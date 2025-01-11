@@ -19,6 +19,26 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # keep-sorted end
+
+    # package sources:
+    # keep-sorted start block=yes
+    busybox = {
+      url = "github:tombl/busybox";
+      flake = false;
+    };
+    linux = {
+      url = "github:tombl/linux/args";
+      flake = false;
+    };
+    llvm = {
+      url = "github:llvm/llvm-project/release/19.x";
+      flake = false;
+    };
+    musl = {
+      url = "github:tombl/musl/args";
+      flake = false;
+    };
+    # keep-sorted end
   };
   outputs =
     inputs:
@@ -37,5 +57,16 @@
         "x86_64-darwin"
         "aarch64-darwin"
       ];
+
+      perSystem =
+        { pkgs, system, ... }:
+        {
+          packages = import ./all-packages.nix {
+            inherit (inputs.nixpkgs) lib;
+            inherit inputs;
+            currentSystem = system;
+            hostpkgs = import ./host-packages.nix { inherit pkgs; };
+          };
+        };
     };
 }
