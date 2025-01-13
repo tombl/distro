@@ -12,9 +12,8 @@ let
       setup =
         if args ? src then
           ''
-            mkdir src
+            cp -r ${args.src} src
             cd src
-            cp -r ${args.src}/* .
             chmod -R u+w .
           ''
         else

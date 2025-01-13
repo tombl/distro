@@ -14,11 +14,14 @@ in
     bc
     bison
     busybox
+    cmake
     esbuild
     findutils
     flex
     gnumake
+    ninja
     perl
+    python3
     rsync
     wabt
     ;
