@@ -1,0 +1,32 @@
+on:
+  - push
+
+jobs:
+  list:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: List packages
+        id: list
+        run: |
+          matrix="$(nix eval .#checks.x86_64-linux --json --apply builtins.attrNames)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: list
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: ${{ fromJson(needs.list.outputs.matrix) }}
+    name: Build ${{ matrix.pkg }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Build
+        run: nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
