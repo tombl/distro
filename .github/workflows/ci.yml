@@ -21,11 +21,12 @@ jobs:
     needs: list
     runs-on: ubuntu-24.04
     strategy:
-      matrix: ${{ fromJson(needs.list.outputs.matrix) }}
-    name: Build ${{ matrix.name }}
+      matrix:
+        pkg: ${{ fromJson(needs.list.outputs.matrix) }}
+    name: Build ${{ matrix.pkg.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Build
-        run: nix build '${{ matrix.path }}^*' --print-build-logs
+        run: nix build '${{ matrix.pkg.path }}^*' --print-build-logs
