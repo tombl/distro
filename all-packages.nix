@@ -7,7 +7,8 @@
 
 let
   mkRun =
-    path: args: command:
+    { path, builder }:
+    args: command:
     let
       setup =
         if args ? src then
@@ -22,14 +23,14 @@ let
     derivation (
       {
         system = currentSystem;
-        builder = "${pkgs.busybox}/bin/ash";
+        inherit builder;
         args = [
           "-euc"
           ''
             if [ 0 -eq "$NIX_BUILD_CORES" ]; then
               NIX_BUILD_CORES=$(${pkgs.busybox}/bin/nproc)
             fi
-            exec ${pkgs.busybox}/bin/ash -eux $commandPath
+            exec ${builder} -eux $commandPath
           ''
         ];
         PATH = lib.makeBinPath ((args.path or [ ]) ++ path);
@@ -39,19 +40,16 @@ let
       // (removeAttrs args [ "srcPath" ])
     );
 
-  run0 = mkRun [ pkgs.busybox ];
-
   wasmpkgs =
     {
       inherit lib inputs;
-      sh = run0 { name = "sh"; } ''
-        mkdir -p $out/bin
-        ln -s ${pkgs.busybox}/bin/ash $out/bin/sh
-      '';
-      run = mkRun [
-        pkgs.busybox
-        pkgs.sh
-      ];
+      run = mkRun {
+        path = [
+          pkgs.busybox
+          pkgs.bash
+        ];
+        builder = "${pkgs.bash}/bin/bash";
+      };
     }
     // lib.packagesFromDirectoryRecursive {
       callPackage = lib.callPackageWith pkgs;
