@@ -11,6 +11,7 @@ in
   clang-host = llvm.clang;
   inherit (llvm) lld;
   inherit (pkgs)
+    bash
     bc
     bison
     busybox
