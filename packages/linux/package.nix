@@ -43,10 +43,11 @@ run
     ];
   }
   ''
-    alias make="make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true"
+    make() {
+      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
+    }
 
-    make defconfig
-    ${if enableDebug then "make debug.config" else ""}
+    make defconfig ${if enableDebug then "debug.config" else ""}
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do

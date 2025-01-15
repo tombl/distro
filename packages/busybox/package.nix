@@ -24,11 +24,13 @@ run
     ];
   }
   ''
-    alias make="make -j$NIX_BUILD_CORES \
-      ARCH=wasm32 \
-      HOSTCC=${clang-host}/bin/clang \
-      CC=${clang}/bin/clang \
-      CFLAGS_busybox=\"${musl}/lib/crt1.o -g -Wl,--import-memory\""
+    make() {
+      command make -j$NIX_BUILD_CORES \
+        ARCH=wasm32 \
+        HOSTCC=${clang-host}/bin/clang \
+        CC=${clang}/bin/clang \
+        CFLAGS_busybox="${musl}/lib/crt1.o -g -Wl,--import-memory" "$@"
+    }
 
     config() {
       sed -i "/CONFIG_$1=/d" .config
