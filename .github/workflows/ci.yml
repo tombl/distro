@@ -29,5 +29,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Build
-        shell: nix shell nixpkgs#nix-fast-build --command bash {0}
-        run: nix-fast-build --skip-cached --no-nom --flake '.#checks.x86_64-linux.${{ matrix.pkg }}^*'
+        shell: nix shell nixpkgs#attic-client nixpkgs#nix-fast-build --command bash {0}
+        run: |
+          attic login --set-default tombl https://nix.tombl.net '${{secrets.ATTIC_TOKEN}}'
+          attic use linuxwasm
+          nix-fast-build --skip-cached --no-nom --flake '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --attic-cache=linuxwasm
