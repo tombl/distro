@@ -1,0 +1,587 @@
+diff --git a/clang/tools/scan-build-py/tests/functional/exec/CMakeLists.txt b/clang/tools/scan-build-py/tests/functional/exec/CMakeLists.txt
+index cb6ebda183..fbbd3a87e6 100644
+--- a/clang/tools/scan-build-py/tests/functional/exec/CMakeLists.txt
++++ b/clang/tools/scan-build-py/tests/functional/exec/CMakeLists.txt
+@@ -21,6 +21,7 @@
+ check_function_exists(execle HAVE_EXECLE)
+ check_function_exists(posix_spawn HAVE_POSIX_SPAWN)
+ check_function_exists(posix_spawnp HAVE_POSIX_SPAWNP)
++check_function_exists(fork HAVE_FORK)
+ 
+ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+ include_directories(${CMAKE_CURRENT_BINARY_DIR})
+diff --git a/llvm/cmake/modules/HandleLLVMOptions.cmake b/llvm/cmake/modules/HandleLLVMOptions.cmake
+index 5ca580fbb5..4a299ef90e 100644
+--- a/llvm/cmake/modules/HandleLLVMOptions.cmake
++++ b/llvm/cmake/modules/HandleLLVMOptions.cmake
+@@ -212,7 +212,7 @@
+ elseif(FUCHSIA OR UNIX)
+   set(LLVM_ON_WIN32 0)
+   set(LLVM_ON_UNIX 1)
+-  if(APPLE OR ${CMAKE_SYSTEM_NAME} MATCHES "AIX")
++  if(APPLE OR WASM OR ${CMAKE_SYSTEM_NAME} MATCHES "AIX")
+     set(LLVM_HAVE_LINK_VERSION_SCRIPT 0)
+   else()
+     set(LLVM_HAVE_LINK_VERSION_SCRIPT 1)
+diff --git a/llvm/lib/ExecutionEngine/Orc/MemoryMapper.cpp b/llvm/lib/ExecutionEngine/Orc/MemoryMapper.cpp
+index bba3329e8c..591cce29cc 100644
+--- a/llvm/lib/ExecutionEngine/Orc/MemoryMapper.cpp
++++ b/llvm/lib/ExecutionEngine/Orc/MemoryMapper.cpp
+@@ -9,20 +9,32 @@
+ #include "llvm/ExecutionEngine/Orc/MemoryMapper.h"
+ 
+ #include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
++#include "llvm/Config/config.h"
+ #include "llvm/Support/WindowsError.h"
+ 
+ #include <algorithm>
+ 
+ #if defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
+ #include <fcntl.h>
++#if defined(HAVE_SYS_MMAN_H)
+ #include <sys/mman.h>
++#endif
+ #if defined(__MVS__)
+ #include "llvm/Support/BLAKE3.h"
+ #include <sys/shm.h>
+ #endif
+ #include <unistd.h>
++#if defined(HAVE_SYS_MMAN_H) && defined(MAP_SHARED) && defined(PROT_READ) &&     \
++    defined(PROT_WRITE) && defined(PROT_EXEC)
++#define LLVM_SUPPORTS_POSIX_MMAP 1
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
++#endif
+ #elif defined(_WIN32)
+ #include <windows.h>
++#define LLVM_SUPPORTS_POSIX_MMAP 0
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
+ #endif
+ 
+ namespace llvm {
+@@ -195,16 +207,21 @@
+ // SharedMemoryMapper
+ 
+ SharedMemoryMapper::SharedMemoryMapper(ExecutorProcessControl &EPC,
+-                                       SymbolAddrs SAs, size_t PageSize)
++                                        SymbolAddrs SAs, size_t PageSize)
+     : EPC(EPC), SAs(SAs), PageSize(PageSize) {
+-#if (!defined(LLVM_ON_UNIX) || defined(__ANDROID__)) && !defined(_WIN32)
++#if !defined(_WIN32) &&                                                     \
++    !(defined(LLVM_ON_UNIX) && !defined(__ANDROID__) &&                     \
++      (defined(__MVS__) || LLVM_SUPPORTS_POSIX_MMAP))
+   llvm_unreachable("SharedMemoryMapper is not supported on this platform yet");
+ #endif
+ }
+ 
++
+ Expected<std::unique_ptr<SharedMemoryMapper>>
+ SharedMemoryMapper::Create(ExecutorProcessControl &EPC, SymbolAddrs SAs) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++#if defined(_WIN32) ||                                                           \
++    (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) &&                           \
++     (defined(__MVS__) || LLVM_SUPPORTS_POSIX_MMAP))
+   auto PageSize = sys::Process::getPageSize();
+   if (!PageSize)
+     return PageSize.takeError();
+@@ -218,10 +235,13 @@
+ }
+ 
+ void SharedMemoryMapper::reserve(size_t NumBytes,
+-                                 OnReservedFunction OnReserved) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++                                  OnReservedFunction OnReserved) {
++#if defined(_WIN32) ||                                                           \
++    (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) &&                           \
++     (defined(__MVS__) || LLVM_SUPPORTS_POSIX_MMAP))
+ 
+   EPC.callSPSWrapperAsync<
++
+       rt::SPSExecutorSharedMemoryMapperServiceReserveSignature>(
+       SAs.Reserve,
+       [this, NumBytes, OnReserved = std::move(OnReserved)](
+@@ -260,8 +280,9 @@
+           return OnReserved(errorCodeToError(
+               std::error_code(errno, std::generic_category())));
+         }
+-#else
+-        int SharedMemoryFile = shm_open(SharedMemoryName.c_str(), O_RDWR, 0700);
++#elif LLVM_SUPPORTS_POSIX_MMAP
++        int SharedMemoryFile =
++            shm_open(SharedMemoryName.c_str(), O_RDWR, 0700);
+         if (SharedMemoryFile < 0) {
+           return OnReserved(errorCodeToError(errnoAsErrorCode()));
+         }
+@@ -276,8 +297,13 @@
+         }
+ 
+         close(SharedMemoryFile);
++#else
++        return OnReserved(make_error<StringError>(
++            "SharedMemoryMapper requires POSIX mmap support on this platform",
++            inconvertibleErrorCode()));
+ #endif
+ 
++
+ #elif defined(_WIN32)
+ 
+         std::wstring WideSharedMemoryName(SharedMemoryName.begin(),
+@@ -306,6 +332,10 @@
+       },
+       SAs.Instance, static_cast<uint64_t>(NumBytes));
+ 
++#elif defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
++  OnReserved(make_error<StringError>(
++      "SharedMemoryMapper requires POSIX mmap support on this platform",
++      inconvertibleErrorCode()));
+ #else
+   OnReserved(make_error<StringError>(
+       "SharedMemoryMapper is not supported on this platform yet",
+@@ -385,10 +415,13 @@
+ }
+ 
+ void SharedMemoryMapper::release(ArrayRef<ExecutorAddr> Bases,
+-                                 OnReleasedFunction OnReleased) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++                                  OnReleasedFunction OnReleased) {
++#if defined(_WIN32) ||                                                           \
++    (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) &&                           \
++     (defined(__MVS__) || LLVM_SUPPORTS_POSIX_MMAP))
+   Error Err = Error::success();
+ 
++
+   {
+     std::lock_guard<std::mutex> Lock(Mutex);
+ 
+@@ -399,9 +432,15 @@
+ #if defined(__MVS__)
+       if (shmdt(Reservations[Base].LocalAddr) < 0)
+         Err = joinErrors(std::move(Err), errorCodeToError(errnoAsErrorCode()));
+-#else
++#elif LLVM_SUPPORTS_POSIX_MMAP
+       if (munmap(Reservations[Base].LocalAddr, Reservations[Base].Size) != 0)
+         Err = joinErrors(std::move(Err), errorCodeToError(errnoAsErrorCode()));
++#else
++      Err = joinErrors(
++          std::move(Err),
++          make_error<StringError>(
++              "SharedMemoryMapper requires POSIX mmap support on this platform",
++              inconvertibleErrorCode()));
+ #endif
+ 
+ #elif defined(_WIN32)
+@@ -430,6 +469,10 @@
+         return OnReleased(joinErrors(std::move(Err), std::move(Result)));
+       },
+       SAs.Instance, Bases);
++#elif defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
++  OnReleased(make_error<StringError>(
++      "SharedMemoryMapper requires POSIX mmap support on this platform",
++      inconvertibleErrorCode()));
+ #else
+   OnReleased(make_error<StringError>(
+       "SharedMemoryMapper is not supported on this platform yet",
+@@ -445,8 +488,10 @@
+ 
+ #if defined(__MVS__)
+     shmdt(R.second.LocalAddr);
+-#else
++#elif LLVM_SUPPORTS_POSIX_MMAP
+     munmap(R.second.LocalAddr, R.second.Size);
++#else
++    (void)R;
+ #endif
+ 
+ #elif defined(_WIN32)
+diff --git a/llvm/lib/ExecutionEngine/Orc/TargetProcess/ExecutorSharedMemoryMapperService.cpp b/llvm/lib/ExecutionEngine/Orc/TargetProcess/ExecutorSharedMemoryMapperService.cpp
+index f5118c0f2b..2695cfbbd8 100644
+--- a/llvm/lib/ExecutionEngine/Orc/TargetProcess/ExecutorSharedMemoryMapperService.cpp
++++ b/llvm/lib/ExecutionEngine/Orc/TargetProcess/ExecutorSharedMemoryMapperService.cpp
+@@ -9,6 +9,7 @@
+ #include "llvm/ExecutionEngine/Orc/TargetProcess/ExecutorSharedMemoryMapperService.h"
+ 
+ #include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
++#include "llvm/Config/config.h"
+ #include "llvm/Support/Process.h"
+ #include "llvm/Support/WindowsError.h"
+ 
+@@ -17,12 +18,22 @@
+ #if defined(LLVM_ON_UNIX)
+ #include <errno.h>
+ #include <fcntl.h>
++#ifdef HAVE_SYS_MMAN_H
+ #include <sys/mman.h>
++#endif
+ #if defined(__MVS__)
+ #include "llvm/Support/BLAKE3.h"
+ #include <sys/shm.h>
+ #endif
+ #include <unistd.h>
++#if defined(HAVE_SYS_MMAN_H) && defined(MAP_SHARED) && defined(PROT_NONE) &&     \
++    defined(PROT_READ) && defined(PROT_WRITE) && defined(PROT_EXEC)
++#define LLVM_SUPPORTS_POSIX_MMAP 1
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
++#endif
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
+ #endif
+ 
+ namespace llvm {
+@@ -51,7 +62,8 @@
+ 
+ Expected<std::pair<ExecutorAddr, std::string>>
+ ExecutorSharedMemoryMapperService::reserve(uint64_t Size) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) && LLVM_SUPPORTS_POSIX_MMAP) || \
++    defined(_WIN32)
+ 
+ #if defined(LLVM_ON_UNIX)
+ 
+@@ -131,6 +143,10 @@
+ 
+   return std::make_pair(ExecutorAddr::fromPtr(Addr),
+                         std::move(SharedMemoryName));
++#elif defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
++  return make_error<StringError>(
++      "SharedMemoryMapper requires POSIX mmap support on this platform",
++      inconvertibleErrorCode());
+ #else
+   return make_error<StringError>(
+       "SharedMemoryMapper is not supported on this platform yet",
+@@ -140,7 +156,8 @@
+ 
+ Expected<ExecutorAddr> ExecutorSharedMemoryMapperService::initialize(
+     ExecutorAddr Reservation, tpctypes::SharedMemoryFinalizeRequest &FR) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) && LLVM_SUPPORTS_POSIX_MMAP) || \
++    defined(_WIN32)
+ 
+   ExecutorAddr MinAddr(~0ULL);
+ 
+@@ -196,6 +213,10 @@
+ 
+   return MinAddr;
+ 
++#elif defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
++  return make_error<StringError>(
++      "SharedMemoryMapper requires POSIX mmap support on this platform",
++      inconvertibleErrorCode());
+ #else
+   return make_error<StringError>(
+       "SharedMemoryMapper is not supported on this platform yet",
+@@ -234,7 +255,8 @@
+ 
+ Error ExecutorSharedMemoryMapperService::release(
+     const std::vector<ExecutorAddr> &Bases) {
+-#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__)) || defined(_WIN32)
++#if (defined(LLVM_ON_UNIX) && !defined(__ANDROID__) && LLVM_SUPPORTS_POSIX_MMAP) || \
++    defined(_WIN32)
+   Error Err = Error::success();
+ 
+   for (auto Base : Bases) {
+@@ -289,6 +311,10 @@
+   }
+ 
+   return Err;
++#elif defined(LLVM_ON_UNIX) && !defined(__ANDROID__)
++  return make_error<StringError>(
++      "SharedMemoryMapper requires POSIX mmap support on this platform",
++      inconvertibleErrorCode());
+ #else
+   return make_error<StringError>(
+       "SharedMemoryMapper is not supported on this platform yet",
+diff --git a/llvm/lib/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.cpp b/llvm/lib/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.cpp
+index f7852b0ca6..d6bea8c977 100644
+--- a/llvm/lib/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.cpp
++++ b/llvm/lib/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.cpp
+@@ -14,6 +14,7 @@
+ 
+ #include "llvm/ExecutionEngine/Orc/Shared/PerfSharedStructs.h"
+ 
++#include "llvm/Config/config.h"
+ #include "llvm/Support/FileSystem.h"
+ #include "llvm/Support/MemoryBuffer.h"
+ #include "llvm/Support/Path.h"
+@@ -23,12 +24,25 @@
+ #include <mutex>
+ #include <optional>
+ 
+-#ifdef __linux__
++#if defined(__linux__)
+ 
++#ifdef HAVE_SYS_MMAN_H
+ #include <sys/mman.h> // mmap()
++#endif
+ #include <time.h>     // clock_gettime(), time(), localtime_r() */
+ #include <unistd.h>   // for read(), close()
+ 
++#if defined(HAVE_SYS_MMAN_H) && defined(MAP_PRIVATE) && defined(PROT_READ) &&   \
++    defined(PROT_WRITE) && defined(PROT_EXEC) && defined(PROT_NONE)
++#define LLVM_SUPPORTS_POSIX_MMAP 1
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
++#endif
++
++#endif
++
++#if defined(__linux__) && LLVM_SUPPORTS_POSIX_MMAP
++
+ #define DEBUG_TYPE "orc"
+ 
+ // language identifier (XXX: should we generate something better from debug
+@@ -420,6 +434,42 @@
+       .release();
+ }
+ 
++#elif defined(__linux__)
++
++using namespace llvm;
++using namespace llvm::orc;
++
++static Error missingMMap() {
++  using namespace llvm;
++  return llvm::make_error<StringError>(
++      "perf JIT support requires POSIX mmap on this platform",
++      inconvertibleErrorCode());
++}
++
++static Error missingMMapBatch(PerfJITRecordBatch &Batch) {
++  return missingMMap();
++}
++
++extern "C" llvm::orc::shared::CWrapperFunctionResult
++llvm_orc_registerJITLoaderPerfImpl(const char *Data, uint64_t Size) {
++  using namespace shared;
++  return WrapperFunction<SPSError(SPSPerfJITRecordBatch)>::handle(
++             Data, Size, missingMMapBatch)
++      .release();
++}
++
++extern "C" llvm::orc::shared::CWrapperFunctionResult
++llvm_orc_registerJITLoaderPerfStart(const char *Data, uint64_t Size) {
++  using namespace shared;
++  return WrapperFunction<SPSError()>::handle(Data, Size, missingMMap).release();
++}
++
++extern "C" llvm::orc::shared::CWrapperFunctionResult
++llvm_orc_registerJITLoaderPerfEnd(const char *Data, uint64_t Size) {
++  using namespace shared;
++  return WrapperFunction<SPSError()>::handle(Data, Size, missingMMap).release();
++}
++
+ #else
+ 
+ using namespace llvm;
+diff --git a/llvm/lib/Support/Unix/Memory.inc b/llvm/lib/Support/Unix/Memory.inc
+index bac208a7d5..571e777009 100644
+--- a/llvm/lib/Support/Unix/Memory.inc
++++ b/llvm/lib/Support/Unix/Memory.inc
+@@ -18,10 +18,19 @@
+ #include "llvm/Support/Process.h"
+ #include "llvm/Support/Valgrind.h"
+ 
++#include <system_error>
++
+ #ifdef HAVE_SYS_MMAN_H
+ #include <sys/mman.h>
+ #endif
+ 
++#if defined(HAVE_SYS_MMAN_H) && defined(MAP_PRIVATE) && defined(PROT_READ) &&   \
++    defined(PROT_WRITE) && defined(PROT_EXEC) && defined(PROT_NONE)
++#define LLVM_SUPPORTS_POSIX_MMAP 1
++#else
++#define LLVM_SUPPORTS_POSIX_MMAP 0
++#endif
++
+ #ifdef __APPLE__
+ #include <mach/mach.h>
+ #endif
+@@ -36,6 +45,7 @@
+ extern "C" void __clear_cache(void *, void *);
+ #endif
+ 
++#if LLVM_SUPPORTS_POSIX_MMAP
+ static int getPosixProtectionFlags(unsigned Flags) {
+   switch (Flags & llvm::sys::Memory::MF_RWE_MASK) {
+   case llvm::sys::Memory::MF_READ:
+@@ -66,6 +76,7 @@
+   // Provide a default return value as required by some compilers.
+   return PROT_NONE;
+ }
++#endif
+ 
+ namespace llvm {
+ namespace sys {
+@@ -77,6 +88,11 @@
+   if (NumBytes == 0)
+     return MemoryBlock();
+ 
++#if !LLVM_SUPPORTS_POSIX_MMAP
++  (void)NearBlock;
++  EC = std::make_error_code(std::errc::function_not_supported);
++  return MemoryBlock();
++#else
+   // On platforms that have it, we can use MAP_ANON to get a memory-mapped
+   // page without file backing, but we need a fallback of opening /dev/zero
+   // for strictly POSIX platforms instead.
+@@ -146,12 +162,16 @@
+   }
+ 
+   return Result;
++#endif
+ }
+ 
+ std::error_code Memory::releaseMappedMemory(MemoryBlock &M) {
+   if (M.Address == nullptr || M.AllocatedSize == 0)
+     return std::error_code();
+ 
++#if !LLVM_SUPPORTS_POSIX_MMAP
++  return std::make_error_code(std::errc::function_not_supported);
++#else
+   if (0 != ::munmap(M.Address, M.AllocatedSize))
+     return errnoAsErrorCode();
+ 
+@@ -159,6 +179,7 @@
+   M.AllocatedSize = 0;
+ 
+   return std::error_code();
++#endif
+ }
+ 
+ std::error_code Memory::protectMappedMemory(const MemoryBlock &M,
+@@ -167,6 +188,10 @@
+   if (M.Address == nullptr || M.AllocatedSize == 0)
+     return std::error_code();
+ 
++#if !LLVM_SUPPORTS_POSIX_MMAP
++  (void)Flags;
++  return std::make_error_code(std::errc::function_not_supported);
++#else
+   if (!Flags)
+     return std::error_code(EINVAL, std::generic_category());
+ 
+@@ -202,6 +227,7 @@
+     Memory::InvalidateInstructionCache(M.Address, M.AllocatedSize);
+ 
+   return std::error_code();
++#endif
+ }
+ 
+ /// InvalidateInstructionCache - Before the JIT can run a block of code
+diff --git a/llvm/lib/Support/Unix/Path.inc b/llvm/lib/Support/Unix/Path.inc
+index cf05db546e..4a806086a3 100644
+--- a/llvm/lib/Support/Unix/Path.inc
++++ b/llvm/lib/Support/Unix/Path.inc
+@@ -831,6 +831,13 @@
+                                          mapmode Mode) {
+   assert(Size != 0);
+ 
++#if !defined(MAP_SHARED) || !defined(MAP_PRIVATE) || !defined(PROT_READ) ||    \
++    !defined(PROT_WRITE)
++  (void)FD;
++  (void)Offset;
++  (void)Mode;
++  return make_error_code(errc::function_not_supported);
++#else
+   int flags = (Mode == readwrite) ? MAP_SHARED : MAP_PRIVATE;
+   int prot = (Mode == readonly) ? PROT_READ : (PROT_READ | PROT_WRITE);
+ #if defined(MAP_NORESERVE)
+@@ -860,6 +867,7 @@
+   if (Mapping == MAP_FAILED)
+     return errnoAsErrorCode();
+   return std::error_code();
++#endif
+ }
+ 
+ mapped_file_region::mapped_file_region(int fd, mapmode mode, size_t length,
+@@ -872,14 +880,24 @@
+ }
+ 
+ void mapped_file_region::unmapImpl() {
++#if !defined(MAP_SHARED) || !defined(MAP_PRIVATE) || !defined(PROT_READ) ||    \
++    !defined(PROT_WRITE)
++  (void)Mapping;
++  (void)Size;
++#else
+   if (Mapping)
+     ::munmap(Mapping, Size);
++#endif
+ }
+ 
+ void mapped_file_region::dontNeedImpl() {
+   assert(Mode == mapped_file_region::readonly);
+   if (!Mapping)
+     return;
++#if !defined(POSIX_MADV_DONTNEED) && !defined(MADV_DONTNEED)
++  (void)Size;
++  return;
++#else
+ #if defined(__MVS__) || defined(_AIX)
+     // If we don't have madvise, or it isn't beneficial, treat this as a no-op.
+ #elif defined(POSIX_MADV_DONTNEED)
+@@ -887,6 +905,7 @@
+ #else
+   ::madvise(Mapping, Size, MADV_DONTNEED);
+ #endif
++#endif
+ }
+ 
+ int mapped_file_region::alignment() { return Process::getPageSizeEstimate(); }
+diff --git a/llvm/lib/Support/Unix/Program.inc b/llvm/lib/Support/Unix/Program.inc
+index 2742734bb1..3ea4758130 100644
+--- a/llvm/lib/Support/Unix/Program.inc
++++ b/llvm/lib/Support/Unix/Program.inc
+@@ -274,6 +274,17 @@
+   }
+ #endif // HAVE_POSIX_SPAWN
+ 
++#if !defined(HAVE_FORK)
++  (void)Args;
++  (void)Redirects;
++  (void)MemoryLimit;
++  (void)PI;
++  (void)Env;
++  (void)DetachProcess;
++  if (ErrMsg)
++    *ErrMsg = "fork is not available on this target";
++  return false;
++#else
+   // Create a child process.
+   int child = fork();
+   switch (child) {
+@@ -347,6 +358,7 @@
+   PI.Process = child;
+ 
+   return true;
++#endif
+ }
+ 
+ namespace llvm {
+diff --git a/llvm/tools/lli/lli.cpp b/llvm/tools/lli/lli.cpp
+index 25f43a4bb6..d6ad7f5229 100644
+--- a/llvm/tools/lli/lli.cpp
++++ b/llvm/tools/lli/lli.cpp
+@@ -1206,7 +1206,7 @@
+ }
+ 
+ Expected<std::unique_ptr<orc::ExecutorProcessControl>> launchRemote() {
+-#ifndef LLVM_ON_UNIX
++#if !defined(LLVM_ON_UNIX) || defined(__wasm__)
+   llvm_unreachable("launchRemote not supported on non-Unix platforms");
+ #else
+   int PipeFD[2][2];
+diff --git a/llvm/tools/llvm-jitlink/llvm-jitlink.cpp b/llvm/tools/llvm-jitlink/llvm-jitlink.cpp
+index bff05b9ca4..4bb40e1a8e 100644
+--- a/llvm/tools/llvm-jitlink/llvm-jitlink.cpp
++++ b/llvm/tools/llvm-jitlink/llvm-jitlink.cpp
+@@ -737,7 +737,7 @@
+ }
+ 
+ static Expected<std::unique_ptr<ExecutorProcessControl>> launchExecutor() {
+-#ifndef LLVM_ON_UNIX
++#if !defined(LLVM_ON_UNIX) || defined(__wasm__)
+   // FIXME: Add support for Windows.
+   return make_error<StringError>("-" + OutOfProcessExecutor.ArgStr +
+                                      " not supported on non-unix platforms",
