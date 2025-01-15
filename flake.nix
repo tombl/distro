@@ -62,7 +62,10 @@
           legacyPackages = import ./all-packages.nix {
             inherit (inputs.nixpkgs) lib;
             currentSystem = system;
-            hostpkgs = import ./host-packages.nix { inherit pkgs; };
+            hostpkgs = import ./host-packages.nix {
+              inherit pkgs;
+              wasmpkgs = config.legacyPackages;
+            };
           };
 
           # and then expose a filtered version of that attribute set with just the actual packages.

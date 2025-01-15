@@ -3,7 +3,7 @@
   run,
   config,
 
-  clang,
+  clang-no-compiler-rt,
   cmake,
   lld,
   llvm,
@@ -22,7 +22,7 @@ run
       hash = "sha256-4/eTF62qkZbSz//hyGnXwQC3VAgyvET+DT9EoShh+jQ=";
     };
     path = [
-      clang
+      clang-no-compiler-rt
       cmake
       lld
       llvm
@@ -35,12 +35,12 @@ run
 
     cmake -S compiler-rt -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=${if config.debug then "Debug" else "Release"} \
-      -DCMAKE_CXX_COMPILER_TARGET=wasm32-unknown \
-      -DCMAKE_CXX_COMPILER_WORKS=ON \
-      -DCMAKE_CXX_FLAGS="-I${musl}/include" \
       -DCMAKE_C_COMPILER_TARGET=wasm32-unknown \
       -DCMAKE_C_COMPILER_WORKS=ON \
       -DCMAKE_C_FLAGS="-I${musl}/include" \
+      -DCMAKE_CXX_COMPILER_TARGET=wasm32-unknown \
+      -DCMAKE_CXX_COMPILER_WORKS=ON \
+      -DCMAKE_CXX_FLAGS="-I${musl}/include" \
       -DCOMPILER_RT_BUILD_CRT=false \
       -DCOMPILER_RT_DEFAULT_TARGET_ARCH=wasm32-unknown \
       -DCOMPILER_RT_DEFAULT_TARGET_ONLY=true

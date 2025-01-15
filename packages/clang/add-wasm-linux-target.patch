@@ -1,0 +1,105 @@
+diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
+index 29133f9ee8..398ec6208d 100644
+--- a/clang/lib/Basic/Targets.cpp
++++ b/clang/lib/Basic/Targets.cpp
+@@ -682,8 +682,7 @@
+   }
+   case llvm::Triple::wasm32:
+     if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
+-        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+-        !Triple.isOSBinFormatWasm())
++        Triple.getVendor() != llvm::Triple::UnknownVendor)
+       return nullptr;
+     switch (os) {
+       case llvm::Triple::WASI:
+@@ -692,6 +691,9 @@
+       case llvm::Triple::Emscripten:
+       return std::make_unique<EmscriptenTargetInfo<WebAssembly32TargetInfo>>(
+           Triple, Opts);
++      case llvm::Triple::Linux:
++      return std::make_unique<LinuxTargetInfo<WebAssembly32TargetInfo>>(Triple,
++                                                                        Opts);
+       case llvm::Triple::UnknownOS:
+       return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly32TargetInfo>>(
+           Triple, Opts);
+@@ -700,8 +702,7 @@
+     }
+   case llvm::Triple::wasm64:
+     if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
+-        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+-        !Triple.isOSBinFormatWasm())
++        Triple.getVendor() != llvm::Triple::UnknownVendor)
+       return nullptr;
+     switch (os) {
+       case llvm::Triple::WASI:
+@@ -710,6 +711,9 @@
+       case llvm::Triple::Emscripten:
+       return std::make_unique<EmscriptenTargetInfo<WebAssembly64TargetInfo>>(
+           Triple, Opts);
++      case llvm::Triple::Linux:
++      return std::make_unique<LinuxTargetInfo<WebAssembly64TargetInfo>>(Triple,
++                                                                        Opts);
+       case llvm::Triple::UnknownOS:
+       return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly64TargetInfo>>(
+           Triple, Opts);
+diff --git a/clang/lib/Driver/ToolChains/WebAssembly.cpp b/clang/lib/Driver/ToolChains/WebAssembly.cpp
+index 60bd97e0ee..cb91b9dfd2 100644
+--- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
++++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
+@@ -94,10 +94,13 @@
+ 
+   ToolChain.AddFilePathLibArgs(Args, CmdArgs);
+ 
+-  bool IsCommand = true;
+   const char *Crt1;
+   const char *Entry = nullptr;
+ 
++  if (Triple.isOSLinux()) {
++    Crt1 = "crt1.o";
++  } else {
++  bool IsCommand = true;
+   // When -shared is specified, use the reactor exec model unless
+   // specified otherwise.
+   if (Args.hasArg(options::OPT_shared))
+@@ -129,6 +132,7 @@
+     Crt1 = "crt1-reactor.o";
+     Entry = "_initialize";
+   }
++  }
+ 
+   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
+     CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(Crt1)));
+@@ -549,7 +553,7 @@
+ }
+ 
+ Tool *WebAssembly::buildLinker() const {
+-  return new tools::wasm::Linker(*this);
++  return new tools::wasm::Linker(getTriple(), *this);
+ }
+ 
+ void WebAssembly::addLibCxxIncludePaths(
+diff --git a/clang/lib/Driver/ToolChains/WebAssembly.h b/clang/lib/Driver/ToolChains/WebAssembly.h
+index 76e0ca39bd..c2dffb174f 100644
+--- a/clang/lib/Driver/ToolChains/WebAssembly.h
++++ b/clang/lib/Driver/ToolChains/WebAssembly.h
+@@ -20,7 +20,9 @@
+ 
+ class LLVM_LIBRARY_VISIBILITY Linker final : public Tool {
+ public:
+-  explicit Linker(const ToolChain &TC) : Tool("wasm::Linker", "linker", TC) {}
++  Linker(const llvm::Triple &Triple, const ToolChain &TC)
++      : Tool("wasm::Linker", "linker", TC), Triple(Triple) {}
++
+   bool isLinkJob() const override { return true; }
+   bool hasIntegratedCPP() const override { return false; }
+   std::string getLinkerPath(const llvm::opt::ArgList &Args) const;
+@@ -28,6 +30,9 @@
+                     const InputInfo &Output, const InputInfoList &Inputs,
+                     const llvm::opt::ArgList &TCArgs,
+                     const char *LinkingOutput) const override;
++
++protected:
++  const llvm::Triple &Triple;
+ };
+ 
+ } // end namespace wasm
