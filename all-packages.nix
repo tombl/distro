@@ -44,14 +44,13 @@ let
   wasmpkgs =
     {
       inherit lib inputs;
-      sh = run0 { name = "sh"; } ''
-        mkdir -p $out/bin
-        ln -s ${pkgs.busybox}/bin/ash $out/bin/sh
-      '';
-      run = mkRun [
-        pkgs.busybox
-        pkgs.sh
-      ];
+      run = mkRun {
+        path = [
+          pkgs.busybox
+          pkgs.bash
+        ];
+        builder = "${pkgs.bash}/bin/bash";
+      };
     }
     // lib.packagesFromDirectoryRecursive {
       callPackage = lib.callPackageWith pkgs;

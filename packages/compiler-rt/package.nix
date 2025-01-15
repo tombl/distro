@@ -1,37 +1,14 @@
 {
-  inputs,
   run,
-
-  clang,
-  cmake,
-  lld,
-  llvm,
-  ninja,
-  python3,
+  inputs,
 }:
 
 run
   {
     name = "compiler-rt";
-    src = inputs.llvm;
-    path = [
-      clang
-      cmake
-      lld
-      llvm
-      ninja
-      python3
-    ];
+    src = inputs.libclang_rt;
   }
   ''
-    cd llvm
-
-    cmake -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_INSTALL_PREFIX=$out \
-      -DLLVM_ENABLE_RUNTIMES="compiler-rt" \
-      -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
-      -DLLVM_USE_LINKER=lld
-
-    cmake --build build --target install
+    mkdir -p $out
+    cp libclang_rt.builtins-wasm32.a $out/
   ''
