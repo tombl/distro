@@ -43,7 +43,7 @@ run
     ];
   }
   ''
-    alias make="make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true"
+    alias make="echo make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true"
 
     make defconfig
     ${if enableDebug then "make debug.config" else ""}
