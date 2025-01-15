@@ -29,4 +29,5 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Build
-        run: nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
+        shell: nix shell nixpkgs#nix-fast-build --command bash {0}
+        run: nix-fast-build --skip-cached --no-nom --flake '.#checks.x86_64-linux.${{ matrix.pkg }}^*'
