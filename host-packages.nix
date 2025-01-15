@@ -7,7 +7,9 @@ let
 in
 
 {
-  clang = llvm.clang-unwrapped;
+  clang = llvm.clang-unwrapped.overrideAttrs (attrs: {
+    patches = attrs.patches or [ ] ++ [ ./packages/clang/add-wasm-linux-target.patch ];
+  });
   clang-host = llvm.clang;
   inherit (llvm) lld;
   inherit (pkgs)
