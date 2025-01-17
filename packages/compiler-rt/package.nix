@@ -1,14 +1,44 @@
 {
-  run,
   inputs,
+  run,
+
+  clang,
+  cmake,
+  lld,
+  llvm,
+  musl,
+  ninja,
+  python3,
 }:
 
 run
   {
     name = "compiler-rt";
-    src = inputs.libclang_rt;
+    src = inputs.llvm;
+    path = [
+      clang
+      cmake
+      lld
+      llvm
+      ninja
+      python3
+    ];
   }
   ''
-    mkdir -p $out
-    cp libclang_rt.builtins-wasm32.a $out/
+    cmake -S compiler-rt -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_COMPILER_TARGET=wasm32-unknown \
+      -DCMAKE_CXX_COMPILER_WORKS=ON \
+      -DCMAKE_CXX_FLAGS="-I${musl}/include" \
+      -DCMAKE_C_COMPILER_TARGET=wasm32-unknown \
+      -DCMAKE_C_COMPILER_WORKS=ON \
+      -DCMAKE_C_FLAGS="-I${musl}/include" \
+      -DCOMPILER_RT_BUILD_CRT=false \
+      -DCOMPILER_RT_DEFAULT_TARGET_ARCH=wasm32-unknown \
+      -DCOMPILER_RT_DEFAULT_TARGET_ONLY=true
+
+    cmake --build build -j$NIX_BUILD_CORES
+
+    mkdir $out
+    cp build/lib/*/libclang_rt.builtins-wasm32.a $out/
   ''

@@ -111,19 +111,6 @@
         "type": "github"
       }
     },
-    "libclang_rt": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1733968120,
-        "narHash": "sha256-qnWit8eyTV8zOwA4SE5z+lTKpmP1u4/+MOqkzEp+Cww=",
-        "type": "tarball",
-        "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/libclang_rt.builtins-wasm32-wasi-25.0.tar.gz"
-      },
-      "original": {
-        "type": "tarball",
-        "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/libclang_rt.builtins-wasm32-wasi-25.0.tar.gz"
-      }
-    },
     "linux": {
       "flake": false,
       "locked": {
@@ -214,7 +201,6 @@
         "busybox": "busybox",
         "flake-parts": "flake-parts",
         "git-hooks": "git-hooks",
-        "libclang_rt": "libclang_rt",
         "linux": "linux",
         "llvm": "llvm",
         "make-shell": "make-shell",

@@ -29,10 +29,6 @@
       url = "github:tombl/busybox";
       flake = false;
     };
-    libclang_rt = {
-      url = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/libclang_rt.builtins-wasm32-wasi-25.0.tar.gz";
-      flake = false;
-    };
     linux = {
       url = "github:tombl/linux/args";
       flake = false;
