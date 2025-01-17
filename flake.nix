@@ -38,7 +38,7 @@
       flake = false;
     };
     musl = {
-      url = "github:tombl/musl/args";
+      url = "github:tombl/musl";
       flake = false;
     };
     # keep-sorted end

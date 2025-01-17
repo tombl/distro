@@ -166,16 +166,15 @@
     "musl": {
       "flake": false,
       "locked": {
-        "lastModified": 1736261761,
+        "lastModified": 1737032533,
         "narHash": "sha256-cZX+YcBL7O1TwZU+/vvD9zDE6r9Kwl4cZL3LRq5twGg=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "9a99dba423852dbaffeb9f9bedad63cefed6e065",
+        "rev": "cd2f4cf59570540da70b3937f1c667f3b2971679",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
-        "ref": "args",
         "repo": "musl",
         "type": "github"
       }
