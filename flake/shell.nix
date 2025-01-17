@@ -9,6 +9,7 @@
         packages = with pkgs; [
           attic-client
           jq
+          nix-eval-jobs
           nix-fast-build
         ];
       };

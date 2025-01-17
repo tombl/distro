@@ -16,7 +16,7 @@ jobs:
         id: list
         run: |
           eval "$(nix print-dev-env .#ci)"
-          matrix="$(nix eval .#checks.x86_64-linux --json --apply builtins.attrNames)"
+          matrix=$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '[.[]|select(.isCached|not).attr]')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
