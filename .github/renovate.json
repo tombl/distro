@@ -8,5 +8,13 @@
   },
   "lockFileMaintenance": {
     "enabled": true
-  }
+  },
+  "customManagers": [{
+    "customType": "regex",
+    "description": "Update package definitions",
+    "fileMatch": "\\.nix$",
+    "matchStrings": [
+      "# renovate: datasource=(?<datasource>[a-z-]+?) name=(?<depName>.+?)\\s+\\w+\\s*=\\s*\"(?<currentValue>.+?)\"\\s*;"
+    ]
+  }]
 }
