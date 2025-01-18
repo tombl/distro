@@ -20,7 +20,7 @@
       '';
 
       apps.runner.program = pkgs.writeShellScriptBin "wasm-linux-runner" ''
-        ${lib.getExe pkgs.deno} run --allow-read ${config.packages.site}/run.js --initcpio=${initramfs} "$@"
+        ${lib.getExe pkgs.deno} run --allow-read ${config.packages.site}/run.js "$@"
       '';
 
       apps.serve.program = pkgs.writeShellScriptBin "wasm-linux-serve" ''
