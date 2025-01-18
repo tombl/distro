@@ -61,10 +61,7 @@ run
       fi
     done
 
-    mkdir $out
-    rm tools/wasm/public/dist
-    cp tools/wasm/public/* $out/
-    cp -r tools/wasm/dist $out/dist
+    cp -r tools/wasm/dist $out
 
     make headers_install INSTALL_HDR_PATH=$headers
   ''

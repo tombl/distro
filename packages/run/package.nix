@@ -49,6 +49,5 @@ derivation (
   }
   // (removeAttrs args [
     "path"
-    "src"
   ])
 )

@@ -32,6 +32,7 @@
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         # keep-sorted start
+        ./flake/apps.nix
         ./flake/format.nix
         ./flake/git-hooks.nix
         ./flake/shell.nix
