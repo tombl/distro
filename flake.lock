@@ -1,21 +1,5 @@
 {
   "nodes": {
-    "busybox": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1736261867,
-        "narHash": "sha256-Sbuibax0P/sz+Pwn5BNASsbzF1iFeo19meO3EFhJZzA=",
-        "owner": "tombl",
-        "repo": "busybox",
-        "rev": "e98330a3b04a0237e1741254b556b709911af8bc",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "repo": "busybox",
-        "type": "github"
-      }
-    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -111,40 +95,6 @@
         "type": "github"
       }
     },
-    "linux": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1736261539,
-        "narHash": "sha256-cqa+eme6Uy985DNv83KmzOT7bLst82zYyfrEGVxWZ2c=",
-        "owner": "tombl",
-        "repo": "linux",
-        "rev": "9aeee3fd5749953ed147c4dadb26660f322d9f68",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "ref": "args",
-        "repo": "linux",
-        "type": "github"
-      }
-    },
-    "llvm": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1736765684,
-        "narHash": "sha256-R1XaHsJR2GlUnIuS/rjQGeB6EGAtgGHWax9UrDzX7iE=",
-        "owner": "llvm",
-        "repo": "llvm-project",
-        "rev": "61c9f970b88710c8292cc32b92c1db723fcfff22",
-        "type": "github"
-      },
-      "original": {
-        "owner": "llvm",
-        "ref": "release/19.x",
-        "repo": "llvm-project",
-        "type": "github"
-      }
-    },
     "make-shell": {
       "inputs": {
         "flake-compat": "flake-compat_2"
@@ -160,22 +110,6 @@
       "original": {
         "owner": "nicknovitski",
         "repo": "make-shell",
-        "type": "github"
-      }
-    },
-    "musl": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1737032533,
-        "narHash": "sha256-cZX+YcBL7O1TwZU+/vvD9zDE6r9Kwl4cZL3LRq5twGg=",
-        "owner": "tombl",
-        "repo": "musl",
-        "rev": "cd2f4cf59570540da70b3937f1c667f3b2971679",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "repo": "musl",
         "type": "github"
       }
     },
@@ -197,13 +131,9 @@
     },
     "root": {
       "inputs": {
-        "busybox": "busybox",
         "flake-parts": "flake-parts",
         "git-hooks": "git-hooks",
-        "linux": "linux",
-        "llvm": "llvm",
         "make-shell": "make-shell",
-        "musl": "musl",
         "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       }

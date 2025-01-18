@@ -16,6 +16,7 @@ in
     bison
     busybox
     cmake
+    curl
     esbuild
     findutils
     flex

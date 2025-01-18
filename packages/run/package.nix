@@ -34,7 +34,7 @@ derivation (
         if [ 0 -eq "$NIX_BUILD_CORES" ]; then
           NIX_BUILD_CORES=$(${busybox}/bin/nproc)
         fi
-        exec ${bash}/bin/bash -eux $commandPath
+        exec ${bash}/bin/bash -euxo pipefail $commandPath
       ''
     ];
     PATH = lib.makeBinPath (

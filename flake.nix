@@ -3,13 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # keep-sorted start block=yes
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
-
-    # repo meta:
-    # keep-sorted start block=yes
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -20,26 +18,6 @@
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-    # keep-sorted end
-
-    # package sources:
-    # keep-sorted start block=yes
-    busybox = {
-      url = "github:tombl/busybox";
-      flake = false;
-    };
-    linux = {
-      url = "github:tombl/linux/args";
-      flake = false;
-    };
-    llvm = {
-      url = "github:llvm/llvm-project/release/19.x";
-      flake = false;
-    };
-    musl = {
-      url = "github:tombl/musl";
-      flake = false;
     };
     # keep-sorted end
   };
@@ -82,7 +60,6 @@
           # In our case, we have a handful of non-package attributes that we still want to expose under the pkgs object.
           legacyPackages = import ./all-packages.nix {
             inherit (inputs.nixpkgs) lib;
-            inherit inputs;
             currentSystem = system;
             hostpkgs = import ./host-packages.nix { inherit pkgs; };
           };
