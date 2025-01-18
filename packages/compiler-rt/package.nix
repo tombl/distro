@@ -12,11 +12,13 @@
 }:
 
 run
-  {
+  rec {
     name = "compiler-rt";
+    # renovate: datasource=github-releases name=llvm/llvm-project
+    version = "19.1.6";
     src = fetch.tar {
-      url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/llvm-project-19.1.7.src.tar.xz";
-      hash = "sha256-cZAB5vZjeTsXt9QHbP5xluWNQnAHByHtHnAhVDV0E6I=";
+      url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/llvm-project-${version}.src.tar.xz";
+      hash = "sha256-LD4nIjZTSZJtbgW6tZopbTF5Mq0Tenj2gbuPXhtOeUI=";
     };
     path = [
       clang
