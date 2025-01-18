@@ -27,12 +27,15 @@
         ${lib.getExe pkgs.miniserve} ${config.packages.site} --index index.html \
           --header Cross-Origin-Opener-Policy:same-origin \
           --header Cross-Origin-Embedder-Policy:require-corp \
-          --header Cross-Origin-Resource-Policy:cross-origin
+          --header Cross-Origin-Resource-Policy:cross-origin "$@"
       '';
 
       make-shells.default.packages = [
-        (pkgs.writeShellScriptBin "run" ''exec ${config.apps.runner.program} "$@"'')
-        (pkgs.writeShellScriptBin "serve" ''exec ${config.apps.serve.program} "$@"'')
+        (pkgs.runCommand "dev-commands" { } ''
+          mkdir -p $out/bin
+          ln -s ${config.apps.runner.program} $out/bin/run
+          ln -s ${config.apps.serve.program} $out/bin/serve
+        '')
       ];
     };
 }
