@@ -16,7 +16,7 @@ jobs:
         id: list
         run: |
           eval "$(nix print-dev-env .#ci)"
-          matrix=$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '[.[]|select(.isCached|not).attr]')
+          matrix=$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '[.[]|select(.isCached|not).attr]' | jq -c 'if length > 0 then . else ["pre-commit"] end')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
