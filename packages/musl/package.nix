@@ -1,5 +1,5 @@
 {
-  inputs,
+  fetch,
   run,
 
   clang,
@@ -11,7 +11,12 @@
 run
   {
     name = "musl";
-    src = inputs.musl;
+    src = fetch.github {
+      owner = "tombl";
+      repo = "musl";
+      rev = "refs/heads/master";
+      hash = "sha256-cZX+YcBL7O1TwZU+/vvD9zDE6r9Kwl4cZL3LRq5twGg=";
+    };
     path = [
       clang
       gnumake
@@ -22,6 +27,8 @@ run
     # outputs = [ "out" "dev" ];
   }
   ''
+    ls
+
     cat >config.mak <<EOF
     ARCH=wasm32
     prefix=$out

@@ -1,5 +1,5 @@
 {
-  inputs,
+  fetch,
   run,
 
   bc,
@@ -22,7 +22,12 @@
 run
   {
     name = "linux";
-    src = inputs.linux;
+    src = fetch.github {
+      owner = "tombl";
+      repo = "linux";
+      rev = "refs/heads/args";
+      hash = "sha256-cqa+eme6Uy985DNv83KmzOT7bLst82zYyfrEGVxWZ2c=";
+    };
     path = [
       bc
       bison

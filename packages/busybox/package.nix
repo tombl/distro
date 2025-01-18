@@ -1,5 +1,5 @@
 {
-  inputs,
+  fetch,
   run,
 
   clang-host ? clang,
@@ -15,7 +15,12 @@
 run
   {
     name = "busybox";
-    src = inputs.busybox;
+    src = fetch.github {
+      owner = "tombl";
+      repo = "busybox";
+      rev = "refs/heads/master";
+      hash = "sha256-Sbuibax0P/sz+Pwn5BNASsbzF1iFeo19meO3EFhJZzA=";
+    };
     path = [
       clang
       gnumake

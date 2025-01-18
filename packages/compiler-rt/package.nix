@@ -1,5 +1,5 @@
 {
-  inputs,
+  fetch,
   run,
 
   clang,
@@ -14,7 +14,10 @@
 run
   {
     name = "compiler-rt";
-    src = inputs.llvm;
+    src = fetch.tar {
+      url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/llvm-project-19.1.7.src.tar.xz";
+      hash = "sha256-cZAB5vZjeTsXt9QHbP5xluWNQnAHByHtHnAhVDV0E6I=";
+    };
     path = [
       clang
       cmake

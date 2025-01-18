@@ -1,19 +1,17 @@
 {
   lib,
-  inputs,
   currentSystem,
   hostpkgs ? { },
 }:
 
 let
-  wasmpkgs =
+  pkgs =
     {
-      inherit lib inputs currentSystem;
+      inherit lib currentSystem;
     }
     // lib.packagesFromDirectoryRecursive {
-      callPackage = lib.callPackageWith pkgs;
+      callPackage = lib.callPackageWith (pkgs // hostpkgs);
       directory = ./packages;
     };
-  pkgs = wasmpkgs // hostpkgs;
 in
-wasmpkgs
+pkgs
