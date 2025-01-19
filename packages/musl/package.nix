@@ -27,8 +27,6 @@ run
     # outputs = [ "out" "dev" ];
   }
   ''
-    ls
-
     cat >config.mak <<EOF
     ARCH=wasm32
     prefix=$out
