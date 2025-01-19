@@ -9,22 +9,15 @@
       ...
     }:
     let
-      inherit (self'.legacyPackages) linux initramfs;
+      inherit (self'.legacyPackages) site;
     in
     {
-      packages.site = pkgs.runCommand "wasm-linux" { src = "${linux.src}/tools/wasm"; } ''
-        mkdir $out
-        cp -r $src/run.js $src/public/* $src/src $out/
-        ln -s ${initramfs} $out/initramfs.cpio
-        ln -sf ${linux} $out/dist
-      '';
-
       apps.runner.program = pkgs.writeShellScriptBin "wasm-linux-runner" ''
-        ${lib.getExe pkgs.deno} run --allow-read ${config.packages.site}/run.js "$@"
+        ${lib.getExe pkgs.deno} run --allow-read ${site}/run.js "$@"
       '';
 
       apps.serve.program = pkgs.writeShellScriptBin "wasm-linux-serve" ''
-        ${lib.getExe pkgs.miniserve} ${config.packages.site} --index index.html \
+        ${lib.getExe pkgs.miniserve} ${site} --index index.html \
           --header Cross-Origin-Opener-Policy:same-origin \
           --header Cross-Origin-Embedder-Policy:require-corp \
           --header Cross-Origin-Resource-Policy:cross-origin "$@"
