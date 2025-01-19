@@ -1,8 +1,18 @@
-diff --git a/lib/Basic/Targets.cpp b/lib/Basic/Targets.cpp
-index 29133f9ee8..a46b88078f 100644
---- a/lib/Basic/Targets.cpp
-+++ b/lib/Basic/Targets.cpp
-@@ -692,6 +692,9 @@
+diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
+index 29133f9ee8..398ec6208d 100644
+--- a/clang/lib/Basic/Targets.cpp
++++ b/clang/lib/Basic/Targets.cpp
+@@ -682,8 +682,7 @@
+   }
+   case llvm::Triple::wasm32:
+     if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
+-        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+-        !Triple.isOSBinFormatWasm())
++        Triple.getVendor() != llvm::Triple::UnknownVendor)
+       return nullptr;
+     switch (os) {
+       case llvm::Triple::WASI:
+@@ -692,6 +691,9 @@
        case llvm::Triple::Emscripten:
        return std::make_unique<EmscriptenTargetInfo<WebAssembly32TargetInfo>>(
            Triple, Opts);
@@ -12,7 +22,17 @@ index 29133f9ee8..a46b88078f 100644
        case llvm::Triple::UnknownOS:
        return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly32TargetInfo>>(
            Triple, Opts);
-@@ -710,6 +713,9 @@
+@@ -700,8 +702,7 @@
+     }
+   case llvm::Triple::wasm64:
+     if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
+-        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+-        !Triple.isOSBinFormatWasm())
++        Triple.getVendor() != llvm::Triple::UnknownVendor)
+       return nullptr;
+     switch (os) {
+       case llvm::Triple::WASI:
+@@ -710,6 +711,9 @@
        case llvm::Triple::Emscripten:
        return std::make_unique<EmscriptenTargetInfo<WebAssembly64TargetInfo>>(
            Triple, Opts);
@@ -22,10 +42,10 @@ index 29133f9ee8..a46b88078f 100644
        case llvm::Triple::UnknownOS:
        return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly64TargetInfo>>(
            Triple, Opts);
-diff --git a/lib/Driver/ToolChains/WebAssembly.cpp b/lib/Driver/ToolChains/WebAssembly.cpp
+diff --git a/clang/lib/Driver/ToolChains/WebAssembly.cpp b/clang/lib/Driver/ToolChains/WebAssembly.cpp
 index 60bd97e0ee..cb91b9dfd2 100644
---- a/lib/Driver/ToolChains/WebAssembly.cpp
-+++ b/lib/Driver/ToolChains/WebAssembly.cpp
+--- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
++++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
 @@ -94,10 +94,13 @@
  
    ToolChain.AddFilePathLibArgs(Args, CmdArgs);
@@ -58,10 +78,10 @@ index 60bd97e0ee..cb91b9dfd2 100644
  }
  
  void WebAssembly::addLibCxxIncludePaths(
-diff --git a/lib/Driver/ToolChains/WebAssembly.h b/lib/Driver/ToolChains/WebAssembly.h
+diff --git a/clang/lib/Driver/ToolChains/WebAssembly.h b/clang/lib/Driver/ToolChains/WebAssembly.h
 index 76e0ca39bd..c2dffb174f 100644
---- a/lib/Driver/ToolChains/WebAssembly.h
-+++ b/lib/Driver/ToolChains/WebAssembly.h
+--- a/clang/lib/Driver/ToolChains/WebAssembly.h
++++ b/clang/lib/Driver/ToolChains/WebAssembly.h
 @@ -20,7 +20,9 @@
  
  class LLVM_LIBRARY_VISIBILITY Linker final : public Tool {
