@@ -1,11 +1,15 @@
 {
   run,
-  basic-init,
+  busybox,
 }:
 
 run { name = "initramfs.cpio"; } ''
-  mkdir root
-  cp ${basic-init}/bin/init root/init
+  mkdir -p root/bin
+  cp ${busybox}/bin/busybox root/bin/sh
+
+  echo '#!/bin/sh' > root/init
+  echo 'exec /bin/sh' >> root/init
+  chmod +x root/init
 
   cd root
   find . | cpio -H newc -o > $out
