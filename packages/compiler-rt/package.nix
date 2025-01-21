@@ -1,6 +1,7 @@
 {
   fetch,
   run,
+  config,
 
   clang,
   cmake,
@@ -31,7 +32,7 @@ run
   }
   ''
     cmake -S compiler-rt -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_BUILD_TYPE=${if config.debug then "Debug" else "Release"} \
       -DCMAKE_CXX_COMPILER_TARGET=wasm32-unknown \
       -DCMAKE_CXX_COMPILER_WORKS=ON \
       -DCMAKE_CXX_FLAGS="-I${musl}/include" \
