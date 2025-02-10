@@ -8,10 +8,7 @@ jobs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: accept-flake-config = true
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: nixbuild/nix-quick-install-action@v29
       - name: List packages
         id: list
         run: |
@@ -36,10 +33,7 @@ jobs:
     name: Build ${{ matrix.pkg }}
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: accept-flake-config = true
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: nixbuild/nix-quick-install-action@v29
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
@@ -51,10 +45,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: accept-flake-config = true
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: nixbuild/nix-quick-install-action@v29
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
