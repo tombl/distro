@@ -24,7 +24,7 @@
 
   nixConfig = {
     extra-substituters = [ "https://nix.tombl.net/linuxwasm" ];
-    extra-trusted-keys = [ "linuxwasm:VY2O9prGSkyVY+xn1RNQV4voLVTnc2FOxAtzf8VbZaw=" ];
+    extra-trusted-public-keys = [ "linuxwasm:VY2O9prGSkyVY+xn1RNQV4voLVTnc2FOxAtzf8VbZaw=" ];
   };
 
   outputs =
