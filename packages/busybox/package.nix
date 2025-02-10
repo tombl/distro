@@ -21,7 +21,7 @@ run
       owner = "tombl";
       repo = "busybox";
       rev = "refs/heads/master";
-      hash = "sha256-Sbuibax0P/sz+Pwn5BNASsbzF1iFeo19meO3EFhJZzA=";
+      hash = "sha256-Rlgj229jP+I/x3mdgilY6FHu1IDyAwpQc/pqBzQIasU=";
     };
     path = [
       clang
