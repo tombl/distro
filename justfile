@@ -30,6 +30,8 @@ build pkg:
         exec just _nix build .#{{ pkg }}
     fi
 
+    mkdir -p overrides/{{ pkg }}/outputs
+
     redirects=()
     for package in $(ls overrides); do
         for output in $(ls overrides/$package/outputs); do
