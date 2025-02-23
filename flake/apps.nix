@@ -5,7 +5,6 @@
     {
       pkgs,
       self',
-      config,
       ...
     }:
     let
@@ -22,13 +21,5 @@
           --header Cross-Origin-Embedder-Policy:require-corp \
           --header Cross-Origin-Resource-Policy:cross-origin "$@"
       '';
-
-      make-shells.default.packages = [
-        (pkgs.runCommand "dev-commands" { } ''
-          mkdir -p $out/bin
-          ln -s ${config.apps.runner.program} $out/bin/run
-          ln -s ${config.apps.serve.program} $out/bin/serve
-        '')
-      ];
     };
 }

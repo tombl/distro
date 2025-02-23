@@ -7,6 +7,9 @@
     {
       make-shells.default = {
         stdenv = pkgs.stdenvNoCC;
+        packages = with pkgs; [
+          just
+        ];
       };
 
       make-shells.ci = {

@@ -14,6 +14,7 @@
           # keep-sorted start
           actionlint.enable = true;
           deadnix.enable = true;
+          just.enable = true;
           keep-sorted.enable = true;
           nixfmt.enable = true;
           shellcheck.enable = true;
