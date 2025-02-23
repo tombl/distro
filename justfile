@@ -16,7 +16,12 @@ eject pkg:
     echo "override for {{ pkg }} created in overrides/{{ pkg }}"
 
 _nix cmd *args:
-    DISTRO_OVERRIDES=$PWD/overrides exec nix {{ cmd }} --impure --print-build-logs {{ args }}
+    #!/usr/bin/env bash
+    if [ -d overrides ]; then
+        DISTRO_OVERRIDES=$PWD/overrides exec nix {{ cmd }} --impure --print-build-logs {{ args }}
+    else
+        exec nix {{ cmd }} --print-build-logs {{ args }}
+    fi
 
 build pkg:
     #!/usr/bin/env bash
@@ -38,6 +43,6 @@ build pkg:
 
     exec nix develop .#{{ pkg }} --build "${redirects[@]}"
 
-run *args: (_nix "run" ".#runner" args)
+run *args: (_nix "run" ".#runner" "--" args)
 
-serve *args: (_nix "run" ".#serve" args)
+serve *args: (_nix "run" ".#serve" "--" args)
