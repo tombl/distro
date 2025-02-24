@@ -52,7 +52,7 @@ run
       command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
     }
 
-    make defconfig ${lib.optionalString config.debug "debug.config"}
+    test -f .config || make defconfig ${lib.optionalString config.debug "debug.config"}
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
