@@ -43,7 +43,7 @@ build pkg:
     rm -rf outputs
     mkdir outputs
 
-    exec nix develop .#{{ pkg }} --build "${redirects[@]}"
+    exec nix develop .#{{ pkg }} --build --ignore-env "${redirects[@]}"
 
 run *args: (_nix "run" ".#runner" "--" args)
 
