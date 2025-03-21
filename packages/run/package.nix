@@ -3,6 +3,7 @@
   currentSystem,
   bash,
   busybox,
+  busybox-host ? busybox,
 }:
 
 let
@@ -33,7 +34,7 @@ let
           path
           ++ [
             bash
-            busybox
+            busybox-host
           ]
         );
         inherit command;
@@ -53,7 +54,7 @@ let
           : ${"$"}{outputs:=out}
 
           if [ 0 -eq "$NIX_BUILD_CORES" ]; then
-            NIX_BUILD_CORES=$(${busybox}/bin/nproc)
+            NIX_BUILD_CORES=$(${busybox-host}/bin/nproc)
           fi
 
           eval "_build() { $(cat $commandPath); }"
