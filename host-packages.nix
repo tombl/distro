@@ -7,6 +7,7 @@ let
 in
 
 {
+  busybox-host = pkgs.busybox;
   clang = llvm.clang-unwrapped;
   clang-host = llvm.clang;
   inherit (llvm) lld;
@@ -14,7 +15,6 @@ in
     bash
     bc
     bison
-    busybox
     cmake
     curl
     esbuild

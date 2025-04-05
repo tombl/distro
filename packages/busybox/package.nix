@@ -61,7 +61,7 @@ run
     cat .config
     make oldconfig
 
-    make
+    make ${lib.optionalString config.debug "SKIP_STRIP=y"}
 
     mkdir -p $out/bin
     cp busybox $out/bin
