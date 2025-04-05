@@ -4,7 +4,7 @@
   lib,
   config,
 
-  clang,
+  clang-no-compiler-rt,
   gnumake,
   lld,
   llvm,
@@ -20,7 +20,7 @@ run
       hash = "sha256-IFfilUadk9wstgeybczU2qJ3MLiAiA3u0jpafsBGcUY=";
     };
     path = [
-      clang
+      clang-no-compiler-rt
       gnumake
       lld
       llvm
