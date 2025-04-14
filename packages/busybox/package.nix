@@ -58,6 +58,49 @@ run
     config EXTRA_LDFLAGS ${compiler-rt}/libclang_rt.builtins-wasm32.a
     config EXTRA_LDLIBS c
 
+    config BOOTCHARTD n
+    config CONSPY n
+    config CROND n
+    config CRONTAB n
+    config DEVMEM n
+    config FBSPLASH n
+    config FTPD n
+    config HDPARM n
+    config HEXEDIT n
+    config HTTPD n
+    config IFDOWN n
+    config IFUP n
+    config INETD n
+    config NC n
+    config NSENTER n
+    config SCRIPT n
+    config START_STOP_DAEMON n
+    config SWAPOFF n
+    config SWAPON n
+    config TCPSVD n
+    config TELNETD n
+    config TIME n
+    config TS n
+    config UDPSVD n
+    config WGET n
+
+    config SENDMAIL n
+    config REFORMIME n
+    config MAKEMIME n
+    config POPMAILDIR n
+
+    config INIT n
+    config LINUXRC n
+
+    config RUNSV n
+    config RUNSVDIR n
+    config SVLOGD n
+
+    config HUSH_TICK n
+
+    config HWCLOCK n
+    config RTCWAKE n
+
     cat .config
     make oldconfig
 
