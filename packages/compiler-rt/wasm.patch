@@ -1,0 +1,17 @@
+diff --git a/compiler-rt/lib/builtins/enable_execute_stack.c b/compiler-rt/lib/builtins/enable_execute_stack.c
+index e18de4eaeb..8af0c21ade 100644
+--- a/compiler-rt/lib/builtins/enable_execute_stack.c
++++ b/compiler-rt/lib/builtins/enable_execute_stack.c
+@@ -38,6 +38,7 @@
+ // and the next 48 bytes as executable.  Since the stack is normally rw-
+ // that means changing the protection on those page(s) to rwx.
+ 
++#ifndef __wasm__
+ COMPILER_RT_ABI void __enable_execute_stack(void *addr) {
+ 
+ #if _WIN32
+@@ -65,3 +66,4 @@
+   (void)mprotect((void *)startPage, length, PROT_READ | PROT_WRITE | PROT_EXEC);
+ #endif
+ }
++#endif
