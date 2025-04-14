@@ -34,6 +34,9 @@ build pkg:
 
     redirects=()
     for package in $(ls overrides); do
+        if [[ $package =~ ^_ ]]; then
+            continue
+        fi
         for output in $(ls overrides/$package/outputs); do
             redirects+=(--redirect .#$package.$output $PWD/overrides/$package/outputs/$output)
         done
