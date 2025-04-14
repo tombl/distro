@@ -36,7 +36,7 @@ run
         ARCH=wasm32 \
         HOSTCC=${clang-host}/bin/clang \
         CC=${clang}/bin/clang \
-        CFLAGS_busybox="${musl}/lib/crt1.o -Wl,--import-memory" "$@"
+        CFLAGS_busybox="${musl}/lib/crt1.o -Wl,--import-memory -Wl,--max-memory=4294967296 -Wl,--shared-memory -Wl,--export-table" "$@"
     }
 
     config() {
@@ -54,7 +54,7 @@ run
     config STATIC_LIBGCC n
     config CROSS_COMPILER_PREFIX llvm-
     config SYSROOT ${musl}
-    config EXTRA_CFLAGS '-nostdlib -isystem ${musl}/include -I${linux.headers}/include ${lib.optionalString config.debug "-g"}'
+    config EXTRA_CFLAGS '-nostdlib -isystem ${musl}/include -I${linux.headers}/include ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory'
     config EXTRA_LDFLAGS ${compiler-rt}/libclang_rt.builtins-wasm32.a
     config EXTRA_LDLIBS c
 
