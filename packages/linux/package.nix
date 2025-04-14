@@ -44,10 +44,15 @@ run
     ];
     outputs = [
       "out"
+      "site"
       "headers"
     ];
   }
   ''
+    mkdir -p $site
+    cp -r tools/wasm/{run.js,public/*,src} $site
+    ln -sf $out $site/dist
+
     make() {
       command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
     }
