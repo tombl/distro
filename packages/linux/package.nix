@@ -26,7 +26,7 @@ run
       owner = "tombl";
       repo = "linux";
       rev = "refs/heads/wasm";
-      hash = "sha256-enDcZb3V22I8JQVw6HPioo0Yzj6zScaQFagARDxy42k=";
+      hash = "sha256-pz2Y4RdKTzcqKy2aj3yhxL441409fx/4SAFu00K/vZY=";
     };
     path = [
       bc
@@ -67,6 +67,8 @@ run
     done
 
     cp -r tools/wasm/dist $out
+    hash=$(cksum $out/index.js | cut -d' ' -f1)
+    sed -i "s/LIBRARY_VERSION/$hash/" $site/index.html 
 
     make headers_install INSTALL_HDR_PATH=$headers
   ''
