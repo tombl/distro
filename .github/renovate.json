@@ -1,20 +1,20 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ],
+  "extends": ["config:recommended"],
   "nix": {
     "enabled": true
   },
   "lockFileMaintenance": {
     "enabled": true
   },
-  "customManagers": [{
-    "customType": "regex",
-    "description": "Update package definitions",
-    "fileMatch": "\\.nix$",
-    "matchStrings": [
-      "# renovate: datasource=(?<datasource>[a-z-]+?) name=(?<depName>.+?)\\s+\\w+\\s*=\\s*\"(?<currentValue>.+?)\"\\s*;"
-    ]
-  }]
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update package definitions",
+      "fileMatch": "\\.nix$",
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+?) name=(?<depName>.+?)\\s+\\w+\\s*=\\s*\"(?<currentValue>.+?)\"\\s*;"
+      ]
+    }
+  ]
 }
