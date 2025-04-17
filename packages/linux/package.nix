@@ -16,6 +16,7 @@
   llvm,
   perl,
   rsync,
+  typescript ? null,
   wabt,
 }:
 
@@ -54,7 +55,9 @@ run
     ln -sf $out $site/dist
 
     make() {
-      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
+      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=${
+        if typescript == null then "true" else "${typescript}/bin/tsc"
+      } "$@"
     }
 
     test -f .config || make defconfig ${lib.optionalString config.debug "debug.config"}
@@ -68,7 +71,7 @@ run
 
     cp -r tools/wasm/dist $out
     hash=$(cksum $out/index.js | cut -d' ' -f1)
-    sed -i "s/LIBRARY_VERSION/$hash/" $site/index.html 
+    sed -i "s/LIBRARY_VERSION/$hash/" $site/index.html
 
     make headers_install INSTALL_HDR_PATH=$headers
   ''
