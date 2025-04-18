@@ -16,6 +16,7 @@
   llvm,
   perl,
   rsync,
+  typescript ? null,
   wabt,
 }:
 
@@ -54,7 +55,9 @@ run
     ln -sf $out $site/dist
 
     make() {
-      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
+      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=${
+        if typescript == null then "true" else "${typescript}/bin/tsc"
+      } "$@"
     }
 
     test -f .config || make defconfig ${lib.optionalString config.debug "debug.config"}
