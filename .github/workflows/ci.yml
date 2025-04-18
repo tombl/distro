@@ -15,8 +15,8 @@ jobs:
           eval "$(nix print-dev-env .#ci)"
           matrix="$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '
             [
-              .[] 
-              | select(.isCached | not).attr 
+              .[]
+              | select(.isCached | not).attr
               | select(test("-shell$") | not)
             ]
             | if length > 0 then . else ["pre-commit"] end
@@ -38,7 +38,8 @@ jobs:
         run: |
           eval "$(nix print-dev-env .#ci)"
           attic login --set-default tombl https://nix.tombl.net '${{secrets.ATTIC_TOKEN}}'
-          nix-fast-build --skip-cached --no-nom --flake '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --attic-cache=linuxwasm
+          nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*'
+          attic push linuxwasm ./result*
 
   deploy:
     needs: build
