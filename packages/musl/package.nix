@@ -33,7 +33,7 @@ run
     ARCH=wasm32
     prefix=$out
     syslibdir=$out
-    CFLAGS=--target=wasm32 ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory
+    CFLAGS=${lib.optionalString config.debug "-g"}
     EOF
 
     mkdir $out
