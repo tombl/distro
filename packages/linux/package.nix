@@ -26,7 +26,7 @@ run
       owner = "tombl";
       repo = "linux";
       rev = "refs/heads/wasm";
-      hash = "sha256-YxdPx4aqgJDmSHM6cOkbiqA1pbinQzKK+3coP7YI7IU=";
+      hash = "sha256-2AGcJnL2XT5XYSEEErdPtvylC27OlNHqqkbGP99Rlg0=";
     };
     path = [
       bc

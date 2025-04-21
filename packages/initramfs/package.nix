@@ -376,14 +376,12 @@ in
 
 run { name = "initramfs.cpio"; } ''
   mkdir -p root/bin
+  cp ${./init.sh} root/init
   cp ${busybox}/bin/busybox root/bin/busybox
+
   for applet in ${lib.concatStringsSep " " applets}; do
     ln -s busybox root/bin/$applet
   done
-
-  echo '#!/bin/sh' > root/init
-  echo 'exec /bin/sh' >> root/init
-  chmod +x root/init
 
   cd root
   find . | cpio -H newc -o > $out
