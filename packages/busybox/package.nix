@@ -1,5 +1,4 @@
 {
-  fetch,
   run,
   lib,
   config,
@@ -17,11 +16,11 @@
 run
   {
     name = "busybox";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "busybox";
-      rev = "refs/heads/master";
-      hash = "sha256-cL/QLG0etQ1TxTBRMrKR5VESGPC73CDcoVomInmL8yE=";
+    src = fetchGit {
+      url = "https://github.com/tombl/busybox.git";
+      rev = "a401b387f4551e226f69cfca49ab5570090a85ba";
+      ref = "master";
+      shallow = true;
     };
     path = [
       clang

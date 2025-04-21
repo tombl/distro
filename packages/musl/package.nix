@@ -1,5 +1,4 @@
 {
-  fetch,
   run,
   lib,
   config,
@@ -13,11 +12,12 @@
 run
   {
     name = "musl";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "musl";
-      rev = "refs/heads/master";
+    src = fetchGit {
+      url = "https://github.com/tombl/musl.git";
+      rev = "96a1dc5522e66e9f42f5e9715f272a4628bd8d23";
+      ref = "master";
       hash = "sha256-IjDa2VkS8wMnDWPXPDnsqEh8TNgSm7qZ0/F51WqPoUs=";
+      shallow = true;
     };
     path = [
       clang
