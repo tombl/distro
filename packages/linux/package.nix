@@ -1,5 +1,4 @@
 {
-  fetch,
   run,
   config,
   lib,
@@ -22,11 +21,12 @@
 run
   {
     name = "linux";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "linux";
-      rev = "refs/heads/wasm";
+    src = fetchGit {
+      url = "https://github.com/tombl/linux.git";
+      rev = "bb08b9388b4ec987fa806958ecf30d1e7dc440d9";
+      ref = "wasm";
       hash = "sha256-FFYZOum0bwUPmoUKW7u2oozUzb2gDwE5Cfwp4GundAg=";
+      shallow = true;
     };
     path = [
       bc
