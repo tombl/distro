@@ -1,5 +1,4 @@
 {
-  fetch,
   run,
   config,
 
@@ -17,9 +16,11 @@ run
     name = "compiler-rt";
     # renovate: datasource=github-releases name=llvm/llvm-project
     version = "19.1.6";
-    src = fetch.tar {
-      url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/llvm-project-${version}.src.tar.xz";
-      hash = "sha256-LD4nIjZTSZJtbgW6tZopbTF5Mq0Tenj2gbuPXhtOeUI=";
+    src = fetchGit {
+      url = "https://github.com/llvm/llvm-project.git";
+      ref = "refs/tags/llvmorg-${version}";
+      rev = "e21dc4bd5474d04b8e62d7331362edcc5648d7e5";
+      shallow = true;
     };
     path = [
       clang
