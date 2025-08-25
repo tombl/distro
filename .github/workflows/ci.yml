@@ -7,7 +7,7 @@ jobs:
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v33
       - name: List packages
         id: list
@@ -32,7 +32,7 @@ jobs:
         pkg: ${{ fromJson(needs.list.outputs.matrix) }}
     name: Build ${{ matrix.pkg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v33
       - name: Build
         run: |
@@ -45,7 +45,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v33
       - name: Build
         run: |
