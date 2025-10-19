@@ -6,8 +6,8 @@
 
   bc,
   bison,
-  clang-host ? clang,
-  clang,
+  clang-no-wasm-libs,
+  clang-host ? clang-no-wasm-libs,
   esbuild,
   findutils,
   flex,
@@ -31,7 +31,7 @@ run
     path = [
       bc
       bison
-      clang
+      clang-no-wasm-libs
       esbuild
       findutils
       flex

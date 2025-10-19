@@ -1,18 +1,15 @@
-diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
-index 29133f9ee8..398ec6208d 100644
---- a/clang/lib/Basic/Targets.cpp
-+++ b/clang/lib/Basic/Targets.cpp
-@@ -682,8 +682,7 @@
-   }
+--- a/lib/Basic/Targets.cpp	2025-10-19 18:46:52.435577208 +0800
++++ b/lib/Basic/Targets.cpp	2025-10-19 18:46:31.389590411 +0800
+@@ -683,7 +683,7 @@
    case llvm::Triple::wasm32:
      if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
--        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+         Triple.getVendor() != llvm::Triple::UnknownVendor ||
 -        !Triple.isOSBinFormatWasm())
-+        Triple.getVendor() != llvm::Triple::UnknownVendor)
++        (!Triple.isOSBinFormatWasm() && os != llvm::Triple::Linux))
        return nullptr;
      switch (os) {
        case llvm::Triple::WASI:
-@@ -692,6 +691,9 @@
+@@ -692,6 +692,9 @@
        case llvm::Triple::Emscripten:
        return std::make_unique<EmscriptenTargetInfo<WebAssembly32TargetInfo>>(
            Triple, Opts);
@@ -22,17 +19,16 @@ index 29133f9ee8..398ec6208d 100644
        case llvm::Triple::UnknownOS:
        return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly32TargetInfo>>(
            Triple, Opts);
-@@ -700,8 +702,7 @@
-     }
+@@ -701,7 +704,7 @@
    case llvm::Triple::wasm64:
      if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
--        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+         Triple.getVendor() != llvm::Triple::UnknownVendor ||
 -        !Triple.isOSBinFormatWasm())
-+        Triple.getVendor() != llvm::Triple::UnknownVendor)
++        (!Triple.isOSBinFormatWasm() && os != llvm::Triple::Linux))
        return nullptr;
      switch (os) {
        case llvm::Triple::WASI:
-@@ -710,6 +711,9 @@
+@@ -710,6 +713,9 @@
        case llvm::Triple::Emscripten:
        return std::make_unique<EmscriptenTargetInfo<WebAssembly64TargetInfo>>(
            Triple, Opts);
@@ -42,64 +38,73 @@ index 29133f9ee8..398ec6208d 100644
        case llvm::Triple::UnknownOS:
        return std::make_unique<WebAssemblyOSTargetInfo<WebAssembly64TargetInfo>>(
            Triple, Opts);
-diff --git a/clang/lib/Driver/ToolChains/WebAssembly.cpp b/clang/lib/Driver/ToolChains/WebAssembly.cpp
-index 60bd97e0ee..cb91b9dfd2 100644
---- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
-+++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
-@@ -94,10 +94,13 @@
- 
-   ToolChain.AddFilePathLibArgs(Args, CmdArgs);
- 
--  bool IsCommand = true;
+--- a/lib/Driver/ToolChains/WebAssembly.cpp	2025-10-19 18:46:52.442577536 +0800
++++ b/lib/Driver/ToolChains/WebAssembly.cpp	2025-10-19 18:46:39.912990049 +0800
+@@ -98,36 +98,40 @@
    const char *Crt1;
    const char *Entry = nullptr;
  
-+  if (Triple.isOSLinux()) {
+-  // When -shared is specified, use the reactor exec model unless
+-  // specified otherwise.
+-  if (Args.hasArg(options::OPT_shared))
+-    IsCommand = false;
+-
+-  if (const Arg *A = Args.getLastArg(options::OPT_mexec_model_EQ)) {
+-    StringRef CM = A->getValue();
+-    if (CM == "command") {
+-      IsCommand = true;
+-    } else if (CM == "reactor") {
++  if (ToolChain.getTriple().isOSLinux()) {
 +    Crt1 = "crt1.o";
 +  } else {
-+  bool IsCommand = true;
-   // When -shared is specified, use the reactor exec model unless
-   // specified otherwise.
-   if (Args.hasArg(options::OPT_shared))
-@@ -129,6 +132,7 @@
-     Crt1 = "crt1-reactor.o";
-     Entry = "_initialize";
++    // When -shared is specified, use the reactor exec model unless
++    // specified otherwise.
++    if (Args.hasArg(options::OPT_shared))
+       IsCommand = false;
+-    } else {
+-      ToolChain.getDriver().Diag(diag::err_drv_invalid_argument_to_option)
+-          << CM << A->getOption().getName();
++
++    if (const Arg *A = Args.getLastArg(options::OPT_mexec_model_EQ)) {
++      StringRef CM = A->getValue();
++      if (CM == "command") {
++        IsCommand = true;
++      } else if (CM == "reactor") {
++        IsCommand = false;
++      } else {
++        ToolChain.getDriver().Diag(diag::err_drv_invalid_argument_to_option)
++            << CM << A->getOption().getName();
++      }
+     }
+-  }
+ 
+-  if (IsCommand) {
+-    // If crt1-command.o exists, it supports new-style commands, so use it.
+-    // Otherwise, use the old crt1.o. This is a temporary transition measure.
+-    // Once WASI libc no longer needs to support LLVM versions which lack
+-    // support for new-style command, it can make crt1.o the same as
+-    // crt1-command.o. And once LLVM no longer needs to support WASI libc
+-    // versions before that, it can switch to using crt1-command.o.
+-    Crt1 = "crt1.o";
+-    if (ToolChain.GetFilePath("crt1-command.o") != "crt1-command.o")
+-      Crt1 = "crt1-command.o";
+-  } else {
+-    Crt1 = "crt1-reactor.o";
+-    Entry = "_initialize";
++    if (IsCommand) {
++      // If crt1-command.o exists, it supports new-style commands, so use it.
++      // Otherwise, use the old crt1.o. This is a temporary transition measure.
++      // Once WASI libc no longer needs to support LLVM versions which lack
++      // support for new-style command, it can make crt1.o the same as
++      // crt1-command.o. And once LLVM no longer needs to support WASI libc
++      // versions before that, it can switch to using crt1-command.o.
++      Crt1 = "crt1.o";
++      if (ToolChain.GetFilePath("crt1-command.o") != "crt1-command.o")
++        Crt1 = "crt1-command.o";
++    } else {
++      Crt1 = "crt1-reactor.o";
++      Entry = "_initialize";
++    }
    }
-+  }
  
    if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles))
-     CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(Crt1)));
-@@ -549,7 +553,7 @@
- }
- 
- Tool *WebAssembly::buildLinker() const {
--  return new tools::wasm::Linker(*this);
-+  return new tools::wasm::Linker(getTriple(), *this);
- }
- 
- void WebAssembly::addLibCxxIncludePaths(
-diff --git a/clang/lib/Driver/ToolChains/WebAssembly.h b/clang/lib/Driver/ToolChains/WebAssembly.h
-index 76e0ca39bd..c2dffb174f 100644
---- a/clang/lib/Driver/ToolChains/WebAssembly.h
-+++ b/clang/lib/Driver/ToolChains/WebAssembly.h
-@@ -20,7 +20,9 @@
- 
- class LLVM_LIBRARY_VISIBILITY Linker final : public Tool {
- public:
--  explicit Linker(const ToolChain &TC) : Tool("wasm::Linker", "linker", TC) {}
-+  Linker(const llvm::Triple &Triple, const ToolChain &TC)
-+      : Tool("wasm::Linker", "linker", TC), Triple(Triple) {}
-+
-   bool isLinkJob() const override { return true; }
-   bool hasIntegratedCPP() const override { return false; }
-   std::string getLinkerPath(const llvm::opt::ArgList &Args) const;
-@@ -28,6 +30,9 @@
-                     const InputInfo &Output, const InputInfoList &Inputs,
-                     const llvm::opt::ArgList &TCArgs,
-                     const char *LinkingOutput) const override;
-+
-+protected:
-+  const llvm::Triple &Triple;
- };
- 
- } // end namespace wasm
