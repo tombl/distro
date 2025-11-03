@@ -1,45 +1,43 @@
 {
   run,
   lib,
-  curl,
 }:
 
-let
-  mkFetcher =
-    command:
+rec {
+  file =
     {
       url,
       name ? builtins.baseNameOf url,
       hash ? lib.fakeHash,
     }:
-    run {
-      inherit name url;
-      outputHashMode = "nar";
-      outputHashAlgo = "sha256";
-      outputHash = hash;
-      path = [ curl ];
-    } command;
-in
-
-rec {
-  file = mkFetcher ''
-    curl -L "$url" -o $out
-  '';
-  tar = mkFetcher ''
-    mkdir $out
-    case "$url" in
-      *gz)  decompress=-z ;;
-      *bz2) decompress=-j ;;
-      *xz)  decompress=-J ;;
-      *lz)  decompress=--lzma ;;
-      *)    decompress= ;;
-    esac
-    curl -L "$url" | tar -x $decompress -C $out --strip-components=1
-  '';
-  zip = mkFetcher ''
-    mkdir $out
-    curl -L "$url" | unzip - -d $out
-  '';
+    import <nix/fetchurl.nix> {
+      inherit url name hash;
+    };
+  tar =
+    args:
+    let
+      result = file args;
+    in
+    run { inherit (result) name; } ''
+      mkdir $out
+      case "${result.url}" in
+        *gz)  decompress=-z ;;
+        *bz2) decompress=-j ;;
+        *xz)  decompress=-J ;;
+        *lz)  decompress=--lzma ;;
+        *)    decompress= ;;
+      esac
+      tar -x $decompress -f ${result} -C $out --strip-components=1
+    '';
+  zip =
+    args:
+    let
+      result = file args;
+    in
+    run { inherit (result) name; } ''
+      mkdir $out
+      unzip -f ${result} -d $out
+    '';
   github =
     {
       owner,

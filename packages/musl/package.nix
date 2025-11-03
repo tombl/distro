@@ -17,7 +17,7 @@ run
       owner = "tombl";
       repo = "musl";
       rev = "refs/heads/master";
-      hash = "sha256-IjDa2VkS8wMnDWPXPDnsqEh8TNgSm7qZ0/F51WqPoUs=";
+      hash = "sha256-iqTTSWLXv850UNToxCrZbXoxke9M9i/7bjgfCzn/zLs=";
     };
     path = [
       clang
