@@ -41,9 +41,9 @@ in
     gnumake
     ninja
     perl
-    python3
     rsync
     wabt
     ;
   llvm = llvm.libllvm;
+  python3 = pkgs.python314;
 }
