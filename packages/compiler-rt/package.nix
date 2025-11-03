@@ -19,7 +19,7 @@ run
     version = "19.1.6";
     src = fetch.tar {
       url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-${version}/llvm-project-${version}.src.tar.xz";
-      hash = "sha256-LD4nIjZTSZJtbgW6tZopbTF5Mq0Tenj2gbuPXhtOeUI=";
+      hash = "sha256-4/eTF62qkZbSz//hyGnXwQC3VAgyvET+DT9EoShh+jQ=";
     };
     path = [
       clang
