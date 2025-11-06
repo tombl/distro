@@ -12,7 +12,7 @@ int other(void *arg) {
         return 0;
 }
 
-int main(int argc, char *argv[], char *envp[]) {
+int main(int argc, char *argv[]) {
         printf("Hello, world!\n");
 
         printf("pid = %d\n", getpid());
@@ -28,8 +28,8 @@ int main(int argc, char *argv[], char *envp[]) {
         printf("argc = %d\n", argc);
         for (int i = 0; i < argc; i++)
                 printf("argv[%d] = %s\n", i, argv[i]);
-        for (int i = 0; envp[i]; i++)
-                printf("envp[%d] = %s\n", i, envp[i]);
+        for (int i = 0; environ[i]; i++)
+                printf("environ[%d] = %s\n", i, environ[i]);
 
         foo = 1;
         void* stack = malloc(4096);

@@ -53,7 +53,6 @@ run
       -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld --sysroot=${sysroot} -Wl,--allow-undefined" \
       -DCMAKE_SYSROOT=${sysroot} \
       -DDEFAULT_SYSROOT=${sysroot} \
-      -DHAVE_LINK_VERSION_SCRIPT=0 \
       -DLLVM_ENABLE_PROJECTS=clang \
       -DLLVM_ENABLE_LIBCXX=ON \
       -DBUILD_SHARED_LIBS=OFF \
@@ -78,8 +77,7 @@ run
       -DLLVM_HOST_TRIPLE=wasm32-unknown-linux-musl \
       -DLLVM_TARGET_ARCH=wasm32 \
       -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
-      -DLLVM_USE_LINKER=lld \
-      -DLLVM_HAVE_LINK_VERSION_SCRIPT=0
+      -DLLVM_USE_LINKER=lld
 
     cmake --build build --target install -j$NIX_BUILD_CORES
     ln -s $out/bin/clang $out/bin/cc

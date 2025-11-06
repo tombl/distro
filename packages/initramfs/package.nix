@@ -383,8 +383,6 @@ run { name = "initramfs.cpio"; } ''
     ln -s busybox root/bin/$applet
   done
 
-  cp ${wasmpkgs.clang}/bin/clang-19 root/bin/clang
-
   cd root
   find . | cpio -H newc -o > $out
 ''
