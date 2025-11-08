@@ -4,7 +4,7 @@
   lib,
   config,
 
-  clang,
+  clang-no-compiler-rt,
   gnumake,
   lld,
   llvm,
@@ -16,11 +16,11 @@ run
     src = fetch.github {
       owner = "tombl";
       repo = "musl";
-      rev = "refs/heads/master";
-      hash = "sha256-iqTTSWLXv850UNToxCrZbXoxke9M9i/7bjgfCzn/zLs=";
+      rev = "314d4e81e26546ba063663437657095ad2c0351c";
+      hash = "sha256-gCylldyaICorupH1e1eXD6fW8ILYeFkokMlMPz4UV5E=";
     };
     path = [
-      clang
+      clang-no-compiler-rt
       gnumake
       lld
       llvm

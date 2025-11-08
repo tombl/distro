@@ -5,8 +5,7 @@
 
   clang,
   lld,
-  musl,
-  compiler-rt,
+  sysroot,
 }:
 
 run
@@ -19,8 +18,8 @@ run
     ];
   }
   ''
-    clang -c -o init.o init.c --target=wasm32 -nostdinc -isystem ${musl}/include ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory
-    wasm-ld -o init init.o ${compiler-rt}/libclang_rt.builtins-wasm32.a ${musl}/lib/crt1.o -L${musl}/lib -lc --fatal-warnings --import-memory --max-memory=4294967296 --shared-memory --export-table
+    clang -c -o init.o init.c --target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory
+    clang -o init init.o --target=wasm32-unknown-linux-musl --sysroot=${sysroot} -Wl,--fatal-warnings,--import-memory,--max-memory=4294967296,--shared-memory,--export-table
 
     mkdir -p $out/bin
     cp init $out/bin

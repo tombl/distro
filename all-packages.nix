@@ -7,14 +7,19 @@
 let
   inherit (lib) filterAttrs pipe;
   inherit (builtins) mapAttrs readDir;
-  pkgs = {
-    inherit lib currentSystem;
+  wasmpkgs = {
+    inherit
+      lib
+      currentSystem
+      wasmpkgs
+      hostpkgs
+      ;
     config = {
       debug = false;
     };
   }
   // lib.packagesFromDirectoryRecursive {
-    callPackage = lib.callPackageWith (pkgs // hostpkgs);
+    callPackage = lib.callPackageWith (wasmpkgs // hostpkgs);
     directory = ./packages;
   }
   // (
@@ -30,17 +35,18 @@ let
         (mapAttrs (
           name: dir:
           let
-            pkg = (mapAttrs (output: _: /${dir}/${output}) (readDir dir)) // {
-              type = "derivation";
-              src = /${overrides}/${name}/src;
-              outPath = pkg.out;
-            };
+            outputs = mapAttrs (output: _: /${dir}/${output}) (readDir dir);
           in
-          pkg
+          outputs
+          // {
+            type = "derivation";
+            src = /${overrides}/${name}/src;
+            outPath = outputs.out;
+          }
         ))
       ]
     else
       { }
   );
 in
-pkgs
+wasmpkgs

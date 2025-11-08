@@ -1,7 +1,7 @@
 {
   run,
-  busybox,
   lib,
+  wasmpkgs,
 }:
 
 let
@@ -377,7 +377,7 @@ in
 run { name = "initramfs.cpio"; } ''
   mkdir -p root/bin
   cp ${./init.sh} root/init
-  cp ${busybox}/bin/busybox root/bin/busybox
+  cp ${wasmpkgs.busybox}/bin/busybox root/bin/busybox
 
   for applet in ${lib.concatStringsSep " " applets}; do
     ln -s busybox root/bin/$applet
