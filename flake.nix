@@ -23,8 +23,10 @@
   };
 
   nixConfig = {
-    extra-substituters = [ "https://nix.tombl.net/linuxwasm" ];
-    extra-trusted-public-keys = [ "linuxwasm:VY2O9prGSkyVY+xn1RNQV4voLVTnc2FOxAtzf8VbZaw=" ];
+    extra-substituters = [ "https://linuxwasm.cachix.org" ];
+    extra-trusted-public-keys = [
+      "linuxwasm.cachix.org-1:+z2SehaESo/3sYp7afTgyXBHUkSj/Y+BokzAkWZEmeM="
+    ];
   };
 
   outputs =

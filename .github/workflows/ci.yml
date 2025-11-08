@@ -9,6 +9,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v34
+      - uses: cachix/cachix-action@v15
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
       - name: List packages
         id: list
         run: |
@@ -34,12 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v34
+      - uses: cachix/cachix-action@v15
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
-          attic login --set-default tombl https://nix.tombl.net '${{secrets.ATTIC_TOKEN}}'
           nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*'
-          attic push linuxwasm ./result*
 
   deploy:
     needs: build
@@ -47,6 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: nixbuild/nix-quick-install-action@v34
+      - uses: cachix/cachix-action@v15
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
