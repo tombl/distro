@@ -27,7 +27,7 @@ in
   '';
   clang-host = llvm.clang;
   clang-tblgen = llvm.clang-unwrapped.dev;
-  inherit (llvm) lld llvm-tblgen;
+  inherit (llvm) lld;
   inherit (pkgs)
     bash
     busybox

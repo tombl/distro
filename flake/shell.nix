@@ -3,21 +3,31 @@
   imports = [ inputs.make-shell.flakeModules.default ];
 
   perSystem =
-    { pkgs, ... }:
+    { pkgs, config, ... }:
+    let
+      inherit (config.legacyPackages) wasmpkgs hostpkgs;
+    in
     {
       make-shells.default = {
         stdenv = pkgs.stdenvNoCC;
-        packages = with pkgs; [
-          just
+        packages = [
+          pkgs.just
+          hostpkgs.clang
+          hostpkgs.lld
+          hostpkgs.llvm
+          hostpkgs.cmake
+          (pkgs.writeShellScriptBin "hostcc" ''exec ${hostpkgs.clang-host}/bin/clang "$@"'')
         ];
+        env = {
+          inherit (wasmpkgs) sysroot;
+        };
       };
 
       make-shells.ci = {
         stdenv = pkgs.stdenvNoCC;
-        packages = with pkgs; [
-          attic-client
-          jq
-          nix-eval-jobs
+        packages = [
+          pkgs.jq
+          pkgs.nix-eval-jobs
         ];
       };
     };
