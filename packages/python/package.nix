@@ -3,7 +3,6 @@
   run,
   lib,
   config,
-
   clang,
   sysroot,
   gnumake,
@@ -32,7 +31,8 @@ run
 
     export CONFIG_SITE=/dev/null
     export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory"
-    export LDFLAGS="--target=wasm32-unknown-linux-musl -fuse-ld=lld --sysroot=${sysroot}"
+    export CPPFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot}"
+    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
 
     ./configure \
       --host=wasm32-unknown-linux-musl \

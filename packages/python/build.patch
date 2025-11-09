@@ -16,6 +16,56 @@ index ba039794c8..341808c531 100644
  LIBHACL_HMAC_LIB_STATIC=Modules/_hacl/libHacl_HMAC.a
  LIBHACL_HMAC_LIB_SHARED=$(LIBHACL_HMAC_OBJS)
  
+diff --git a/Misc/platform_triplet.c b/Misc/platform_triplet.c
+index f5cd73bdea..06bc075880 100644
+--- a/Misc/platform_triplet.c
++++ b/Misc/platform_triplet.c
+@@ -26,6 +26,26 @@
+ #    error unknown Android platform
+ #  endif
+ 
++#elif defined(__wasm32__)
++#  if defined(__EMSCRIPTEN__)
++PLATFORM_TRIPLET=wasm32-emscripten
++#  elif defined(__wasi__)
++#    if defined(_REENTRANT)
++PLATFORM_TRIPLET=wasm32-wasi-threads
++#    else
++PLATFORM_TRIPLET=wasm32-wasi
++#    endif
++#  elif defined(__linux__)
++#    include <stdarg.h>
++#    ifdef __DEFINED_va_list
++PLATFORM_TRIPLET=wasm32-unknown-linux-musl
++#    else
++PLATFORM_TRIPLET=wasm32-unknown-linux-gnu
++#    endif
++#  else
++#    error unknown wasm32 platform
++#  endif
++
+ #elif defined(__linux__)
+ /*
+  * BEGIN of Linux block
+@@ -265,18 +285,6 @@
+ #  endif
+ #elif defined(__VXWORKS__)
+ PLATFORM_TRIPLET=vxworks
+-#elif defined(__wasm32__)
+-#  if defined(__EMSCRIPTEN__)
+-PLATFORM_TRIPLET=wasm32-emscripten
+-#  elif defined(__wasi__)
+-#    if defined(_REENTRANT)
+-PLATFORM_TRIPLET=wasm32-wasi-threads
+-#    else
+-PLATFORM_TRIPLET=wasm32-wasi
+-#    endif
+-#  else
+-#    error unknown wasm32 platform
+-#  endif
+ #elif defined(__wasm64__)
+ #  if defined(__EMSCRIPTEN__)
+ PLATFORM_TRIPLET=wasm64-emscripten
 diff --git a/configure b/configure
 index d31c24dffa..9246454ae8 100755
 --- a/configure
