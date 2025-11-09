@@ -35,14 +35,12 @@ run
 
     cmake -S compiler-rt -B build -G Ninja \
       -DCMAKE_BUILD_TYPE=${if config.debug then "Debug" else "Release"} \
+      -DCMAKE_SYSROOT=${musl} \
       -DCMAKE_C_COMPILER_TARGET=wasm32-unknown-linux-musl \
       -DCMAKE_C_COMPILER_WORKS=ON \
-      -DCMAKE_C_FLAGS="-I${musl}/include" \
       -DCMAKE_CXX_COMPILER_TARGET=wasm32-unknown-linux-musl \
       -DCMAKE_CXX_COMPILER_WORKS=ON \
-      -DCMAKE_CXX_FLAGS="-I${musl}/include" \
       -DCOMPILER_RT_BUILD_CRT=false \
-      -DCOMPILER_RT_DEFAULT_TARGET_ARCH=wasm32-unknown-linux-musl \
       -DCOMPILER_RT_DEFAULT_TARGET_ONLY=true
 
     cmake --build build -j$NIX_BUILD_CORES
