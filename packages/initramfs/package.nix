@@ -372,8 +372,8 @@ let
     "zcat"
     "zcip"
   ];
-
 in
+
 run { name = "initramfs.cpio"; } ''
   mkdir -p root/bin
   cp ${./init.sh} root/init
@@ -383,7 +383,6 @@ run { name = "initramfs.cpio"; } ''
     ln -s busybox root/bin/$applet
   done
 
-  cp ${wasmpkgs.sqlite3}/bin/sqlite3 root/bin/sqlite3
   cd root
   find . | cpio -H newc -o > $out
 ''
