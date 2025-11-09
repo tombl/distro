@@ -8,6 +8,7 @@
   gnumake,
   lld,
   llvm,
+  clang-host,
 }:
 let
   archiveVersion = import ./archive-version.nix lib;
@@ -30,22 +31,25 @@ run
     ];
   }
   ''
-     export CC=${clang}/bin/clang
 
-     export CFLAGS=" --target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory -DSQLITE_OS_OTHER=1  -I${sysroot}/include -L${sysroot}/lib"
+    export CC_FOR_BUILD=${clang-host}/bin/clang
 
-     export LDFLAGS="-v --target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
+    export CC=${clang}/bin/clang
 
-     ./configure -v \
-       --host=wasm32-unknown-linux-musl \
-       --build=x86_64-linux-gnu \
-       --prefix=$out \
-       exec_prefix=${sysroot} \
-    -fuse-ld=lld \
-       AR=llvm-ar \
-       --disable-shared \
+    export CFLAGS=" --target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0  -I${sysroot}/include -L${sysroot}/lib"
+
+    export LD=wasm-ld
+
+    export LDFLAGS=" --target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
+
+    export AR=llvm-ar
+
+    ./configure \
+      --host=wasm32-unknown-linux-musl \
+      --build=x86_64-linux-gnu \
+      --prefix=$out \
 
 
-
-     make -j$NIX_BUILD_CORES sqlite3
+    make -j$NIX_BUILD_CORES sqlite3
+    make install
   ''
