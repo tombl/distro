@@ -57,7 +57,19 @@ run
       command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
     }
 
-    test -f .config || make defconfig ${lib.optionalString config.debug "debug.config"}
+    config() {
+      sed -i "/CONFIG_$1=/d" .config
+      sed -i "/CONFIG_$1 is not set/d" .config
+      case $2 in
+        y|n) echo "CONFIG_$1=$2" >> .config ;;
+        *) echo "CONFIG_$1=\"$2\"" >> .config ;;
+      esac
+    }
+
+    if ! [ -f .config ]; then
+      make defconfig ${lib.optionalString config.debug "debug.config"}
+      config FILE_LOCKING y
+    fi
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
