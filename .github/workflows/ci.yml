@@ -1,5 +1,8 @@
 on:
-  - push
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
   list:
@@ -49,6 +52,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event.pull_request.head.repo.full_name == 'tombl/distro'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
