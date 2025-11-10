@@ -12,7 +12,7 @@
     in
     {
       apps.runner.program = pkgs.writeShellScriptBin "wasm-linux-runner" ''
-        ${lib.getExe pkgs.deno} run --allow-read ${site}/run.js "$@"
+        ${lib.getExe pkgs.deno} run --allow-all ${site}/run.js "$@"
       '';
 
       apps.serve.program = pkgs.writeShellScriptBin "wasm-linux-serve" ''
