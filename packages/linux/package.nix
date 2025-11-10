@@ -67,8 +67,16 @@ run
     }
 
     [ -f .config ] || make defconfig ${lib.optionalString config.debug "debug.config"}
+    config BLOCK y
+    config BLK_DEV y
+    config BLK_DEV_INITRD y
+    config DEVTMPFS y
+    config EXT4_FS y
     config FILE_LOCKING y
-    config SQUASHFS y
+    config OVERLAY_FS n
+    config SQUASHFS n
+    config VIRTIO_BLK y
+    config VIRTIO_WASM y
     make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure

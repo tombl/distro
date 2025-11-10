@@ -35,6 +35,7 @@ in
     busybox
     cmake
     curl
+    e2fsprogs
     esbuild
     findutils
     flex

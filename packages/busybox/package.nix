@@ -56,6 +56,16 @@ run
     config EXTRA_CFLAGS '-I${linux.headers}/include ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory'
     config EXTRA_LDLIBS c
 
+    config MOUNT y
+    config SWITCH_ROOT y
+    config HUSH y
+    config SH_IS_ASH n
+    config SH_IS_HUSH y
+    config SH_IS_NONE n
+    config BASH_IS_ASH n
+    config BASH_IS_HUSH n
+    config BASH_IS_NONE y
+
     config BOOTCHARTD n
     config CONSPY n
     config CROND n
@@ -103,6 +113,5 @@ run
 
     make ${lib.optionalString config.debug "SKIP_STRIP=y"}
 
-    mkdir -p $out/bin
-    cp busybox $out/bin
+    make CONFIG_PREFIX=$out install
   ''

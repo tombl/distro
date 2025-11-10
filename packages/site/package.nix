@@ -2,6 +2,7 @@
   run,
   linux,
   initramfs,
+  rootfs,
 }:
 
 run
@@ -13,4 +14,5 @@ run
     mkdir $out
     cp -r ./* $out/
     ln -s ${initramfs} $out/initramfs.cpio
+    ln -s ${rootfs} $out/rootfs.ext4
   ''

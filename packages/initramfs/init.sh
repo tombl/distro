@@ -1,10 +1,20 @@
 #!/bin/busybox sh
 
-/bin/busybox --install -s
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-mkdir -p /dev /proc /sys
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
+/bin/busybox mkdir -p /dev /newroot
+/bin/busybox mount -t devtmpfs devtmpfs /dev
 
-exec sh
+i=0
+while [ ! -b /dev/vda ]; do
+  if [ "$i" -ge 100 ]; then
+    echo "Timed out waiting for /dev/vda"
+    exec /bin/busybox sh
+  fi
+
+  i=$((i + 1))
+  /bin/busybox sleep 0.1
+done
+
+/bin/busybox mount -t ext4 /dev/vda /newroot
+exec /bin/busybox switch_root /newroot /bin/sh
