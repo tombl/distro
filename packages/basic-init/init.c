@@ -2,13 +2,16 @@
 #include <stdlib.h>
 #include <sched.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <string.h>
 
 static int foo = 0;
 
 int other(void *arg) {
         printf("hello from other thread: %d\n", foo);
+        exit(1);
         return 0;
 }
 
@@ -44,6 +47,30 @@ int main(int argc, char *argv[]) {
         }
 
         free(stack);
+
+        if (mkdir("/foo", 0755) == -1) {
+                perror("mkdir");
+                return 1;
+        }
+
+        if (chdir("/foo") == -1) {
+                perror("chdir");
+                return 1;
+        }
+
+        char *cwd = getcwd(NULL, 0);
+        if (!cwd) {
+                perror("getcwd");
+                return 1;
+        }
+        printf("cwd = %s\n", cwd);
+
+        if (strcmp(cwd, "/foo") != 0) {
+                fprintf(stderr, "incorrect cwd: chdir is broken");
+                return 1;
+        }
+        
+        free(cwd);
 
         printf("idling forever\n");
         for (;;)
