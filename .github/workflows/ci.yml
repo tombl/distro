@@ -48,7 +48,7 @@ jobs:
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
-          nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*'
+          nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
 
   deploy:
     needs: build
