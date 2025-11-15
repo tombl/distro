@@ -3,6 +3,7 @@
   libcxx,
   musl,
   linux,
+  compiler-rt,
 }:
 
 run { name = "sysroot"; } ''
@@ -14,4 +15,7 @@ run { name = "sysroot"; } ''
   cp -r ${musl}/include/* $out/include/
   cp ${musl}/lib/* $out/lib/
   cp -r ${linux.headers}/* $out/include/
+
+  cp ${compiler-rt}/libclang_rt.builtins-wasm32.a $out/lib/
+  ln -s libclang_rt.builtins-wasm32.a $out/lib/libatomic.a
 ''
