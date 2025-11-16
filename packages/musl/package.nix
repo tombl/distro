@@ -16,8 +16,8 @@ run
     src = fetch.github {
       owner = "tombl";
       repo = "musl";
-      rev = "1b9248e905e8a0e59123365401266d6685c87b28";
-      hash = "sha256-bzCx65NT6ojmNFsva+T7GRpVTyNTfNH0nN8s0Oh8zK0=";
+      rev = "4f84c4dfeb2ebcaf9e7f1c85ae0240f07bf4441d";
+      hash = "sha256-LekMVlVo9I5SSh8pWjvUNmsQNBfZ6OlCEbbeZKw99p8=";
     };
     path = [
       clang-no-compiler-rt
