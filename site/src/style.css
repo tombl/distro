@@ -1,0 +1,36 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+html {
+  height: 100%;
+  body {
+    margin: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    .terminal {
+      flex: 1;
+    }
+  }
+}
+
+details {
+  font-size: 1.2rem;
+  margin: 1rem;
+  summary {
+    user-select: none;
+  }
+  form {
+    display: grid;
+    grid-template-columns: 15ch 1fr;
+    grid-column: 2;
+    input {
+      font-family: monospace;
+    }
+    button {
+      grid-column: span 2;
+    }
+  }
+}

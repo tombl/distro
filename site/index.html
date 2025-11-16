@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Linux</title>
+  </head>
+  <body>
+    <details>
+      <summary>info & options</summary>
+
+      <p>Welcome to Linux 6.1 running natively in your browser!</p>
+
+      <p>
+        There's no x86_64/RISC-V emulation going on here, instead this is a port
+        of the kernel to WebAssembly.
+      </p>
+
+      <p>
+        We've got a patched version of the Linux kernel and Musl libc running,
+        complete with virtio devices, memory isolation, and multi-core support.
+      </p>
+
+      <p>
+        If this sounds interesting, you can check out the source at
+        <a href="https://github.com/tombl/linux">github.com/tombl/linux</a>
+      </p>
+
+      <form>
+        <label for="cmdline">
+          <a
+            href="https://www.kernel.org/doc/html/v6.1/admin-guide/kernel-parameters.html"
+          >
+            Kernel parameters
+          </a>
+        </label>
+        <input type="text" name="cmdline" id="cmdline" />
+        <label for="memory">Memory (in MiB)</label>
+        <input type="number" name="memory" id="memory" />
+        <label for="initcpio">URL to an initramfs</label>
+        <input type="text" name="initcpio" id="initcpio" />
+        <button type="submit">Reboot</button>
+      </form>
+    </details>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
