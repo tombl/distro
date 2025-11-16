@@ -1,7 +1,6 @@
 {
   fetch,
   run,
-
   clang,
   clang-host,
   lib,
@@ -11,7 +10,10 @@
   config,
   gnumake,
   libatomic_ops,
-
+  autoconf,
+  automake,
+  libtool,
+  gnum4,
 }:
 
 run
@@ -31,11 +33,16 @@ run
       gnumake
       lld
       llvm
+      autoconf
+      automake
+      libtool
+      gnum4
     ];
   }
   ''
-    ls
-    patch -p1 <${./linux-wasm.patch}
+
+    patch -N -p1 <${./linux-wasm.patch} #this is the real patch
+
     export CC_FOR_BUILD=${clang-host}/bin/clang
     export CC=${clang}/bin/clang
     export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory -I${libatomic_ops}/include"
@@ -43,6 +50,7 @@ run
     export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
     export AR=llvm-ar
 
+    ./autogen.sh
     ./configure --host=wasm32-unknown-linux-musl --prefix=$out
 
     make -j$NIX_BUILD_CORES install

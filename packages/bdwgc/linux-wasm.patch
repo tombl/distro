@@ -1,12 +1,34 @@
+
+
+diff --git a/include/gc/gc_config_macros.h b/include/gc/gc_config_macros.h
+index 70546ec6..d270885f 100644
+--- a/include/gc/gc_config_macros.h
++++ b/include/gc/gc_config_macros.h
+@@ -426,10 +426,11 @@ typedef long ptrdiff_t;
+  * This may also be desirable if it is possible but expensive to
+  * retrieve the call chain.
+  */
+-#  if (defined(__linux__) || defined(__DragonFly__) || defined(__FreeBSD__) \
+-       || defined(__FreeBSD_kernel__) || defined(__HAIKU__)                 \
+-       || defined(__NetBSD__) || defined(__OpenBSD__)                       \
+-       || defined(HOST_ANDROID) || defined(__ANDROID__))                    \
++#  if ((defined(__linux__) && !defined(__wasm__))        \
++       || defined(__DragonFly__) || defined(__FreeBSD__)    \
++       || defined(__FreeBSD_kernel__) || defined(__HAIKU__) \
++       || defined(__NetBSD__) || defined(__OpenBSD__)       \
++       || defined(HOST_ANDROID) || defined(__ANDROID__))    \
+       && !defined(GC_CAN_SAVE_CALL_STACKS)
+ #    define GC_ADD_CALLER
+ #    if GC_GNUC_PREREQ(2, 95)
 diff --git a/include/private/gcconfig.h b/include/private/gcconfig.h
-index b949e367..5ca7be3f 100644
+index b949e367..e0f1c01e 100644
 --- a/include/private/gcconfig.h
 +++ b/include/private/gcconfig.h
 @@ -485,6 +485,12 @@ EXTERN_C_BEGIN
  #  define WASI
  #  define mach_type_known
  #endif
-+#if defined(__linux__) && defined(__WASM__)
++#if defined(__linux__) && defined(__wasm__)
 +/* Linux for WASM */
 +#  define WEBASSEMBLY
 +#  define LINUX
@@ -15,15 +37,56 @@ index b949e367..5ca7be3f 100644
  
  #if defined(__aarch64__)                                      \
      && (defined(ANY_BSD) || defined(COSMO) || defined(DARWIN) \
-@@ -637,7 +643,7 @@ EXTERN_C_BEGIN
-  *   - `TILEPRO`: Tilera TILEPro (running `LINUX`);
-  *   - `VAX`: DEC VAX (running `BSD`, `ULTRIX`);
-  *   - `WEBASSEMBLY`: WebAssembly/Wasm (running `EMSCRIPTEN` environment,
-- *     `WASI` environment);
-+ *     `WASI` environment, ‘LINUX’);
-  *   - `X86_64`: AMD x86-64 ILP32/64-bit (running `COSMO` environment,
-  *     `CYGWIN32` environment, `DARWIN` (macOS), `FREEBSD`, `HAIKU`,
-  *     `HURD`, `LINUX`, `MSWIN32`, `MSWIN_XBOX1`, `NETBSD`, `OPENBSD`,
+@@ -2591,6 +2597,23 @@ extern char __global_base, __heap_base;
+ #      error No thread support yet
+ #    endif
+ #  endif
++#  ifdef LINUX
++#    define OS_TYPE "LINUX"
++extern char __global_base, __heap_base;
++#    define DATASTART ((ptr_t)(&__global_base))
++#    define DATAEND ((ptr_t)(&__heap_base))
++#    define STACKBOTTOM DATASTART
++#    ifndef GC_NO_SIGSETJMP
++#      define GC_NO_SIGSETJMP 1 /*< no support of signals */
++#    endif
++#    ifndef NO_CLOCK
++#      define NO_CLOCK 1 /*< no support of `clock()` */
++#    endif
++/* TODO: Check if threads are actually supported here */
++/* #    if defined(GC_THREADS) && !defined(CPPCHECK) */
++/* #      error No thread support yet */
++/* #    endif */
++#  endif
+ #endif /* WEBASSEMBLY */
+ 
+ #if defined(CYGWIN32) || defined(MSWIN32) || defined(MSWINCE)
+@@ -2904,9 +2927,10 @@ EXTERN_C_BEGIN
+ #  undef USE_MMAP
+ #endif
+ 
+-#if defined(ANY_BSD) || defined(DARWIN) || defined(IRIX5) || defined(LINUX) \
+-    || defined(SERENITY) || defined(SOLARIS)                                \
+-    || ((defined(CYGWIN32) || defined(USE_MMAP) || defined(USE_MUNMAP))     \
++#if defined(ANY_BSD) || defined(DARWIN) || defined(IRIX5)               \
++    || (defined(LINUX) && !defined(WEBASSEMBLY)) || defined(SERENITY)   \
++    || defined(SOLARIS)                                                 \
++    || ((defined(CYGWIN32) || defined(USE_MMAP) || defined(USE_MUNMAP)) \
+         && !defined(USE_WINALLOC))
+ /* Try both `sbrk` and `mmap`, in that order. */
+ #  define MMAP_SUPPORTED
+@@ -3214,8 +3238,9 @@ extern ptr_t GC_data_start;
+ #endif
+ 
+ /* Whether `GC_page_size` is to be set to a value other than page size. */
+-#if defined(CYGWIN32) && (defined(MPROTECT_VDB) || defined(USE_MUNMAP)) \
+-    || (!defined(ANY_MSWIN) && !defined(WASI) && !defined(USE_MMAP)     \
++#if defined(CYGWIN32) && (defined(MPROTECT_VDB) || defined(USE_MUNMAP))    \
++    || (!defined(ANY_MSWIN) && !defined(WASI)                              \
++        && !(defined(LINUX) && defined(WEBASSEMBLY)) && !defined(USE_MMAP) \
+         && (defined(GC_DISABLE_INCREMENTAL) || defined(DEFAULT_VDB)))
+ /*
+  * Cygwin: use the allocation granularity instead.
 -- 
 2.51.0
 
