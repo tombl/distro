@@ -51,7 +51,11 @@ run
     export AR=llvm-ar
 
     ./autogen.sh
-    ./configure --host=wasm32-unknown-linux-musl --prefix=$out
+    ./configure \
+      --host=wasm32-unknown-linux-musl \
+      --prefix=$out \
+      --disable-shared \
+      --enable-static
 
     make -j$NIX_BUILD_CORES install
 
