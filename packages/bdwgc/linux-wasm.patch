@@ -1,0 +1,128 @@
+diff --git a/include/gc/gc_config_macros.h b/include/gc/gc_config_macros.h
+index 70546ec6..7830771f 100644
+--- a/include/gc/gc_config_macros.h
++++ b/include/gc/gc_config_macros.h
+@@ -426,9 +426,9 @@ typedef long ptrdiff_t;
+  * This may also be desirable if it is possible but expensive to
+  * retrieve the call chain.
+  */
+-#  if (defined(__linux__) || defined(__DragonFly__) || defined(__FreeBSD__) \
+-       || defined(__FreeBSD_kernel__) || defined(__HAIKU__)                 \
+-       || defined(__NetBSD__) || defined(__OpenBSD__)                       \
++#  if ((defined(__linux__) && !defined(__wasm__)) || defined(__DragonFly__) \
++       || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)               \
++       || defined(__HAIKU__) || defined(__NetBSD__) || defined(__OpenBSD__) \
+        || defined(HOST_ANDROID) || defined(__ANDROID__))                    \
+       && !defined(GC_CAN_SAVE_CALL_STACKS)
+ #    define GC_ADD_CALLER
+diff --git a/include/private/gcconfig.h b/include/private/gcconfig.h
+index b949e367..ff7e67db 100644
+--- a/include/private/gcconfig.h
++++ b/include/private/gcconfig.h
+@@ -485,6 +485,12 @@ EXTERN_C_BEGIN
+ #  define WASI
+ #  define mach_type_known
+ #endif
++#if defined(__linux__) && defined(__wasm__)
++/* Linux for WASM */
++#  define WEBASSEMBLY
++#  define LINUX
++#  define mach_type_known
++#endif
+ 
+ #if defined(__aarch64__)                                      \
+     && (defined(ANY_BSD) || defined(COSMO) || defined(DARWIN) \
+@@ -2591,6 +2597,24 @@ extern char __global_base, __heap_base;
+ #      error No thread support yet
+ #    endif
+ #  endif
++#  ifdef LINUX
++#    define OS_TYPE "LINUX"
++extern char __global_base, __heap_base;
++#    define DATASTART ((ptr_t)(&__global_base))
++#    define DATAEND ((ptr_t)(&__heap_base))
++#    define STACKBOTTOM DATASTART
++#    define HAVE_NO_FORK
++#    ifndef GC_NO_SIGSETJMP
++#      define GC_NO_SIGSETJMP 1 /*< no support of signals */
++#    endif
++#    ifndef NO_CLOCK
++#      define NO_CLOCK 1 /*< no support of `clock()` */
++#    endif
++/* TODO: Check if threads are actually supported here */
++/* #    if defined(GC_THREADS) && !defined(CPPCHECK) */
++/* #      error No thread support yet */
++/* #    endif */
++#  endif
+ #endif /* WEBASSEMBLY */
+ 
+ #if defined(CYGWIN32) || defined(MSWIN32) || defined(MSWINCE)
+@@ -2904,9 +2928,10 @@ EXTERN_C_BEGIN
+ #  undef USE_MMAP
+ #endif
+ 
+-#if defined(ANY_BSD) || defined(DARWIN) || defined(IRIX5) || defined(LINUX) \
+-    || defined(SERENITY) || defined(SOLARIS)                                \
+-    || ((defined(CYGWIN32) || defined(USE_MMAP) || defined(USE_MUNMAP))     \
++#if defined(ANY_BSD) || defined(DARWIN) || defined(IRIX5)               \
++    || (defined(LINUX) && !defined(WEBASSEMBLY)) || defined(SERENITY)   \
++    || defined(SOLARIS)                                                 \
++    || ((defined(CYGWIN32) || defined(USE_MMAP) || defined(USE_MUNMAP)) \
+         && !defined(USE_WINALLOC))
+ /* Try both `sbrk` and `mmap`, in that order. */
+ #  define MMAP_SUPPORTED
+@@ -3214,8 +3239,9 @@ extern ptr_t GC_data_start;
+ #endif
+ 
+ /* Whether `GC_page_size` is to be set to a value other than page size. */
+-#if defined(CYGWIN32) && (defined(MPROTECT_VDB) || defined(USE_MUNMAP)) \
+-    || (!defined(ANY_MSWIN) && !defined(WASI) && !defined(USE_MMAP)     \
++#if defined(CYGWIN32) && (defined(MPROTECT_VDB) || defined(USE_MUNMAP))    \
++    || (!defined(ANY_MSWIN) && !defined(WASI)                              \
++        && !(defined(LINUX) && defined(WEBASSEMBLY)) && !defined(USE_MMAP) \
+         && (defined(GC_DISABLE_INCREMENTAL) || defined(DEFAULT_VDB)))
+ /*
+  * Cygwin: use the allocation granularity instead.
+diff --git a/tests/gctest.c b/tests/gctest.c
+index 1e6539f7..1b41e4e9 100644
+--- a/tests/gctest.c
++++ b/tests/gctest.c
+@@ -21,6 +21,15 @@
+  * more precise results checking for some of the tests.
+  */
+ 
++#include <sys/syscall.h>
++#include <unistd.h>
++long
++__syscall_cp_asm(void *, long nr, long a, long b, long c, long d, long e,
++                 long f)
++{
++  return syscall(nr, a, b, c, d, e, f);
++}
++
+ #ifdef HAVE_CONFIG_H
+ #  include "config.h"
+ #endif
+@@ -2482,7 +2491,8 @@ main(void)
+ 
+ #if defined(GC_WIN32_THREADS) && !defined(GC_PTHREADS)
+ 
+-static DWORD __stdcall thr_run_one_test(void *arg)
++static DWORD __stdcall
++thr_run_one_test(void *arg)
+ {
+   UNUSED_ARG(arg);
+   run_one_test();
+@@ -2517,7 +2527,8 @@ window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+   return ret;
+ }
+ 
+-static DWORD __stdcall thr_window(void *arg)
++static DWORD __stdcall
++thr_window(void *arg)
+ {
+   WNDCLASS win_class = { CS_NOCLOSE,
+                          window_proc,
+-- 
+2.51.0
+
