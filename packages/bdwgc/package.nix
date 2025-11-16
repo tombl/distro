@@ -47,7 +47,7 @@ run
     export CC=${clang}/bin/clang
     export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory -I${libatomic_ops}/include"
     export LD=wasm-ld
-    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
+    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld -L${libatomic_ops}/lib"
     export AR=llvm-ar
 
     ./autogen.sh
@@ -55,7 +55,12 @@ run
       --host=wasm32-unknown-linux-musl \
       --prefix=$out \
       --disable-shared \
-      --enable-static
+      --enable-static \
+      --with-sysroot=${sysroot}
+
+    make  -j$NIX_BUILD_CORES
+
+    make -j$NIX_BUILD_CORES check
 
     make -j$NIX_BUILD_CORES install
 
