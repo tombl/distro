@@ -30,9 +30,9 @@ run
     patch -p1 <${./build.patch}
 
     export CONFIG_SITE=/dev/null
-    export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory"
+    export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -matomics -mbulk-memory -pthread"
     export CPPFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot}"
-    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
+    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld -pthread -Wl,--max-memory=4294967296 -Wl,-z,stack-size=8388608"
 
     ./configure \
       --host=wasm32-unknown-linux-musl \
@@ -46,7 +46,7 @@ run
       --with-ensurepip=no \
       --disable-test-modules \
       --disable-ipv6 \
-      --without-remote-debug \
+      --without-remote-debug ${lib.optionalString config.debug "--with-pydebug"} \
       py_cv_module__remote_debugging=n/a \
       py_cv_module_mmap=n/a \
       py_cv_module__posixsubprocess=n/a \
