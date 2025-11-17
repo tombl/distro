@@ -1,0 +1,99 @@
+diff --git a/Makefile.pre.in b/Makefile.pre.in
+index ba039794c8..341808c531 100644
+--- a/Makefile.pre.in
++++ b/Makefile.pre.in
+@@ -694,12 +694,7 @@
+ 
+ LIBHACL_HMAC_OBJS= \
+ 		Modules/_hacl/Hacl_HMAC.o \
+-		Modules/_hacl/Hacl_Streaming_HMAC.o \
+-		$(LIBHACL_MD5_OBJS) \
+-		$(LIBHACL_SHA1_OBJS) \
+-		$(LIBHACL_SHA2_OBJS) \
+-		$(LIBHACL_SHA3_OBJS) \
+-		$(LIBHACL_BLAKE2_OBJS)
++		Modules/_hacl/Hacl_Streaming_HMAC.o
+ LIBHACL_HMAC_LIB_STATIC=Modules/_hacl/libHacl_HMAC.a
+ LIBHACL_HMAC_LIB_SHARED=$(LIBHACL_HMAC_OBJS)
+ 
+diff --git a/Misc/platform_triplet.c b/Misc/platform_triplet.c
+index f5cd73bdea..06bc075880 100644
+--- a/Misc/platform_triplet.c
++++ b/Misc/platform_triplet.c
+@@ -26,6 +26,26 @@
+ #    error unknown Android platform
+ #  endif
+ 
++#elif defined(__wasm32__)
++#  if defined(__EMSCRIPTEN__)
++PLATFORM_TRIPLET=wasm32-emscripten
++#  elif defined(__wasi__)
++#    if defined(_REENTRANT)
++PLATFORM_TRIPLET=wasm32-wasi-threads
++#    else
++PLATFORM_TRIPLET=wasm32-wasi
++#    endif
++#  elif defined(__linux__)
++#    include <stdarg.h>
++#    ifdef __DEFINED_va_list
++PLATFORM_TRIPLET=wasm32-unknown-linux-musl
++#    else
++PLATFORM_TRIPLET=wasm32-unknown-linux-gnu
++#    endif
++#  else
++#    error unknown wasm32 platform
++#  endif
++
+ #elif defined(__linux__)
+ /*
+  * BEGIN of Linux block
+@@ -265,18 +285,6 @@
+ #  endif
+ #elif defined(__VXWORKS__)
+ PLATFORM_TRIPLET=vxworks
+-#elif defined(__wasm32__)
+-#  if defined(__EMSCRIPTEN__)
+-PLATFORM_TRIPLET=wasm32-emscripten
+-#  elif defined(__wasi__)
+-#    if defined(_REENTRANT)
+-PLATFORM_TRIPLET=wasm32-wasi-threads
+-#    else
+-PLATFORM_TRIPLET=wasm32-wasi
+-#    endif
+-#  else
+-#    error unknown wasm32 platform
+-#  endif
+ #elif defined(__wasm64__)
+ #  if defined(__EMSCRIPTEN__)
+ PLATFORM_TRIPLET=wasm64-emscripten
+diff --git a/configure b/configure
+index d31c24dffa..9246454ae8 100755
+--- a/configure
++++ b/configure
+@@ -8467,7 +8467,7 @@
+     DEF_MAKE_ALL_RULE="build_emscripten"
+   REQUIRE_PGO="no"
+   DEF_MAKE_RULE="all"
+-elif test "$ac_sys_system" = "WASI"; then
++elif test "$ac_sys_system" = "WASI" || test "$host" = "wasm32-unknown-linux-musl"; then
+     DEF_MAKE_ALL_RULE="build_wasm"
+   REQUIRE_PGO="no"
+   DEF_MAKE_RULE="all"
+@@ -9542,7 +9542,7 @@
+ fi
+ 
+ # gh-120688: WASI uses -O3 in debug mode to support more recursive calls
+-if test "$ac_sys_system" = "WASI"; then
++if test "$ac_sys_system" = "WASI" || test "$host" = "wasm32-unknown-linux-musl"; then
+     PYDEBUG_CFLAGS="-O3"
+ fi
+ 
+@@ -32744,7 +32744,7 @@
+ 
+ { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for HACL* library linking type" >&5
+ printf %s "checking for HACL* library linking type... " >&6; }
+-if test "$ac_sys_system" = "WASI"; then
++if test "$ac_sys_system" = "WASI" || test "$host" = "wasm32-unknown-linux-musl"; then
+   LIBHACL_LDEPS_LIBTYPE=STATIC
+   { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: static" >&5
+ printf "%s\n" "static" >&6; }
