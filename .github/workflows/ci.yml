@@ -10,7 +10,7 @@ jobs:
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v34
       - uses: cachix/cachix-action@v16
         with:
@@ -39,7 +39,7 @@ jobs:
         pkg: ${{ fromJson(needs.list.outputs.matrix) }}
     name: Build ${{ matrix.pkg }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v34
       - uses: cachix/cachix-action@v16
         with:
@@ -55,7 +55,7 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == 'tombl/distro'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v34
       - uses: cachix/cachix-action@v16
         with:
