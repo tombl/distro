@@ -43,6 +43,7 @@ in
     perl
     python3
     rsync
+    typescript
     wabt
     ;
   llvm = llvm.libllvm;
