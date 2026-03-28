@@ -30,9 +30,9 @@ in
   inherit (llvm) lld;
   inherit (pkgs)
     bash
-    busybox
     bc
     bison
+    busybox
     cmake
     curl
     esbuild
@@ -43,6 +43,7 @@ in
     perl
     python3
     rsync
+    squashfsTools
     wabt
     ;
   llvm = llvm.libllvm;

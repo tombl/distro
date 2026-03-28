@@ -25,8 +25,8 @@ run
     src = fetch.github {
       owner = "tombl";
       repo = "linux";
-      rev = "b32c91b69e2e4a0dad815a396b1340dc895d3e7c";
-      hash = "sha256-wI4r6MMagy/CZ6vbZGckoDVdSXtwdjWraJ3VNga5Kfk=";
+      rev = "2d589452b644bb590de83a60aadc3ff6e019e694";
+      hash = "sha256-K4Cgzk12AAZ9kd3V/j8S+FapLgBjeuRohX7bTmRW4+E=";
     };
     path = [
       bc
@@ -66,10 +66,10 @@ run
       esac
     }
 
-    if ! [ -f .config ]; then
-      make defconfig ${lib.optionalString config.debug "debug.config"}
-      config FILE_LOCKING y
-    fi
+    [ -f .config ] || make defconfig ${lib.optionalString config.debug "debug.config"}
+    config FILE_LOCKING y
+    config SQUASHFS y
+    make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
