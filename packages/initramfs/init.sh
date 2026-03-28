@@ -7,4 +7,4 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
 
-exec sh
+/opt/python/bin/python3 -c 'print(1+1)'
