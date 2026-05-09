@@ -11,7 +11,7 @@ in
 
 {
   clang-no-compiler-rt = clang;
-  clang = pkgs.runCommandNoCCLocal "clang" { } ''
+  clang = pkgs.runCommandLocal "clang" { } ''
     cp -r ${clang} $out
     chmod -R +w $out
     ln -s $out/bin/clang $out/bin/cc
