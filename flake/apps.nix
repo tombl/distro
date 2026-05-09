@@ -41,6 +41,9 @@
 
       apps.serve.program = pkgs.writeShellScriptBin "wasm-linux-serve" ''
         ${lib.getExe pkgs.miniserve} ${site} --index index.html \
+          --header Cache-Control:no-store,no-cache,must-revalidate,max-age=0 \
+          --header Pragma:no-cache \
+          --header Expires:0 \
           --header Cross-Origin-Opener-Policy:same-origin \
           --header Cross-Origin-Embedder-Policy:require-corp \
           --header Cross-Origin-Resource-Policy:cross-origin "$@"
