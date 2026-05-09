@@ -7,8 +7,8 @@ let
   clang = llvm.clang-unwrapped.overrideAttrs (attrs: {
     patches = attrs.patches or [ ] ++ [ ./packages/clang/clang-add-wasm-linux-target.patch ];
   });
-in
 
+in
 {
   clang-no-compiler-rt = clang;
   clang = pkgs.runCommandLocal "clang" { } ''
@@ -46,6 +46,10 @@ in
     rsync
     squashfsTools
     wabt
+    autoconf
+    automake
+    libtool
+    gnum4
     ;
   llvm = llvm.libllvm;
 }
