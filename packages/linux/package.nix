@@ -25,8 +25,8 @@ run
     src = fetch.github {
       owner = "tombl";
       repo = "linux";
-      rev = "2d589452b644bb590de83a60aadc3ff6e019e694";
-      hash = "sha256-K4Cgzk12AAZ9kd3V/j8S+FapLgBjeuRohX7bTmRW4+E=";
+      rev = "f9c0796e7116aeb7451c4ebeaa968ff84af4c54c";
+      hash = "sha256-Rp2mek43UAUcvmXbkpl1OCFiToB9pQ6bBqkWBnQwEyE=";
     };
     path = [
       bc
