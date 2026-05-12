@@ -65,7 +65,7 @@ jobs:
         run: |
           eval "$(nix print-dev-env .#ci)"
           nix build .#packages.x86_64-linux.site --print-build-logs
-      - uses: cloudflare/wrangler-action@v3
+      - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{secrets.CLOUDFLARE_API_TOKEN}}
           accountId: 7d87194d9d4af2959fb81de343dd63d9
