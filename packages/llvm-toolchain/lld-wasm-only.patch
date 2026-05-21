@@ -1,0 +1,44 @@
+diff --git a/lld/CMakeLists.txt b/lld/CMakeLists.txt
+index 5510c7eb9..e4b2a1b99 100644
+--- a/lld/CMakeLists.txt
++++ b/lld/CMakeLists.txt
+@@ -201,10 +201,6 @@ if (LLVM_INCLUDE_TESTS)
+ endif()
+ 
+ add_subdirectory(docs)
+-add_subdirectory(COFF)
+-add_subdirectory(ELF)
+-add_subdirectory(MachO)
+-add_subdirectory(MinGW)
+ add_subdirectory(wasm)
+ 
+ add_subdirectory(cmake/modules)
+diff --git a/lld/tools/lld/CMakeLists.txt b/lld/tools/lld/CMakeLists.txt
+index d14a354e1..35eae8856 100644
+--- a/lld/tools/lld/CMakeLists.txt
++++ b/lld/tools/lld/CMakeLists.txt
+@@ -27,9 +27,5 @@
+ lld_target_link_libraries(lld
+   PRIVATE
+   lldCommon
+-  lldCOFF
+-  lldELF
+-  lldMachO
+-  lldMinGW
+   lldWasm
+   )
+diff --git a/lld/include/lld/Common/Driver.h b/lld/include/lld/Common/Driver.h
+index 06a43e6b6..d746d2263 100644
+--- a/lld/include/lld/Common/Driver.h
++++ b/lld/include/lld/Common/Driver.h
+@@ -61,9 +61,6 @@ Result lldMain(llvm::ArrayRef<const char *> args, llvm::raw_ostream &stdoutOS,
+ #define LLD_ALL_DRIVERS                                                        \
+   {                                                                            \
+-    {lld::WinLink, &lld::coff::link}, {lld::Gnu, &lld::elf::link},             \
+-        {lld::MinGW, &lld::mingw::link}, {lld::Darwin, &lld::macho::link}, {   \
+-      lld::Wasm, &lld::wasm::link                                              \
+-    }                                                                          \
++    { lld::Wasm, &lld::wasm::link }                                            \
+   }
+ 
+ #endif
