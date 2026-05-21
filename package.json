@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "workspaces": [
+    "packages/runner",
+    "packages/site"
+  ],
+  "type": "module",
+  "scripts": {
+    "typecheck": "npm run check --workspaces"
+  },
+  "dependencies": {
+    "@tombl/linux": "^0.0.0"
+  }
+}
