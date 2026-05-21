@@ -17,4 +17,9 @@ while [ ! -b /dev/vda ]; do
 done
 
 /bin/busybox mount -t ext4 /dev/vda /newroot
-exec /bin/busybox switch_root /newroot /bin/sh
+/bin/busybox mkdir -p /newroot/dev /newroot/proc /newroot/sys
+/bin/busybox mount --move /dev /newroot/dev
+/bin/busybox mount -t proc proc /newroot/proc
+/bin/busybox mount -t sysfs sysfs /newroot/sys
+
+exec /bin/busybox switch_root /newroot /bin/init

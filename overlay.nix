@@ -33,6 +33,7 @@ _final: prev:
     rootfs = self.callPackage ./packages/rootfs { };
 
     # tools:
+    runner = self.callPackage ./packages/runner { };
     site = self.callPackage ./packages/site { };
   });
 }
