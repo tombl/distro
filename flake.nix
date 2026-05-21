@@ -76,6 +76,12 @@
         (import ./checks.nix { inherit lib; } pkgs.wasmpkgs)
         // self.formatter.${pkgs.stdenv.hostPlatform.system}.checks
       );
-      apps = forEachSystem (_pkgs: { });
+      apps = forEachSystem (pkgs: {
+        runner = {
+          type = "app";
+          program = "${pkgs.wasmpkgs.runner}/bin/wasm-linux-runner";
+        };
+        default = self.apps.${pkgs.system}.runner;
+      });
     };
 }
