@@ -31,6 +31,7 @@ _final: prev:
     linux = self.callPackage ./packages/linux { src = inputs.linux-src.outPath; };
     mkRootfs = self.callPackage ./packages/rootfs-builder { };
     rootfs = self.callPackage ./packages/rootfs { };
+    vm = self.callPackage ./packages/vm-test { };
 
     # tools:
     runner = self.callPackage ./packages/runner { };
