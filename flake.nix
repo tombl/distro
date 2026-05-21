@@ -76,6 +76,20 @@
         (import ./checks.nix { inherit lib; } pkgs.wasmpkgs)
         // self.formatter.${pkgs.stdenv.hostPlatform.system}.checks
       );
-      apps = forEachSystem (_pkgs: { });
+      apps = forEachSystem (pkgs: {
+        serve = {
+          type = "app";
+          program = lib.getExe (
+            pkgs.writeShellApplication {
+              name = "serve-site";
+              runtimeInputs = [ pkgs.python3 ];
+              text = ''
+                cd ${pkgs.wasmpkgs.site}
+                exec python -m http.server "$@"
+              '';
+            }
+          );
+        };
+      });
     };
 }
