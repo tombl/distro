@@ -82,10 +82,15 @@
           program = lib.getExe (
             pkgs.writeShellApplication {
               name = "serve-site";
-              runtimeInputs = [ pkgs.python3 ];
+              runtimeInputs = [ pkgs.miniserve ];
               text = ''
-                cd ${pkgs.wasmpkgs.site}
-                exec python -m http.server "$@"
+                exec miniserve \
+                  --index index.html \
+                  --header "Cross-Origin-Embedder-Policy:require-corp" \
+                  --header "Cross-Origin-Opener-Policy:same-origin" \
+                  --header "Cross-Origin-Resource-Policy:cross-origin" \
+                  "$@" \
+                  ${pkgs.wasmpkgs.site}
               '';
             }
           );
