@@ -33,5 +33,6 @@ _final: prev:
     rootfs = self.callPackage ./packages/rootfs { };
 
     # tools:
+    site = self.callPackage ./packages/site { };
   });
 }
