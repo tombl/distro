@@ -90,6 +90,11 @@
             }
           );
         };
+        runner = {
+          type = "app";
+          program = "${pkgs.wasmpkgs.runner}/bin/wasm-linux-runner";
+        };
+        default = self.apps.${pkgs.system}.runner;
       });
     };
 }
