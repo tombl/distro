@@ -26,7 +26,7 @@ jobs:
               | select(.isCached | not).attr
               | select(test("-shell$") | not)
             ]
-            | if length > 0 then . else ["pre-commit"] end
+            | if length > 0 then . else ["treefmt"] end
           ')"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 

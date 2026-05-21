@@ -1,115 +1,64 @@
 {
   "nodes": {
-    "flake-compat": {
+    "busybox-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1767039857,
-        "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
-        "owner": "NixOS",
-        "repo": "flake-compat",
-        "rev": "5edf11c44bc78a0d334f6334cdaf7d60d732daab",
+        "lastModified": 1779361060,
+        "narHash": "sha256-g+ymN4NjUgc1m/N1lMH0CZ6wWkbVNwJwkVQadR3kygA=",
+        "owner": "tombl",
+        "repo": "busybox",
+        "rev": "7e538434a144f9ea75d764a4e3f380a00fb80bac",
         "type": "github"
       },
       "original": {
-        "owner": "NixOS",
-        "repo": "flake-compat",
+        "owner": "tombl",
+        "ref": "master",
+        "repo": "busybox",
         "type": "github"
       }
     },
-    "flake-compat_2": {
+    "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1696426674,
-        "narHash": "sha256-kvjfFW7WAETZlt09AgDn1MrtKzP7t90Vf7vypd3OL1U=",
-        "owner": "edolstra",
-        "repo": "flake-compat",
-        "rev": "0f9255e01c2351cc7d116c072cb317785dd33b33",
+        "lastModified": 1779363227,
+        "narHash": "sha256-twzWrKbcmumPIr1tzSugNRqrYdmtykZZCI3hxFgCFa4=",
+        "owner": "tombl",
+        "repo": "linux",
+        "rev": "b36416c7f266a465361ab7dde7622eb37239cd7e",
         "type": "github"
       },
       "original": {
-        "owner": "edolstra",
-        "repo": "flake-compat",
+        "owner": "tombl",
+        "repo": "linux",
         "type": "github"
       }
     },
-    "flake-parts": {
-      "inputs": {
-        "nixpkgs-lib": [
-          "nixpkgs"
-        ]
-      },
+    "llvm-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1777988971,
-        "narHash": "sha256-qIoWPDs+0/8JecyYgE3gpKQxW/4bLW/gp45vow9ioCQ=",
-        "owner": "hercules-ci",
-        "repo": "flake-parts",
-        "rev": "0678d8986be1661af6bb555f3489f2fdfc31f6ff",
-        "type": "github"
+        "lastModified": 1736847662,
+        "narHash": "sha256-cZAB5vZjeTsXt9QHbP5xluWNQnAHByHtHnAhVDV0E6I=",
+        "type": "tarball",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/llvm-project-19.1.7.src.tar.xz"
       },
       "original": {
-        "owner": "hercules-ci",
-        "repo": "flake-parts",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/llvm-project-19.1.7.src.tar.xz"
       }
     },
-    "git-hooks": {
-      "inputs": {
-        "flake-compat": "flake-compat",
-        "gitignore": "gitignore",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
+    "musl-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1776796298,
-        "narHash": "sha256-PcRvlWayisPSjd0UcRQbhG8Oqw78AcPE6x872cPRHN8=",
-        "owner": "cachix",
-        "repo": "git-hooks.nix",
-        "rev": "3cfd774b0a530725a077e17354fbdb87ea1c4aad",
+        "lastModified": 1779361194,
+        "narHash": "sha256-e8EhtE3x9oR8gBpqKTW4Edvyk1ckFPZq8eA6WZK62Rc=",
+        "owner": "tombl",
+        "repo": "musl",
+        "rev": "6f5868459d329826c90a642c50e3bbb5bc5f2d76",
         "type": "github"
       },
       "original": {
-        "owner": "cachix",
-        "repo": "git-hooks.nix",
-        "type": "github"
-      }
-    },
-    "gitignore": {
-      "inputs": {
-        "nixpkgs": [
-          "git-hooks",
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1709087332,
-        "narHash": "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs=",
-        "owner": "hercules-ci",
-        "repo": "gitignore.nix",
-        "rev": "637db329424fd7e46cf4185293b9cc8c88c95394",
-        "type": "github"
-      },
-      "original": {
-        "owner": "hercules-ci",
-        "repo": "gitignore.nix",
-        "type": "github"
-      }
-    },
-    "make-shell": {
-      "inputs": {
-        "flake-compat": "flake-compat_2"
-      },
-      "locked": {
-        "lastModified": 1733933815,
-        "narHash": "sha256-9JjM7eT66W4NJAXpGUsdyAFXhBxFWR2Z9LZwUa7Hli0=",
-        "owner": "nicknovitski",
-        "repo": "make-shell",
-        "rev": "ffeceae9956df03571ea8e96ef77c2924f13a63c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nicknovitski",
-        "repo": "make-shell",
+        "owner": "tombl",
+        "repo": "musl",
         "type": "github"
       }
     },
@@ -131,11 +80,26 @@
     },
     "root": {
       "inputs": {
-        "flake-parts": "flake-parts",
-        "git-hooks": "git-hooks",
-        "make-shell": "make-shell",
+        "busybox-src": "busybox-src",
+        "linux-src": "linux-src",
+        "llvm-src": "llvm-src",
+        "musl-src": "musl-src",
         "nixpkgs": "nixpkgs",
+        "sqlite-src": "sqlite-src",
         "treefmt-nix": "treefmt-nix"
+      }
+    },
+    "sqlite-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1762301600,
+        "narHash": "sha256-IbgsC+KGI0uWM4PS+bKpLfbE7ciE1fpz9Jhj9+qEiVA=",
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
       }
     },
     "treefmt-nix": {
