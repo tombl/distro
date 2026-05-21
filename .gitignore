@@ -1,5 +1,6 @@
 .*
 !.gitignore
 !.github
+node_modules
+packages/*/dist
 result*
-/overrides

@@ -3,23 +3,31 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    # keep-sorted start block=yes
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs-lib.follows = "nixpkgs";
-    };
-    git-hooks = {
-      url = "github:cachix/git-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    make-shell = {
-      url = "github:nicknovitski/make-shell";
-    };
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # keep-sorted end
+
+    linux-src = {
+      url = "github:tombl/linux";
+      flake = false;
+    };
+    musl-src = {
+      url = "github:tombl/musl";
+      flake = false;
+    };
+    busybox-src = {
+      url = "github:tombl/busybox/master";
+      flake = false;
+    };
+    sqlite-src = {
+      url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
+      flake = false;
+    };
+    llvm-src = {
+      url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/llvm-project-19.1.7.src.tar.xz";
+      flake = false;
+    };
   };
 
   nixConfig = {
@@ -30,49 +38,44 @@
   };
 
   outputs =
-    inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [
-        # keep-sorted start
-        ./flake/apps.nix
-        ./flake/format.nix
-        ./flake/git-hooks.nix
-        ./flake/shell.nix
-        # keep-sorted end
-      ];
-
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
-
-      perSystem =
-        {
-          pkgs,
-          system,
-          config,
-          lib,
-          ...
-        }:
-        {
-          # For better or for worse, nixpkgs has established the pattern of
-          # a legacyPackages attribute that does not contain legacy packages at all,
-          # but rather an attribute set that's just not the shape of the typical packages attribute.
-          # In our case, we have a handful of non-package attributes that we still want to expose under the pkgs object.
-          legacyPackages = import ./all-packages.nix {
-            inherit (inputs.nixpkgs) lib;
-            currentSystem = system;
-            hostpkgs = import ./host-packages.nix {
-              inherit pkgs;
-              wasmpkgs = config.legacyPackages;
-            };
-          };
-
-          # and then expose a filtered version of that attribute set with just the actual packages.
-          packages = lib.filterAttrs (_name: value: value ? drvPath) config.legacyPackages;
-          checks = config.packages;
+    { self, nixpkgs, ... }@inputs:
+    let
+      inherit (nixpkgs) lib;
+      forEachSystem =
+        fn:
+        lib.genAttrs
+          [
+            "x86_64-linux"
+            "aarch64-linux"
+          ]
+          (
+            system:
+            fn (
+              import nixpkgs {
+                inherit system;
+                overlays = [ self.overlays.default ];
+              }
+            )
+          );
+    in
+    {
+      formatter = forEachSystem (pkgs: import ./formatter.nix { inherit pkgs inputs self; });
+      devShells = forEachSystem (pkgs: {
+        default = import ./devshells {
+          inherit pkgs;
+          formatter = self.formatter.${pkgs.stdenv.hostPlatform.system};
         };
+        ci = import ./devshells/ci.nix { inherit pkgs; };
+      });
+      overlays.default = import ./overlay.nix { inherit inputs; };
+      packages = forEachSystem (
+        pkgs: nixpkgs.lib.filterAttrs (_name: value: lib.isDerivation value) pkgs.wasmpkgs
+      );
+      checks = forEachSystem (
+        pkgs:
+        (import ./checks.nix { inherit lib; } pkgs.wasmpkgs)
+        // self.formatter.${pkgs.stdenv.hostPlatform.system}.checks
+      );
+      apps = forEachSystem (_pkgs: { });
     };
 }
