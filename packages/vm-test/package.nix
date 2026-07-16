@@ -1,33 +1,30 @@
+# Build-platform test harness: boots the kernel under Deno and asserts on a
+# pass marker. See docs/architecture.md, "Testing".
 {
-  run,
+  pkgs,
   lib,
-
-  cpio,
-  deno,
   linux,
 }:
 
 let
-  runnerBase =
-    run
-      {
-        name = "vm-test-runner";
-        src = ./.;
-      }
-      ''
-        mkdir $out
-        cp limit-output.awk protocol.js run-test.js $out/
-      '';
+  runnerBase = pkgs.runCommand "vm-test-runner" { } ''
+    mkdir $out
+    cp ${./limit-output.awk} $out/limit-output.awk
+    cp ${./protocol.js} $out/protocol.js
+    cp ${./run-test.js} $out/run-test.js
+  '';
 
   runner = runnerBase // {
     checks.protocol =
-      run
+      pkgs.runCommand "vm-test-protocol-check"
         {
-          name = "vm-test-protocol-check";
-          src = ./.;
-          path = [ deno ];
+          nativeBuildInputs = [ pkgs.deno ];
         }
         ''
+          cp ${./limit-output.awk} limit-output.awk
+          cp ${./protocol.js} protocol.js
+          cp ${./protocol-test.js} protocol-test.js
+
           export HOME=$TMPDIR/home
           export DENO_DIR=$TMPDIR/deno
           mkdir -p $HOME $DENO_DIR
@@ -51,10 +48,12 @@ let
       init,
       contents ? [ ],
     }:
-    run
+    pkgs.runCommand "${name}.cpio"
       {
-        name = "${name}.cpio";
-        path = [ cpio ];
+        nativeBuildInputs = [
+          pkgs.cpio
+          pkgs.findutils
+        ];
       }
       ''
         mkdir -p root/dev root/proc root/sys root/tmp
@@ -72,10 +71,9 @@ let
       initramfs,
       disk ? null,
     }:
-    run
+    pkgs.runCommand "vm-test-${name}"
       {
-        name = "vm-test-${name}";
-        path = [ deno ];
+        nativeBuildInputs = [ pkgs.deno ];
       }
       ''
         export HOME=$TMPDIR/home

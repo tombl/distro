@@ -1,22 +1,20 @@
 {
-  run,
-  e2fsprogs,
-  wasmpkgs,
+  pkgs,
   basic-init,
+  busybox,
   vm-test,
 }:
 
 let
   package =
-    run
+    pkgs.runCommand "rootfs.ext4"
       {
-        name = "rootfs.ext4";
-        path = [ e2fsprogs ];
+        nativeBuildInputs = [ pkgs.e2fsprogs ];
       }
       ''
         mkdir -p root/bin root/dev root/proc root/sys
         cp ${basic-init}/bin/init root/bin/basic-init
-        cp -RP ${wasmpkgs.busybox}/. root/
+        cp -RP ${busybox}/. root/
 
         truncate -s 64M $out
         mke2fs -q -t ext4 -d root -F -L rootfs -m 0 $out
@@ -29,7 +27,7 @@ package
     initramfs = vm-test.mkInitramfs {
       name = "rootfs-mount";
       init = ./smoke-test.sh;
-      contents = [ wasmpkgs.busybox ];
+      contents = [ busybox ];
     };
     disk = package;
   };

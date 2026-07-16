@@ -1,18 +1,13 @@
 {
-  run,
-  linux,
+  pkgs,
   initramfs,
+  linux,
   rootfs,
 }:
 
-run
-  {
-    name = "site";
-    src = linux.site;
-  }
-  ''
-    mkdir $out
-    cp -r ./* $out/
-    ln -s ${initramfs} $out/initramfs.cpio
-    ln -s ${rootfs} $out/rootfs.ext4
-  ''
+pkgs.runCommand "site" { } ''
+  mkdir $out
+  cp -r ${linux.site}/* $out/
+  ln -s ${initramfs} $out/initramfs.cpio
+  ln -s ${rootfs} $out/rootfs.ext4
+''

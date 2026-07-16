@@ -1,60 +1,41 @@
 {
-  run,
-  config,
-  lib,
+  stdenv,
   vm-test,
-
-  clang,
-  lld,
-  sysroot,
 }:
 
 let
   buildInit =
     name: source:
-    run
-      {
-        inherit name;
-        src = ./.;
-        path = [
-          clang
-          lld
-        ];
-      }
-      ''
-        clang -c -o init.o ${source} \
-          --target=wasm32-unknown-linux-musl \
-          --sysroot=${sysroot} \
-          ${lib.optionalString config.debug "-g"} \
-          -matomics -mbulk-memory
-        clang -o init init.o \
-          --target=wasm32-unknown-linux-musl \
-          --sysroot=${sysroot} \
-          -Wl,--fatal-warnings,--import-memory,--max-memory=4294967296,--shared-memory,--export-table
+    stdenv.mkDerivation {
+      inherit name;
+      src = ./.;
 
-        mkdir -p $out/bin
-        cp init $out/bin/init
+      buildPhase = ''
+        runHook preBuild
+        $CC -Wl,--fatal-warnings -o init ${source}
+        runHook postBuild
       '';
 
-  package = buildInit "basic-init" "init.c";
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/bin
+        cp init $out/bin/init
+        runHook postInstall
+      '';
+    };
 
   check =
     name:
-    let
-      init = buildInit "basic-init-${name}" "tests/${name}.c";
-      initramfs = vm-test.mkInitramfs {
-        name = "basic-init-${name}";
-        init = "${init}/bin/init";
-      };
-    in
     vm-test.vmTest {
       name = "basic-init-${name}";
-      inherit initramfs;
+      initramfs = vm-test.mkInitramfs {
+        name = "basic-init-${name}";
+        init = "${buildInit "basic-init-${name}" "tests/${name}.c"}/bin/init";
+      };
     };
 in
-package
-// {
-  checks = {
+(buildInit "basic-init" "init.c").overrideAttrs {
+  passthru.checks = {
     boot = check "boot";
     brk = check "brk";
     cancellation = check "cancellation";

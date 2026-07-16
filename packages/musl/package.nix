@@ -1,36 +1,42 @@
 {
-  run,
+  pkgs,
   lib,
-  config,
-  musl-src,
-
-  clang-no-compiler-rt,
-  gnumake,
-  lld,
-  llvm,
+  debug,
+  llvm-toolchain-unwrapped,
+  src,
 }:
 
-run
-  {
-    name = "musl";
-    src = musl-src;
-    path = [
-      clang-no-compiler-rt
-      gnumake
-      lld
-      llvm
-    ];
-    # TODO: split for size, only relevant for dynamic linking
-    # outputs = [ "out" "dev" ];
-  }
-  ''
+pkgs.stdenvNoCC.mkDerivation {
+  name = "musl";
+  inherit src;
+
+  nativeBuildInputs = [ llvm-toolchain-unwrapped ];
+
+  # TODO: split for size, only relevant for dynamic linking
+  # outputs = [ "out" "dev" ];
+  configurePhase = ''
+    runHook preConfigure
+
     cat >config.mak <<EOF
     ARCH=wasm32
     prefix=$out
     syslibdir=$out
-    CFLAGS=${lib.optionalString config.debug "-g"}
+    CFLAGS=${lib.optionalString debug "-g"}
     EOF
 
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+    make -j$NIX_BUILD_CORES
+    runHook postBuild
+  '';
+
+  installPhase = ''
+    runHook preInstall
     mkdir $out
     make -j$NIX_BUILD_CORES install-libs install-headers
-  ''
+    runHook postInstall
+  '';
+}

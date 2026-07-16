@@ -1,60 +1,50 @@
+# The kernel is a build-platform artifact: a wasm blob plus the JavaScript
+# that hosts it, loaded by the runner and the site. Built with explicit tools
+# rather than the wasm stdenv because kbuild drives its own cross setup.
 {
-  fetch,
-  run,
-  config,
+  pkgs,
   lib,
-
-  bc,
-  bison,
-  clang-no-compiler-rt,
-  clang-host ? clang-no-compiler-rt,
-  esbuild,
-  findutils,
-  flex,
-  gnumake,
-  lld,
-  llvm,
-  perl,
-  rsync,
-  wabt,
+  debug,
+  llvm-toolchain-unwrapped,
+  src,
 }:
 
-run
-  {
-    name = "linux";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "linux";
-      rev = "f9c0796e7116aeb7451c4ebeaa968ff84af4c54c";
-      hash = "sha256-Rp2mek43UAUcvmXbkpl1OCFiToB9pQ6bBqkWBnQwEyE=";
-    };
-    path = [
-      bc
-      bison
-      clang-no-compiler-rt
-      esbuild
-      findutils
-      flex
-      gnumake
-      lld
-      llvm
-      perl
-      rsync
-      wabt
-    ];
-    outputs = [
-      "out"
-      "site"
-      "headers"
-    ];
-  }
-  ''
+pkgs.stdenvNoCC.mkDerivation {
+  name = "linux";
+  inherit src;
+
+  outputs = [
+    "out"
+    "site"
+    "headers"
+  ];
+
+  # The outputs are wasm, JavaScript, and headers: nixpkgs' fixup would strip
+  # nothing and would patch shebangs in files served to browsers.
+  dontFixup = true;
+
+  nativeBuildInputs = [
+    llvm-toolchain-unwrapped
+    pkgs.bc
+    pkgs.bison
+    pkgs.esbuild
+    pkgs.findutils
+    pkgs.flex
+    pkgs.gnumake
+    pkgs.perl
+    pkgs.rsync
+    pkgs.wabt
+  ];
+
+  buildPhase = ''
+    runHook preBuild
+
     mkdir -p $site
     cp -r tools/wasm/{run.js,public/*,src} $site
     ln -sf $out $site/dist
 
     make() {
-      command make -j$NIX_BUILD_CORES HOSTCC=${clang-host}/bin/clang TSC=true "$@"
+      command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_19.clang}/bin/clang TSC=true "$@"
     }
 
     config() {
@@ -66,7 +56,7 @@ run
       esac
     }
 
-    [ -f .config ] || make defconfig ${lib.optionalString config.debug "debug.config"}
+    [ -f .config ] || make defconfig ${lib.optionalString debug "debug.config"}
     config BLOCK y
     config BLK_DEV y
     config BLK_DEV_INITRD y
@@ -91,4 +81,9 @@ run
     sed -i "s/LIBRARY_VERSION/$hash/" $site/index.html
 
     make headers_install INSTALL_HDR_PATH=$headers
-  ''
+
+    runHook postBuild
+  '';
+
+  installPhase = "runHook preInstall; runHook postInstall";
+}

@@ -26,7 +26,7 @@ jobs:
               | select(.isCached | not).attr
               | select(test("-shell$") | not)
             ]
-            | if length > 0 then . else ["pre-commit"] end
+            | if length > 0 then . else ["formatting"] end
           ')"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -64,7 +64,7 @@ jobs:
       - name: Build
         run: |
           eval "$(nix print-dev-env .#ci)"
-          nix build .#packages.x86_64-linux.site --print-build-logs
+          nix build .#site --print-build-logs
       - uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{secrets.CLOUDFLARE_API_TOKEN}}
