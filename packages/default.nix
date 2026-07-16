@@ -58,6 +58,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
 
     # images:
     initramfs = callPackage ./initramfs/package.nix { };
+    mkRootfs = callPackage ./rootfs-builder/package.nix { };
     rootfs = callPackage ./rootfs/package.nix { };
 
     # host tools and tests:

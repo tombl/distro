@@ -1,24 +1,17 @@
 {
-  pkgs,
   basic-init,
   busybox,
+  mkRootfs,
   vm-test,
 }:
 
 let
-  package =
-    pkgs.runCommand "rootfs.ext4"
-      {
-        nativeBuildInputs = [ pkgs.e2fsprogs ];
-      }
-      ''
-        mkdir -p root/bin root/dev root/proc root/sys
-        cp ${basic-init}/bin/init root/bin/basic-init
-        cp -RP ${busybox}/. root/
-
-        truncate -s 64M $out
-        mke2fs -q -t ext4 -d root -F -L rootfs -m 0 $out
-      '';
+  package = mkRootfs {
+    name = "rootfs";
+    init = ./init.sh;
+    contents = [ busybox ];
+    files."/bin/basic-init" = "${basic-init}/bin/init";
+  };
 in
 package
 // {
