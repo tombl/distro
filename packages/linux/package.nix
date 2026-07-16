@@ -1,6 +1,6 @@
-# The kernel is a build-platform artifact: a wasm blob plus the JavaScript
-# that hosts it, loaded by the runner and the site. Built with explicit tools
-# rather than the wasm stdenv because kbuild drives its own cross setup.
+# The kernel is a build-platform artifact: a wasm blob plus its JavaScript
+# host library. It uses explicit tools because kbuild drives its own cross
+# setup rather than the wasm stdenv.
 {
   pkgs,
   lib,
@@ -27,25 +27,25 @@ pkgs.stdenvNoCC.mkDerivation {
     llvm-toolchain-unwrapped
     pkgs.bc
     pkgs.bison
-    pkgs.esbuild
     pkgs.findutils
     pkgs.flex
     pkgs.gnumake
     pkgs.perl
     pkgs.rsync
+    pkgs.typescript
     pkgs.wabt
   ];
 
   buildPhase = ''
     runHook preBuild
 
-    mkdir -p $site
-    cp -r tools/wasm/{run.js,public/*,src} $site
-    ln -sf $out $site/dist
-
     make() {
-      command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_19.clang}/bin/clang TSC=true "$@"
+      command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_19.clang}/bin/clang "$@"
     }
+
+    make mrproper
+    make -C tools/wasm clean
+    mkdir -p $out $site
 
     config() {
       sed -i "/CONFIG_$1=/d" .config
@@ -56,13 +56,14 @@ pkgs.stdenvNoCC.mkDerivation {
       esac
     }
 
-    [ -f .config ] || make defconfig ${lib.optionalString debug "debug.config"}
+    make defconfig ${lib.optionalString debug "debug.config"}
     config BLOCK y
     config BLK_DEV y
     config BLK_DEV_INITRD y
     config DEVTMPFS y
     config EXT4_FS y
     config FILE_LOCKING y
+    config FUTEX y
     config OVERLAY_FS n
     config SQUASHFS n
     config VIRTIO_BLK y
@@ -76,9 +77,8 @@ pkgs.stdenvNoCC.mkDerivation {
       fi
     done
 
-    cp -r tools/wasm/dist $out
-    hash=$(cksum $out/index.js | cut -d' ' -f1)
-    sed -i "s/LIBRARY_VERSION/$hash/" $site/index.html
+    cp -r tools/wasm/dist $out/
+    cp tools/wasm/vmlinux.wasm $out/
 
     make headers_install INSTALL_HDR_PATH=$headers
 

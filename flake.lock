@@ -20,17 +20,17 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1778322591,
-        "narHash": "sha256-gIRygkQwu9kYPaz5uXY4pmOV69Ulm/gRznV+a/Jg+CQ=",
+        "lastModified": 1784188540,
+        "narHash": "sha256-MRE3VvgyfQS9dqvmBE+RKsMmtUvuBA3Ba2Je0xuw27M=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "f9c0796e7116aeb7451c4ebeaa968ff84af4c54c",
+        "rev": "a1b17a90f467e788492acad5434c2376062a9c95",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
         "repo": "linux",
-        "rev": "f9c0796e7116aeb7451c4ebeaa968ff84af4c54c",
+        "rev": "a1b17a90f467e788492acad5434c2376062a9c95",
         "type": "github"
       }
     },

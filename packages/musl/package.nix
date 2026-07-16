@@ -29,6 +29,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
   buildPhase = ''
     runHook preBuild
+    make clean
     make -j$NIX_BUILD_CORES
     runHook postBuild
   '';

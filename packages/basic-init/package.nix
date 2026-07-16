@@ -40,11 +40,15 @@ in
     brk = check "brk";
     cancellation = check "cancellation";
     clone = check "clone";
+    clone-no-vm = check "clone-no-vm";
     clone-return = check "clone-return";
     clone-tid = check "clone-tid";
+    clone-tls = check "clone-tls";
     cwd = check "cwd";
+    futex = check "futex";
     malloc = check "malloc";
     proc-self-mem = check "proc-self-mem";
+    thread-local = check "thread-local";
     threads = check "threads";
     tls = check "tls";
   };

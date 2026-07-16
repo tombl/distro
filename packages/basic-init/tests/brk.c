@@ -6,7 +6,9 @@
 
 int main(void)
 {
+	char message[96];
 	char *start = sbrk(0);
+	char *end;
 	void *previous;
 
 	if (start == (void *)-1)
@@ -16,8 +18,13 @@ int main(void)
 		test_perror("sbrk");
 	if (previous != start)
 		test_fail("sbrk did not return the previous break");
-	if (sbrk(0) != start + 1)
-		test_fail("sbrk rounded the program break");
+	end = sbrk(0);
+	if (end != start + 1) {
+		snprintf(message, sizeof(message),
+			 "sbrk rounded the program break: got %p, want %p",
+			 end, start + 1);
+		test_fail(message);
+	}
 
 	test_pass();
 }

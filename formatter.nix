@@ -6,7 +6,7 @@ pkgs.treefmt.withConfig {
     pkgs.actionlint
     pkgs.deadnix
     pkgs.keep-sorted
-    pkgs.nixfmt-rfc-style
+    pkgs.nixfmt
     pkgs.shellcheck
     pkgs.shfmt
     pkgs.statix

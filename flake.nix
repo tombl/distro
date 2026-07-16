@@ -9,7 +9,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/f9c0796e7116aeb7451c4ebeaa968ff84af4c54c";
+      url = "github:tombl/linux/a1b17a90f467e788492acad5434c2376062a9c95";
       flake = false;
     };
     llvm-src = {

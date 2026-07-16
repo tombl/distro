@@ -85,7 +85,7 @@ let
         ''}
         set +e
         timeout 20 deno run --allow-all ${runner}/run-test.js \
-          ${linux}/index.js \
+          ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.ext4"} \
           2>&1 | awk -f ${runner}/limit-output.awk
