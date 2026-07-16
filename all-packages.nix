@@ -1,6 +1,7 @@
 {
   lib,
   currentSystem,
+  musl-src,
   hostpkgs ? { },
 }:
 
@@ -11,6 +12,7 @@ let
     inherit
       lib
       currentSystem
+      musl-src
       wasmpkgs
       hostpkgs
       ;

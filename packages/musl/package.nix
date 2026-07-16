@@ -1,8 +1,8 @@
 {
-  fetch,
   run,
   lib,
   config,
+  musl-src,
 
   clang-no-compiler-rt,
   gnumake,
@@ -13,12 +13,7 @@
 run
   {
     name = "musl";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "musl";
-      rev = "314d4e81e26546ba063663437657095ad2c0351c";
-      hash = "sha256-gCylldyaICorupH1e1eXD6fW8ILYeFkokMlMPz4UV5E=";
-    };
+    src = musl-src;
     path = [
       clang-no-compiler-rt
       gnumake

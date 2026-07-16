@@ -56,9 +56,13 @@ package
 // {
   checks = {
     boot = check "boot";
+    cancellation = check "cancellation";
     clone = check "clone";
     clone-return = check "clone-return";
+    clone-tid = check "clone-tid";
     cwd = check "cwd";
     proc-self-mem = check "proc-self-mem";
+    threads = check "threads";
+    tls = check "tls";
   };
 }

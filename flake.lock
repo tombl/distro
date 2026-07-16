@@ -113,6 +113,23 @@
         "type": "github"
       }
     },
+    "musl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1762439915,
+        "narHash": "sha256-Siy5OjLzKGwnlDGUgAkl/sIUA9jIFTUsX/XZg3iy5zc=",
+        "owner": "tombl",
+        "repo": "musl",
+        "rev": "314d4e81e26546ba063663437657095ad2c0351c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "tombl",
+        "repo": "musl",
+        "rev": "314d4e81e26546ba063663437657095ad2c0351c",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1777954456,
@@ -134,6 +151,7 @@
         "flake-parts": "flake-parts",
         "git-hooks": "git-hooks",
         "make-shell": "make-shell",
+        "musl-src": "musl-src",
         "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       }

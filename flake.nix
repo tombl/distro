@@ -15,6 +15,10 @@
     make-shell = {
       url = "github:nicknovitski/make-shell";
     };
+    musl-src = {
+      url = "github:tombl/musl/314d4e81e26546ba063663437657095ad2c0351c";
+      flake = false;
+    };
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -63,6 +67,7 @@
           # In our case, we have a handful of non-package attributes that we still want to expose under the pkgs object.
           legacyPackages = import ./all-packages.nix {
             inherit (inputs.nixpkgs) lib;
+            inherit (inputs) musl-src;
             currentSystem = system;
             hostpkgs = import ./host-packages.nix {
               inherit pkgs;
