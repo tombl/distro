@@ -63,10 +63,13 @@ pkgs.stdenvNoCC.mkDerivation {
     config EXT4_FS y
     config FILE_LOCKING y
     config FUTEX y
+    config NET y
     config OVERLAY_FS n
-    config SQUASHFS n
+    config SQUASHFS y
     config VIRTIO_BLK y
+    config VIRTIO_VSOCKETS y
     config VIRTIO_WASM y
+    config VSOCKETS y
     make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure

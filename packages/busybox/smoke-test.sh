@@ -1,7 +1,7 @@
 #!/bin/busybox sh
 
 fail() {
-  echo "::tombl-vm-test::fail: $*"
+  echo "::vm-test::fail: $*"
   while :; do :; done
 }
 
@@ -17,5 +17,5 @@ read -r content </tmp/busybox-smoke/copy || fail "read failed"
 rm /tmp/busybox-smoke/source /tmp/busybox-smoke/copy || fail "rm failed"
 [ ! -e /tmp/busybox-smoke/source ] || fail "rm left its input behind"
 
-echo "::tombl-vm-test::pass"
+echo "::vm-test::pass"
 while :; do :; done

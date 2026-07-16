@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "deno check src/run.ts"
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/deno": "^2.7.0",
+    "@types/node": "^25.9.5"
   }
 }

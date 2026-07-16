@@ -1,7 +1,7 @@
 #!/bin/busybox sh
 
 fail() {
-  echo "::tombl-vm-test::fail: $*"
+  echo "::vm-test::fail: $*"
   while :; do :; done
 }
 
@@ -20,5 +20,5 @@ mount -t ext4 /dev/vda /newroot || fail "mounting ext4 rootfs failed"
 [ -x /newroot/bin/basic-init ] || fail "rootfs is missing basic-init"
 [ -x /newroot/bin/busybox ] || fail "rootfs is missing busybox"
 
-echo "::tombl-vm-test::pass"
+echo "::vm-test::pass"
 while :; do :; done

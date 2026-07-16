@@ -8,9 +8,10 @@ if (!linuxPath || !initramfsPath || Deno.args.length > 3) {
   throw new Error("usage: run-test.js <linux-module> <initramfs> [disk]");
 }
 
-const { BlockDevice, ConsoleDevice, EntropyDevice, Machine } = await import(
-  pathToFileURL(linuxPath).href
-);
+const { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } =
+  await import(
+    pathToFileURL(linuxPath).href
+  );
 
 let resolveResult;
 const result = new Promise((resolve) => {
@@ -43,7 +44,10 @@ function consoleOutput({ failWhenClosed }) {
     close() {
       for (const line of decoder.close()) consumeLine(line);
       if (failWhenClosed) {
-        finish({ passed: false, reason: "guest console closed before reporting a result" });
+        finish({
+          passed: false,
+          reason: "guest console closed before reporting a result",
+        });
       }
     },
     abort(error) {
@@ -93,22 +97,19 @@ if (diskPath) {
   );
 }
 
-const machine = new Machine({
+const machine = await spawnMachine({
   memoryMib: 128,
   cpus: 1,
   devices,
   initcpio: await Deno.readFile(initramfsPath),
-});
-
-machine.bootConsole
-  .pipeTo(consoleOutput({ failWhenClosed: false }))
-  .catch((error) => finish({ passed: false, reason: `boot console failed: ${error}` }));
-machine.on("error", ({ error }) => {
-  finish({ passed: false, reason: `machine failed: ${error}` });
-});
-
-machine.boot().catch((error) => {
+  bootConsole: consoleOutput({ failWhenClosed: false }),
+}).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
+  return null;
+});
+
+void machine?.closed.catch((error) => {
+  finish({ passed: false, reason: `machine failed: ${error}` });
 });
 
 const timeout = setTimeout(() => {
@@ -117,6 +118,7 @@ const timeout = setTimeout(() => {
 
 const outcome = await result;
 clearTimeout(timeout);
+machine?.close();
 disk?.close();
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);

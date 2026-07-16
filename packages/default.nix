@@ -54,14 +54,18 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     clang = callPackage ./clang/package.nix { src = inputs.llvm-src; };
+    guest-agent = callPackage ./guest-agent/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
 
     # images:
+    guest-initramfs = callPackage ./guest-initramfs/package.nix { };
+    guest-rootfs = callPackage ./guest-rootfs/package.nix { };
     initramfs = callPackage ./initramfs/package.nix { };
     mkRootfs = callPackage ./rootfs-builder/package.nix { };
     rootfs = callPackage ./rootfs/package.nix { };
 
     # host tools and tests:
+    linux-guest = callPackage ./linux-guest/package.nix { };
     runner = callPackage ./runner/package.nix { };
     site = callPackage ./site/package.nix { };
     vm-test = callPackage ./vm-test/package.nix { };

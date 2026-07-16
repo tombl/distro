@@ -1,5 +1,5 @@
-export const PASS = "::tombl-vm-test::pass";
-export const FAIL = "::tombl-vm-test::fail";
+export const PASS = "::vm-test::pass";
+export const FAIL = "::vm-test::fail";
 
 export class LineDecoder {
   #buffer = "";

@@ -1,0 +1,23 @@
+{
+  "name": "@tombl/linux-guest",
+  "version": "0.0.0",
+  "files": [
+    "dist",
+    "initramfs.cpio",
+    "rootfs.squashfs"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@tombl/linux": "0.0.0"
+  }
+}

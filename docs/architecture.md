@@ -12,7 +12,7 @@ The SDK published from this repository owns the guest agent and its host client,
 
 Target packages are built for `wasm32-unknown-linux-musl`; host packages build the toolchain, images, SDK, tests, and applications which embed the machine. The package set should make this distinction explicit without leaking cross-compilation mechanics into each package.
 
-`mkRootfs` produces one writable ext4 image. It constructs a conventional FHS tree by unioning the selected packages, files, and init program; conflicting non-identical paths are errors. Other image formats are out of scope until a real consumer requires one.
+`mkRootfs` constructs a conventional FHS tree by unioning the selected packages, files, and init program; conflicting non-identical paths are errors. It can encode that tree as writable ext4 or read-only squashfs. The SDK uses squashfs for immutable system files and mounts tmpfs at `/run`, `/tmp`, and `/workspace`; the standalone runner retains a persistent ext4 root.
 
 WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn children through an explicit `clone()` entry point followed by `execve()`, normally exposed as `posix_spawn()`. Ports should replace private allocation or file-reading uses of `mmap()` with the operation they require rather than provide an incomplete mmap emulation.
 

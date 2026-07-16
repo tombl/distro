@@ -19,15 +19,16 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1779363227,
-        "narHash": "sha256-twzWrKbcmumPIr1tzSugNRqrYdmtykZZCI3hxFgCFa4=",
+        "lastModified": 1784243763,
+        "narHash": "sha256-/oeFfGPAJX4Qbkqx9SYadFf9oV6p6xwPN7uFQtFSQrI=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "b36416c7f266a465361ab7dde7622eb37239cd7e",
+        "rev": "1efe277f9b1e83a3ad9b5839a1332ec333edf43d",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
+        "ref": "clone-vm-threads",
         "repo": "linux",
         "type": "github"
       }

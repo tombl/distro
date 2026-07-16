@@ -9,7 +9,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux";
+      url = "github:tombl/linux/clone-vm-threads";
       flake = false;
     };
     llvm-src = {

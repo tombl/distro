@@ -1,5 +1,10 @@
 #!/usr/bin/env -S deno run --allow-all
-import { BlockDevice, ConsoleDevice, EntropyDevice, Machine } from "@tombl/linux";
+import {
+  BlockDevice,
+  ConsoleDevice,
+  EntropyDevice,
+  spawnMachine,
+} from "@tombl/linux";
 import { parseArgs } from "node:util";
 
 function assert(cond: unknown, message = "Assertion failed"): asserts cond {
@@ -129,34 +134,29 @@ for (const disk of args.disk) {
         }
         return array.subarray(0, n);
       },
-      write: readonly
-        ? undefined
-        : async (offset, data) => {
-            file.seekSync(offset, Deno.SeekMode.Start);
-            let n = 0;
-            while (n < data.byteLength) {
-              n += file.writeSync(data.subarray(n));
-            }
-            return n;
-          },
+      write: readonly ? undefined : async (offset, data) => {
+        file.seekSync(offset, Deno.SeekMode.Start);
+        let n = 0;
+        while (n < data.byteLength) {
+          n += file.writeSync(data.subarray(n));
+        }
+        return n;
+      },
       flush: () => file.sync(),
       capacity: size,
     }),
   );
 }
 
-const machine = new Machine({
+const machine = await spawnMachine({
   cmdline: args.cmdline,
   memoryMib: parseInt(args.memory, 10),
   cpus: parseInt(args.cpus, 10),
   devices,
   initcpio: await Deno.readFile(args.initcpio),
+  bootConsole: Deno.stderr.writable,
 });
 
-machine.bootConsole.pipeTo(Deno.stderr.writable, { preventClose: true });
-
-machine.on("error", ({ error }) => {
+void machine.closed.catch((error) => {
   console.error(error);
 });
-
-machine.boot();
