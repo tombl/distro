@@ -47,7 +47,10 @@ in
     cwd = check "cwd";
     futex = check "futex";
     malloc = check "malloc";
+    malloc-failure = check "malloc-failure";
+    malloc-thread = check "malloc-thread";
     proc-self-mem = check "proc-self-mem";
+    pthread-no-tls = check "pthread-no-tls";
     thread-local = check "thread-local";
     threads = check "threads";
     tls = check "tls";

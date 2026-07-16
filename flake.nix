@@ -5,19 +5,19 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # keep-sorted start block=yes
     busybox-src = {
-      url = "github:tombl/busybox/7e538434a144f9ea75d764a4e3f380a00fb80bac";
+      url = "github:tombl/busybox";
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/a1b17a90f467e788492acad5434c2376062a9c95";
+      url = "github:tombl/linux";
       flake = false;
     };
     llvm-src = {
-      url = "github:tombl/llvm-project/ff5671ca630630276cc185db3e017305eae59bc1";
+      url = "github:tombl/llvm-project";
       flake = false;
     };
     musl-src = {
-      url = "github:tombl/musl/314d4e81e26546ba063663437657095ad2c0351c";
+      url = "github:tombl/musl";
       flake = false;
     };
     sqlite-src = {
