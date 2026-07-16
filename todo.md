@@ -1,28 +1,16 @@
-- split these into separate packages:
-  - the kernel
-  - the js host library
-  - the deno runner
-  - the web ui
-- musl
-  - patch/wrap/configure clang to include libc.a and crt1.o
-- busybox
-- generate initramfs
-- generate bundle of kernel+lib+ui+initramfs
-- make
-- gnu coreutils
-- util-linux
-- bash
-- cmake
-- cpio
-- ninja
-- llvm/clang/wasm-ld
-- go
-- esbuild
-- kernel
-  - perl, bc, bison, flex
-- cpython
-- meson
-- apk-tools
-  - distribute nix built packages as apk packages
-- pkg-config, glib
-- ncurses
+# Roadmap
+
+## Now
+
+1. Land the early VM test primitive and instantiate checks for boot, root filesystem setup, and known kernel/userspace regressions.
+2. Enable BusyBox's NOMMU build, reproduce each failure before fixing it, and replace remaining fork- or vfork-shaped control flow with explicit spawn operations.
+3. Prove the musl process substrate: `clone()`, `posix_spawn()`, `execve()`, pipes, file actions, waiting, signals, TLS, and cancellation.
+4. Rebuild the host and target package scopes on the clean stack, then expose one `mkRootfs` which produces a writable ext4 image.
+5. Land the guest agent and its SDK as the production command and file boundary; move the CLI and demo site onto that SDK.
+
+## Later
+
+- Land framebuffer and input support with guest-visible integration tests, then add basic DRM only when its userspace memory requirements are supportable.
+- Add loopback access, virtio networking, and pluggable JavaScript transports.
+- Package a useful initial software set and document the Nix-to-JavaScript build path.
+- Revisit x86 execution, Python, and guest Node after the core SDK is reliable.
