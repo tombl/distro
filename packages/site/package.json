@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite dev",
     "check": "tsc",
-    "setup": "rm -f public/rootfs.ext4 public/initramfs.cpio && nix build .#rootfs -o result-rootfs && cp result-rootfs public/rootfs.ext4 && nix build .#initramfs -o result-initramfs && cp result-initramfs public/initramfs.cpio"
+    "setup": "rm -f public/rootfs.ext4.gz public/initramfs.cpio.gz && nix build .#rootfs -o result-rootfs && gzip --best --no-name --stdout result-rootfs > public/rootfs.ext4.gz && nix build .#initramfs -o result-initramfs && gzip --best --no-name --stdout result-initramfs > public/initramfs.cpio.gz"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

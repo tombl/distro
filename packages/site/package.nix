@@ -11,6 +11,7 @@ pkgs.buildNpmPackage {
   src = ../..;
   npmDepsHash = "sha256-WZWwNHVFjZLBhCqd10XP7rLYTXGOtEG2TgpFyUF1qS8=";
   npmBuildFlags = [ "--workspace=@tombl/linux-site" ];
+  nativeBuildInputs = [ pkgs.gzip ];
 
   preBuild = ''
     export npm_config_cache=$TMPDIR/npm-cache
@@ -24,8 +25,8 @@ pkgs.buildNpmPackage {
 
     mkdir -p $out
     cp -r packages/site/dist/* $out/
-    ln -s ${initramfs} $out/initramfs.cpio
-    ln -s ${rootfs} $out/rootfs.ext4
+    gzip --best --no-name --stdout ${initramfs} > $out/initramfs.cpio.gz
+    gzip --best --no-name --stdout ${rootfs} > $out/rootfs.ext4.gz
 
     runHook postInstall
   '';

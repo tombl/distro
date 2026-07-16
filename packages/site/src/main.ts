@@ -46,8 +46,8 @@ if (!window.crossOriginIsolated) {
 const {
   cmdline = "",
   memory = navigator.hardwareConcurrency > 16 ? "256" : "128",
-  initcpio: initcpioPath = "initramfs.cpio",
-  rootfs: rootfsPath = "rootfs.ext4",
+  initcpio: initcpioPath = "initramfs.cpio.gz",
+  rootfs: rootfsPath = "rootfs.ext4.gz",
 } = Object.fromEntries(new URLSearchParams(location.search));
 
 const cmdlineInput = document.querySelector<HTMLInputElement>("input[name=cmdline]");
