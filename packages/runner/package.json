@@ -1,0 +1,9 @@
+{
+  "name": "@tombl/linux-runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "deno check src/run.ts"
+  }
+}

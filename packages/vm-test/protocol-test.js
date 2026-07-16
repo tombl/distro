@@ -11,7 +11,7 @@ Deno.test("decodes records split across arbitrary chunks", () => {
     ...decoder.write(encoder.encode("\n")),
   ];
 
-  assert.deepEqual(lines, [ "booting", "::tombl-vm-test::pass" ]);
+  assert.deepEqual(lines, ["booting", "::tombl-vm-test::pass"]);
   assert.deepEqual(parseResult(lines[1]), { passed: true });
 });
 

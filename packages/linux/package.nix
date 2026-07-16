@@ -15,7 +15,6 @@ pkgs.stdenvNoCC.mkDerivation {
 
   outputs = [
     "out"
-    "site"
     "headers"
   ];
 
@@ -45,7 +44,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
     make mrproper
     make -C tools/wasm clean
-    mkdir -p $out $site
+    mkdir -p $out
 
     config() {
       sed -i "/CONFIG_$1=/d" .config
@@ -77,7 +76,9 @@ pkgs.stdenvNoCC.mkDerivation {
       fi
     done
 
+    make -C tools/wasm pack PACKAGE_VERSION=0.0.0
     cp -r tools/wasm/dist $out/
+    cp tools/wasm/linux.tgz $out/
     cp tools/wasm/vmlinux.wasm $out/
 
     make headers_install INSTALL_HDR_PATH=$headers

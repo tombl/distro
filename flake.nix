@@ -96,7 +96,9 @@
               formatter
               wasmpkgs.llvm-toolchain
               pkgs.cmake
+              pkgs.deno
               pkgs.ninja
+              pkgs.nodejs
             ];
             env.sysroot = "${wasmpkgs.sysroot}";
           };
@@ -115,35 +117,7 @@
         {
           runner = {
             type = "app";
-            program = lib.getExe (
-              pkgs.writeShellScriptBin "wasm-linux-runner" ''
-                has_disk=0
-                for arg in "$@"; do
-                  case "$arg" in
-                    --disk|--disk=*) has_disk=1 ;;
-                  esac
-                done
-
-                if [ "$has_disk" -eq 1 ]; then
-                  exec ${lib.getExe pkgs.deno} run --allow-all ${wasmpkgs.site}/run.js "$@"
-                fi
-
-                state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/wasm-linux"
-                seed="${wasmpkgs.site}/rootfs.ext4"
-                disk="$state_dir/rootfs.ext4"
-                stamp="$state_dir/rootfs.seed"
-
-                mkdir -p "$state_dir"
-                if [ ! -f "$disk" ] || [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$seed" ]; then
-                  rm -f "$disk"
-                  cp "$seed" "$disk"
-                  chmod u+w "$disk"
-                  printf '%s' "$seed" > "$stamp"
-                fi
-
-                exec ${lib.getExe pkgs.deno} run --allow-all ${wasmpkgs.site}/run.js --disk "$disk" "$@"
-              ''
-            );
+            program = lib.getExe wasmpkgs.runner;
           };
 
           serve = {

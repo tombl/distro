@@ -61,6 +61,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rootfs = callPackage ./rootfs/package.nix { };
 
     # host tools and tests:
+    runner = callPackage ./runner/package.nix { };
     site = callPackage ./site/package.nix { };
     vm-test = callPackage ./vm-test/package.nix { };
   }

@@ -7,6 +7,7 @@ pkgs.treefmt.withConfig {
     pkgs.deadnix
     pkgs.keep-sorted
     pkgs.nixfmt
+    pkgs.oxfmt
     pkgs.shellcheck
     pkgs.shfmt
     pkgs.statix
@@ -34,6 +35,16 @@ pkgs.treefmt.withConfig {
       nixfmt = {
         command = "nixfmt";
         includes = [ "*.nix" ];
+      };
+      oxfmt = {
+        command = "oxfmt";
+        includes = [
+          "*.css"
+          "*.html"
+          "*.js"
+          "*.json"
+          "*.ts"
+        ];
       };
       shellcheck = {
         command = "shellcheck";

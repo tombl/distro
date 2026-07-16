@@ -1,0 +1,25 @@
+{
+  "name": "@tombl/linux-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite dev",
+    "check": "tsc",
+    "setup": "rm -f public/rootfs.ext4 public/initramfs.cpio && nix build .#rootfs -o result-rootfs && cp result-rootfs public/rootfs.ext4 && nix build .#initramfs -o result-initramfs && cp result-initramfs public/initramfs.cpio"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@astrojs/mdx": "^7.0.3",
+    "@deno/doc": "jsr:0.202.0",
+    "@types/node": "^26.1.1",
+    "astro": "^7.1.1",
+    "typescript": "^5.9.3"
+  }
+}
