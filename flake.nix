@@ -72,7 +72,7 @@
 
           # and then expose a filtered version of that attribute set with just the actual packages.
           packages = lib.filterAttrs (_name: value: value ? drvPath) config.legacyPackages;
-          checks = config.packages;
+          checks = import ./checks.nix { inherit lib; } config.legacyPackages;
         };
     };
 }

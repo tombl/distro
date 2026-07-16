@@ -34,7 +34,9 @@ in
     bison
     busybox
     cmake
+    cpio
     curl
+    deno
     e2fsprogs
     esbuild
     findutils
