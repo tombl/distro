@@ -1,442 +1,192 @@
-// Multiplexed guest-agent protocol client (protocol v2).
+// Guest transport (protocol v3): how bytes travel. What they mean lives in
+// syscalls.ts and agent.c.
 //
-// One vsock connection to port 1024, established once and multiplexed: a
-// single background read loop demuxes replies by id. The agent is a dumb
-// syscall executor; this class exposes exactly `syscall`, `spawn`, `reap`
-// (plus a blocking-budget semaphore). It reports guest errors as
-// `{ret, errno}` and never throws `SystemError`; it throws `ProtocolError`
-// only for wire violations, which poison the connection so all in-flight and
-// future operations reject.
+// A session is one pinned vsock connection to the session port plus a pool
+// of request lanes. A lane carries strictly serial request/reply exchanges:
+// whoever holds it writes one request and reads its reply, so there are no
+// frame lengths, request ids, or reply demultiplexing anywhere — message
+// sizes are fully determined by the request itself. Concurrency is simply
+// the number of lanes in flight.
 //
-// See packages/guest-agent/protocol.md for the frozen framing.
+// The session connection carries no requests. It exists because a session
+// needs a death signal that cannot be stuck behind a blocked syscall: the
+// agent parks a dedicated thread on it, and either side closing it tears the
+// session down (agent side: kill and reap every child).
 
 import type { VsockConnection, VsockDevice } from "@tombl/linux";
+import { ProtocolError } from "./abi.ts";
 import { Bytes, Struct, U16LE, U32LE } from "@tombl/linux/bytes";
-import { ProtocolError } from "./errors.ts";
 
-// Inlined from the deleted v1 protocol.ts (its only surviving callers).
-function concat(chunks: readonly Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-  const output = new Bytes(length || 1);
-  for (const chunk of chunks) output.append(chunk);
-  return output.array;
-}
+const SESSION_PORT = 1024;
+const LANE_PORT = 1025;
+const HANDSHAKE_MAGIC = 0x584e4c54; // "TLNX"
+const PROTOCOL_VERSION = 3;
 
-function u32(value: number): Uint8Array {
-  const bytes = new Uint8Array(4);
-  U32LE.set(new DataView(bytes.buffer), 0, value);
-  return bytes;
-}
+// Hard cap on concurrent lanes, equal to the agent's worker thread count so
+// a lane we open always has a thread free to accept it. The veneer's
+// process cap (process.ts) keeps worst-case blocked lanes well under this.
+const MAX_LANES = 64;
 
-const AGENT_PORT = 1024;
-const HANDSHAKE_MAGIC = 0x584e4c54;
-const PROTOCOL_VERSION = 2;
-const MAX_FRAME_PAYLOAD = 131072; // 128 KiB, payload only
-
-const BLOCKING_PERMITS = 8;
-const MAX_SYSCALL_ARGS = 6;
-const MAX_STRING_BYTES = 4096;
-const MAX_ARGC = 256;
-const MAX_ENVC = 256;
-
-const FrameType = {
-  Syscall: 1,
-  Spawn: 2,
-  Reply: 3,
-  Reap: 4,
-} as const;
-
-const ArgKind = {
-  Scalar: 0,
-  InBlob: 1,
-  OutFull: 2,
-  OutRetSized: 3,
-} as const;
-
-class FrameHeader extends Struct({
-  length: U32LE,
-  id: U32LE,
-  type: U16LE,
-  flags: U16LE,
+class Handshake extends Struct({
+  magic: U32LE,
+  version: U16LE,
+  reserved: U16LE,
 }) {}
 
-const REPLY_HEADER_SIZE = 16; // { ret i64, errno u32, reserved u32 }
-const SYSCALL_FIXED_SIZE = 8 + MAX_SYSCALL_ARGS * 12; // { nr u32, reserved u32 } + 6 args
-const SPAWN_REPLY_BODY_SIZE = 16; // { pid u32, stdin u32, stdout u32, stderr u32 }
-const REAP_REPLY_BODY_SIZE = 4; // { status u32 }
-
-export type SyscallArg =
-  | number
-  | bigint // scalar
-  | { in: Uint8Array } // in-blob
-  | { out: number; retSized?: boolean }; // out-blob capacity
-
-export interface SyscallResult {
-  ret: bigint;
-  errno: number;
-  out: Uint8Array[]; // one entry per out-blob arg, in order; empty on ret -1
+/** One strictly serial request/reply channel. Only ever held by one
+ *  exchange at a time; see {@link GuestSession.exchange}. */
+export interface Lane {
+  write(bytes: Uint8Array): Promise<void>;
+  /** Read exactly `length` bytes; a short read means the peer vanished
+   *  mid-message, which is a wire violation. */
+  read(length: number): Promise<Uint8Array>;
 }
 
-interface Pending {
-  decode: (body: Uint8Array) => unknown;
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-}
+class VsockLane implements Lane {
+  constructor(readonly conn: VsockConnection) {}
 
-function view(bytes: Uint8Array) {
-  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
-function guestString(value: string): Uint8Array {
-  const bytes = new TextEncoder().encode(value);
-  if (bytes.includes(0)) {
-    throw new TypeError("guest strings cannot contain NUL");
+  write(bytes: Uint8Array): Promise<void> {
+    return this.conn.write(bytes);
   }
-  if (bytes.byteLength > MAX_STRING_BYTES) {
-    throw new RangeError("guest string is too long");
+
+  async read(length: number): Promise<Uint8Array> {
+    const bytes = await this.conn.readExactly(length);
+    if (bytes.byteLength !== length) {
+      throw new ProtocolError("guest connection closed mid-message");
+    }
+    return bytes;
   }
-  return concat([u32(bytes.byteLength), bytes]);
 }
 
-export class GuestConn {
-  #connection: VsockConnection;
-  #pending = new Map<number, Pending>();
-  #nextId = 1;
+async function handshake(conn: VsockConnection): Promise<void> {
+  const bytes = new Bytes(Handshake.size);
+  const hello = bytes.alloc(Handshake);
+  hello.value = { magic: HANDSHAKE_MAGIC, version: PROTOCOL_VERSION, reserved: 0 };
+  await conn.write(bytes.array);
+  const echo = await conn.readExactly(Handshake.size);
+  if (echo.byteLength !== Handshake.size) {
+    throw new ProtocolError("guest connection closed during handshake");
+  }
+  const reply = new Handshake(echo);
+  if (reply.magic !== HANDSHAKE_MAGIC || reply.version !== PROTOCOL_VERSION) {
+    throw new ProtocolError("guest handshake echo mismatch");
+  }
+}
+
+export class GuestSession {
+  #device: VsockDevice;
+  #session: VsockConnection;
   #dead: Error | null = null;
 
-  #permits = BLOCKING_PERMITS;
-  #waiters: (() => void)[] = [];
+  #free: VsockLane[] = [];
+  #lane_count = 0;
+  #waiters: { resolve: (lane: VsockLane) => void; reject: (error: Error) => void }[] = [];
 
-  private constructor(connection: VsockConnection) {
-    this.#connection = connection;
-    void this.#readLoop();
+  private constructor(device: VsockDevice, session: VsockConnection) {
+    this.#device = device;
+    this.#session = session;
+    void this.#watch();
   }
 
-  // One vsock connect to port 1024 plus the 8-byte handshake and echo verify.
-  // Exactly one attempt; the veneer owns any connect-retry loop.
-  static async connect(device: VsockDevice, options?: { timeoutMs?: number }): Promise<GuestConn> {
-    const connection = await device.connect(
-      AGENT_PORT,
+  /** One connect + handshake attempt on the session port; the veneer owns
+   *  any readiness retry loop. */
+  static async connect(
+    device: VsockDevice,
+    options?: { timeoutMs?: number },
+  ): Promise<GuestSession> {
+    const conn = await device.connect(
+      SESSION_PORT,
       options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {},
     );
     try {
-      const handshake = new Uint8Array(8);
-      const dv = view(handshake);
-      dv.setUint32(0, HANDSHAKE_MAGIC, true);
-      dv.setUint16(4, PROTOCOL_VERSION, true);
-      dv.setUint16(6, 0, true); // reserved
-      await connection.write(handshake);
-      const echo = await connection.readExactly(8);
-      if (echo.byteLength !== 8) {
-        throw new ProtocolError("guest connection closed during handshake");
-      }
-      for (let i = 0; i < 8; i++) {
-        if (echo[i] !== handshake[i]) {
-          throw new ProtocolError("guest handshake echo mismatch");
-        }
-      }
+      await handshake(conn);
     } catch (error) {
-      connection.close();
+      conn.close();
       throw error;
     }
-    return new GuestConn(connection);
+    return new GuestSession(device, conn);
   }
 
-  // --- framing -------------------------------------------------------------
+  // The session connection is silent after its handshake: EOF is session
+  // death, and any payload byte means the two sides disagree about the
+  // protocol.
+  async #watch(): Promise<void> {
+    try {
+      const chunk = await this.#session.read();
+      this.#die(
+        chunk.byteLength === 0
+          ? new Error("guest session closed")
+          : new ProtocolError("unexpected data on the session connection"),
+      );
+    } catch (error) {
+      this.#die(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 
   #die(error: Error): void {
     if (this.#dead) return;
     this.#dead = error;
-    const pending = [...this.#pending.values()];
-    this.#pending.clear();
-    for (const entry of pending) entry.reject(error);
-    this.#connection.close();
+    const waiters = this.#waiters;
+    this.#waiters = [];
+    for (const waiter of waiters) waiter.reject(error);
+    for (const lane of this.#free) lane.conn.close();
+    this.#free = [];
+    this.#session.close();
+    // Lanes checked out by in-flight exchanges close when those exchanges
+    // fail against their dead connections and release into #dead handling.
   }
 
-  async #readLoop(): Promise<void> {
-    try {
-      while (true) {
-        const headerBytes = await this.#connection.readExactly(FrameHeader.size);
-        if (headerBytes.byteLength === 0) {
-          // Clean EOF on a frame boundary: session death, not a wire violation.
-          this.#die(new Error("guest connection closed"));
-          return;
-        }
-        if (headerBytes.byteLength !== FrameHeader.size) {
-          throw new ProtocolError("guest connection closed mid-frame");
-        }
-        const header = new FrameHeader(headerBytes);
-        if (header.flags !== 0) {
-          throw new ProtocolError("unsupported guest frame flags");
-        }
-        if (header.length > MAX_FRAME_PAYLOAD) {
-          throw new ProtocolError("oversized guest frame");
-        }
-        if (header.type !== FrameType.Reply) {
-          throw new ProtocolError("unexpected guest frame type");
-        }
-        const payload = await this.#connection.readExactly(header.length);
-        if (payload.byteLength !== header.length) {
-          throw new ProtocolError("guest connection closed mid-frame");
-        }
-        const pending = this.#pending.get(header.id);
-        if (!pending) {
-          throw new ProtocolError("reply for unknown request id");
-        }
-        this.#pending.delete(header.id);
-        let result: unknown;
-        try {
-          result = pending.decode(payload);
-        } catch (error) {
-          // Malformed reply body: reject this call, then poison the rest.
-          const wire = error instanceof Error ? error : new ProtocolError(String(error));
-          pending.reject(wire);
-          throw wire;
-        }
-        pending.resolve(result);
-      }
-    } catch (error) {
-      this.#die(error instanceof Error ? error : new ProtocolError(String(error)));
-    }
-  }
-
-  #send<T>(type: number, payload: Uint8Array, decode: (body: Uint8Array) => T): Promise<T> {
-    if (this.#dead) return Promise.reject(this.#dead);
-    if (payload.byteLength > MAX_FRAME_PAYLOAD) {
-      return Promise.reject(new ProtocolError("oversized guest frame"));
-    }
-    const id = this.#nextId;
-    this.#nextId = (this.#nextId + 1) >>> 0;
-
-    return new Promise<T>((resolve, reject) => {
-      this.#pending.set(id, {
-        decode: decode as (body: Uint8Array) => unknown,
-        resolve: resolve as (value: unknown) => void,
-        reject,
-      });
-
-      const headerBytes = new Uint8Array(FrameHeader.size);
-      const header = new FrameHeader(headerBytes);
-      header.length = payload.byteLength;
-      header.id = id;
-      header.type = type;
-      header.flags = 0;
-
-      this.#connection.write(concat([headerBytes, payload])).catch((error: unknown) => {
-        this.#die(error instanceof Error ? error : new Error(String(error)));
-      });
-    });
-  }
-
-  // --- operations ----------------------------------------------------------
-
-  syscall(nr: number, ...args: SyscallArg[]): Promise<SyscallResult> {
-    if (args.length > MAX_SYSCALL_ARGS) {
-      return Promise.reject(new RangeError(`syscall takes at most ${MAX_SYSCALL_ARGS} arguments`));
-    }
-
-    const fixed = new Uint8Array(SYSCALL_FIXED_SIZE);
-    const dv = view(fixed);
-    dv.setUint32(0, nr >>> 0, true);
-    dv.setUint32(4, 0, true); // reserved
-
-    const inBlobs: Uint8Array[] = [];
-    const outSpecs: { capacity: number; retSized: boolean }[] = [];
-    let outTotal = 0;
-
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i]!;
-      const base = 8 + i * 12;
-      let kind: number;
-      let value: bigint;
-      if (typeof arg === "number" || typeof arg === "bigint") {
-        kind = ArgKind.Scalar;
-        value = BigInt.asUintN(64, BigInt(arg));
-      } else if ("in" in arg) {
-        kind = ArgKind.InBlob;
-        value = BigInt(arg.in.byteLength);
-        inBlobs.push(arg.in);
-      } else {
-        const retSized = arg.retSized ?? false;
-        kind = retSized ? ArgKind.OutRetSized : ArgKind.OutFull;
-        value = BigInt(arg.out);
-        outSpecs.push({ capacity: arg.out, retSized });
-        // The agent kills the connection on a reply that cannot fit the
-        // frame cap; catch that here as a per-call error instead.
-        outTotal += arg.out;
-        if (outTotal > MAX_FRAME_PAYLOAD - REPLY_HEADER_SIZE) {
-          return Promise.reject(new RangeError("out-blob capacities exceed the reply frame cap"));
-        }
-      }
-      dv.setUint32(base, kind, true);
-      dv.setBigUint64(base + 4, value, true);
-    }
-    // Remaining arg slots default to scalar 0 (already zero-filled).
-
-    const payload = concat([fixed, ...inBlobs]);
-    return this.#send(FrameType.Syscall, payload, (body) => decodeSyscall(body, outSpecs));
-  }
-
-  spawn(
-    argv: readonly string[],
-    cwd: string,
-    env: readonly string[],
-  ): Promise<{
-    ret: bigint;
-    errno: number;
-    pid: number;
-    stdin: number;
-    stdout: number;
-    stderr: number;
-  }> {
-    if (argv.length < 1 || argv.length > MAX_ARGC) {
-      return Promise.reject(new RangeError("argv length out of range"));
-    }
-    if (env.length > MAX_ENVC) {
-      return Promise.reject(new RangeError("too many environment entries"));
-    }
-    for (const entry of env) {
-      if (!entry.includes("=")) {
-        return Promise.reject(new TypeError("environment entries must contain '='"));
+  async #acquire(): Promise<VsockLane> {
+    if (this.#dead) throw this.#dead;
+    const free = this.#free.pop();
+    if (free) return free;
+    if (this.#lane_count < MAX_LANES) {
+      this.#lane_count++;
+      try {
+        const conn = await this.#device.connect(LANE_PORT);
+        const lane = new VsockLane(conn);
+        await handshake(conn);
+        return lane;
+      } catch (error) {
+        this.#lane_count--;
+        throw error;
       }
     }
+    return new Promise((resolve, reject) => this.#waiters.push({ resolve, reject }));
+  }
 
-    let payload: Uint8Array;
-    try {
-      payload = concat([
-        u32(argv.length),
-        ...argv.map(guestString),
-        guestString(cwd),
-        u32(env.length),
-        ...env.map(guestString),
-      ]);
-    } catch (error) {
-      return Promise.reject(error as Error);
+  #release(lane: VsockLane): void {
+    if (this.#dead) {
+      lane.conn.close();
+      return;
     }
-
-    return this.#send(FrameType.Spawn, payload, decodeSpawn);
-  }
-
-  reap(pid: number): Promise<{ ret: bigint; errno: number; status: number }> {
-    return this.#send(FrameType.Reap, u32(pid), decodeReap);
-  }
-
-  // --- blocking-budget semaphore (8 permits) -------------------------------
-
-  async blocking<T>(fn: () => Promise<T>): Promise<T> {
-    await this.#acquire();
-    try {
-      return await fn();
-    } finally {
-      this.#release();
-    }
-  }
-
-  #acquire(): Promise<void> {
-    if (this.#permits > 0) {
-      this.#permits--;
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => this.#waiters.push(resolve));
-  }
-
-  #release(): void {
     const waiter = this.#waiters.shift();
     if (waiter) {
-      waiter(); // hand the permit straight to the next waiter
+      waiter.resolve(lane);
     } else {
-      this.#permits++;
+      this.#free.push(lane);
+    }
+  }
+
+  /** Run one request/reply exchange on a pooled lane. `fn` must write one
+   *  request and read its complete reply. Any exception from `fn` is a wire
+   *  violation (semantic errors travel as errno in replies, not exceptions)
+   *  and poisons the whole session. */
+  async exchange<T>(fn: (lane: Lane) => Promise<T>): Promise<T> {
+    const lane = await this.#acquire();
+    try {
+      const result = await fn(lane);
+      this.#release(lane);
+      return result;
+    } catch (error) {
+      this.#die(error instanceof Error ? error : new ProtocolError(String(error)));
+      lane.conn.close();
+      this.#lane_count--;
+      throw error;
     }
   }
 
   close(): void {
-    this.#die(new Error("guest connection closed"));
+    this.#die(new Error("guest session closed"));
   }
-}
-
-// --- reply decoders (throw ProtocolError on any wire violation) ------------
-
-function readReplyHeader(body: Uint8Array): { ret: bigint; errno: number; rest: Uint8Array } {
-  if (body.byteLength < REPLY_HEADER_SIZE) {
-    throw new ProtocolError("short guest reply");
-  }
-  const dv = view(body);
-  const ret = dv.getBigInt64(0, true); // signed
-  const errno = dv.getUint32(8, true);
-  // bytes 12..16 reserved
-  return { ret, errno, rest: body.subarray(REPLY_HEADER_SIZE) };
-}
-
-function decodeSyscall(
-  body: Uint8Array,
-  outSpecs: { capacity: number; retSized: boolean }[],
-): SyscallResult {
-  const { ret, errno, rest } = readReplyHeader(body);
-  if (ret === -1n) {
-    if (rest.byteLength !== 0) {
-      throw new ProtocolError("error reply carried a body");
-    }
-    return { ret, errno, out: [] };
-  }
-  const out: Uint8Array[] = [];
-  let offset = 0;
-  for (const spec of outSpecs) {
-    const length = spec.retSized ? Math.min(spec.capacity, Number(ret)) : spec.capacity;
-    if (offset + length > rest.byteLength) {
-      throw new ProtocolError("truncated out-blob in reply");
-    }
-    out.push(rest.subarray(offset, offset + length));
-    offset += length;
-  }
-  if (offset !== rest.byteLength) {
-    throw new ProtocolError("trailing bytes in reply");
-  }
-  return { ret, errno, out };
-}
-
-function decodeSpawn(body: Uint8Array): {
-  ret: bigint;
-  errno: number;
-  pid: number;
-  stdin: number;
-  stdout: number;
-  stderr: number;
-} {
-  const { ret, errno, rest } = readReplyHeader(body);
-  if (ret === -1n) {
-    if (rest.byteLength !== 0) {
-      throw new ProtocolError("error reply carried a body");
-    }
-    return { ret, errno, pid: 0, stdin: -1, stdout: -1, stderr: -1 };
-  }
-  if (rest.byteLength !== SPAWN_REPLY_BODY_SIZE) {
-    throw new ProtocolError("invalid spawn reply body");
-  }
-  const dv = view(rest);
-  return {
-    ret,
-    errno,
-    pid: dv.getUint32(0, true),
-    stdin: dv.getUint32(4, true),
-    stdout: dv.getUint32(8, true),
-    stderr: dv.getUint32(12, true),
-  };
-}
-
-function decodeReap(body: Uint8Array): {
-  ret: bigint;
-  errno: number;
-  status: number;
-} {
-  const { ret, errno, rest } = readReplyHeader(body);
-  if (ret === -1n) {
-    if (rest.byteLength !== 0) {
-      throw new ProtocolError("error reply carried a body");
-    }
-    return { ret, errno, status: 0 };
-  }
-  if (rest.byteLength !== REAP_REPLY_BODY_SIZE) {
-    throw new ProtocolError("invalid reap reply body");
-  }
-  return { ret, errno, status: view(rest).getUint32(0, true) };
 }

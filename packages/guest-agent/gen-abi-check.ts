@@ -38,12 +38,12 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
-function cString(text: string): string {
+function c_string(text: string): string {
   return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function assert(condition: string, message: string): string {
-  return `_Static_assert(${condition}, ${cString(message)});`;
+  return `_Static_assert(${condition}, ${c_string(message)});`;
 }
 
 async function main() {
@@ -54,7 +54,7 @@ async function main() {
 
   const url = new URL(arg, `file://${Deno.cwd()}/`).href;
   const module = await import(url);
-  const checks = module.abiChecks as AbiChecks | undefined;
+  const checks = module.abi_checks as AbiChecks | undefined;
   if (!checks || !Array.isArray(checks.scalars) || !Array.isArray(checks.includes)) {
     fail(`${arg} does not export a valid \`abiChecks\``);
   }
@@ -113,3 +113,5 @@ async function main() {
 }
 
 await main();
+
+export {}; // to make typescript happy

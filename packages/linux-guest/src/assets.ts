@@ -1,6 +1,6 @@
 export const rootfsSize = Number("@ROOTFS_SIZE@");
 
-async function fetchBytes(path: string) {
+async function fetch_bytes(path: string) {
   const response = await fetch(new URL(path, import.meta.url));
   if (!response.ok) {
     throw new Error(`failed to fetch ${path}: ${response.status}`);
@@ -8,5 +8,5 @@ async function fetchBytes(path: string) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-export const rootfs = fetchBytes("../rootfs.squashfs");
-export const initramfs = fetchBytes("../initramfs.cpio");
+export const rootfs = fetch_bytes("../rootfs.squashfs");
+export const initramfs = fetch_bytes("../initramfs.cpio");

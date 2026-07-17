@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 
-const [modulePath] = Deno.args;
-if (!modulePath || Deno.args.length !== 1) {
+const [module_path] = Deno.args;
+if (!module_path || Deno.args.length !== 1) {
   throw new Error("usage: integration-test.ts <linux-guest-module>");
 }
 
-const { ConsoleDevice, EntropyDevice, SeekMode, SystemError, spawnGuest } = await import(
-  pathToFileURL(modulePath).href
-);
+const {
+  ConsoleDevice,
+  EntropyDevice,
+  SeekMode,
+  SystemError,
+  spawnGuest,
+}: typeof import("./src/index.ts") = await import(pathToFileURL(module_path).href);
 
-function closedInput() {
+function closed_input() {
   return new ReadableStream({
     start(controller) {
       controller.close();
@@ -18,7 +22,7 @@ function closedInput() {
   });
 }
 
-function consoleOutput() {
+function console_output() {
   return new WritableStream<Uint8Array>({
     write(chunk) {
       Deno.stderr.writeSync(chunk);
@@ -42,19 +46,18 @@ async function collect(stream: ReadableStream<Uint8Array>) {
   return result;
 }
 
-const bootConsole = consoleOutput();
+const boot_console = console_output();
 const { machine, fs, exec } = await spawnGuest({
   cpus: 2,
   memoryMib: 192,
-  devices: [new ConsoleDevice(closedInput(), consoleOutput()), new EntropyDevice()],
+  devices: [new ConsoleDevice(closed_input(), console_output()), new EntropyDevice()],
 });
-const bootConsoleDone = machine.bootConsole.pipeTo(bootConsole, { preventClose: true });
+const boot_console_done = machine.bootConsole.pipeTo(boot_console, { preventClose: true });
 
 try {
   await assert.rejects(
     fs.writeTextFile("/immutable.txt", "nope"),
-    (error: unknown) =>
-      error instanceof SystemError && (error as { code?: string }).code === "EROFS",
+    (error) => error instanceof SystemError && error.code === "EROFS",
   );
 
   await fs.mkdir("/workspace/tree/child", { recursive: true });
@@ -80,8 +83,7 @@ try {
   await fs.copyFile("/workspace/tree/hello.txt", "/workspace/tree/copied.txt");
   await assert.rejects(
     fs.copyFile("/workspace/tree/hello.txt", "/workspace/tree/hello.txt"),
-    (error: unknown) =>
-      error instanceof SystemError && (error as { code?: string }).code === "EINVAL",
+    (error) => error instanceof SystemError && error.code === "EINVAL",
   );
   assert.equal(await fs.readTextFile("/workspace/tree/hello.txt"), "hello, guest\n");
   await fs.rename("/workspace/tree/copied.txt", "/workspace/tree/renamed.txt");
@@ -102,11 +104,11 @@ try {
   assert.equal(await file.read(tail), 3);
   assert.equal(new TextDecoder().decode(tail), "def");
   await file.sync();
-  file.close();
+  await file.close();
 
   const appended = await fs.open("/workspace/tree/open.txt", { append: true });
   assert.equal(await appended.write(new TextEncoder().encode("ghi")), 3);
-  appended.close();
+  await appended.close();
   assert.equal(await fs.readTextFile("/workspace/tree/open.txt"), "abcdefghi");
 
   // Open files are plain guest fds (the v1 agent pinned a worker per open
@@ -118,7 +120,7 @@ try {
   try {
     assert.equal((await fs.stat("/workspace/tree/open.txt")).size, 9);
   } finally {
-    for (const retainedFile of retained) retainedFile.close();
+    await Promise.all(retained.map((retainedFile) => retainedFile.close()));
   }
 
   const large = new Uint8Array(256 * 1024);
@@ -143,9 +145,9 @@ try {
   assert.deepEqual(status, { success: true, code: 0, signal: null });
 
   const concurrent = await Promise.all([exec(["cat"]), exec(["cat"])]);
-  const concurrentOutput = concurrent.map((process) => collect(process.stdout));
-  const concurrentError = concurrent.map((process) => collect(process.stderr));
-  const concurrentStatus = concurrent.map((process) => process.status);
+  const concurrent_output = concurrent.map((process) => collect(process.stdout));
+  const concurrent_error = concurrent.map((process) => collect(process.stderr));
+  const concurrent_status = concurrent.map((process) => process.status);
   assert.equal((await fs.stat("/workspace/large.bin")).size, large.byteLength);
   await Promise.all(
     concurrent.map(async (process, index) => {
@@ -156,11 +158,11 @@ try {
   );
   for (let index = 0; index < concurrent.length; index++) {
     assert.deepEqual(
-      await concurrentOutput[index],
+      await concurrent_output[index],
       large.subarray(index * 32 * 1024, (index + 1) * 32 * 1024),
     );
-    assert.equal((await concurrentError[index]).byteLength, 0);
-    assert.deepEqual(await concurrentStatus[index], {
+    assert.equal((await concurrent_error[index]).byteLength, 0);
+    assert.deepEqual(await concurrent_status[index], {
       success: true,
       code: 0,
       signal: null,
@@ -182,13 +184,13 @@ try {
     signal: 11,
   });
 
-  const abortController = new AbortController();
+  const abort_controller = new AbortController();
   const aborted = await exec(["sleep", "30"], {
-    signal: abortController.signal,
+    signal: abort_controller.signal,
   });
-  const abortReason = new Error("cancel process");
-  abortController.abort(abortReason);
-  await assert.rejects(aborted.status, (error: unknown) => error === abortReason);
+  const abort_reason = new Error("cancel process");
+  abort_controller.abort(abort_reason);
+  await assert.rejects(aborted.status, (error) => error === abort_reason);
 
   const orphaned = await exec([
     "sh",
@@ -213,8 +215,7 @@ try {
 
   await assert.rejects(
     fs.readFile("/workspace/missing"),
-    (error: unknown) =>
-      error instanceof SystemError && (error as { code?: string }).code === "ENOENT",
+    (error) => error instanceof SystemError && error.code === "ENOENT",
   );
 
   await fs.remove("/workspace/tree", { recursive: true });
@@ -222,8 +223,8 @@ try {
 } finally {
   machine.close();
   await machine.closed;
-  await bootConsoleDone;
-  const writer = bootConsole.getWriter();
+  await boot_console_done;
+  const writer = boot_console.getWriter();
   await writer.write(new Uint8Array());
   writer.releaseLock();
 }

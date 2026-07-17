@@ -40,7 +40,6 @@ let
       export HOME=$TMPDIR/home DENO_DIR=$TMPDIR/deno
       mkdir -p "$HOME" "$DENO_DIR" node_modules/@tombl/linux
       cp ${../linux-guest/src/abi.ts} abi.ts
-      cp ${../linux-guest/src/errors.ts} errors.ts
       tar -xzf ${linux}/linux.tgz --strip-components=1 \
         -C node_modules/@tombl/linux
       echo '{"dependencies":{"@tombl/linux":"*"}}' > package.json

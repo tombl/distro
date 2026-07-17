@@ -1,3 +1,20 @@
+/* Guest agent (protocol v3): a dumb syscall executor.
+ *
+ * The host opens one connection to the session port plus up to `workers`
+ * lanes on the lane port. A lane carries strictly serial request/reply
+ * exchanges served by a dedicated thread, so there is no request queue, no
+ * reply multiplexing, and no shared write path: message sizes are fully
+ * determined by the request, and the kernel does all the scheduling.
+ *
+ * The session connection carries no requests. Its only job is to be a death
+ * signal that cannot be stuck behind a blocked syscall: when it reaches EOF
+ * the main thread kills every child (which unblocks any lane stuck in a
+ * pipe read), waits for the lanes to drain, reaps, and returns to accept()
+ * so a fresh host can attach during development.
+ *
+ * See packages/guest-agent/protocol.md for the frozen contract.
+ */
+
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -18,24 +35,23 @@
 #include <unistd.h>
 
 enum {
-	agent_port = 1024,
+	session_port = 1024,
+	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
-	protocol_version = 2,
-	max_payload = 128 * 1024,
+	protocol_version = 3,
+	workers = 64,
+	max_blob = 128 * 1024,
+	max_spawn_payload = 4 * 1024 * 1024,
 	max_string = 4096,
 	max_arguments = 256,
 	max_environment = 256,
-	syscall_args = 6,
-	worker_count = 12,
-	ring_capacity = 32,
 	process_capacity = 16,
 };
 
-enum frame_type {
-	frame_syscall = 1,
-	frame_spawn = 2,
-	frame_reply = 3,
-	frame_reap = 4,
+enum request_kind {
+	req_syscall = 1,
+	req_spawn = 2,
+	req_reap = 3,
 };
 
 enum arg_kind {
@@ -45,43 +61,23 @@ enum arg_kind {
 	arg_out_ret = 3,
 };
 
-struct request {
-	uint32_t id;
-	uint16_t type;
-	uint32_t length;
-	uint8_t *payload;
-};
-
-static struct {
-	struct request items[ring_capacity];
-	size_t head;
-	size_t count;
-	size_t outstanding;
-	pthread_mutex_t mutex;
-	pthread_cond_t not_empty;
-	pthread_cond_t not_full;
-	pthread_cond_t drained;
-} ring = {
-	.mutex = PTHREAD_MUTEX_INITIALIZER,
-	.not_empty = PTHREAD_COND_INITIALIZER,
-	.not_full = PTHREAD_COND_INITIALIZER,
-	.drained = PTHREAD_COND_INITIALIZER,
-};
-
-static struct {
-	int fd;
-	volatile sig_atomic_t dead;
-	pthread_mutex_t write_mutex;
-} conn = {
-	.fd = -1,
-	.write_mutex = PTHREAD_MUTEX_INITIALIZER,
-};
-
 static struct {
 	pid_t pid;
 	bool used;
 } children[process_capacity];
 static pthread_mutex_t children_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Lanes of a dying session must drain before a new session's lanes are
+ * served: teardown sweeps the children table and must not race new spawns. */
+static struct {
+	pthread_mutex_t mutex;
+	pthread_cond_t changed;
+	bool dying;
+	int active_lanes;
+} session = {
+	.mutex = PTHREAD_MUTEX_INITIALIZER,
+	.changed = PTHREAD_COND_INITIALIZER,
+};
 
 static uint16_t load_u16(const uint8_t *p)
 {
@@ -97,12 +93,6 @@ static uint32_t load_u32(const uint8_t *p)
 static uint64_t load_u64(const uint8_t *p)
 {
 	return (uint64_t)load_u32(p) | (uint64_t)load_u32(p + 4) << 32;
-}
-
-static void store_u16(uint8_t *p, uint16_t value)
-{
-	p[0] = value;
-	p[1] = value >> 8;
 }
 
 static void store_u32(uint8_t *p, uint32_t value)
@@ -157,29 +147,28 @@ static int write_all(int fd, const void *buffer, size_t length)
 	return 0;
 }
 
+/* { ret i64, errno u32 }: the uniform reply head for all three requests. */
+static int write_reply(int fd, int64_t ret, uint32_t err)
+{
+	uint8_t head[12];
+
+	store_u64(head, (uint64_t)ret);
+	store_u32(head + 8, err);
+	return write_all(fd, head, sizeof(head));
+}
+
 struct cursor {
 	const uint8_t *data;
 	size_t length;
 	size_t offset;
 };
 
-static bool cursor_read(struct cursor *cursor, void *out, size_t length)
-{
-	if (cursor->offset > cursor->length ||
-	    length > cursor->length - cursor->offset)
-		return false;
-	memcpy(out, cursor->data + cursor->offset, length);
-	cursor->offset += length;
-	return true;
-}
-
 static bool cursor_u32(struct cursor *cursor, uint32_t *out)
 {
-	uint8_t bytes[4];
-
-	if (!cursor_read(cursor, bytes, sizeof(bytes)))
+	if (cursor->length - cursor->offset < 4)
 		return false;
-	*out = load_u32(bytes);
+	*out = load_u32(cursor->data + cursor->offset);
+	cursor->offset += 4;
 	return true;
 }
 
@@ -189,7 +178,6 @@ static char *cursor_string(struct cursor *cursor)
 	char *string;
 
 	if (!cursor_u32(cursor, &length) || length > max_string ||
-	    cursor->offset > cursor->length ||
 	    length > cursor->length - cursor->offset)
 		return NULL;
 	if (memchr(cursor->data + cursor->offset, 0, length))
@@ -203,179 +191,84 @@ static char *cursor_string(struct cursor *cursor)
 	return string;
 }
 
-static bool cursor_finished(const struct cursor *cursor)
+/* Syscall request body: { nr u32, arg_kinds u8[6], arg_values u64[6] } then
+ * in-blob bytes in argument order. Returns -1 to end the lane: an in-blob
+ * length beyond the cap means the stream itself cannot be trusted (semantic
+ * problems get errno replies; the host validates nothing). */
+static int serve_syscall(int fd)
 {
-	return cursor->offset == cursor->length;
-}
-
-/* The reader owns accept/read; workers only ever pop and reply. */
-static void ring_push(struct request req)
-{
-	pthread_mutex_lock(&ring.mutex);
-	while (ring.count == ring_capacity)
-		pthread_cond_wait(&ring.not_full, &ring.mutex);
-	ring.items[(ring.head + ring.count) % ring_capacity] = req;
-	ring.count++;
-	ring.outstanding++;
-	pthread_cond_signal(&ring.not_empty);
-	pthread_mutex_unlock(&ring.mutex);
-}
-
-static struct request ring_pop(void)
-{
-	struct request req;
-
-	pthread_mutex_lock(&ring.mutex);
-	while (ring.count == 0)
-		pthread_cond_wait(&ring.not_empty, &ring.mutex);
-	req = ring.items[ring.head];
-	ring.head = (ring.head + 1) % ring_capacity;
-	ring.count--;
-	pthread_cond_signal(&ring.not_full);
-	pthread_mutex_unlock(&ring.mutex);
-	return req;
-}
-
-static void ring_done(void)
-{
-	pthread_mutex_lock(&ring.mutex);
-	if (--ring.outstanding == 0)
-		pthread_cond_signal(&ring.drained);
-	pthread_mutex_unlock(&ring.mutex);
-}
-
-static void ring_drain(void)
-{
-	pthread_mutex_lock(&ring.mutex);
-	while (ring.outstanding)
-		pthread_cond_wait(&ring.drained, &ring.mutex);
-	pthread_mutex_unlock(&ring.mutex);
-}
-
-/* Tear down a connection detected as malformed mid-flight: wake the reader
- * out of its blocking read so it can run disconnect cleanup. */
-static void mark_dead(void)
-{
-	conn.dead = 1;
-	shutdown(conn.fd, SHUT_RDWR);
-}
-
-static void send_reply(uint32_t id, int64_t ret, uint32_t err,
-		       const void *body, uint32_t body_len)
-{
-	uint8_t head[28];
-
-	store_u32(head, 16 + body_len);
-	store_u32(head + 4, id);
-	store_u16(head + 8, frame_reply);
-	store_u16(head + 10, 0);
-	store_u64(head + 12, (uint64_t)ret);
-	store_u32(head + 20, err);
-	store_u32(head + 24, 0);
-	/* Writes on a dead connection fail silently; SIGPIPE is ignored. */
-	pthread_mutex_lock(&conn.write_mutex);
-	if (write_all(conn.fd, head, sizeof(head)) == 0 && body_len)
-		write_all(conn.fd, body, body_len);
-	pthread_mutex_unlock(&conn.write_mutex);
-}
-
-static void handle_syscall(const struct request *req)
-{
-	const uint8_t *p = req->payload;
-	size_t header = 8 + syscall_args * 12;
-	size_t consumed = 0;
-	size_t tail;
-	unsigned long args[syscall_args] = { 0 };
-	uint8_t *blobs[syscall_args] = { 0 };
-	uint8_t *outs[syscall_args] = { 0 };
-	uint32_t out_cap[syscall_args] = { 0 };
-	uint8_t out_mode[syscall_args] = { 0 };
-	uint32_t take[syscall_args] = { 0 };
-	uint32_t body_len = 0;
-	uint8_t *body = NULL;
-	uint64_t out_total = 0;
+	uint8_t hdr[58];
+	unsigned long args[6] = { 0 };
+	uint8_t *blobs[6] = { 0 };
+	uint8_t *outs[6] = { 0 };
+	uint32_t out_cap[6] = { 0 };
+	uint8_t kinds[6];
 	long nr, ret;
-	int err, i;
+	uint32_t err;
+	int i, rc = -1;
 
-	if (req->length < header)
-		goto malformed;
-	tail = req->length - header;
-	nr = (long)load_u32(p);
-	for (i = 0; i < syscall_args; i++) {
-		uint32_t kind = load_u32(p + 8 + i * 12);
-		uint64_t value = load_u64(p + 8 + i * 12 + 4);
+	if (read_all(fd, hdr, sizeof(hdr)))
+		return -1;
+	nr = (long)load_u32(hdr);
+	for (i = 0; i < 6; i++) {
+		uint64_t value = load_u64(hdr + 10 + 8 * i);
 
-		switch (kind) {
+		kinds[i] = hdr[4 + i];
+		switch (kinds[i]) {
 		case arg_scalar:
 			args[i] = (unsigned long)value;
 			break;
 		case arg_in_blob:
-			if (value > (uint64_t)(tail - consumed))
-				goto malformed;
+			if (value > max_blob)
+				goto out;
 			blobs[i] = malloc(value ? value : 1);
 			if (!blobs[i])
-				goto malformed;
-			memcpy(blobs[i], p + header + consumed, value);
-			consumed += value;
+				goto out;
+			if (read_all(fd, blobs[i], value))
+				goto out;
 			args[i] = (unsigned long)(uintptr_t)blobs[i];
 			break;
 		case arg_out_full:
 		case arg_out_ret:
-			/* The reply must also fit max_payload: 16-byte reply
-			 * preamble plus every out-blob at full capacity. */
-			out_total += value;
-			if (out_total > max_payload - 16)
-				goto malformed;
+			if (value > max_blob)
+				goto out;
 			outs[i] = calloc(value ? value : 1, 1);
 			if (!outs[i])
-				goto malformed;
+				goto out;
 			out_cap[i] = (uint32_t)value;
-			out_mode[i] = kind;
 			args[i] = (unsigned long)(uintptr_t)outs[i];
 			break;
 		default:
-			goto malformed;
+			goto out;
 		}
 	}
-	if (consumed != tail)
-		goto malformed;
 
 	ret = (long)syscall(nr, args[0], args[1], args[2], args[3], args[4],
 			    args[5]);
-	err = ret == -1 ? errno : 0;
+	err = ret == -1 ? (uint32_t)errno : 0;
 
+	if (write_reply(fd, ret, err))
+		goto out;
 	if (ret != -1) {
-		for (i = 0; i < syscall_args; i++) {
-			if (out_mode[i] == arg_out_full)
-				take[i] = out_cap[i];
-			else if (out_mode[i] == arg_out_ret && ret >= 0)
-				take[i] = (uint64_t)ret < out_cap[i] ?
-						  (uint32_t)ret : out_cap[i];
-			body_len += take[i];
-		}
-		if (body_len) {
-			size_t off = 0;
+		for (i = 0; i < 6; i++) {
+			uint32_t take = 0;
 
-			body = malloc(body_len);
-			if (!body)
-				goto malformed;
-			for (i = 0; i < syscall_args; i++)
-				if (take[i]) {
-					memcpy(body + off, outs[i], take[i]);
-					off += take[i];
-				}
+			if (kinds[i] == arg_out_full)
+				take = out_cap[i];
+			else if (kinds[i] == arg_out_ret && ret >= 0)
+				take = (uint64_t)ret < out_cap[i] ?
+					       (uint32_t)ret : out_cap[i];
+			if (take && write_all(fd, outs[i], take))
+				goto out;
 		}
 	}
-	send_reply(req->id, ret, err, body, body_len);
-	goto out;
-malformed:
-	mark_dead();
+	rc = 0;
 out:
-	free(body);
-	for (i = 0; i < syscall_args; i++) {
+	for (i = 0; i < 6; i++) {
 		free(blobs[i]);
 		free(outs[i]);
 	}
+	return rc;
 }
 
 static void close_fd(int *fd)
@@ -386,10 +279,16 @@ static void close_fd(int *fd)
 	}
 }
 
-static void handle_spawn(const struct request *req)
+/* Spawn request body: { len u32 } then { argc u32 } argc x string,
+ * string cwd, { envc u32 } envc x string. The length prefix exists so a
+ * payload that fails to parse is already consumed and can get an EINVAL
+ * reply without desyncing the lane. */
+static int serve_spawn(int fd)
 {
-	struct cursor cur = { req->payload, req->length, 0 };
-	uint32_t argc = 0, envc = 0, i;
+	uint8_t len_bytes[4];
+	uint8_t *payload = NULL;
+	struct cursor cur;
+	uint32_t len, argc = 0, envc = 0, i;
 	char **argv = NULL;
 	char **envp = NULL;
 	char *cwd = NULL;
@@ -399,9 +298,22 @@ static void handle_spawn(const struct request *req)
 	posix_spawn_file_actions_t actions;
 	bool have_actions = false;
 	int slot = -1;
-	int rc = EIO;
+	int spawn_errno;
 	pid_t pid;
 	uint8_t body[16];
+	int rc = -1;
+
+	if (read_all(fd, len_bytes, sizeof(len_bytes)))
+		return -1;
+	len = load_u32(len_bytes);
+	if (len > max_spawn_payload)
+		return -1;
+	payload = malloc(len ? len : 1);
+	if (!payload)
+		return -1;
+	if (read_all(fd, payload, len))
+		goto out;
+	cur = (struct cursor){ payload, len, 0 };
 
 	if (!cursor_u32(&cur, &argc) || argc < 1 || argc > max_arguments)
 		goto invalid;
@@ -424,7 +336,7 @@ static void handle_spawn(const struct request *req)
 		if (!envp[i] || !strchr(envp[i], '='))
 			goto invalid;
 	}
-	if (!cursor_finished(&cur))
+	if (cur.offset != cur.length)
 		goto invalid;
 
 	pthread_mutex_lock(&children_mutex);
@@ -437,29 +349,29 @@ static void handle_spawn(const struct request *req)
 		}
 	pthread_mutex_unlock(&children_mutex);
 	if (slot < 0) {
-		send_reply(req->id, -1, EAGAIN, NULL, 0);
-		goto done;
+		rc = write_reply(fd, -1, EAGAIN);
+		goto out;
 	}
 
 	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
 	    pipe2(err, O_CLOEXEC) == -1) {
-		rc = errno;
+		spawn_errno = errno;
 		goto spawn_failed;
 	}
-	rc = posix_spawn_file_actions_init(&actions);
-	if (rc)
+	spawn_errno = posix_spawn_file_actions_init(&actions);
+	if (spawn_errno)
 		goto spawn_failed;
 	have_actions = true;
-	if ((rc = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
-	    (rc = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
-	    (rc = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
-	    (rc = posix_spawn_file_actions_addclose(&actions, in[1])) ||
-	    (rc = posix_spawn_file_actions_addclose(&actions, out[0])) ||
-	    (rc = posix_spawn_file_actions_addclose(&actions, err[0])) ||
-	    (rc = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
+	if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
+	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
+	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
+	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
+	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
+	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])) ||
+	    (spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
 		goto spawn_failed;
-	rc = posix_spawnp(&pid, argv[0], &actions, NULL, argv, envp);
-	if (rc)
+	spawn_errno = posix_spawnp(&pid, argv[0], &actions, NULL, argv, envp);
+	if (spawn_errno)
 		goto spawn_failed;
 	posix_spawn_file_actions_destroy(&actions);
 	close_fd(&in[0]);
@@ -468,12 +380,14 @@ static void handle_spawn(const struct request *req)
 	pthread_mutex_lock(&children_mutex);
 	children[slot].pid = pid;
 	pthread_mutex_unlock(&children_mutex);
-	store_u32(body, pid);
-	store_u32(body + 4, in[1]);
-	store_u32(body + 8, out[0]);
-	store_u32(body + 12, err[0]);
-	send_reply(req->id, 0, 0, body, sizeof(body));
-	goto done;
+	store_u32(body, (uint32_t)pid);
+	store_u32(body + 4, (uint32_t)in[1]);
+	store_u32(body + 8, (uint32_t)out[0]);
+	store_u32(body + 12, (uint32_t)err[0]);
+	if (write_reply(fd, 0, 0) || write_all(fd, body, sizeof(body)))
+		goto out;
+	rc = 0;
+	goto out;
 
 spawn_failed:
 	if (have_actions)
@@ -487,12 +401,12 @@ spawn_failed:
 	pthread_mutex_lock(&children_mutex);
 	children[slot].used = false;
 	pthread_mutex_unlock(&children_mutex);
-	send_reply(req->id, -1, rc > 0 ? (uint32_t)rc : EIO, NULL, 0);
-	goto done;
+	rc = write_reply(fd, -1, spawn_errno > 0 ? (uint32_t)spawn_errno : EIO);
+	goto out;
 
 invalid:
-	send_reply(req->id, -1, EINVAL, NULL, 0);
-done:
+	rc = write_reply(fd, -1, EINVAL);
+out:
 	if (argv)
 		for (i = 0; i < argc; i++)
 			free(argv[i]);
@@ -502,134 +416,159 @@ done:
 	free(argv);
 	free(envp);
 	free(cwd);
+	free(payload);
+	return rc;
 }
 
-static void handle_reap(const struct request *req)
+/* Reap request body: { pid u32 }. Blocks in waitpid until the child exits;
+ * reply body on success is { status u32 } (raw wait status). */
+static int serve_reap(int fd)
 {
+	uint8_t pid_bytes[4];
+	uint8_t body[4];
 	uint32_t pid;
 	int status = 0;
+	int wait_errno;
 	pid_t r;
-	int err;
 	size_t i;
-	uint8_t body[4];
 
-	if (req->length != 4) {
-		mark_dead();
-		return;
-	}
-	pid = load_u32(req->payload);
+	if (read_all(fd, pid_bytes, sizeof(pid_bytes)))
+		return -1;
+	pid = load_u32(pid_bytes);
 	r = waitpid((pid_t)pid, &status, 0);
-	err = errno;
+	wait_errno = errno;
 	pthread_mutex_lock(&children_mutex);
 	for (i = 0; i < process_capacity; i++)
 		if (children[i].used && children[i].pid == (pid_t)pid)
 			children[i].used = false;
 	pthread_mutex_unlock(&children_mutex);
-	if (r == -1) {
-		send_reply(req->id, -1, err, NULL, 0);
-	} else {
-		store_u32(body, (uint32_t)status);
-		send_reply(req->id, 0, 0, body, sizeof(body));
+	if (r == -1)
+		return write_reply(fd, -1, (uint32_t)wait_errno);
+	if (write_reply(fd, 0, 0))
+		return -1;
+	store_u32(body, (uint32_t)status);
+	return write_all(fd, body, sizeof(body));
+}
+
+/* Handshake: 8 bytes { magic u32, version u16, reserved u16 }, echoed. */
+static int handshake(int fd)
+{
+	uint8_t hs[8];
+
+	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic ||
+	    load_u16(hs + 4) != protocol_version)
+		return -1;
+	return write_all(fd, hs, sizeof(hs));
+}
+
+static void serve_lane(int fd)
+{
+	if (handshake(fd))
+		return;
+	for (;;) {
+		uint8_t kind;
+
+		if (read_all(fd, &kind, 1))
+			return;
+		switch (kind) {
+		case req_syscall:
+			if (serve_syscall(fd))
+				return;
+			break;
+		case req_spawn:
+			if (serve_spawn(fd))
+				return;
+			break;
+		case req_reap:
+			if (serve_reap(fd))
+				return;
+			break;
+		default:
+			return;
+		}
 	}
 }
 
-static void *worker(void *unused)
+static void *worker(void *listener_arg)
 {
-	(void)unused;
-	for (;;) {
-		struct request req = ring_pop();
+	int listener = (int)(intptr_t)listener_arg;
 
-		switch (req.type) {
-		case frame_syscall:
-			handle_syscall(&req);
-			break;
-		case frame_spawn:
-			handle_spawn(&req);
-			break;
-		case frame_reap:
-			handle_reap(&req);
-			break;
+	for (;;) {
+		int fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+
+		if (fd == -1) {
+			if (errno != EINTR)
+				perror("accept lane");
+			continue;
 		}
-		free(req.payload);
-		ring_done();
+		pthread_mutex_lock(&session.mutex);
+		while (session.dying)
+			pthread_cond_wait(&session.changed, &session.mutex);
+		session.active_lanes++;
+		pthread_mutex_unlock(&session.mutex);
+		serve_lane(fd);
+		close(fd);
+		pthread_mutex_lock(&session.mutex);
+		session.active_lanes--;
+		pthread_cond_broadcast(&session.changed);
+		pthread_mutex_unlock(&session.mutex);
 	}
 	return NULL;
 }
 
-static void serve(int fd)
+static void teardown(void)
 {
-	uint8_t hs[8];
 	size_t i;
 
-	conn.fd = fd;
-	conn.dead = 0;
-	if (read_all(fd, hs, sizeof(hs)) == -1 ||
-	    load_u32(hs) != protocol_magic ||
-	    load_u16(hs + 4) != protocol_version) {
-		close(fd);
-		conn.fd = -1;
-		return;
-	}
-	if (write_all(fd, hs, sizeof(hs)) == -1) {
-		close(fd);
-		conn.fd = -1;
-		return;
-	}
-	for (;;) {
-		uint8_t frame[12];
-		struct request req = { 0 };
-		uint16_t flags;
+	pthread_mutex_lock(&session.mutex);
+	session.dying = true;
+	pthread_mutex_unlock(&session.mutex);
 
-		if (read_all(fd, frame, sizeof(frame)) == -1)
-			break;
-		req.length = load_u32(frame);
-		req.id = load_u32(frame + 4);
-		req.type = load_u16(frame + 8);
-		flags = load_u16(frame + 10);
-		if (flags != 0 || req.length > max_payload ||
-		    (req.type != frame_syscall && req.type != frame_spawn &&
-		     req.type != frame_reap))
-			break;
-		if (req.length) {
-			req.payload = malloc(req.length);
-			if (!req.payload)
-				break;
-			if (read_all(fd, req.payload, req.length) == -1) {
-				free(req.payload);
-				break;
-			}
-		}
-		ring_push(req);
-	}
-
-	/* Disconnect cleanup, ordered deliberately. */
-	conn.dead = 1;
-	/* SIGKILL unblocks workers stuck in blocking read()/waitpid() on a
-	 * child's pipes or exit. */
+	/* SIGKILL first: this is what unblocks lanes stuck in a pipe read or
+	 * waitpid, so it must happen before waiting for them. */
 	pthread_mutex_lock(&children_mutex);
 	for (i = 0; i < process_capacity; i++)
 		if (children[i].used && children[i].pid > 0)
 			kill(children[i].pid, SIGKILL);
 	pthread_mutex_unlock(&children_mutex);
-	/* Only close the fd once the ring is drained and every in-flight
-	 * request has completed: a still-running worker could otherwise write
-	 * its reply into a reused fd number. This ordering is load-bearing. */
-	ring_drain();
-	close(fd);
-	conn.fd = -1;
-	pthread_mutex_lock(&children_mutex);
+
+	pthread_mutex_lock(&session.mutex);
+	while (session.active_lanes)
+		pthread_cond_wait(&session.changed, &session.mutex);
+	pthread_mutex_unlock(&session.mutex);
+
+	/* All lanes have drained, so the table is quiescent. A spawn that was
+	 * still in flight during the kill pass completed after it; kill again
+	 * (idempotent) or the waitpid below blocks forever. */
 	for (i = 0; i < process_capacity; i++)
 		if (children[i].used) {
 			int status;
 
-			/* A spawn that was still in flight during the
-			 * pre-drain kill pass completed after it; kill again
-			 * (idempotent) or the waitpid below blocks forever. */
 			kill(children[i].pid, SIGKILL);
 			waitpid(children[i].pid, &status, 0);
 			children[i].used = false;
 		}
-	pthread_mutex_unlock(&children_mutex);
+
+	pthread_mutex_lock(&session.mutex);
+	session.dying = false;
+	pthread_cond_broadcast(&session.changed);
+	pthread_mutex_unlock(&session.mutex);
+}
+
+static int listener(unsigned port, int backlog)
+{
+	struct sockaddr_vm address = {
+		.svm_family = AF_VSOCK,
+		.svm_cid = VMADDR_CID_ANY,
+		.svm_port = port,
+	};
+	int fd = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
+
+	if (fd == -1 ||
+	    bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1 ||
+	    listen(fd, backlog) == -1)
+		return -1;
+	return fd;
 }
 
 static int mount_if_needed(const char *source, const char *target,
@@ -642,24 +581,28 @@ static int mount_if_needed(const char *source, const char *target,
 
 int main(void)
 {
-	struct sockaddr_vm address = {
-		.svm_family = AF_VSOCK,
-		.svm_cid = VMADDR_CID_ANY,
-		.svm_port = agent_port,
-	};
-	int server, rc;
+	int session_listener, lane_listener, rc;
 	size_t i;
 
 	signal(SIGPIPE, SIG_IGN);
+	/* /proc is load-bearing: the host's realPath and FsFile.stat go
+	 * through /proc/self/fd/N. */
 	if (mount_if_needed("proc", "/proc", "proc") == -1 ||
 	    mount_if_needed("sysfs", "/sys", "sysfs") == -1) {
 		perror("mount");
 		return 1;
 	}
-	for (i = 0; i < worker_count; i++) {
+	session_listener = listener(session_port, 1);
+	lane_listener = listener(lane_port, workers);
+	if (session_listener == -1 || lane_listener == -1) {
+		perror("vsock listener");
+		return 1;
+	}
+	for (i = 0; i < workers; i++) {
 		pthread_t thread;
 
-		rc = pthread_create(&thread, NULL, worker, NULL);
+		rc = pthread_create(&thread, NULL, worker,
+				    (void *)(intptr_t)lane_listener);
 		if (rc) {
 			errno = rc;
 			perror("pthread_create");
@@ -672,22 +615,23 @@ int main(void)
 			return 1;
 		}
 	}
-	server = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (server == -1 ||
-	    bind(server, (struct sockaddr *)&address, sizeof(address)) == -1 ||
-	    listen(server, ring_capacity) == -1) {
-		perror("vsock listener");
-		return 1;
-	}
-	printf("linux-guest-agent: ready on vsock port %d\n", agent_port);
+	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
 	for (;;) {
-		int fd = accept4(server, NULL, NULL, SOCK_CLOEXEC);
+		uint8_t byte;
+		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
 
 		if (fd == -1) {
 			if (errno != EINTR)
-				perror("accept");
+				perror("accept session");
 			continue;
 		}
-		serve(fd);
+		if (handshake(fd) == 0) {
+			/* The session connection is silent after its
+			 * handshake; EOF (or any byte, which means the two
+			 * sides disagree) ends the session. */
+			read_all(fd, &byte, 1);
+			teardown();
+		}
+		close(fd);
 	}
 }

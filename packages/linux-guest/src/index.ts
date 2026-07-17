@@ -8,8 +8,8 @@ export {
   type VsockConnection,
   VsockDevice,
 } from "@tombl/linux";
+export { ProtocolError, SystemError } from "./abi.ts";
 export { type Exec, type ExecOptions, type FileData, type FileSystem } from "./client.ts";
-export { ProtocolError, SystemError } from "./errors.ts";
 export {
   type DirEntry,
   type FileInfo,

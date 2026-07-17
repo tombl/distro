@@ -1,4 +1,4 @@
-// Guest ABI schema (protocol v2).
+// Guest ABI schema (protocol v3).
 //
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
@@ -8,21 +8,11 @@
 // expression it mirrors so `packages/guest-agent/gen-abi-check.ts` can emit
 // one `_Static_assert` per fact and the guest toolchain verifies the schema
 // at build time. There is exactly one copy of every number: the ergonomic
-// exports (`NR`, `O`, `AT`, ...) are derived from the same check tables.
+// exports (`NR`, `O`, `AT`, `E`, `SIG`, ...) are derived from the same
+// check tables, and the error types that carry errnos to consumers live
+// here so their name table cannot drift from the checked numbers.
 
-import { Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@tombl/linux/bytes";
-import { ProtocolError } from "./errors.ts";
-
-// A signed 32-bit little-endian scalar (kernel `int`); bytes.ts lacks one.
-const I32LE: Type<number> = {
-  get(dv, offset) {
-    return dv.getInt32(offset, true);
-  },
-  set(dv, offset, value) {
-    dv.setInt32(offset, value, true);
-  },
-  size: 4,
-};
+import { I32LE, Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@tombl/linux/bytes";
 
 // ---------------------------------------------------------------------------
 // Check tables. gen-abi-check.ts walks these.
@@ -57,7 +47,7 @@ export interface ExprCheck {
   expr: string;
 }
 
-function scalarGroup<T extends Record<string, number>>(prefix: string, entries: T) {
+function scalar_group<T extends Record<string, number>>(prefix: string, entries: T) {
   const checks: ScalarCheck[] = Object.entries(entries).map(([key, value]) => ({
     c: prefix + key,
     value,
@@ -65,10 +55,10 @@ function scalarGroup<T extends Record<string, number>>(prefix: string, entries: 
   return { values: entries, checks };
 }
 
-function defineStruct<T extends object>(
-  cType: string,
+function define_struct<T extends object>(
+  c_type: string,
   layout: { [K in keyof T]: Type<T[K]> },
-  options: { assertSizeof?: boolean } = {},
+  options: { assert_sizeof?: boolean } = {},
 ) {
   const fields: FieldCheck[] = [];
   let offset = 0;
@@ -79,8 +69,8 @@ function defineStruct<T extends object>(
   }
   const Schema = Struct(layout);
   const check: StructCheck = {
-    c: cType,
-    sizeof: options.assertSizeof ? offset : null,
+    c: c_type,
+    sizeof: options.assert_sizeof ? offset : null,
     fields,
   };
   return { Schema, check, size: offset };
@@ -95,7 +85,7 @@ function defineStruct<T extends object>(
 // present because arch/wasm defines __ARCH_WANT_RENAMEAT.
 // ---------------------------------------------------------------------------
 
-const nr = scalarGroup("__NR_", {
+const nr = scalar_group("__NR_", {
   openat: 56,
   close: 57,
   read: 63,
@@ -125,7 +115,7 @@ export const NR = nr.values;
 // AT_*: checkouts/linux/include/uapi/linux/fcntl.h.
 // ---------------------------------------------------------------------------
 
-const o = scalarGroup("O_", {
+const o = scalar_group("O_", {
   RDONLY: 0o0, // 0
   WRONLY: 0o1, // 1
   RDWR: 0o2, // 2
@@ -142,7 +132,7 @@ const o = scalarGroup("O_", {
 /** Open flags, e.g. `O.CLOEXEC`. */
 export const O = o.values;
 
-const at = scalarGroup("AT_", {
+const at = scalar_group("AT_", {
   FDCWD: -100,
   SYMLINK_NOFOLLOW: 0x100, // 256
   REMOVEDIR: 0x200, // 512
@@ -156,7 +146,7 @@ export const AT = at.values;
 // checkouts/linux/include/uapi/linux/stat.h (octal literals).
 // ---------------------------------------------------------------------------
 
-const sIf = scalarGroup("S_IF", {
+const s_if = scalar_group("S_IF", {
   MT: 0o170000, // 61440 mask
   REG: 0o100000, // 32768
   DIR: 0o040000, // 16384
@@ -164,14 +154,14 @@ const sIf = scalarGroup("S_IF", {
 });
 
 /** File-type bits: `(mode & S_IF.MT) === S_IF.DIR`, etc. */
-export const S_IF = sIf.values;
+export const S_IF = s_if.values;
 
 // ---------------------------------------------------------------------------
 // Directory-entry type bytes (linux_dirent64.d_type / struct dirent.d_type).
 // checkouts/musl/include/dirent.h (matches kernel DT_* in linux/fs.h).
 // ---------------------------------------------------------------------------
 
-const dt = scalarGroup("DT_", {
+const dt = scalar_group("DT_", {
   REG: 8,
   DIR: 4,
   LNK: 10,
@@ -179,6 +169,97 @@ const dt = scalarGroup("DT_", {
 
 /** Directory-entry type bytes, e.g. `DT.DIR === 4`. */
 export const DT = dt.values;
+
+// ---------------------------------------------------------------------------
+// Errno numbers.
+// checkouts/linux/include/uapi/asm-generic/errno-base.h and errno.h (the
+// guest musl <errno.h> forwards to them). Consumers branch on `E.*` for
+// control flow; SystemError below derives its human-readable code from this
+// same table, so the names can never drift from the checked numbers.
+// ---------------------------------------------------------------------------
+
+const e = scalar_group("E", {
+  PERM: 1,
+  NOENT: 2,
+  SRCH: 3,
+  INTR: 4,
+  IO: 5,
+  "2BIG": 7,
+  BADF: 9,
+  AGAIN: 11,
+  NOMEM: 12,
+  ACCES: 13,
+  BUSY: 16,
+  EXIST: 17,
+  XDEV: 18,
+  NOTDIR: 20,
+  ISDIR: 21,
+  INVAL: 22,
+  NOSPC: 28,
+  ROFS: 30,
+  PIPE: 32,
+  NAMETOOLONG: 36,
+  NOSYS: 38,
+  NOTEMPTY: 39,
+  LOOP: 40,
+  PROTO: 71,
+  OVERFLOW: 75,
+  CONNRESET: 104,
+  ALREADY: 114,
+});
+
+/** Errno numbers, e.g. `E.NOENT === 2` (E2BIG is `E["2BIG"]`). */
+export const E = e.values;
+
+const errno_names = new Map<number, `E${keyof typeof E}`>(
+  Object.entries(E).map(([name, value]) => [value, `E${name as keyof typeof E}`]),
+);
+
+// ---------------------------------------------------------------------------
+// Signal numbers.
+// checkouts/linux/include/uapi/asm-generic/signal.h (guest musl <signal.h>
+// forwards to them). Only the signals the public `Signal` type names.
+// ---------------------------------------------------------------------------
+
+const sig = scalar_group("SIG", {
+  HUP: 1,
+  INT: 2,
+  QUIT: 3,
+  KILL: 9,
+  USR1: 10,
+  USR2: 12,
+  TERM: 15,
+});
+
+/** Signal numbers, e.g. `SIG.TERM === 15`. */
+export const SIG = sig.values;
+
+// ---------------------------------------------------------------------------
+// Errors. These live beside the errno table so the code shown to humans is
+// derived from the same checked numbers the control flow uses.
+// ---------------------------------------------------------------------------
+
+/** A guest syscall failed. Carries the errno code. */
+export class SystemError extends Error {
+  readonly code?: `E${keyof typeof E}`;
+
+  constructor(errno: number) {
+    const code = errno_names.get(errno);
+    super(code ?? `E${errno}`);
+    this.name = "SystemError";
+    this.code = code;
+  }
+}
+
+/** The wire contract was violated (truncated reply, bad handshake echo, a
+ *  malformed kernel structure). Always poisons the session: both endpoints
+ *  ship together, so a violation means corruption, not incompatibility. */
+export class ProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProtocolError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // struct stat64 — the layout fstatat64 (__NR_fstatat64 = 79) fills on this
@@ -190,7 +271,7 @@ export const DT = dt.values;
 // total sizeof is 104. Field order is authoritative for offsets.
 // ---------------------------------------------------------------------------
 
-const stat = defineStruct<{
+const stat = define_struct<{
   st_dev: bigint;
   st_ino: bigint;
   st_mode: number;
@@ -235,13 +316,13 @@ const stat = defineStruct<{
     __unused4: U32LE, // unsigned int
     __unused5: U32LE, // unsigned int
   },
-  { assertSizeof: true },
+  { assert_sizeof: true },
 );
 
 /** Byte layout of `struct stat64` as written by fstatat64. */
 export const Stat = stat.Schema;
 /** `sizeof(struct stat64)` on wasm32. */
-export const statSize = stat.size;
+export const stat_size = stat.size;
 
 // ---------------------------------------------------------------------------
 // struct linux_dirent64 — the record getdents64 (__NR_getdents64 = 61) writes.
@@ -255,7 +336,7 @@ export const statSize = stat.size;
 // skipped because musl fixes d_name[256] while the kernel record is flexible.
 // ---------------------------------------------------------------------------
 
-const dirent = defineStruct<{
+const dirent = define_struct<{
   d_ino: bigint;
   d_off: bigint;
   d_reclen: number;
@@ -270,9 +351,9 @@ const dirent = defineStruct<{
 /** Header of a `linux_dirent64` record (fields before the flexible d_name). */
 export const Dirent = dirent.Schema;
 /** Byte offset of `d_name` within a `linux_dirent64` record (19). */
-export const direntNameOffset = dirent.size;
+const dirent_name_offset = dirent.size;
 // d_name follows the fixed header; assert its offset in C too (offset-only).
-dirent.check.fields.push({ c: "d_name", offset: direntNameOffset, size: null });
+dirent.check.fields.push({ c: "d_name", offset: dirent_name_offset, size: null });
 
 // ---------------------------------------------------------------------------
 // Wait-status bit math.
@@ -298,7 +379,7 @@ export function WTERMSIG(status: number): number {
 
 // Sample-value checks: 0x2a00 = exited with code 42; 0x09 = killed by signal 9.
 // gen-abi-check.ts asserts each expression is true at compile time.
-const waitChecks: ExprCheck[] = [
+const wait_checks: ExprCheck[] = [
   { name: "WIFEXITED(exited)", expr: "WIFEXITED(0x2a00)" },
   { name: "WEXITSTATUS(exited)", expr: "WEXITSTATUS(0x2a00) == 0x2a" },
   { name: "!WIFSIGNALED(exited)", expr: "!WIFSIGNALED(0x2a00)" },
@@ -313,22 +394,22 @@ const waitChecks: ExprCheck[] = [
 
 /** Walk a getdents64 buffer, yielding each entry's name and d_type, skipping
  *  "." and "..". Throws {@link ProtocolError} on a malformed record. */
-export function parseDirents(buf: Uint8Array): { name: string; dtype: number }[] {
+export function parse_dirents(buf: Uint8Array): { name: string; dtype: number }[] {
   const entries: { name: string; dtype: number }[] = [];
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let offset = 0;
-  while (offset + direntNameOffset <= buf.byteLength) {
+  while (offset + dirent_name_offset <= buf.byteLength) {
     const header = new Dirent(buf.subarray(offset));
     const reclen = header.d_reclen;
-    if (reclen < direntNameOffset || offset + reclen > buf.byteLength) {
+    if (reclen < dirent_name_offset || offset + reclen > buf.byteLength) {
       throw new ProtocolError("malformed getdents64 record");
     }
     const dtype = header.d_type;
-    const nameStart = offset + direntNameOffset;
+    const name_start = offset + dirent_name_offset;
     const limit = offset + reclen;
-    let nameEnd = nameStart;
-    while (nameEnd < limit && buf[nameEnd] !== 0) nameEnd++;
-    const name = decoder.decode(buf.subarray(nameStart, nameEnd));
+    let name_end = name_start;
+    while (name_end < limit && buf[name_end] !== 0) name_end++;
+    const name = decoder.decode(buf.subarray(name_start, name_end));
     if (name !== "." && name !== "..") entries.push({ name, dtype });
     offset += reclen;
   }
@@ -342,7 +423,7 @@ export function parseDirents(buf: Uint8Array): { name: string; dtype: number }[]
 /** The complete build-time check schema. gen-abi-check.ts emits one
  *  `_Static_assert` per scalar, per struct field, per struct sizeof, and per
  *  wait expression. */
-export const abiChecks: {
+export const abi_checks: {
   includes: string[];
   scalars: ScalarCheck[];
   structs: StructCheck[];
@@ -355,9 +436,19 @@ export const abiChecks: {
     "#include <asm/stat.h>", // struct stat64
     "#include <linux/stat.h>", // S_IF*
     "#include <dirent.h>", // struct dirent (== linux_dirent64 header), DT_*
+    "#include <errno.h>", // E*
+    "#include <signal.h>", // SIG*
     "#include <sys/wait.h>", // WIF*/W* macros
   ],
-  scalars: [...nr.checks, ...o.checks, ...at.checks, ...sIf.checks, ...dt.checks],
+  scalars: [
+    ...nr.checks,
+    ...o.checks,
+    ...at.checks,
+    ...s_if.checks,
+    ...dt.checks,
+    ...e.checks,
+    ...sig.checks,
+  ],
   structs: [stat.check, dirent.check],
-  exprs: waitChecks,
+  exprs: wait_checks,
 };
