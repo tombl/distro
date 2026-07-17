@@ -8,10 +8,9 @@ if (!linuxPath || !initramfsPath || Deno.args.length > 3) {
   throw new Error("usage: run-test.js <linux-module> <initramfs> [disk]");
 }
 
-const { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } =
-  await import(
-    pathToFileURL(linuxPath).href
-  );
+const { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } = await import(
+  pathToFileURL(linuxPath).href
+);
 
 let resolveResult;
 const result = new Promise((resolve) => {
@@ -102,12 +101,14 @@ const machine = await spawnMachine({
   cpus: 1,
   devices,
   initcpio: await Deno.readFile(initramfsPath),
-  bootConsole: consoleOutput({ failWhenClosed: false }),
 }).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
   return null;
 });
 
+void machine?.bootConsole
+  .pipeTo(consoleOutput({ failWhenClosed: false }), { preventClose: true })
+  .catch((error) => finish({ passed: false, reason: `boot console failed: ${error}` }));
 void machine?.closed.catch((error) => {
   finish({ passed: false, reason: `machine failed: ${error}` });
 });

@@ -1,12 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
-import {
-  BlockDevice,
-  ConsoleDevice,
-  EntropyDevice,
-  spawnMachine,
-} from "@tombl/linux";
+import { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } from "@tombl/linux";
 import "./style.css";
 
 if (import.meta.env.PROD) {
@@ -55,18 +50,10 @@ const {
   rootfs: rootfsPath = "rootfs.ext4.gz",
 } = Object.fromEntries(new URLSearchParams(location.search));
 
-const cmdlineInput = document.querySelector<HTMLInputElement>(
-  "input[name=cmdline]",
-);
-const memoryInput = document.querySelector<HTMLInputElement>(
-  "input[name=memory]",
-);
-const initcpioInput = document.querySelector<HTMLInputElement>(
-  "input[name=initcpio]",
-);
-const rootfsInput = document.querySelector<HTMLInputElement>(
-  "input[name=rootfs]",
-);
+const cmdlineInput = document.querySelector<HTMLInputElement>("input[name=cmdline]");
+const memoryInput = document.querySelector<HTMLInputElement>("input[name=memory]");
+const initcpioInput = document.querySelector<HTMLInputElement>("input[name=initcpio]");
+const rootfsInput = document.querySelector<HTMLInputElement>("input[name=rootfs]");
 
 if (!cmdlineInput || !memoryInput || !initcpioInput || !rootfsInput) {
   throw new Error("form inputs not found");
@@ -101,13 +88,9 @@ async function fetchBytes(path: string): Promise<Uint8Array | null> {
   if (!response.ok) {
     return null;
   }
-  if (
-    path.endsWith(".gz") && response.headers.get("Content-Encoding") !== "gzip"
-  ) {
+  if (path.endsWith(".gz") && response.headers.get("Content-Encoding") !== "gzip") {
     if (!response.body) return null;
-    response = new Response(
-      response.body.pipeThrough(new DecompressionStream("gzip")),
-    );
+    response = new Response(response.body.pipeThrough(new DecompressionStream("gzip")));
   }
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -146,7 +129,7 @@ const machine = await spawnMachine({
     }),
   ],
   initcpio: new Uint8Array(initcpio),
-  bootConsole: stdout2,
 });
 
+void machine.bootConsole.pipeTo(stdout2, { preventClose: true }).catch(() => {});
 void machine.closed.catch((error) => term.write(`Machine failed: ${error}\n`));

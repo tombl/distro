@@ -14,8 +14,7 @@ import {
   type GuestClientCapabilities,
 } from "./client.ts";
 
-export interface SpawnGuestOptions
-  extends Omit<SpawnMachineOptions, "devices" | "initcpio"> {
+export interface SpawnGuestOptions extends Omit<SpawnMachineOptions, "devices" | "initcpio"> {
   devices?: readonly VirtioDevice[];
 }
 
@@ -25,17 +24,12 @@ export interface Guest {
   readonly exec: Exec;
 }
 
-async function waitForGuest(
-  client: GuestClientCapabilities,
-  machine: Machine,
-  signal?: AbortSignal,
-) {
+async function waitForGuest(client: GuestClientCapabilities, machine: Machine) {
   let machine_ended = false;
   const ended = machine.closed.then(
     () => {
       machine_ended = true;
-      throw signal?.reason ??
-        new Error("machine closed before guest became ready");
+      throw new Error("machine closed before guest became ready");
     },
     (error) => {
       machine_ended = true;
@@ -50,21 +44,15 @@ async function waitForGuest(
       await Promise.race([client.ping(1000), ended]);
       return;
     } catch (error) {
-      signal?.throwIfAborted();
       if (machine_ended) throw error;
       failure = error;
     }
-    await Promise.race([
-      new Promise((resolve) => setTimeout(resolve, 25)),
-      ended,
-    ]);
+    await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
   } while (performance.now() < deadline);
   throw new Error("guest agent did not become ready", { cause: failure });
 }
 
-export async function spawnGuest(
-  options: SpawnGuestOptions = {},
-): Promise<Guest> {
+export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest> {
   if (!Number.isSafeInteger(rootfsSize) || rootfsSize <= 0) {
     throw new Error("invalid packaged guest rootfs size");
   }
@@ -85,7 +73,7 @@ export async function spawnGuest(
   });
 
   try {
-    await waitForGuest(client, machine, options.signal);
+    await waitForGuest(client, machine);
     return { machine, fs: client.fs, exec: client.exec };
   } catch (error) {
     machine.close();

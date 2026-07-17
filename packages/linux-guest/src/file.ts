@@ -1,20 +1,9 @@
-import type { VsockConnection } from "@tombl/linux";
-import { Struct, U32LE, U64LE } from "@tombl/linux/bytes";
-import {
-  concat,
-  expectEnd,
-  i64,
-  maxFramePayload,
-  MessageType,
-  readFrame,
-  readU32,
-  readU64,
-  throwIfError,
-  u32,
-  u64,
-  writeFrame,
-} from "./protocol.ts";
-import { ProtocolError } from "./errors.ts";
+import { AT, NR, O, S_IF, Stat, statSize } from "./abi.ts";
+import type { GuestConn, SyscallArg, SyscallResult } from "./conn.ts";
+import { SystemError } from "./errors.ts";
+
+// Host convention for bulk I/O: 32 KiB chunks (protocol.md, "Concurrency").
+export const CHUNK = 32 * 1024;
 
 export interface FileInfo {
   readonly isFile: boolean;
@@ -71,72 +60,96 @@ export const SeekMode = {
 
 export type SeekMode = (typeof SeekMode)[keyof typeof SeekMode];
 
-function date(seconds: bigint, nanoseconds: number) {
-  return new Date(Number(seconds) * 1000 + nanoseconds / 1_000_000);
+// --- low-level syscall helpers (shared by the veneer) ----------------------
+
+/** A path argument as a C string: UTF-8 bytes plus a trailing NUL, passed to
+ *  the guest as an in-blob. Rejects embedded NUL like the v1 protocol did. */
+export function cString(value: string): { in: Uint8Array } {
+  const utf8 = new TextEncoder().encode(value);
+  if (utf8.includes(0)) {
+    throw new TypeError("guest strings cannot contain NUL");
+  }
+  const bytes = new Uint8Array(utf8.byteLength + 1);
+  bytes.set(utf8);
+  return { in: bytes };
 }
 
-class StatPayload extends Struct({
-  size: U64LE,
-  atimeSeconds: U64LE,
-  atimeNanoseconds: U32LE,
-  mtimeSeconds: U64LE,
-  mtimeNanoseconds: U32LE,
-  ctimeSeconds: U64LE,
-  ctimeNanoseconds: U32LE,
-  ino: U64LE,
-  dev: U64LE,
-  blocks: U64LE,
-  mode: U32LE,
-  nlink: U32LE,
-  uid: U32LE,
-  gid: U32LE,
-  kind: U32LE,
-}) {}
+/** Split a 64-bit value into [low, high] 32-bit words for the ILP32 ABI. */
+export function loHi(value: bigint): [number, number] {
+  const u = BigInt.asUintN(64, value);
+  return [Number(u & 0xffffffffn), Number(u >> 32n)];
+}
 
-export function decodeFileInfo(payload: Uint8Array): FileInfo {
-  if (payload.byteLength !== StatPayload.size) {
-    throw new ProtocolError("invalid stat payload");
+/** Run an injected syscall and convert a -1 return into a {@link SystemError}
+ *  with the given name/paths, exactly as the v1 protocol surfaced errors. */
+export async function sys(
+  conn: GuestConn,
+  nr: number,
+  name: string,
+  args: SyscallArg[],
+  path?: string,
+  dest?: string,
+): Promise<SyscallResult> {
+  const result = await conn.syscall(nr, ...args);
+  if (result.ret === -1n) {
+    throw new SystemError(result.errno, name, path, dest);
   }
-  const stat = new StatPayload(payload);
+  return result;
+}
+
+/** openat(AT_FDCWD, path, flags, mode), returning the fd. */
+export async function openFd(
+  conn: GuestConn,
+  path: string,
+  flags: number,
+  mode: number,
+  dest?: string,
+): Promise<number> {
+  const result = await sys(
+    conn,
+    NR.openat,
+    "open",
+    [AT.FDCWD, cString(path), flags, mode],
+    path,
+    dest,
+  );
+  return Number(result.ret);
+}
+
+/** Best-effort close; tolerates a dead connection or already-closed fd. */
+export async function closeFd(conn: GuestConn, fd: number): Promise<void> {
+  await conn.syscall(NR.close, fd).catch(() => {});
+}
+
+export function decodeStat(bytes: Uint8Array): FileInfo {
+  const st = new Stat(bytes);
+  const type = st.st_mode & S_IF.MT;
   return {
-    size: Number(stat.size),
-    atime: date(stat.atimeSeconds, stat.atimeNanoseconds),
-    mtime: date(stat.mtimeSeconds, stat.mtimeNanoseconds),
+    isFile: type === S_IF.REG,
+    isDirectory: type === S_IF.DIR,
+    isSymlink: type === S_IF.LNK,
+    size: Number(st.st_size),
+    mtime: new Date(st.st_mtime * 1000 + st.st_mtime_nsec / 1_000_000),
+    atime: new Date(st.st_atime * 1000 + st.st_atime_nsec / 1_000_000),
     birthtime: null,
-    ino: Number(stat.ino),
-    dev: Number(stat.dev),
-    blocks: Number(stat.blocks),
-    mode: stat.mode,
-    nlink: stat.nlink,
-    uid: stat.uid,
-    gid: stat.gid,
-    isFile: stat.kind === 1,
-    isDirectory: stat.kind === 2,
-    isSymlink: stat.kind === 3,
+    dev: Number(st.st_dev),
+    ino: Number(st.st_ino),
+    mode: st.st_mode,
+    nlink: st.st_nlink,
+    uid: st.st_uid,
+    gid: st.st_gid,
+    blocks: Number(st.st_blocks),
   };
 }
 
-export function decodeDirEntry(payload: Uint8Array): DirEntry {
-  if (payload.byteLength < 4) {
-    throw new ProtocolError("invalid directory entry");
-  }
-  const kind = readU32(payload);
-  return {
-    name: new TextDecoder("utf-8", { fatal: true }).decode(payload.subarray(4)),
-    isFile: kind === 1,
-    isDirectory: kind === 2,
-    isSymlink: kind === 3,
-  };
-}
-
-export function openFlags(options: OpenOptions = {}) {
+export function openFlags(options: OpenOptions = {}): number {
   const write = options.write ?? options.append ?? false;
   const read = options.read ?? !write;
-  let flags = read && write ? 2 : write ? 1 : 0;
-  if (options.create) flags |= 64;
-  if (options.createNew) flags |= 64 | 128;
-  if (options.truncate) flags |= 512;
-  if (options.append) flags |= 1024;
+  let flags = read && write ? O.RDWR : write ? O.WRONLY : O.RDONLY;
+  if (options.create) flags |= O.CREAT;
+  if (options.createNew) flags |= O.CREAT | O.EXCL;
+  if (options.truncate) flags |= O.TRUNC;
+  if (options.append) flags |= O.APPEND;
   return flags;
 }
 
@@ -144,17 +157,22 @@ export class FsFile implements AsyncDisposable {
   #tail = Promise.resolve<unknown>(undefined);
   #closed = false;
 
+  readonly #conn: GuestConn;
+  readonly #fd: number;
+  readonly #path: string;
+
   readonly readable: ReadableStream<Uint8Array>;
   readonly writable: WritableStream<Uint8Array>;
 
-  constructor(
-    private readonly connection: VsockConnection,
-    private readonly path: string,
-  ) {
+  constructor(conn: GuestConn, fd: number, path: string) {
+    this.#conn = conn;
+    this.#fd = fd;
+    this.#path = path;
+
     this.readable = new ReadableStream({
       type: "bytes",
       pull: async (controller) => {
-        const buffer = new Uint8Array(maxFramePayload);
+        const buffer = new Uint8Array(CHUNK);
         const length = await this.read(buffer);
         if (length === null) {
           controller.close();
@@ -173,7 +191,7 @@ export class FsFile implements AsyncDisposable {
         while (offset < chunk.byteLength) {
           const written = await this.write(chunk.subarray(offset));
           if (written === 0) {
-            throw new ProtocolError("guest file write made no progress");
+            throw new SystemError(5, "write", this.#path); // EIO
           }
           offset += written;
         }
@@ -197,84 +215,86 @@ export class FsFile implements AsyncDisposable {
   read(buffer: Uint8Array): Promise<number | null> {
     if (buffer.byteLength === 0) return Promise.resolve(0);
     return this.#run(async () => {
-      await writeFrame(
-        this.connection,
-        MessageType.FileRead,
-        u32(Math.min(buffer.byteLength, maxFramePayload)),
+      const capacity = Math.min(buffer.byteLength, CHUNK);
+      const result = await sys(
+        this.#conn,
+        NR.read,
+        "read",
+        [this.#fd, { out: capacity, retSized: true }, capacity],
+        this.#path,
       );
-      const frame = await readFrame(this.connection);
-      throwIfError(frame, "read", this.path);
-      if (frame.type === MessageType.End) return null;
-      if (
-        frame.type !== MessageType.Data ||
-        frame.payload.byteLength > buffer.byteLength
-      ) {
-        throw new ProtocolError("invalid file read response");
-      }
-      buffer.set(frame.payload);
-      return frame.payload.byteLength;
+      if (result.ret === 0n) return null;
+      const data = result.out[0]!;
+      buffer.set(data);
+      return data.byteLength;
     });
   }
 
   write(buffer: Uint8Array): Promise<number> {
     return this.#run(async () => {
-      await writeFrame(
-        this.connection,
-        MessageType.FileWrite,
-        buffer.subarray(0, maxFramePayload),
+      const chunk = buffer.subarray(0, CHUNK);
+      const result = await sys(
+        this.#conn,
+        NR.write,
+        "write",
+        [this.#fd, { in: chunk }, chunk.byteLength],
+        this.#path,
       );
-      const frame = await readFrame(this.connection);
-      throwIfError(frame, "write", this.path);
-      if (frame.type !== MessageType.Data || frame.payload.byteLength !== 4) {
-        throw new ProtocolError("invalid file write response");
-      }
-      return readU32(frame.payload);
+      return Number(result.ret);
     });
   }
 
   seek(offset: number | bigint, whence: SeekMode): Promise<number> {
     return this.#run(async () => {
-      const payload = concat([i64(offset), u32(whence)]);
-      await writeFrame(this.connection, MessageType.FileSeek, payload);
-      const frame = await readFrame(this.connection);
-      throwIfError(frame, "seek", this.path);
-      if (frame.type !== MessageType.Data || frame.payload.byteLength !== 8) {
-        throw new ProtocolError("invalid file seek response");
-      }
-      return Number(readU64(frame.payload));
+      const [lo, hi] = loHi(BigInt(offset));
+      const result = await sys(
+        this.#conn,
+        NR.llseek,
+        "_llseek",
+        [this.#fd, hi, lo, { out: 8 }, whence],
+        this.#path,
+      );
+      const out = result.out[0]!;
+      const position = new DataView(out.buffer, out.byteOffset, out.byteLength).getBigInt64(
+        0,
+        true,
+      );
+      return Number(position);
     });
   }
 
   stat(): Promise<FileInfo> {
     return this.#run(async () => {
-      await writeFrame(this.connection, MessageType.FileStat);
-      const frame = await readFrame(this.connection);
-      throwIfError(frame, "fstat", this.path);
-      if (frame.type !== MessageType.Data) {
-        throw new ProtocolError("invalid file stat response");
-      }
-      return decodeFileInfo(frame.payload);
+      // fstatat64 needs a path; the empty-path / AT_EMPTY_PATH trick is not in
+      // abi.ts, so stat the fd through /proc/self/fd/N, which the agent mounts.
+      const result = await sys(
+        this.#conn,
+        NR.fstatat64,
+        "fstat",
+        [AT.FDCWD, cString(`/proc/self/fd/${this.#fd}`), { out: statSize }, 0],
+        this.#path,
+      );
+      return decodeStat(result.out[0]!);
     });
   }
 
   truncate(length = 0): Promise<void> {
     return this.#run(async () => {
-      await writeFrame(this.connection, MessageType.FileTruncate, u64(length));
-      await expectEnd(this.connection, "ftruncate", this.path);
+      const [lo, hi] = loHi(BigInt(length));
+      await sys(this.#conn, NR.ftruncate64, "ftruncate", [this.#fd, lo, hi], this.#path);
     });
   }
 
   sync(): Promise<void> {
     return this.#run(async () => {
-      await writeFrame(this.connection, MessageType.FileSync);
-      await expectEnd(this.connection, "fsync", this.path);
+      await sys(this.#conn, NR.fsync, "fsync", [this.#fd], this.#path);
     });
   }
 
   close() {
     if (this.#closed) return;
     this.#closed = true;
-    this.connection.close();
+    void this.#conn.syscall(NR.close, this.#fd).catch(() => {});
   }
 
   async [Symbol.asyncDispose]() {
