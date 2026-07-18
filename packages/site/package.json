@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite dev",
+    "build": "astro build",
+    "dev": "astro dev",
     "check": "tsc",
     "setup": "rm -f public/rootfs.ext4.gz public/initramfs.cpio.gz && nix build .#rootfs -o result-rootfs && gzip --best --no-name --stdout result-rootfs > public/rootfs.ext4.gz && nix build .#initramfs -o result-initramfs && gzip --best --no-name --stdout result-initramfs > public/initramfs.cpio.gz"
   },
@@ -20,6 +20,6 @@
     "@deno/doc": "jsr:0.202.0",
     "@types/node": "^26.1.1",
     "astro": "^7.1.1",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }

@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "astro/config";
 
 export default defineConfig({
   server: {
@@ -6,6 +6,13 @@ export default defineConfig({
       "Cross-Origin-Embedder-Policy": "require-corp",
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Resource-Policy": "cross-origin",
+    },
+  },
+  vite: {
+    server: {
+      fs: {
+        allow: ["/home/tom/src/distro"], // TODO: remove
+      },
     },
   },
 });
