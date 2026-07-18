@@ -402,7 +402,7 @@ class GuestClient {
   }
 }
 
-export function createGuestClient(vsock: VsockDevice): GuestClientCapabilities {
+export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities {
   const client = new GuestClient(vsock);
   return {
     ping: client.ping.bind(client),

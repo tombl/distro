@@ -63,10 +63,15 @@ pkgs.stdenvNoCC.mkDerivation {
     config EXT4_FS y
     config FILE_LOCKING y
     config FUTEX y
+    config INET y
+    config IP_PNP y
+    config IPV6 n
     config NET y
+    config NETDEVICES y
     config OVERLAY_FS n
     config SQUASHFS y
     config VIRTIO_BLK y
+    config VIRTIO_NET y
     config VIRTIO_VSOCKETS y
     config VIRTIO_WASM y
     config VSOCKETS y

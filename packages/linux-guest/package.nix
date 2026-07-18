@@ -3,9 +3,24 @@
   guest-initramfs,
   guest-rootfs,
   linux,
+  stdenv,
 }:
 
 let
+  network-test = stdenv.mkDerivation {
+    pname = "linux-guest-network-test";
+    version = "0.0.0";
+    dontUnpack = true;
+    buildPhase = ''
+      $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
+        -Wl,--fatal-warnings -o network-test ${./network-test.c}
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      cp network-test $out/bin/
+    '';
+  };
+
   package = pkgs.buildNpmPackage {
     pname = "linux-guest";
     version = "0.0.0";
@@ -61,9 +76,10 @@ let
           -C "$test_root/node_modules/@tombl/linux"
         cp ${./integration-consumer.json} "$test_root/package.json"
         cp ${./integration-test.ts} "$test_root/integration-test.ts"
+        cp ${network-test}/bin/network-test "$test_root/network-test"
         cd "$test_root"
         timeout 180 deno run --allow-all integration-test.ts \
-          node_modules/@tombl/linux-guest/dist/index.js
+          node_modules/@tombl/linux-guest/dist/index.js network-test
         mkdir $out
       '';
 in

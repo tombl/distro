@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 
-const [module_path] = Deno.args;
-if (!module_path || Deno.args.length !== 1) {
-  throw new Error("usage: integration-test.ts <linux-guest-module>");
+const [module_path, network_test_path] = Deno.args;
+if (!module_path || !network_test_path || Deno.args.length !== 2) {
+  throw new Error("usage: integration-test.ts <linux-guest-module> <network-test>");
 }
 
 const {
   consoleDevice,
+  createNetwork,
   entropyDevice,
   SeekMode,
   SystemError,
@@ -46,15 +47,52 @@ async function collect(stream: ReadableStream<Uint8Array>) {
   return result;
 }
 
+async function connect_with_retry<T>(connect: () => Promise<T>) {
+  let failure: unknown;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      return await connect();
+    } catch (error) {
+      failure = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error("guest listener did not become ready", { cause: failure });
+}
+
 const boot_console = console_output();
-const { machine, fs, exec } = await spawnGuest({
+const network = createNetwork({
+  connectTcp: (options) => Deno.connect({ ...options, transport: "tcp" }),
+  resolveDns: (hostname) => Deno.resolveDns(hostname, "A"),
+});
+const {
+  machine,
+  fs,
+  exec,
+  network: guest_network,
+} = await spawnGuest({
   cpus: 2,
   memoryMib: 192,
+  network,
   devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
 });
 const boot_console_done = machine.bootConsole.pipeTo(boot_console, { preventClose: true });
 
 try {
+  await fs.writeFile("/workspace/network-test", await Deno.readFile(network_test_path));
+  await fs.chmod("/workspace/network-test", 0o755);
+  const network_configuration = await exec(["sh", "-c", "ip address; ip route"]);
+  const [network_configuration_output, network_configuration_error, network_configuration_status] =
+    await Promise.all([
+      collect(network_configuration.stdout),
+      collect(network_configuration.stderr),
+      network_configuration.status,
+    ]);
+  assert.deepEqual(network_configuration_status, { success: true, code: 0, signal: null });
+  assert.equal(network_configuration_error.byteLength, 0);
+  const configured_network = new TextDecoder().decode(network_configuration_output);
+  assert.match(configured_network, /inet 192\.0\.2\.2\/24/);
+  assert.match(configured_network, /default via 192\.0\.2\.1 dev eth0/);
   await assert.rejects(
     fs.writeTextFile("/immutable.txt", "nope"),
     (error) => error instanceof SystemError && error.code === "EROFS",
@@ -120,7 +158,7 @@ try {
   try {
     assert.equal((await fs.stat("/workspace/tree/open.txt")).size, 9);
   } finally {
-    await Promise.all(retained.map((retainedFile) => retainedFile.close()));
+    await Promise.all(retained.map((retained_file) => retained_file.close()));
   }
 
   const large = new Uint8Array(256 * 1024);
@@ -202,12 +240,12 @@ try {
     code: 0,
     signal: null,
   });
-  const zombieCheck = await exec([
+  const zombie_check = await exec([
     "sh",
     "-c",
     'for stat in /proc/[0-9]*/stat; do case "$(cat "$stat")" in *") Z 1 "*) exit 1;; esac; done',
   ]);
-  assert.deepEqual(await zombieCheck.status, {
+  assert.deepEqual(await zombie_check.status, {
     success: true,
     code: 0,
     signal: null,
@@ -218,12 +256,115 @@ try {
     (error) => error instanceof SystemError && error.code === "ENOENT",
   );
 
+  const tcp_server = await exec(["/workspace/network-test", "listen", "tcp", "12001"]);
+  const tcp_server_output = collect(tcp_server.stdout);
+  const tcp_server_error = collect(tcp_server.stderr);
+  const tcp = await connect_with_retry(() => guest_network.connect({ port: 12001 }));
+  const tcp_writer = tcp.writable.getWriter();
+  await tcp_writer.write(new TextEncoder().encode("host to guest"));
+  await tcp_writer.close();
+  assert.equal(new TextDecoder().decode(await collect(tcp.readable)), "host to guest");
+  assert.deepEqual(await tcp_server.status, { success: true, code: 0, signal: null });
+  assert.equal((await tcp_server_output).byteLength, 0);
+  assert.equal((await tcp_server_error).byteLength, 0);
+
+  const udp_server = await exec(["/workspace/network-test", "listen", "udp", "12002"]);
+  const udp_server_output = collect(udp_server.stdout);
+  const udp_server_error = collect(udp_server.stderr);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const udp = await guest_network.connect({ port: 12002, transport: "udp" });
+  const udp_writer = udp.writable.getWriter();
+  await udp_writer.write(new TextEncoder().encode("host datagram"));
+  const udp_reader = udp.readable.getReader();
+  const datagram = await udp_reader.read();
+  assert.equal(datagram.done, false);
+  assert.equal(new TextDecoder().decode(datagram.value), "host datagram");
+  udp.close();
+  assert.deepEqual(await udp_server.status, { success: true, code: 0, signal: null });
+  assert.equal((await udp_server_output).byteLength, 0);
+  assert.equal((await udp_server_error).byteLength, 0);
+
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const host_port = listener.addr.port;
+  const host_echo = (async () => {
+    const connection = await listener.accept();
+    listener.close();
+    const buffer = new Uint8Array(4096);
+    try {
+      for (;;) {
+        const length = await connection.read(buffer);
+        if (length === null) break;
+        await connection.write(buffer.subarray(0, length));
+      }
+    } finally {
+      connection.close();
+    }
+  })();
+  const outbound = await exec([
+    "/workspace/network-test",
+    "connect",
+    network.gateway,
+    String(host_port),
+    "guest to host",
+  ]);
+  const [outbound_output, outbound_error, outbound_status] = await Promise.all([
+    collect(outbound.stdout),
+    collect(outbound.stderr),
+    outbound.status,
+  ]);
+  await host_echo;
+  assert.equal(new TextDecoder().decode(outbound_output), "guest to host");
+  assert.equal(outbound_error.byteLength, 0);
+  assert.deepEqual(outbound_status, { success: true, code: 0, signal: null });
+
+  const second_console = console_output();
+  const second = await spawnGuest({
+    cpus: 2,
+    memoryMib: 192,
+    network,
+    devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
+  });
+  const second_console_done = second.machine.bootConsole.pipeTo(second_console, {
+    preventClose: true,
+  });
+  try {
+    await second.fs.writeFile("/workspace/network-test", await Deno.readFile(network_test_path));
+    await second.fs.chmod("/workspace/network-test", 0o755);
+    const guest_server = await exec(["/workspace/network-test", "listen", "tcp", "12003"]);
+    const guest_server_output = collect(guest_server.stdout);
+    const guest_server_error = collect(guest_server.stderr);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const guest_client = await second.exec([
+      "/workspace/network-test",
+      "connect",
+      guest_network.address,
+      "12003",
+      "guest to guest",
+    ]);
+    const [guest_output, guest_error, guest_status] = await Promise.all([
+      collect(guest_client.stdout),
+      collect(guest_client.stderr),
+      guest_client.status,
+    ]);
+    assert.equal(new TextDecoder().decode(guest_output), "guest to guest");
+    assert.equal(guest_error.byteLength, 0);
+    assert.deepEqual(guest_status, { success: true, code: 0, signal: null });
+    assert.deepEqual(await guest_server.status, { success: true, code: 0, signal: null });
+    assert.equal((await guest_server_output).byteLength, 0);
+    assert.equal((await guest_server_error).byteLength, 0);
+  } finally {
+    second.machine.close();
+    await second.machine.closed;
+    await second_console_done;
+  }
+
   await fs.remove("/workspace/tree", { recursive: true });
   await assert.rejects(fs.stat("/workspace/tree"));
 } finally {
   machine.close();
   await machine.closed;
   await boot_console_done;
+  network.close();
   const writer = boot_console.getWriter();
   await writer.write(new Uint8Array());
   writer.releaseLock();
@@ -231,5 +372,5 @@ try {
 
 // Temporary workaround: Deno does not stop a Worker blocked in Wasm
 // memory.atomic.wait when terminate() is called. Remove this forced exit once
-// Deno fixes worker termination.
+// https://github.com/denoland/deno/pull/35657 is released.
 Deno.exit(0);

@@ -11,6 +11,6 @@
 ## Later
 
 - Land framebuffer and input support with guest-visible integration tests, then add basic DRM only when its userspace memory requirements are supportable.
-- Add loopback access, virtio networking, and pluggable JavaScript transports.
+- Add outbound UDP and browser `fetch` transports to the networking layer.
 - Package a useful initial software set and document the Nix-to-JavaScript build path.
 - Revisit x86 execution, Python, and guest Node after the core SDK is reliable.

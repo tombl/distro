@@ -8,23 +8,35 @@ import {
 } from "@tombl/linux";
 import { initramfs, rootfs, rootfsSize } from "./assets.ts";
 import {
-  createGuestClient,
+  create_guest_client,
   type Exec,
   type FileSystem,
   type GuestClientCapabilities,
 } from "./client.ts";
+import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
-export interface SpawnGuestOptions extends Omit<SpawnMachineOptions, "devices" | "initcpio"> {
+export interface SpawnGuestOptions extends Omit<
+  SpawnMachineOptions,
+  "devices" | "initcpio" | "cmdline"
+> {
   devices?: readonly VirtioDevice[];
+  /** Guests attached to the same network can connect to each other. */
+  network?: Network;
+  cmdline?: string;
 }
 
 export interface Guest {
   readonly machine: Machine;
   readonly fs: FileSystem;
   readonly exec: Exec;
+  readonly network: GuestNetwork | undefined;
 }
 
-async function waitForGuest(client: GuestClientCapabilities, machine: Machine) {
+export interface NetworkedGuest extends Guest {
+  readonly network: GuestNetwork;
+}
+
+async function wait_for_guest(client: GuestClientCapabilities, machine: Machine) {
   let machine_ended = false;
   const ended = machine.closed.then(
     () => {
@@ -52,12 +64,58 @@ async function waitForGuest(client: GuestClientCapabilities, machine: Machine) {
   throw new Error("guest agent did not become ready", { cause: failure });
 }
 
+async function run_network_command(exec: Exec, command: string[]) {
+  const child = await exec(command);
+  const [status, stdout, stderr] = await Promise.all([
+    child.status,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (!status.success) {
+    const output = `${stdout}${stderr}`.trim();
+    throw new Error(
+      `guest network command failed (${status.code}): ${command.join(" ")}${output ? `: ${output}` : ""}`,
+    );
+  }
+}
+
+async function configure_network(exec: Exec, fs: FileSystem, address: string, gateway: string) {
+  const deadline = performance.now() + 10_000;
+  let failure: unknown;
+  while (performance.now() < deadline) {
+    try {
+      await fs.stat("/sys/class/net/eth0");
+      failure = undefined;
+      break;
+    } catch (error) {
+      failure = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  if (failure) throw new Error("guest network device did not appear", { cause: failure });
+
+  await run_network_command(exec, [
+    "/sbin/ifconfig",
+    "eth0",
+    address,
+    "netmask",
+    "255.255.255.0",
+    "up",
+  ]);
+  await run_network_command(exec, ["/sbin/route", "add", "default", "gw", gateway, "eth0"]);
+}
+
+export function spawnGuest(
+  options: SpawnGuestOptions & { network: Network },
+): Promise<NetworkedGuest>;
+export function spawnGuest(options?: SpawnGuestOptions): Promise<Guest>;
 export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest> {
   if (!Number.isSafeInteger(rootfsSize) || rootfsSize <= 0) {
     throw new Error("invalid packaged guest rootfs size");
   }
 
-  const { devices = [], ...machine_options } = options;
+  const { devices = [], network, cmdline = "", ...machine_options } = options;
+  const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
   const root = blockDevice({
     capacity: rootfsSize,
@@ -65,16 +123,34 @@ export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest
       return (await rootfs).subarray(offset, offset + length);
     },
   });
-  const client = createGuestClient(vsock);
-  const machine = await spawnMachine({
-    ...machine_options,
-    devices: [root, vsock, ...devices],
-    initcpio: initramfs,
+  const client = create_guest_client(vsock);
+  let machine: Machine;
+  try {
+    machine = await spawnMachine({
+      ...machine_options,
+      cmdline,
+      devices: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
+      initcpio: initramfs,
+    });
+  } catch (error) {
+    attached?.attachment.close();
+    throw error;
+  }
+  void machine.closed.finally(() => {
+    attached?.attachment.close();
   });
 
   try {
-    await waitForGuest(client, machine);
-    return { machine, fs: client.fs, exec: client.exec };
+    await wait_for_guest(client, machine);
+    if (attached) {
+      await configure_network(
+        client.exec,
+        client.fs,
+        attached.attachment.address,
+        network!.gateway,
+      );
+    }
+    return { machine, fs: client.fs, exec: client.exec, network: attached?.guest_network };
   } catch (error) {
     machine.close();
     throw error;

@@ -16,6 +16,26 @@ Target packages are built for `wasm32-unknown-linux-musl`; host packages build t
 
 WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn children through an explicit `clone()` entry point followed by `execve()`, normally exposed as `posix_spawn()`. Ports should replace private allocation or file-reading uses of `mmap()` with the operation they require rather than provide an incomplete mmap emulation.
 
+## Networking
+
+`@tombl/linux` provides a virtio-net NIC and a small learning Ethernet switch.
+The switch is the primitive: NICs attached to the same switch exchange ordinary
+Ethernet frames without involving the guest agent or host TCP/IP endpoint.
+
+`@tombl/linux-guest` builds an opinionated IPv4 network on that primitive.
+`spawnGuest()` attaches a NIC, assigns a static address in `192.0.2.0/24`, and
+configures the kernel's address and default route. Its JavaScript endpoint
+implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses outside
+the virtual subnet are proxied through the caller's `connectTcp` adapter; a Deno
+caller can provide `Deno.connect` without making Deno part of the SDK. The
+gateway address maps to the host's loopback address. UDP proxying to arbitrary
+hosts is intentionally not part of the first cut.
+
+Each guest exposes its assigned address and host connection API as
+`guest.network`. Supplying the same `createNetwork()` result to multiple
+`spawnGuest()` calls joins their NICs to one switch. Omitting `network` starts
+the guest without a NIC; network creation and ownership remain with the caller.
+
 ## Testing
 
 The distro owns integration tests because kernel smoke tests require the same libc, init, filesystem, and programs that users run.
