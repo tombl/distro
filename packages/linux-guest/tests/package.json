@@ -1,0 +1,16 @@
+{
+  "name": "@tombl/linux-guest-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc",
+    "test": "deno test --no-check --allow-all"
+  },
+  "dependencies": {
+    "@tombl/linux": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/deno": "^2.7.0",
+    "@types/node": "^24"
+  }
+}

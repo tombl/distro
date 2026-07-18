@@ -1,8 +1,0 @@
-{
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "@tombl/linux": "0.0.0",
-    "@tombl/linux-guest": "0.0.0"
-  }
-}

@@ -1,4 +1,7 @@
-export const rootfsSize = Number("@ROOTFS_SIZE@");
+export interface GuestAssets {
+  initramfs: Uint8Array;
+  rootfs: Uint8Array;
+}
 
 async function fetch_bytes(path: string) {
   const response = await fetch(new URL(path, import.meta.url));
@@ -8,5 +11,11 @@ async function fetch_bytes(path: string) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-export const rootfs = fetch_bytes("../rootfs.squashfs");
-export const initramfs = fetch_bytes("../initramfs.cpio");
+/** The boot assets bundled with the published npm package. */
+export async function packaged_assets(): Promise<GuestAssets> {
+  const [initramfs, rootfs] = await Promise.all([
+    fetch_bytes("../initramfs.cpio"),
+    fetch_bytes("../rootfs.squashfs"),
+  ]);
+  return { initramfs, rootfs };
+}

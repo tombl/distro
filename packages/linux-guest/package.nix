@@ -7,13 +7,15 @@
 }:
 
 let
+  npmDepsHash = "sha256-s8dd7A1qKak11TarcIMkOvatWHQOtC1CUc/IGOK3/ew=";
+
   network-test = stdenv.mkDerivation {
     pname = "linux-guest-network-test";
     version = "0.0.0";
     dontUnpack = true;
     buildPhase = ''
       $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
-        -Wl,--fatal-warnings -o network-test ${./network-test.c}
+        -Wl,--fatal-warnings -o network-test ${./tests/network-test.c}
     '';
     installPhase = ''
       mkdir -p $out/bin
@@ -21,11 +23,19 @@ let
     '';
   };
 
+  # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
+  # or by building this attribute itself.
+  test-assets = pkgs.linkFarm "linux-guest-test-assets" {
+    "initramfs.cpio" = guest-initramfs;
+    "rootfs.squashfs" = guest-rootfs;
+    "network-test" = "${network-test}/bin/network-test";
+  };
+
   package = pkgs.buildNpmPackage {
     pname = "linux-guest";
     version = "0.0.0";
     src = ../..;
-    npmDepsHash = "sha256-2tX0XR24dREbZOXaCmjho9i6+0J7K4anv2Zj2fbLAzc=";
+    inherit npmDepsHash;
     npmBuildFlags = [ "--workspace=@tombl/linux-guest" ];
 
     preBuild = ''
@@ -36,9 +46,6 @@ let
     '';
 
     postBuild = ''
-      rootfs_size=$(stat --format=%s ${guest-rootfs})
-      substituteInPlace packages/linux-guest/dist/assets.js \
-        --replace-fail '@ROOTFS_SIZE@' "$rootfs_size"
       cp ${guest-initramfs} packages/linux-guest/initramfs.cpio
       cp ${guest-rootfs} packages/linux-guest/rootfs.squashfs
     '';
@@ -58,32 +65,39 @@ let
     '';
   };
 
-  integration =
-    pkgs.runCommand "linux-guest-integration-test"
-      {
-        nativeBuildInputs = [
-          pkgs.deno
-          pkgs.gnutar
-        ];
-      }
-      ''
-        export HOME=$TMPDIR/home
-        export DENO_DIR=$TMPDIR/deno
-        test_root=$TMPDIR/test
-        mkdir -p "$HOME" "$DENO_DIR" "$test_root/node_modules/@tombl/linux"
-        cp -r ${package} "$test_root/node_modules/@tombl/linux-guest"
-        tar -xzf ${linux}/linux.tgz --strip-components=1 \
-          -C "$test_root/node_modules/@tombl/linux"
-        cp ${./integration-consumer.json} "$test_root/package.json"
-        cp ${./integration-test.ts} "$test_root/integration-test.ts"
-        cp ${network-test}/bin/network-test "$test_root/network-test"
-        cd "$test_root"
-        timeout 180 deno run --allow-all integration-test.ts \
-          node_modules/@tombl/linux-guest/dist/index.js network-test
-        mkdir $out
-      '';
+  integration = pkgs.buildNpmPackage {
+    pname = "linux-guest-integration-test";
+    version = "0.0.0";
+    src = ../..;
+    inherit npmDepsHash;
+    nativeBuildInputs = [ pkgs.deno ];
+
+    buildPhase = ''
+      runHook preBuild
+
+      export npm_config_cache=$TMPDIR/npm-cache
+      mkdir -p "$npm_config_cache"
+      npm install --no-save --ignore-scripts ${linux}/linux.tgz
+      # tsc typechecks and deno runs: deno's checker cannot resolve the .ts
+      # specifiers in @tombl/linux's declarations, and is not meant to.
+      npm run check --workspace=@tombl/linux-guest-tests
+
+      export DENO_DIR=$TMPDIR/deno
+      LINUX_GUEST_TEST_ASSETS=${test-assets} \
+        timeout 180 npm run test --workspace=@tombl/linux-guest-tests
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      mkdir $out
+    '';
+  };
 in
 package
 // {
-  checks.integration = integration;
+  checks.tests = {
+    assets = test-assets;
+    inherit integration;
+  };
 }

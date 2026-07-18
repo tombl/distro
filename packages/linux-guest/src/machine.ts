@@ -6,7 +6,7 @@ import {
   type SpawnMachineOptions,
   type VirtioDevice,
 } from "@tombl/linux";
-import { initramfs, rootfs, rootfsSize } from "./assets.ts";
+import { type GuestAssets, packaged_assets } from "./assets.ts";
 import {
   create_guest_client,
   type Exec,
@@ -23,6 +23,8 @@ export interface SpawnGuestOptions extends Omit<
   /** Guests attached to the same network can connect to each other. */
   network?: Network;
   cmdline?: string;
+  /** Boot from these assets instead of the ones bundled with the package. */
+  assets?: GuestAssets;
 }
 
 export interface Guest {
@@ -110,17 +112,14 @@ export function spawnGuest(
 ): Promise<NetworkedGuest>;
 export function spawnGuest(options?: SpawnGuestOptions): Promise<Guest>;
 export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest> {
-  if (!Number.isSafeInteger(rootfsSize) || rootfsSize <= 0) {
-    throw new Error("invalid packaged guest rootfs size");
-  }
-
-  const { devices = [], network, cmdline = "", ...machine_options } = options;
+  const { devices = [], network, cmdline = "", assets, ...machine_options } = options;
+  const { initramfs, rootfs } = assets ?? (await packaged_assets());
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
   const root = blockDevice({
-    capacity: rootfsSize,
-    async read(offset, length) {
-      return (await rootfs).subarray(offset, offset + length);
+    capacity: rootfs.byteLength,
+    read(offset, length) {
+      return rootfs.subarray(offset, offset + length);
     },
   });
   const client = create_guest_client(vsock);

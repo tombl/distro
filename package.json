@@ -2,6 +2,7 @@
   "private": true,
   "workspaces": [
     "packages/linux-guest",
+    "packages/linux-guest/tests",
     "packages/runner",
     "packages/site"
   ],
