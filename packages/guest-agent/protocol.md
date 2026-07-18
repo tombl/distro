@@ -27,11 +27,11 @@ signal).
   can attach during development. fds handed to the host by injected
   `openat` are intentionally leaked on teardown — an abandoned session
   means the machine is going away.
-- **Lanes, port 1025.** Up to 64 connections (the agent's worker thread
-  count; the host opens them on demand and pools them). A lane carries
-  strictly serial request/reply exchanges: the host writes one request and
-  reads its complete reply before reusing the lane. Concurrency is the
-  number of lanes in flight; a blocking syscall occupies only its own lane.
+- **Lanes, port 1025.** Up to 64 connections. The host opens them on demand
+  and pools them; the agent creates one worker thread as each lane connects.
+  A lane carries strictly serial request/reply exchanges: the host writes one
+  request and reads its complete reply before reusing the lane. Concurrency is
+  the number of lanes in flight; a blocking syscall occupies only its own lane.
 
 Because a lane is serial, there is no framing: no lengths (except spawn's,
 below), no request ids, no reply demultiplexing. Every message's size is
@@ -98,5 +98,7 @@ live once each in `packages/linux-guest/src/syscalls.ts`.
 ## Agent startup
 
 Ignore SIGPIPE, mount `/proc` and `/sys` if absent (the host's `realPath`
-and `FsFile.stat` go through `/proc/self/fd/N`), start 64 lane workers,
-listen on both ports.
+and `FsFile.stat` go through `/proc/self/fd/N`), and listen on both ports.
+While a session is connected, its main thread polls the silent session
+connection and the lane listener, creating a detached worker for each accepted
+lane. Session death stops acceptance before teardown waits for those workers.

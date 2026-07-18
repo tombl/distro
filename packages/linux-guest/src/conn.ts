@@ -22,9 +22,9 @@ const LANE_PORT = 1025;
 const HANDSHAKE_MAGIC = 0x584e4c54; // "TLNX"
 const PROTOCOL_VERSION = 3;
 
-// Hard cap on concurrent lanes, equal to the agent's worker thread count so
-// a lane we open always has a thread free to accept it. The veneer's
-// process cap (process.ts) keeps worst-case blocked lanes well under this.
+// Hard cap on concurrent lanes, equal to the agent's limit. The agent creates
+// their workers on demand; the veneer's process cap (process.ts) keeps
+// worst-case blocked lanes well under this.
 const MAX_LANES = 64;
 
 class Handshake extends Struct({

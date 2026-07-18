@@ -1,10 +1,11 @@
 /* Guest agent (protocol v3): a dumb syscall executor.
  *
- * The host opens one connection to the session port plus up to `workers`
+ * The host opens one connection to the session port plus up to `max_lanes`
  * lanes on the lane port. A lane carries strictly serial request/reply
- * exchanges served by a dedicated thread, so there is no request queue, no
- * reply multiplexing, and no shared write path: message sizes are fully
- * determined by the request, and the kernel does all the scheduling.
+ * exchanges served by a dedicated thread created when the lane connects, so
+ * there is no request queue, no reply multiplexing, and no shared write path:
+ * message sizes are fully determined by the request, and the kernel does all
+ * the scheduling.
  *
  * The session connection carries no requests. Its only job is to be a death
  * signal that cannot be stuck behind a blocked syscall: when it reaches EOF
@@ -19,6 +20,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -39,7 +41,7 @@ enum {
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
 	protocol_version = 3,
-	workers = 64,
+	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
 	max_string = 4096,
@@ -67,12 +69,9 @@ static struct {
 } children[process_capacity];
 static pthread_mutex_t children_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* Lanes of a dying session must drain before a new session's lanes are
- * served: teardown sweeps the children table and must not race new spawns. */
 static struct {
 	pthread_mutex_t mutex;
 	pthread_cond_t changed;
-	bool dying;
 	int active_lanes;
 } session = {
 	.mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -489,40 +488,83 @@ static void serve_lane(int fd)
 	}
 }
 
-static void *worker(void *listener_arg)
+static void *worker(void *fd_arg)
 {
-	int listener = (int)(intptr_t)listener_arg;
+	int fd = (int)(intptr_t)fd_arg;
 
-	for (;;) {
-		int fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+	serve_lane(fd);
+	close(fd);
+	pthread_mutex_lock(&session.mutex);
+	session.active_lanes--;
+	pthread_cond_broadcast(&session.changed);
+	pthread_mutex_unlock(&session.mutex);
+	return NULL;
+}
 
-		if (fd == -1) {
-			if (errno != EINTR)
-				perror("accept lane");
-			continue;
-		}
-		pthread_mutex_lock(&session.mutex);
-		while (session.dying)
-			pthread_cond_wait(&session.changed, &session.mutex);
-		session.active_lanes++;
+static int accept_lane(int listener, const pthread_attr_t *worker_attr)
+{
+	pthread_t thread;
+	int fd, rc;
+
+	fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+	if (fd == -1)
+		return errno == EINTR ? 0 : -1;
+
+	pthread_mutex_lock(&session.mutex);
+	if (session.active_lanes == max_lanes) {
 		pthread_mutex_unlock(&session.mutex);
-		serve_lane(fd);
+		close(fd);
+		return 0;
+	}
+	session.active_lanes++;
+	pthread_mutex_unlock(&session.mutex);
+
+	rc = pthread_create(&thread, worker_attr, worker,
+			    (void *)(intptr_t)fd);
+	if (rc) {
 		close(fd);
 		pthread_mutex_lock(&session.mutex);
 		session.active_lanes--;
 		pthread_cond_broadcast(&session.changed);
 		pthread_mutex_unlock(&session.mutex);
+		errno = rc;
+		return -1;
 	}
-	return NULL;
+	return 0;
+}
+
+static int serve_session(int fd, int lane_listener,
+			 const pthread_attr_t *worker_attr)
+{
+	struct pollfd fds[] = {
+		{ .fd = fd, .events = POLLIN },
+		{ .fd = lane_listener, .events = POLLIN },
+	};
+
+	for (;;) {
+		int rc = poll(fds, sizeof(fds) / sizeof(fds[0]), -1);
+
+		if (rc == -1) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		/* Session death wins over a simultaneously arriving lane. */
+		if (fds[0].revents)
+			return 0;
+		if (fds[1].revents & POLLIN) {
+			if (accept_lane(lane_listener, worker_attr))
+				return -1;
+		} else if (fds[1].revents) {
+			errno = EIO;
+			return -1;
+		}
+	}
 }
 
 static void teardown(void)
 {
 	size_t i;
-
-	pthread_mutex_lock(&session.mutex);
-	session.dying = true;
-	pthread_mutex_unlock(&session.mutex);
 
 	/* SIGKILL first: this is what unblocks lanes stuck in a pipe read or
 	 * waitpid, so it must happen before waiting for them. */
@@ -549,10 +591,6 @@ static void teardown(void)
 			children[i].used = false;
 		}
 
-	pthread_mutex_lock(&session.mutex);
-	session.dying = false;
-	pthread_cond_broadcast(&session.changed);
-	pthread_mutex_unlock(&session.mutex);
 }
 
 static int listener(unsigned port, int backlog)
@@ -581,8 +619,8 @@ static int mount_if_needed(const char *source, const char *target,
 
 int main(void)
 {
+	pthread_attr_t worker_attr;
 	int session_listener, lane_listener, rc;
-	size_t i;
 
 	signal(SIGPIPE, SIG_IGN);
 	/* /proc is load-bearing: the host's realPath and FsFile.stat go
@@ -593,31 +631,22 @@ int main(void)
 		return 1;
 	}
 	session_listener = listener(session_port, 1);
-	lane_listener = listener(lane_port, workers);
+	lane_listener = listener(lane_port, max_lanes);
 	if (session_listener == -1 || lane_listener == -1) {
 		perror("vsock listener");
 		return 1;
 	}
-	for (i = 0; i < workers; i++) {
-		pthread_t thread;
-
-		rc = pthread_create(&thread, NULL, worker,
-				    (void *)(intptr_t)lane_listener);
-		if (rc) {
-			errno = rc;
-			perror("pthread_create");
-			return 1;
-		}
-		rc = pthread_detach(thread);
-		if (rc) {
-			errno = rc;
-			perror("pthread_detach");
-			return 1;
-		}
+	rc = pthread_attr_init(&worker_attr);
+	if (!rc)
+		rc = pthread_attr_setdetachstate(&worker_attr,
+					      PTHREAD_CREATE_DETACHED);
+	if (rc) {
+		errno = rc;
+		perror("pthread worker attributes");
+		return 1;
 	}
 	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
 	for (;;) {
-		uint8_t byte;
 		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
 
 		if (fd == -1) {
@@ -626,11 +655,13 @@ int main(void)
 			continue;
 		}
 		if (handshake(fd) == 0) {
-			/* The session connection is silent after its
-			 * handshake; EOF (or any byte, which means the two
-			 * sides disagree) ends the session. */
-			read_all(fd, &byte, 1);
+			rc = serve_session(fd, lane_listener, &worker_attr);
 			teardown();
+			if (rc) {
+				perror("serve session");
+				close(fd);
+				return 1;
+			}
 		}
 		close(fd);
 	}

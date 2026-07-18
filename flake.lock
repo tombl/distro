@@ -19,11 +19,11 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784360596,
-        "narHash": "sha256-4/o5JUcFm468Hp9HlcKvCHTiTqWQoI4fX1CedeY7arw=",
+        "lastModified": 1784380541,
+        "narHash": "sha256-GPuDNQAjlyY/eL1etHGMK1iAJktbsI63z4qkEhbXEZ8=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "90d767cbe6034c4052e27e5263c26bfac9a1428a",
+        "rev": "b7659dc1c6972e4731640ad1099bea8dde22b0e6",
         "type": "github"
       },
       "original": {
@@ -52,11 +52,11 @@
     "musl-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784211548,
-        "narHash": "sha256-HpovM4j9E7a0tRGSD6UAXqq0S8+Wqwn6SCN7xZP20YQ=",
+        "lastModified": 1784380584,
+        "narHash": "sha256-VHFtMSKGRYWIV8HUUpVLO60UXp/+7ZHUmEKc1fY6rK0=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "1f07aa70d2b84eb4d2c4a696da22ab7aa381427f",
+        "rev": "150b6271cc3faa38615fa9fc9b4f952268369ee0",
         "type": "github"
       },
       "original": {
