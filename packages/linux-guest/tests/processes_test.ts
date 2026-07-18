@@ -9,25 +9,24 @@ guest_test("processes", async (t, fixture) => {
   try {
     const large = pattern_bytes(256 * 1024);
     await guest.fs.writeFile(`${directory}/large.bin`, large);
-    await t.step("streams stdio and configures the environment", async () => {
+    await t.test("streams stdio and configures the environment", async () => {
       const child = await guest.exec(["sh", "-c", 'cat; printf \'%s:%s\' "$GREETING" "$PWD" >&2'], {
         cwd: directory,
         env: { GREETING: "hello" },
       });
+      const output = collect(child.stdout);
+      const error = collect(child.stderr);
+      const status = child.status;
       const stdin = child.stdin.getWriter();
       await stdin.write(large);
       await stdin.close();
-      const [stdout, stderr, status] = await Promise.all([
-        collect(child.stdout),
-        collect(child.stderr),
-        child.status,
-      ]);
+      const [stdout, stderr, result] = await Promise.all([output, error, status]);
       assert.deepEqual(stdout, large);
       assert.equal(new TextDecoder().decode(stderr), `hello:${directory}`);
-      assert.deepEqual(status, { success: true, code: 0, signal: null });
+      assert.deepEqual(result, { success: true, code: 0, signal: null });
     });
 
-    await t.step("runs processes concurrently with filesystem traffic", async () => {
+    await t.test("runs processes concurrently with filesystem traffic", async () => {
       const concurrent = await Promise.all([guest.exec(["cat"]), guest.exec(["cat"])]);
       const collected = concurrent.map((process) => ({
         output: collect(process.stdout),
@@ -49,7 +48,7 @@ guest_test("processes", async (t, fixture) => {
       }
     });
 
-    await t.step("kills processes with signals", async () => {
+    await t.test("kills processes with signals", async () => {
       const signalled = await guest.exec(["sleep", "30"]);
       await signalled.kill("SIGTERM");
       assert.deepEqual(await signalled.status, {
@@ -59,7 +58,7 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
-    await t.step("reports fatal process signals", async () => {
+    await t.test("reports fatal process signals", async () => {
       const crashed = await guest.exec(["sh", "-c", "kill -SEGV $$"]);
       assert.deepEqual(await crashed.status, {
         success: false,
@@ -68,7 +67,7 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
-    await t.step("aborts processes", async () => {
+    await t.test("aborts processes", async () => {
       const abort_controller = new AbortController();
       const aborted = await guest.exec(["sleep", "30"], {
         signal: abort_controller.signal,
@@ -78,7 +77,7 @@ guest_test("processes", async (t, fixture) => {
       await assert.rejects(aborted.status, (error) => error === abort_reason);
     });
 
-    await t.step("allows commands to orphan child processes", async () => {
+    await t.test("allows commands to orphan child processes", async () => {
       const orphaned = await guest.exec([
         "sh",
         "-c",
@@ -91,7 +90,7 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
-    await t.step("reaps orphaned processes", async () => {
+    await t.test("reaps orphaned processes", async () => {
       const zombie_check = await guest.exec([
         "sh",
         "-c",

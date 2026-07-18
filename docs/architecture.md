@@ -26,10 +26,10 @@ Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 `spawnGuest()` attaches a NIC, assigns a static address in `192.0.2.0/24`, and
 configures the kernel's address and default route. Its JavaScript endpoint
 implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses outside
-the virtual subnet are proxied through the caller's `connectTcp` adapter; a Deno
-caller can provide `Deno.connect` without making Deno part of the SDK. The
-gateway address maps to the host's loopback address. UDP proxying to arbitrary
-hosts is intentionally not part of the first cut.
+the virtual subnet are proxied through the caller's `connectTcp` adapter, which
+can be implemented with Node's `net.connect`. The gateway address maps to the
+host's loopback address. UDP proxying to arbitrary hosts is intentionally not
+part of the first cut.
 
 Each guest exposes its assigned address and host connection API as
 `guest.network`. Supplying the same `createNetwork()` result to multiple
@@ -42,4 +42,4 @@ The distro owns integration tests because kernel smoke tests require the same li
 
 Early tests boot a test-specific root filesystem whose minimal init performs one assertion and emits a single pass marker. A small Node runner starts the machine and fails on timeout, exception, kernel panic, explicit failure, or missing pass marker. This layer deliberately does not depend on the guest agent.
 
-Consumer tests boot the production root filesystem and exercise the packaged SDK and guest agent through `node:test` or `Deno.test`. They test the same command, file, device, and lifecycle APIs that applications use. The early boot oracle remains below them so a broken agent cannot hide whether the kernel booted at all.
+Consumer tests boot the production root filesystem and exercise the packaged SDK and guest agent through `node:test`. They test the same command, file, device, and lifecycle APIs that applications use. The early boot oracle remains below them so a broken agent cannot hide whether the kernel booted at all.

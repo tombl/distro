@@ -7,7 +7,7 @@
 }:
 
 let
-  npmDepsHash = "sha256-s8dd7A1qKak11TarcIMkOvatWHQOtC1CUc/IGOK3/ew=";
+  npmDepsHash = "sha256-1NL9O4LvSzJMl9QLJytT5VyYyiSJecsilr26fPOw/A4=";
 
   network-test = stdenv.mkDerivation {
     pname = "linux-guest-network-test";
@@ -70,7 +70,7 @@ let
     version = "0.0.0";
     src = ../..;
     inherit npmDepsHash;
-    nativeBuildInputs = [ pkgs.deno ];
+    nativeBuildInputs = [ pkgs.nodejs ];
 
     buildPhase = ''
       runHook preBuild
@@ -78,11 +78,8 @@ let
       export npm_config_cache=$TMPDIR/npm-cache
       mkdir -p "$npm_config_cache"
       npm install --no-save --ignore-scripts ${linux}/linux.tgz
-      # tsc typechecks and deno runs: deno's checker cannot resolve the .ts
-      # specifiers in @tombl/linux's declarations, and is not meant to.
       npm run check --workspace=@tombl/linux-guest-tests
 
-      export DENO_DIR=$TMPDIR/deno
       LINUX_GUEST_TEST_ASSETS=${test-assets} \
         timeout 180 npm run test --workspace=@tombl/linux-guest-tests
 

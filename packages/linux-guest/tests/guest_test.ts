@@ -6,7 +6,7 @@ import { collect } from "./helpers.ts";
 guest_test("guest", async (t, fixture) => {
   const guest = await fixture.spawn();
 
-  await t.step("configures the network", async () => {
+  await t.test("configures the network", async () => {
     const network_configuration = await guest.exec(["sh", "-c", "ip address; ip route"]);
     const [output, error, status] = await Promise.all([
       collect(network_configuration.stdout),
@@ -20,7 +20,7 @@ guest_test("guest", async (t, fixture) => {
     assert.match(configured_network, /default via 192\.0\.2\.1 dev eth0/);
   });
 
-  await t.step("mounts the root filesystem read-only", async () => {
+  await t.test("mounts the root filesystem read-only", async () => {
     await assert.rejects(
       guest.fs.writeTextFile("/immutable.txt", "nope"),
       (error) => error instanceof SystemError && error.code === "EROFS",

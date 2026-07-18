@@ -64,12 +64,15 @@ class SpawnReply extends Struct({
  *  the fd even when close reports a delayed write failure. */
 export class GuestFd implements AsyncDisposable {
   #close?: Promise<void>;
+  readonly session: GuestSession;
+  readonly fd: number;
+  readonly path?: string;
 
-  constructor(
-    readonly session: GuestSession,
-    readonly fd: number,
-    readonly path?: string,
-  ) {}
+  constructor(session: GuestSession, fd: number, path?: string) {
+    this.session = session;
+    this.fd = fd;
+    this.path = path;
+  }
 
   close(): Promise<void> {
     return (this.#close ??= syscall(this.session, NR.close, this.fd).then(() => {}));

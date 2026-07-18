@@ -3,27 +3,31 @@
 // the nix check points LINUX_GUEST_TEST_ASSETS at it, and outside nix we
 // build it ourselves.
 import { dirname, join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const ATTRIBUTE = "linux-guest.checks.tests.assets";
+const exec_file = promisify(execFile);
 
 async function build() {
   const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const result = await new Deno.Command("nix", {
-    args: ["build", `${repository_root}#${ATTRIBUTE}`, "--no-link", "--print-out-paths"],
-    stdout: "piped",
-    stderr: "inherit",
-  }).output();
-  if (!result.success) throw new Error(`nix build failed for ${ATTRIBUTE}`);
-  return new TextDecoder().decode(result.stdout).trim();
+  const { stdout } = await exec_file("nix", [
+    "build",
+    `${repository_root}#${ATTRIBUTE}`,
+    "--no-link",
+    "--print-out-paths",
+  ]);
+  return stdout.trim();
 }
 
-const directory = Deno.env.get("LINUX_GUEST_TEST_ASSETS") ?? (await build());
+const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
 
 export const assets = {
-  initramfs: await Deno.readFile(join(directory, "initramfs.cpio")),
-  rootfs: await Deno.readFile(join(directory, "rootfs.squashfs")),
+  initramfs: await readFile(join(directory, "initramfs.cpio")),
+  rootfs: await readFile(join(directory, "rootfs.squashfs")),
 };
 
 /** A static guest executable that exercises the guest-side network stack. */
-export const network_test = await Deno.readFile(join(directory, "network-test"));
+export const network_test = await readFile(join(directory, "network-test"));

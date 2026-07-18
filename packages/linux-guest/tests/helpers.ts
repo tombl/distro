@@ -9,13 +9,13 @@ export function closed_input() {
 export function console_output() {
   return new WritableStream<Uint8Array>({
     write(chunk) {
-      Deno.stderr.writeSync(chunk);
+      process.stderr.write(chunk);
     },
   });
 }
 
 export async function collect(stream: ReadableStream<Uint8Array>) {
-  return new Response(stream).arrayBuffer();
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 export function pattern_bytes(length: number) {

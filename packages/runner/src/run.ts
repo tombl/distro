@@ -1,15 +1,20 @@
-#!/usr/bin/env -S deno run --allow-all
+#!/usr/bin/env node
 import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
+import { closeSync, fstatSync, fsync, openSync, readSync, writeSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
+import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
 
 function assert(cond: unknown, message = "Assertion failed"): asserts cond {
   if (!cond) throw new Error(message);
 }
 
-const defaultMemory = navigator.hardwareConcurrency > 16 ? 256 : 128;
+const cpus = availableParallelism();
+const defaultMemory = cpus > 16 ? 256 : 128;
 
 const args = parseArgs({
-  args: Deno.args,
+  args: process.argv.slice(2),
   allowNegative: true,
   options: {
     cmdline: {
@@ -30,7 +35,7 @@ const args = parseArgs({
     cpus: {
       short: "j",
       type: "string",
-      default: navigator.hardwareConcurrency.toString(),
+      default: cpus.toString(),
     },
     help: {
       short: "h",
@@ -66,7 +71,7 @@ options:
       --disk <string>     Path to a disk image to use (can be specified multiple times)
   -h, --help              Show this help message
 `);
-  Deno.exit(0);
+  process.exit(0);
 }
 
 assert(!Number.isNaN(parseInt(args.cpus, 10)), "cpus must be a number");
@@ -75,33 +80,38 @@ assert(!Number.isNaN(parseInt(args.memory, 10)), "memory must be a number");
 const devices = [];
 
 if (args.console) {
-  if (Deno.stdin.isTerminal()) {
+  if (process.stdin.isTTY) {
     let raw = false;
 
     const restore = () => {
       if (!raw) return;
       raw = false;
-      Deno.stdin.setRaw(false);
+      process.stdin.setRawMode(false);
     };
 
-    const exitFromSignal = (signal: Deno.Signal, code: number) => {
-      Deno.addSignalListener(signal, () => {
+    const exitFromSignal = (signal: NodeJS.Signals, code: number) => {
+      process.on(signal, () => {
         restore();
-        Deno.exit(code);
+        process.exit(code);
       });
     };
 
-    Deno.stdin.setRaw(true, { cbreak: true });
+    process.stdin.setRawMode(true);
     raw = true;
 
-    addEventListener("unload", restore);
+    process.on("exit", restore);
     exitFromSignal("SIGHUP", 129);
     exitFromSignal("SIGINT", 130);
     exitFromSignal("SIGQUIT", 131);
     exitFromSignal("SIGTERM", 143);
   }
 
-  devices.push(consoleDevice(Deno.stdin.readable, Deno.stdout.writable));
+  devices.push(
+    consoleDevice(
+      Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
+      Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+    ),
+  );
 }
 
 if (args.entropy) {
@@ -110,36 +120,42 @@ if (args.entropy) {
 
 for (const disk of args.disk) {
   let readonly = false;
-  const file = await Deno.open(disk, { read: true, write: true }).catch(() => {
+  let file: number;
+  try {
+    file = openSync(disk, "r+");
+  } catch {
     readonly = true;
-    return Deno.open(disk, { read: true });
-  });
-  const { size } = await file.stat();
+    file = openSync(disk, "r");
+  }
+  const { size } = fstatSync(file);
+
+  process.on("exit", () => closeSync(file));
 
   devices.push(
     blockDevice({
       read: async (offset, length) => {
         const array = new Uint8Array(length);
-        file.seekSync(offset, Deno.SeekMode.Start);
         let n = 0;
         while (n < array.byteLength) {
-          const chunk = file.readSync(array.subarray(n));
-          if (chunk === null) break;
-          n += chunk;
+          const read = readSync(file, array, n, array.byteLength - n, offset + n);
+          if (read === 0) break;
+          n += read;
         }
         return array.subarray(0, n);
       },
       write: readonly
         ? undefined
         : async (offset, data) => {
-            file.seekSync(offset, Deno.SeekMode.Start);
             let n = 0;
             while (n < data.byteLength) {
-              n += file.writeSync(data.subarray(n));
+              n += writeSync(file, data, n, data.byteLength - n, offset + n);
             }
             return n;
           },
-      flush: () => file.sync(),
+      flush: () =>
+        new Promise<void>((resolve, reject) => {
+          fsync(file, (error) => (error ? reject(error) : resolve()));
+        }),
       capacity: size,
     }),
   );
@@ -150,10 +166,14 @@ const machine = await spawnMachine({
   memoryMib: parseInt(args.memory, 10),
   cpus: parseInt(args.cpus, 10),
   devices,
-  initcpio: await Deno.readFile(args.initcpio),
+  initcpio: await readFile(args.initcpio),
 });
 
-void machine.bootConsole.pipeTo(Deno.stderr.writable, { preventClose: true }).catch(() => {});
+void machine.bootConsole
+  .pipeTo(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>, {
+    preventClose: true,
+  })
+  .catch(() => {});
 void machine.closed.catch((error) => {
   console.error(error);
 });

@@ -4,13 +4,12 @@
   "type": "module",
   "scripts": {
     "check": "tsc",
-    "test": "deno test --no-check --allow-all"
+    "test": "for file in *_test.ts; do node --test \"$file\" || exit; done"
   },
   "dependencies": {
     "@tombl/linux": "0.0.0"
   },
   "devDependencies": {
-    "@types/deno": "^2.7.0",
     "@types/node": "^24"
   }
 }

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { LineDecoder, parseResult } from "./protocol.js";
 
 const encoder = new TextEncoder();
 
-Deno.test("decodes records split across arbitrary chunks", () => {
+test("decodes records split across arbitrary chunks", () => {
   const decoder = new LineDecoder();
   const lines = [
     ...decoder.write(encoder.encode("booting\n::vm-")),
@@ -15,14 +16,14 @@ Deno.test("decodes records split across arbitrary chunks", () => {
   assert.deepEqual(parseResult(lines[1]), { passed: true });
 });
 
-Deno.test("preserves a guest failure explanation", () => {
+test("preserves a guest failure explanation", () => {
   assert.deepEqual(parseResult("::vm-test::fail: getcwd returned /"), {
     passed: false,
     reason: "getcwd returned /",
   });
 });
 
-Deno.test("ignores marker-like workload output", () => {
+test("ignores marker-like workload output", () => {
   assert.equal(parseResult("prefix ::vm-test::pass"), undefined);
   assert.equal(parseResult("::vm-test::failure"), undefined);
 });

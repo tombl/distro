@@ -141,7 +141,7 @@ export class FsFile implements AsyncDisposable {
   }
 
   // Reads and writes share a file offset in the guest, so operations on an
-  // FsFile are serialized like Deno's.
+  // FsFile are serialized.
   #run<T>(operation: () => Promise<T>): Promise<T> {
     if (this.#closed) return Promise.reject(new TypeError("file is closed"));
     const result = this.#tail.then(operation, operation);

@@ -11,15 +11,14 @@ let
     pname = "runner-app";
     version = "0.0.0";
     src = ../..;
-    npmDepsHash = "sha256-hkrnO6lWqnwxZEGLBftY+gkhS9Ipx9vtlIGw0hZSMsw=";
+    npmDepsHash = "sha256-1NL9O4LvSzJMl9QLJytT5VyYyiSJecsilr26fPOw/A4=";
     dontNpmBuild = true;
 
-    nativeBuildInputs = [ pkgs.deno ];
+    nativeBuildInputs = [ pkgs.nodejs ];
 
     preBuild = ''
       export npm_config_cache=$TMPDIR/npm-cache
-      export DENO_DIR=$TMPDIR/deno
-      mkdir -p "$npm_config_cache" "$DENO_DIR"
+      mkdir -p "$npm_config_cache"
       npm install --no-save --ignore-scripts ${linux}/linux.tgz
       npm run check --workspace=@tombl/linux-runner
     '';
@@ -54,7 +53,7 @@ pkgs.writeShellScriptBin "wasm-linux-runner" ''
   fi
 
   if [ "$help" -eq 1 ] || [ "$has_disk" -eq 1 ]; then
-    exec ${lib.getExe pkgs.deno} run --allow-all ${app}/run.ts "''${initcpio_args[@]}" "$@"
+    exec ${lib.getExe pkgs.nodejs} ${app}/run.ts "''${initcpio_args[@]}" "$@"
   fi
 
   state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/wasm-linux"
@@ -70,5 +69,5 @@ pkgs.writeShellScriptBin "wasm-linux-runner" ''
     printf '%s' "$seed" > "$stamp"
   fi
 
-  exec ${lib.getExe pkgs.deno} run --allow-all ${app}/run.ts "''${initcpio_args[@]}" --disk "$disk" "$@"
+  exec ${lib.getExe pkgs.nodejs} ${app}/run.ts "''${initcpio_args[@]}" --disk "$disk" "$@"
 ''

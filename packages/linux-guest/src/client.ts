@@ -1,4 +1,4 @@
-// The Deno-shaped public API, composed entirely from the syscall table.
+// The public API, composed entirely from the syscall table.
 // Every operation here reads like the C it replaces; errno-based control
 // flow catches SystemError, because exceptions are the errno channel.
 
@@ -123,8 +123,11 @@ class GuestClient {
   #session: Promise<GuestSession> | null = null;
   #processes = 0;
   #process_waiters: (() => void)[] = [];
+  private readonly vsock: VsockDevice;
 
-  constructor(private readonly vsock: VsockDevice) {}
+  constructor(vsock: VsockDevice) {
+    this.vsock = vsock;
+  }
 
   // Lazy, memoized connect; cleared on failure so the next call retries. This
   // is what machine.ts's readiness loop depends on.

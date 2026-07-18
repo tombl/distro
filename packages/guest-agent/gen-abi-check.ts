@@ -1,7 +1,10 @@
-#!/usr/bin/env -S deno run --allow-read
+#!/usr/bin/env node
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
 // Emit a C translation unit of _Static_asserts from the host ABI schema.
 //
-// Standalone Deno script, no third-party dependencies. Given the path to
+// Standalone Node.js script, no third-party dependencies. Given the path to
 // packages/linux-guest/src/abi.ts as its single argument, it dynamic-imports
 // the schema and prints one _Static_assert per ABI fact to stdout. The
 // guest-agent build compiles the result with `$CC -c` (it is never run):
@@ -35,7 +38,7 @@ interface AbiChecks {
 
 function fail(message: string): never {
   console.error(`gen-abi-check: ${message}`);
-  Deno.exit(1);
+  process.exit(1);
 }
 
 function c_string(text: string): string {
@@ -47,12 +50,12 @@ function assert(condition: string, message: string): string {
 }
 
 async function main() {
-  const arg = Deno.args[0];
-  if (!arg || Deno.args.length !== 1) {
+  const [arg] = process.argv.slice(2);
+  if (!arg || process.argv.length !== 3) {
     fail("usage: gen-abi-check.ts <path-to-abi.ts>");
   }
 
-  const url = new URL(arg, `file://${Deno.cwd()}/`).href;
+  const url = pathToFileURL(resolve(arg)).href;
   const module = await import(url);
   const checks = module.abi_checks as AbiChecks | undefined;
   if (!checks || !Array.isArray(checks.scalars) || !Array.isArray(checks.includes)) {

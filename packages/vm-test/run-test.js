@@ -1,10 +1,19 @@
-#!/usr/bin/env -S deno run --allow-all
+#!/usr/bin/env node
 
+import {
+  closeSync,
+  fstatSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeSync,
+} from "node:fs";
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-const [linuxPath, initramfsPath, diskPath] = Deno.args;
-if (!linuxPath || !initramfsPath || Deno.args.length > 3) {
+const [linuxPath, initramfsPath, diskPath] = process.argv.slice(2);
+if (!linuxPath || !initramfsPath || process.argv.length > 5) {
   throw new Error("usage: run-test.js <linux-module> <initramfs> [disk]");
 }
 
@@ -37,7 +46,7 @@ function consoleOutput({ failWhenClosed }) {
   const decoder = new LineDecoder();
   return new WritableStream({
     write(chunk) {
-      Deno.stdout.writeSync(chunk);
+      process.stdout.write(chunk);
       for (const line of decoder.write(chunk)) consumeLine(line);
     },
     close() {
@@ -64,31 +73,29 @@ const devices = [consoleDevice(input, consoleOutput({ failWhenClosed: true })), 
 
 let disk;
 if (diskPath) {
-  disk = await Deno.open(diskPath, { read: true, write: true });
-  const { size } = await disk.stat();
+  disk = openSync(diskPath, "r+");
+  const { size } = fstatSync(disk);
   devices.push(
     blockDevice({
       capacity: size,
       read: async (offset, length) => {
         const data = new Uint8Array(length);
-        disk.seekSync(offset, Deno.SeekMode.Start);
         let read = 0;
         while (read < data.length) {
-          const length = disk.readSync(data.subarray(read));
-          if (length === null) break;
+          const length = readSync(disk, data, read, data.length - read, offset + read);
+          if (length === 0) break;
           read += length;
         }
         return data.subarray(0, read);
       },
       write: async (offset, data) => {
-        disk.seekSync(offset, Deno.SeekMode.Start);
         let written = 0;
         while (written < data.length) {
-          written += disk.writeSync(data.subarray(written));
+          written += writeSync(disk, data, written, data.length - written, offset + written);
         }
         return written;
       },
-      flush: () => disk.sync(),
+      flush: async () => fsyncSync(disk),
     }),
   );
 }
@@ -97,7 +104,7 @@ const machine = await spawnMachine({
   memoryMib: 128,
   cpus: 1,
   devices,
-  initcpio: await Deno.readFile(initramfsPath),
+  initcpio: readFileSync(initramfsPath),
 }).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
   return null;
@@ -117,7 +124,7 @@ const timeout = setTimeout(() => {
 const outcome = await result;
 clearTimeout(timeout);
 machine?.close();
-disk?.close();
+if (disk !== undefined) closeSync(disk);
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);
-Deno.exit(outcome.passed ? 0 : 1);
+process.exitCode = outcome.passed ? 0 : 1;

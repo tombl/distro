@@ -43,7 +43,11 @@ export interface Lane {
 }
 
 class VsockLane implements Lane {
-  constructor(readonly conn: VsockConnection) {}
+  readonly conn: VsockConnection;
+
+  constructor(conn: VsockConnection) {
+    this.conn = conn;
+  }
 
   write(bytes: Uint8Array): Promise<void> {
     return this.conn.write(bytes);

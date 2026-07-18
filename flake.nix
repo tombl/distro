@@ -96,7 +96,6 @@
               formatter
               wasmpkgs.llvm-toolchain
               pkgs.cmake
-              pkgs.deno
               pkgs.ninja
               pkgs.nodejs
             ];

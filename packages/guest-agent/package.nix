@@ -33,17 +33,16 @@ let
     pname = "linux-guest-agent-abi-check";
     version = "0.0.0";
     src = ./.;
-    nativeBuildInputs = [ pkgs.deno ];
+    nativeBuildInputs = [ pkgs.nodejs ];
 
     buildPhase = ''
       runHook preBuild
-      export HOME=$TMPDIR/home DENO_DIR=$TMPDIR/deno
-      mkdir -p "$HOME" "$DENO_DIR" node_modules/@tombl/linux
+      mkdir -p node_modules/@tombl/linux
       cp ${../linux-guest/src/abi.ts} abi.ts
       tar -xzf ${linux}/linux.tgz --strip-components=1 \
         -C node_modules/@tombl/linux
-      echo '{"dependencies":{"@tombl/linux":"*"}}' > package.json
-      deno run --allow-read gen-abi-check.ts ./abi.ts > abi-check.c
+      echo '{"type":"module","dependencies":{"@tombl/linux":"*"}}' > package.json
+      node gen-abi-check.ts ./abi.ts > abi-check.c
       $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
         -c abi-check.c -o abi-check.o
       runHook postBuild

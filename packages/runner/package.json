@@ -7,7 +7,6 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@types/deno": "^2.7.0",
     "@types/node": "^25.9.5"
   }
 }

@@ -13,7 +13,7 @@
       "webworker.iterable",
       "webworker.asynciterable"
     ],
-    "types": ["deno", "node"],
+    "types": ["node"],
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true

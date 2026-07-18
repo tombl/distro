@@ -9,38 +9,38 @@ guest_test("filesystem", async (t, fixture) => {
   const directory = "/workspace/filesystem";
   await fs.mkdir(`${directory}/child`, { recursive: true });
 
-  await t.step("reads and writes text files", async () => {
+  await t.test("reads and writes text files", async () => {
     await fs.writeTextFile(`${directory}/hello.txt`, "hello, guest\n");
     assert.equal(await fs.readTextFile(`${directory}/hello.txt`), "hello, guest\n");
   });
 
-  await t.step("stats files", async () => {
+  await t.test("stats files", async () => {
     const info = await fs.stat(`${directory}/hello.txt`);
     assert.equal(info.isFile, true);
     assert.equal(info.size, 13);
   });
 
-  await t.step("reads directories", async () => {
+  await t.test("reads directories", async () => {
     const entries = [];
     for await (const entry of fs.readDir(directory)) entries.push(entry);
     assert.deepEqual(entries.map((entry) => entry.name).sort(), ["child", "hello.txt"]);
   });
 
-  await t.step("resolves symbolic links", async () => {
+  await t.test("resolves symbolic links", async () => {
     await fs.symlink("hello.txt", `${directory}/link`);
     assert.equal((await fs.lstat(`${directory}/link`)).isSymlink, true);
     assert.equal(await fs.readLink(`${directory}/link`), "hello.txt");
     assert.equal(await fs.realPath(`${directory}/link`), `${directory}/hello.txt`);
   });
 
-  await t.step("copies and renames files", async () => {
+  await t.test("copies and renames files", async () => {
     await fs.copyFile(`${directory}/hello.txt`, `${directory}/copied.txt`);
     assert.equal(await fs.readTextFile(`${directory}/copied.txt`), "hello, guest\n");
     await fs.rename(`${directory}/copied.txt`, `${directory}/renamed.txt`);
     assert.equal(await fs.readTextFile(`${directory}/renamed.txt`), "hello, guest\n");
   });
 
-  await t.step("rejects copying a file onto itself", async () => {
+  await t.test("rejects copying a file onto itself", async () => {
     await assert.rejects(
       fs.copyFile(`${directory}/hello.txt`, `${directory}/hello.txt`),
       (error) => error instanceof SystemError && error.code === "EINVAL",
@@ -48,14 +48,14 @@ guest_test("filesystem", async (t, fixture) => {
     assert.equal(await fs.readTextFile(`${directory}/hello.txt`), "hello, guest\n");
   });
 
-  await t.step("changes file modes and sizes", async () => {
+  await t.test("changes file modes and sizes", async () => {
     await fs.chmod(`${directory}/renamed.txt`, 0o600);
     assert.equal((await fs.stat(`${directory}/renamed.txt`)).mode & 0o777, 0o600);
     await fs.truncate(`${directory}/renamed.txt`, 5);
     assert.equal(await fs.readTextFile(`${directory}/renamed.txt`), "hello");
   });
 
-  await t.step("reads, writes, seeks, and syncs open files", async () => {
+  await t.test("reads, writes, seeks, and syncs open files", async () => {
     const file = await fs.open(`${directory}/open.txt`, {
       create: true,
       read: true,
@@ -71,7 +71,7 @@ guest_test("filesystem", async (t, fixture) => {
     await file.close();
   });
 
-  await t.step("appends to open files", async () => {
+  await t.test("appends to open files", async () => {
     const appended = await fs.open(`${directory}/open.txt`, { append: true });
     assert.equal(await appended.write(new TextEncoder().encode("ghi")), 3);
     await appended.close();
@@ -80,7 +80,7 @@ guest_test("filesystem", async (t, fixture) => {
 
   // Open files are plain guest fds. More opens than the agent has workers
   // must coexist with other traffic.
-  await t.step("keeps many file descriptors open", async () => {
+  await t.test("keeps many file descriptors open", async () => {
     const retained = await Promise.all(
       Array.from({ length: 32 }, () => fs.open(`${directory}/open.txt`)),
     );
@@ -91,13 +91,13 @@ guest_test("filesystem", async (t, fixture) => {
     }
   });
 
-  await t.step("reads and writes large binary files", async () => {
+  await t.test("reads and writes large binary files", async () => {
     const large = pattern_bytes(256 * 1024);
     await fs.writeFile(`${directory}/large.bin`, large);
     assert.deepEqual(await fs.readFile(`${directory}/large.bin`), large);
   });
 
-  await t.step("reports missing files", async () => {
+  await t.test("reports missing files", async () => {
     await assert.rejects(
       fs.readFile(`${directory}/missing`),
       (error) => error instanceof SystemError && error.code === "ENOENT",

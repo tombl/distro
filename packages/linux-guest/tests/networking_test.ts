@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { createServer, type AddressInfo } from "node:net";
 import { guest_test } from "./fixture.ts";
 import { collect, connect_with_retry } from "./helpers.ts";
 
 guest_test("networking", async (t, fixture) => {
   const guest = await fixture.spawn();
 
-  await t.step("connects from the host over TCP", async () => {
+  await t.test("connects from the host over TCP", async () => {
     const server = await guest.exec(["/workspace/network-test", "listen", "tcp", "12001"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
@@ -23,7 +24,7 @@ guest_test("networking", async (t, fixture) => {
     assert.equal((await server_error).byteLength, 0);
   });
 
-  await t.step("connects from the host over UDP", async () => {
+  await t.test("connects from the host over UDP", async () => {
     const server = await guest.exec(["/workspace/network-test", "listen", "udp", "12002"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
@@ -45,27 +46,28 @@ guest_test("networking", async (t, fixture) => {
     assert.equal((await server_error).byteLength, 0);
   });
 
-  await t.step("connects from the guest to the host", async () => {
-    const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-    const host_echo = (async () => {
-      const connection = await listener.accept();
-      const buffer = new Uint8Array(4096);
-      try {
-        for (;;) {
-          const length = await connection.read(buffer);
-          if (length === null) break;
-          await connection.write(buffer.subarray(0, length));
-        }
-      } finally {
-        connection.close();
-      }
-    })();
+  await t.test("connects from the guest to the host", async () => {
+    let settle_echo!: (error?: Error) => void;
+    const host_echo = new Promise<void>((resolve, reject) => {
+      settle_echo = (error) => (error ? reject(error) : resolve());
+    });
+    const listener = createServer((connection) => {
+      connection.on("error", settle_echo);
+      connection.on("close", () => settle_echo());
+      connection.pipe(connection);
+    });
+    listener.once("close", () => settle_echo());
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const address = listener.address() as AddressInfo;
     try {
       const outbound = await guest.exec([
         "/workspace/network-test",
         "connect",
         fixture.network.gateway,
-        String(listener.addr.port),
+        String(address.port),
         "guest to host",
       ]);
       const [output, error, status] = await Promise.all([
@@ -79,11 +81,11 @@ guest_test("networking", async (t, fixture) => {
       assert.deepEqual(status, { success: true, code: 0, signal: null });
     } finally {
       listener.close();
-      await host_echo.catch(() => {});
+      await host_echo.catch(() => undefined);
     }
   });
 
-  await t.step("connects between guests", async () => {
+  await t.test("connects between guests", async () => {
     const second = await fixture.spawn();
     const server = await guest.exec(["/workspace/network-test", "listen", "tcp", "12003"]);
     const server_output = collect(server.stdout);

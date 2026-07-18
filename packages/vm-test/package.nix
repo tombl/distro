@@ -1,4 +1,4 @@
-# Build-platform test harness: boots the kernel under Deno and asserts on a
+# Build-platform test harness: boots the kernel under Node and asserts on a
 # pass marker. See docs/architecture.md, "Testing".
 {
   pkgs,
@@ -18,17 +18,14 @@ let
     checks.protocol =
       pkgs.runCommand "vm-test-protocol-check"
         {
-          nativeBuildInputs = [ pkgs.deno ];
+          nativeBuildInputs = [ pkgs.nodejs ];
         }
         ''
           cp ${./limit-output.awk} limit-output.awk
           cp ${./protocol.js} protocol.js
           cp ${./protocol-test.js} protocol-test.js
 
-          export HOME=$TMPDIR/home
-          export DENO_DIR=$TMPDIR/deno
-          mkdir -p $HOME $DENO_DIR
-          deno test --no-config --allow-read protocol-test.js
+          node --test protocol-test.js
           for line in $(seq 1 200); do
             if [ "$line" -eq 120 ]; then
               echo "vm test failed: expected failure"
@@ -73,18 +70,15 @@ let
     }:
     pkgs.runCommand "vm-test-${name}"
       {
-        nativeBuildInputs = [ pkgs.deno ];
+        nativeBuildInputs = [ pkgs.nodejs ];
       }
       ''
-        export HOME=$TMPDIR/home
-        export DENO_DIR=$TMPDIR/deno
-        mkdir -p $HOME $DENO_DIR
         ${lib.optionalString (disk != null) ''
           cp ${disk} disk.ext4
           chmod u+w disk.ext4
         ''}
         set +e
-        timeout 20 deno run --allow-all ${runner}/run-test.js \
+        timeout 20 node ${runner}/run-test.js \
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.ext4"} \
