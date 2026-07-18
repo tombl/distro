@@ -1,0 +1,248 @@
+<section class="terminal" aria-label="Interactive Linux terminal">
+  <div id="terminal"><p>Starting Linux…</p></div>
+  <div class="statusbar">
+    <p class="status" data-terminal-status>fetching…</p>
+    <button class="expand" aria-label="Expand terminal" data-terminal-expand>
+      <svg
+        class="icon-expand"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="15 3 21 3 21 9" />
+        <polyline points="9 21 3 21 3 15" />
+        <line x1="21" y1="3" x2="14" y2="10" />
+        <line x1="3" y1="21" x2="10" y2="14" />
+      </svg>
+      <svg
+        class="icon-restore"
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <polyline points="4 14 10 14 10 20" />
+        <polyline points="20 10 14 10 14 4" />
+        <line x1="14" y1="10" x2="21" y2="3" />
+        <line x1="3" y1="21" x2="10" y2="14" />
+      </svg>
+    </button>
+  </div>
+</section>
+
+<script>
+  import { FitAddon } from "@xterm/addon-fit";
+  import { Terminal } from "@xterm/xterm";
+  import type { ITheme } from "@xterm/xterm";
+  import "@xterm/xterm/css/xterm.css";
+  import { attachConsole, hero, writeConsole } from "../lib/hero";
+
+  const element = document.querySelector<HTMLElement>("#terminal");
+  if (!element) throw new Error("terminal element not found");
+
+  function resolveColor(variable: string) {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${variable})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }
+
+  function terminalTheme(): ITheme {
+    return {
+      background: resolveColor("--code-background"),
+      foreground: resolveColor("--terminal-foreground"),
+      cursor: resolveColor("--code-cursor"),
+      cursorAccent: resolveColor("--code-background"),
+      selectionBackground: resolveColor("--code-selection"),
+      black: resolveColor("--terminal-black"),
+      red: resolveColor("--terminal-red"),
+      green: resolveColor("--terminal-green"),
+      yellow: resolveColor("--terminal-yellow"),
+      blue: resolveColor("--terminal-blue"),
+      magenta: resolveColor("--terminal-magenta"),
+      cyan: resolveColor("--terminal-cyan"),
+      white: resolveColor("--terminal-white"),
+      brightBlack: resolveColor("--terminal-bright-black"),
+      brightRed: resolveColor("--terminal-bright-red"),
+      brightGreen: resolveColor("--terminal-bright-green"),
+      brightYellow: resolveColor("--terminal-bright-yellow"),
+      brightBlue: resolveColor("--terminal-bright-blue"),
+      brightMagenta: resolveColor("--terminal-bright-magenta"),
+      brightCyan: resolveColor("--terminal-bright-cyan"),
+      brightWhite: resolveColor("--terminal-bright-white"),
+    };
+  }
+
+  const ROWS = 18;
+  const terminal = new Terminal({
+    convertEol: true,
+    cursorBlink: true,
+    fontFamily: getComputedStyle(element).fontFamily,
+    fontSize: 15,
+    rows: ROWS,
+    scrollback: 1_000,
+    theme: terminalTheme(),
+  });
+  const fit = new FitAddon();
+  terminal.loadAddon(fit);
+  element.replaceChildren();
+  terminal.open(element);
+
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    terminal.options.theme = terminalTheme();
+  });
+
+  const section = element.closest<HTMLElement>(".terminal");
+  const expandButton = document.querySelector<HTMLButtonElement>("[data-terminal-expand]");
+
+  // Inline, the height is fixed at ROWS and only the width tracks the
+  // container; expanded, the container is the viewport and both dimensions
+  // fit to it.
+  function fitTerminal() {
+    const dimensions = fit.proposeDimensions();
+    if (!dimensions) return;
+    const rows = section?.classList.contains("expanded") ? dimensions.rows : ROWS;
+    if (dimensions.cols !== terminal.cols || rows !== terminal.rows) {
+      terminal.resize(dimensions.cols, rows);
+    }
+  }
+
+  fitTerminal();
+  new ResizeObserver(fitTerminal).observe(element);
+
+  const placeholder = document.createElement("div");
+
+  function setExpanded(expanded: boolean) {
+    if (section && expanded) {
+      // Hold the terminal's slot open so the page keeps its height (and
+      // scroll position) while the terminal is out of the flow.
+      placeholder.style.height = `${section.offsetHeight}px`;
+      placeholder.style.marginBlock = getComputedStyle(section).marginBlock;
+      section.before(placeholder);
+    } else {
+      placeholder.remove();
+    }
+    section?.classList.toggle("expanded", expanded);
+    expandButton?.setAttribute(
+      "aria-label",
+      expanded ? "Restore terminal size" : "Expand terminal",
+    );
+    fitTerminal();
+    terminal.focus();
+  }
+
+  // No Escape-to-restore: the shell owns the keyboard while focused (xterm
+  // swallows handled keys, and TUIs need Escape), so the button is the way out.
+  expandButton?.addEventListener("click", () => {
+    setExpanded(!section?.classList.contains("expanded"));
+  });
+
+  terminal.onData((data) => writeConsole(data));
+  attachConsole((data) => terminal.write(Uint8Array.from(data)));
+
+  const status = document.querySelector("[data-terminal-status]");
+  void booting.then(() => {
+    if (status) status.textContent = "booting…";
+  });
+  hero.then(
+    ({ bootMs, cpus, memoryMib }) => {
+      if (status) status.textContent = `running · ${cpus} cpus · ${memoryMib} MiB · booted in ${bootMs} ms`;
+      terminal.focus();
+    },
+    (error) => {
+      console.error(error);
+      terminal.writeln(`\r\nCould not start Linux: ${error instanceof Error ? error.message : error}`);
+      if (status) status.textContent = "failed to boot";
+    },
+  );
+</script>
+
+<style>
+  .terminal {
+    width: 100%;
+    margin-block: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    font-family: var(--font-mono);
+    transition: border-color 120ms;
+
+    &:focus-within {
+      border-color: var(--hairline-strong);
+    }
+
+    &.expanded {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      margin-block: 0;
+      border: none;
+      background: var(--code-background);
+      display: flex;
+      flex-direction: column;
+
+      > #terminal {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .icon-expand {
+        display: none;
+      }
+    }
+
+    &:not(.expanded) .icon-restore {
+      display: none;
+    }
+  }
+
+  /* The strengthened border (plus xterm's caret) is the focus indicator.
+     :global() because xterm builds its DOM at runtime, outside style scoping. */
+  .terminal :global(:focus-visible) {
+    outline: none;
+  }
+
+  #terminal {
+    width: 100%;
+  }
+
+  .statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-block-start: 0.5rem;
+  }
+
+  .status {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .expand {
+    display: inline-flex;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    transition: color 120ms;
+
+    &:hover {
+      color: var(--code-foreground);
+    }
+  }
+</style>

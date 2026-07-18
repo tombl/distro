@@ -1,0 +1,166 @@
+---
+import { classHighlighter, highlightCode } from "@lezer/highlight";
+import { parser as javascriptParser } from "@lezer/javascript";
+
+interface Props {
+  code: string;
+  language?: string;
+  editable?: boolean;
+}
+
+interface Token {
+  text: string;
+  classes: string;
+}
+
+const { code, language, editable = false } = Astro.props;
+const tokens: Token[] = [];
+
+if (["javascript", "js", "jsx", "mjs"].includes(language ?? "")) {
+  highlightCode(
+    code,
+    javascriptParser.parse(code),
+    classHighlighter,
+    (text, classes) => tokens.push({ text, classes }),
+    () => tokens.push({ text: "\n", classes: "" }),
+  );
+} else {
+  tokens.push({ text: code, classes: "" });
+}
+---
+
+<div
+  class="code-block"
+  data-code-block
+  data-editable={editable ? "" : undefined}
+  data-language={language}
+>
+  <pre><code>{tokens.map(({ text, classes }) =>
+    classes ? <span class={classes}>{text}</span> : text
+  )}</code></pre>
+</div>
+
+{editable && (
+  <script>
+    import { javascript } from "@codemirror/lang-javascript";
+    import { syntaxHighlighting } from "@codemirror/language";
+    import { EditorView } from "@codemirror/view";
+    import { classHighlighter } from "@lezer/highlight";
+
+    for (const block of document.querySelectorAll<HTMLElement>("[data-code-block][data-editable]")) {
+      const fallback = block.querySelector<HTMLElement>(":scope > pre");
+      const code = fallback?.querySelector("code");
+      if (!fallback || !code) continue;
+
+      const view = new EditorView({
+        doc: code.textContent ?? "",
+        extensions: [
+          syntaxHighlighting(classHighlighter),
+          ...(["javascript", "js", "jsx", "mjs"].includes(block.dataset.language ?? "")
+            ? [javascript()]
+            : []),
+          EditorView.contentAttributes.of({ "aria-label": "Editable code example" }),
+        ],
+      });
+
+      fallback.replaceWith(view.dom);
+      // Let the page read back edits, e.g. to run the example.
+      Object.assign(block, { getCode: () => view.state.doc.toString() });
+    }
+  </script>
+)}
+
+{/* Global and unlayered on purpose: CodeMirror builds its DOM at runtime, outside
+    Astro's style scoping, and injects its own unlayered stylesheet that layered
+    rules would lose to. */}
+<style is:global>
+  .code-block {
+    color: var(--code-foreground);
+    background-color: var(--code-background);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    margin-block-end: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    overflow-x: auto;
+    transition: border-color 120ms;
+  }
+
+  /* Editable blocks use the strengthened border (plus the caret) as their
+     focus indicator, so the global ring inside is redundant —
+     editable elements match :focus-visible even on pointer focus. */
+  .code-block[data-editable]:focus-within {
+    border-color: var(--hairline-strong);
+  }
+
+  .code-block[data-editable] :focus-visible {
+    outline: none;
+  }
+
+  .code-block > pre {
+    margin: 0;
+    overflow: visible;
+  }
+
+  .code-block .cm-editor,
+  .code-block .cm-scroller {
+    font: inherit;
+    line-height: inherit;
+  }
+
+  .code-block .cm-editor {
+    color: inherit;
+    background: transparent;
+  }
+
+  .code-block .cm-scroller {
+    overflow: visible;
+  }
+
+  .code-block .cm-content,
+  .code-block .cm-line {
+    padding: 0;
+  }
+
+  .code-block .cm-content {
+    caret-color: var(--code-cursor);
+  }
+
+  .code-block .cm-cursor,
+  .code-block .cm-dropCursor {
+    border-left-color: var(--code-cursor);
+  }
+
+  .code-block .cm-selectionBackground {
+    background-color: var(--code-selection) !important;
+  }
+
+  /* Monochrome highlighting: bold keywords, italic muted comments, one quiet
+     step of gray for string literals — structure over color. */
+  .tok-keyword {
+    font-weight: 700;
+  }
+
+  .tok-comment {
+    color: var(--code-muted);
+    font-style: italic;
+  }
+
+  .tok-string,
+  .tok-string2 {
+    color: var(--prose);
+  }
+
+  .tok-emphasis {
+    font-style: italic;
+  }
+
+  .tok-strong,
+  .tok-heading {
+    font-weight: 700;
+  }
+
+  .tok-invalid {
+    text-decoration: underline wavy;
+  }
+</style>

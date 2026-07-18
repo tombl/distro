@@ -11,7 +11,7 @@ let
     pname = "runner-app";
     version = "0.0.0";
     src = ../..;
-    npmDepsHash = "sha256-2tX0XR24dREbZOXaCmjho9i6+0J7K4anv2Zj2fbLAzc=";
+    npmDepsHash = "sha256-hkrnO6lWqnwxZEGLBftY+gkhS9Ipx9vtlIGw0hZSMsw=";
     dontNpmBuild = true;
 
     nativeBuildInputs = [ pkgs.deno ];

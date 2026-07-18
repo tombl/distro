@@ -1,0 +1,133 @@
+---
+interface Item {
+  href: string;
+  label: string;
+}
+
+interface Props {
+  items: Item[];
+  heading?: boolean;
+}
+
+const { items, heading = false } = Astro.props;
+---
+
+<nav aria-label="On this page">
+  {heading && <h2>On this page</h2>}
+  <ul>
+    {items.map((item) => (
+      <li>
+        <a href={item.href} data-section-link>{item.label}</a>
+      </li>
+    ))}
+  </ul>
+</nav>
+
+<script>
+  const idleVisibility = 0.6;
+  const main = document.querySelector("main");
+  const linksBySection = new Map<string, HTMLAnchorElement[]>();
+  for (const link of document.querySelectorAll<HTMLAnchorElement>("[data-section-link]")) {
+    const links = linksBySection.get(link.hash.slice(1)) ?? [];
+    links.push(link);
+    linksBySection.set(link.hash.slice(1), links);
+  }
+
+  interface SectionLink {
+    heading: HTMLHeadingElement;
+    links: HTMLAnchorElement[];
+    depth: number;
+    visibility: number;
+    parent?: SectionLink;
+  }
+
+  const sectionLinks: SectionLink[] = [...document.querySelectorAll<HTMLHeadingElement>("main :is(h2, h3, h4, h5, h6)[id]")]
+    .flatMap((heading) => {
+      const links = linksBySection.get(heading.id);
+      return links ? [{ heading, links, depth: Number(heading.tagName.slice(1)), visibility: 0 }] : [];
+    });
+
+  for (let index = 0; index < sectionLinks.length; index++) {
+    const item = sectionLinks[index];
+    item.parent = sectionLinks.slice(0, index).findLast(({ depth }) => depth < item.depth);
+  }
+
+  function updateToc() {
+    const viewportHeight = document.documentElement.clientHeight;
+
+    for (let index = 0; index < sectionLinks.length; index++) {
+      const item = sectionLinks[index];
+      const next = sectionLinks.slice(index + 1).find(({ depth }) => depth <= item.depth);
+      const top = item.heading.getBoundingClientRect().top;
+      const bottom = next?.heading.getBoundingClientRect().top
+        ?? main?.getBoundingClientRect().bottom
+        ?? top;
+      const visibleHeight = Math.max(0, Math.min(bottom, viewportHeight) - Math.max(top, 0));
+      item.visibility = Math.min(1, visibleHeight / Math.min(bottom - top, viewportHeight));
+    }
+
+    for (let index = sectionLinks.length - 1; index >= 0; index--) {
+      const item = sectionLinks[index];
+      if (item.parent) item.parent.visibility = Math.max(item.parent.visibility, item.visibility);
+    }
+
+    for (const { links, visibility } of sectionLinks) {
+      const colorMix = idleVisibility + (1 - idleVisibility) * visibility;
+      for (const link of links) {
+        link.style.setProperty("--toc-visibility", `${colorMix * 100}%`);
+      }
+    }
+  }
+
+  let updateFrame = 0;
+  function scheduleUpdate() {
+    if (updateFrame) return;
+    updateFrame = requestAnimationFrame(() => {
+      updateFrame = 0;
+      updateToc();
+    });
+  }
+
+  addEventListener("scroll", scheduleUpdate, { passive: true });
+  new ResizeObserver(scheduleUpdate).observe(document.documentElement);
+  scheduleUpdate();
+</script>
+
+<style>
+  nav {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+
+  h2 {
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: 0;
+    color: var(--muted);
+    margin-block-end: 0.5rem;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4375rem;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  [data-section-link] {
+    --toc-visibility: 60%;
+
+    color: color-mix(in srgb, var(--code-foreground) var(--toc-visibility), transparent);
+    transition: color 120ms;
+
+    &:hover {
+      color: var(--code-foreground);
+    }
+  }
+</style>

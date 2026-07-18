@@ -1,0 +1,122 @@
+---
+import { getCollection } from "astro:content";
+
+interface Props {
+  current: string;
+}
+
+const { current } = Astro.props;
+const docs = (await getCollection("docs")).sort((left, right) => {
+  if (left.id === "index") return -1;
+  if (right.id === "index") return 1;
+  return left.data.title.localeCompare(right.data.title);
+});
+---
+
+<nav aria-label="Documentation">
+  <div>
+    <h3>Tutorials</h3>
+    <ul>
+      {docs.map((doc) => (
+        <li>
+          <a
+            href={doc.id === "index" ? "/docs/" : `/docs/${doc.id}/`}
+            aria-current={doc.id === current ? "page" : undefined}
+          >
+            {doc.data.title}
+          </a>
+          {doc.id === current && (
+            <div class="current-toc">
+              <slot />
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  </div>
+
+  <div>
+    <h3>How-to guides</h3>
+    <ul>
+      <li>Run a process</li>
+      <li>Read and write files</li>
+      <li>Connect two guests</li>
+    </ul>
+  </div>
+
+  <div>
+    <h3>Reference</h3>
+    <ul>
+      <li><code>@tombl/linux</code></li>
+      <li><code>@tombl/linux-guest</code></li>
+    </ul>
+  </div>
+
+  <div>
+    <h3>Explanation</h3>
+    <ul>
+      <li>Architecture</li>
+      <li>Package boundaries</li>
+    </ul>
+  </div>
+</nav>
+
+<style>
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 1.375rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: 0.8125rem;
+    font-weight: inherit;
+    letter-spacing: 0;
+    color: var(--muted);
+    margin-block-end: 0.5rem;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4375rem;
+    color: var(--prose);
+  }
+
+  /* Placeholder entries for unwritten pages: dimmer than links, and they
+     don't respond to hover, so real links self-identify. */
+  li:not(:has(a)) {
+    color: var(--muted);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 120ms;
+
+    &:hover,
+    &[aria-current="page"] {
+      color: var(--code-foreground);
+    }
+
+    &[aria-current="page"] {
+      font-weight: 500;
+    }
+  }
+
+  /* "On this page", folded under the current page's link wherever the
+     dedicated table-of-contents column doesn't fit. */
+  .current-toc {
+    padding: 0.4375rem 0 0.1875rem 0.875rem;
+  }
+
+  @media (min-width: 72rem) {
+    .current-toc {
+      display: none;
+    }
+  }
+</style>

@@ -1,0 +1,321 @@
+---
+import type { MarkdownHeading } from "astro";
+
+import DocumentationNavigation from "../components/DocumentationNavigation.astro";
+import Footnotes from "../components/Footnotes.astro";
+import TableOfContents from "../components/TableOfContents.astro";
+import Base from "./Base.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  current: string;
+  headings: MarkdownHeading[];
+}
+
+const { title, description, current, headings } = Astro.props;
+// footnote-label is the GFM footnotes section, which Footnotes renders inline.
+const toc = headings
+  .filter(({ depth, slug }) => depth > 1 && slug !== "footnote-label")
+  .map(({ slug, text }) => ({ href: `#${slug}`, label: text }));
+---
+
+<Base title={title} description={description}>
+  <span slot="breadcrumb" class="breadcrumb">
+    {" / "}<a href="/docs/">docs</a>
+  </span>
+
+  <div slot="header" class="mobile-header-navigation">
+    <details class="mobile-disclosure">
+      <summary>Contents</summary>
+      <div class="mobile-disclosure-panel">
+        <DocumentationNavigation current={current}>
+          <TableOfContents items={toc} />
+        </DocumentationNavigation>
+      </div>
+    </details>
+  </div>
+
+  <div class="layout">
+    <aside class="navigation">
+      <DocumentationNavigation current={current}>
+        <TableOfContents items={toc} />
+      </DocumentationNavigation>
+    </aside>
+
+    <main>
+      {/* TODO: link this to the page's raw markdown source. */}
+      <a class="view-markdown">view as markdown</a>
+      <slot />
+    </main>
+
+    <aside class="page-toc">
+      <TableOfContents items={toc} heading />
+    </aside>
+  </div>
+
+  <Footnotes />
+
+  <script>
+    // Close an open panel on navigation within it or on any click outside it.
+    // (details has no native light dismiss; the popover API does, but placing
+    // the panel would need anchor positioning and this handler stays either
+    // way for same-page anchor clicks.)
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const panels = document.querySelectorAll<HTMLDetailsElement>(
+        ".mobile-header-navigation details[open]",
+      );
+      for (const details of panels) {
+        if (!target || target.closest("a") || !details.contains(target)) details.open = false;
+      }
+    });
+  </script>
+</Base>
+
+<style>
+  .breadcrumb {
+    color: var(--muted);
+
+    a {
+      text-decoration: none;
+      transition: color 120ms;
+
+      &:hover {
+        color: var(--code-foreground);
+      }
+    }
+  }
+
+  .layout {
+    flex: 1;
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding-inline: 1rem;
+
+    > main {
+      position: relative;
+      padding-block: 2rem 6rem;
+    }
+  }
+
+  aside {
+    display: none;
+  }
+
+  .view-markdown {
+    display: none;
+    position: absolute;
+    inset-inline-end: 0;
+    /* Baseline-aligned with the h1: main's top padding + the h1's margin,
+       ascent, minus this line's own ascent. */
+    inset-block-start: 3.95rem;
+    font-size: 0.8125rem;
+    color: var(--muted);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 120ms;
+
+    &:hover {
+      color: var(--code-foreground);
+    }
+  }
+
+  .mobile-header-navigation {
+    position: relative;
+    margin-block-start: 0.75rem;
+
+    .mobile-disclosure {
+      position: static;
+      interpolate-size: allow-keywords;
+
+      > summary {
+        min-height: 2.75rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding-inline: 0.75rem;
+        border: 1px solid var(--hairline);
+        color: var(--code-foreground);
+        cursor: pointer;
+        font-weight: 700;
+        list-style: none;
+        -webkit-user-select: none;
+        user-select: none;
+        /* Above the panel, so the open button's background covers the panel's
+           top border and the two read as one surface. */
+        position: relative;
+        z-index: 2;
+        transition:
+          border-color 120ms,
+          background-color 120ms;
+
+        &:hover {
+          background: var(--surface);
+        }
+
+        &::-webkit-details-marker {
+          display: none;
+        }
+
+        &::after {
+          content: "+";
+          font-weight: 400;
+          transition: rotate 160ms ease;
+        }
+      }
+
+      &[open] > summary {
+        border-block-end-color: transparent;
+        background: var(--surface);
+
+        &::after {
+          rotate: 45deg;
+        }
+      }
+
+      &::details-content {
+        position: absolute;
+        z-index: 1;
+        inset-block-start: calc(100% - 1px);
+        inset-inline: 0;
+        height: 0;
+        overflow: clip;
+        opacity: 0;
+        transition:
+          height 180ms ease,
+          opacity 120ms linear,
+          content-visibility 180ms allow-discrete;
+      }
+
+      &[open]::details-content {
+        height: auto;
+        opacity: 1;
+      }
+    }
+
+    .mobile-disclosure-panel {
+      max-height: calc(100dvh - 7rem);
+      padding: 1.25rem 1rem;
+      border: 1px solid var(--hairline);
+      overflow-y: auto;
+      background: var(--surface);
+
+      > :global(nav) {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+        gap: 1.5rem;
+      }
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mobile-disclosure > summary::after,
+    .mobile-disclosure::details-content {
+      transition: none;
+    }
+  }
+
+  /* Three tiers: single column below 48rem, sidebar + content between 48 and
+     72rem ("On this page" folds into the sidebar under the current item — see
+     DocumentationNavigation), all three columns above 72rem. */
+  @media (min-width: 48rem) {
+    .mobile-header-navigation {
+      display: none;
+    }
+
+    .view-markdown {
+      display: block;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns:
+        minmax(0, var(--side-column))
+        minmax(0, var(--content-column));
+      column-gap: var(--column-gap);
+
+      > main {
+        grid-column: 2;
+        min-width: 0;
+      }
+    }
+
+    aside.navigation {
+      display: block;
+      grid-column: 1;
+    }
+
+    .layout aside {
+      /* Sidebars start below the page h1: main's top padding plus the h1's
+         margin and line box. The sticky top is negative so the offset scrolls
+         away, leaving --stuck-inset of breathing room when pinned. */
+      --below-h1: 5.4rem;
+      --stuck-inset: 1.5rem;
+      padding-block: var(--below-h1) 1.5rem;
+      align-self: start;
+      position: sticky;
+      top: calc(var(--stuck-inset) - var(--below-h1));
+      max-height: calc(100dvh + var(--below-h1) - var(--stuck-inset));
+      overflow-y: auto;
+      scrollbar-width: none;
+
+      /* Fade the edges only while content is clipped beyond them: the fades
+         are driven by scroll position, and a non-overflowing sidebar has an
+         inactive scroll(self) timeline, which leaves both at 0. */
+      mask-image: linear-gradient(
+        to bottom,
+        transparent,
+        black var(--nav-fade-top),
+        black calc(100% - var(--nav-fade-bottom)),
+        transparent
+      );
+      animation-name: nav-fade-top, nav-fade-bottom;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: scroll(self);
+      animation-range:
+        0 2.5rem,
+        calc(100% - 2.5rem) 100%;
+    }
+  }
+
+  @media (min-width: 72rem) {
+    .layout {
+      grid-template-columns:
+        minmax(0, var(--side-column))
+        minmax(0, var(--content-column))
+        minmax(0, var(--side-column));
+    }
+
+    aside.page-toc {
+      display: block;
+      grid-column: 3;
+    }
+  }
+
+  @property --nav-fade-top {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @property --nav-fade-bottom {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @keyframes nav-fade-top {
+    to {
+      --nav-fade-top: 2.5rem;
+    }
+  }
+
+  @keyframes nav-fade-bottom {
+    from {
+      --nav-fade-bottom: 2.5rem;
+    }
+  }
+</style>

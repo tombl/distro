@@ -9,7 +9,7 @@ pkgs.buildNpmPackage {
   pname = "site";
   version = "0.0.0";
   src = ../..;
-  npmDepsHash = "sha256-BFEh5IW9i7nbHiocBbYPz1n82DCIy68TRc6VI133y8M=";
+  npmDepsHash = "sha256-s8dd7A1qKak11TarcIMkOvatWHQOtC1CUc/IGOK3/ew=";
   npmBuildFlags = [ "--workspace=@tombl/linux-site" ];
   nativeBuildInputs = [ pkgs.gzip ];
 
