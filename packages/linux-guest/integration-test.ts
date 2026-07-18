@@ -7,8 +7,8 @@ if (!module_path || Deno.args.length !== 1) {
 }
 
 const {
-  ConsoleDevice,
-  EntropyDevice,
+  consoleDevice,
+  entropyDevice,
   SeekMode,
   SystemError,
   spawnGuest,
@@ -50,7 +50,7 @@ const boot_console = console_output();
 const { machine, fs, exec } = await spawnGuest({
   cpus: 2,
   memoryMib: 192,
-  devices: [new ConsoleDevice(closed_input(), console_output()), new EntropyDevice()],
+  devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
 });
 const boot_console_done = machine.bootConsole.pipeTo(boot_console, { preventClose: true });
 

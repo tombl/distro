@@ -1,5 +1,5 @@
 #!/usr/bin/env -S deno run --allow-all
-import { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } from "@tombl/linux";
+import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
 import { parseArgs } from "node:util";
 
 function assert(cond: unknown, message = "Assertion failed"): asserts cond {
@@ -101,11 +101,11 @@ if (args.console) {
     exitFromSignal("SIGTERM", 143);
   }
 
-  devices.push(new ConsoleDevice(Deno.stdin.readable, Deno.stdout.writable));
+  devices.push(consoleDevice(Deno.stdin.readable, Deno.stdout.writable));
 }
 
 if (args.entropy) {
-  devices.push(new EntropyDevice());
+  devices.push(entropyDevice());
 }
 
 for (const disk of args.disk) {
@@ -117,7 +117,7 @@ for (const disk of args.disk) {
   const { size } = await file.stat();
 
   devices.push(
-    new BlockDevice({
+    blockDevice({
       read: async (offset, length) => {
         const array = new Uint8Array(length);
         file.seekSync(offset, Deno.SeekMode.Start);

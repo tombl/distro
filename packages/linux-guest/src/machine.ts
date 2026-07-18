@@ -1,10 +1,10 @@
 import {
-  BlockDevice,
+  blockDevice,
+  vsockDevice,
   type Machine,
   spawnMachine,
   type SpawnMachineOptions,
   type VirtioDevice,
-  VsockDevice,
 } from "@tombl/linux";
 import { initramfs, rootfs, rootfsSize } from "./assets.ts";
 import {
@@ -58,8 +58,8 @@ export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest
   }
 
   const { devices = [], ...machine_options } = options;
-  const vsock = new VsockDevice();
-  const root = new BlockDevice({
+  const vsock = vsockDevice();
+  const root = blockDevice({
     capacity: rootfsSize,
     async read(offset, length) {
       return (await rootfs).subarray(offset, offset + length);

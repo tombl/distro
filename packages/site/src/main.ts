@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
-import { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } from "@tombl/linux";
+import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
 import "./style.css";
 
 if (import.meta.env.PROD) {
@@ -115,9 +115,9 @@ const machine = await spawnMachine({
   cmdline: cmdline.replace(/\+/g, " "),
   memoryMib: parseInt(memory, 10),
   devices: [
-    new ConsoleDevice(stdin, stdout),
-    new EntropyDevice(),
-    new BlockDevice({
+    consoleDevice(stdin, stdout),
+    entropyDevice(),
+    blockDevice({
       capacity: rootfsData.byteLength,
       read(offset, length) {
         return rootfsData.subarray(offset, offset + length);

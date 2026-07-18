@@ -8,7 +8,7 @@ if (!linuxPath || !initramfsPath || Deno.args.length > 3) {
   throw new Error("usage: run-test.js <linux-module> <initramfs> [disk]");
 }
 
-const { BlockDevice, ConsoleDevice, EntropyDevice, spawnMachine } = await import(
+const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
   pathToFileURL(linuxPath).href
 );
 
@@ -60,17 +60,14 @@ const input = new ReadableStream({
     controller.close();
   },
 });
-const devices = [
-  new ConsoleDevice(input, consoleOutput({ failWhenClosed: true })),
-  new EntropyDevice(),
-];
+const devices = [consoleDevice(input, consoleOutput({ failWhenClosed: true })), entropyDevice()];
 
 let disk;
 if (diskPath) {
   disk = await Deno.open(diskPath, { read: true, write: true });
   const { size } = await disk.stat();
   devices.push(
-    new BlockDevice({
+    blockDevice({
       capacity: size,
       read: async (offset, length) => {
         const data = new Uint8Array(length);

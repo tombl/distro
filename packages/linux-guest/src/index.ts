@@ -1,12 +1,13 @@
 export {
-  BlockDevice,
   type BlockDeviceStorage,
-  ConsoleDevice,
+  blockDevice,
+  consoleDevice,
+  entropyDevice,
+  vsockDevice,
   type DeviceTreeNode,
-  EntropyDevice,
   type VirtioDevice,
   type VsockConnection,
-  VsockDevice,
+  type VsockDevice,
 } from "@tombl/linux";
 export { ProtocolError, SystemError } from "./abi.ts";
 export { type Exec, type ExecOptions, type FileData, type FileSystem } from "./client.ts";
