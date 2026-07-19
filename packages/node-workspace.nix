@@ -11,6 +11,6 @@ in
     src = ../.;
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-2ygSYj9Sz9kb+KWka9TKx1bEyscyxtoU9kevDOKgkuE=";
+    hash = "sha256-yqqQ6cJ2++r6u2fyRvhwdac9QPA2XFMugM8bNbOnT4A=";
   };
 }
