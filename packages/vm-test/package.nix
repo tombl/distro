@@ -55,7 +55,12 @@ let
       ''
         mkdir -p root/dev root/proc root/sys root/tmp
         ${lib.concatMapStringsSep "\n" (content: ''
-          cp -RP ${content}/. root/
+          # --remove-destination so a later content's real file replaces an
+          # earlier content's entry outright. Without it, cp writes *through* an
+          # existing symlink: a GNU tool copied over busybox's applet symlink
+          # (e.g. bin/sed -> busybox) would clobber the busybox binary itself
+          # instead of shadowing the applet. "later wins" must replace, not follow.
+          cp -RP --remove-destination ${content}/. root/
           # Each store path arrives read-only; keep the tree writable so a later
           # content can add files under a directory an earlier one created (e.g.
           # a second package populating /bin).
