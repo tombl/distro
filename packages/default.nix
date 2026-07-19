@@ -58,6 +58,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
     xz = callPackage ./xz/package.nix { src = inputs.xz-src; };
     zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
+    zstd = callPackage ./zstd/package.nix { src = inputs.zstd-src; };
 
     # images:
     guest-initramfs = callPackage ./guest-initramfs/package.nix { };

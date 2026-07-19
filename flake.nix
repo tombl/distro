@@ -36,6 +36,10 @@
       url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz";
       flake = false;
     };
+    zstd-src = {
+      url = "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz";
+      flake = false;
+    };
     # keep-sorted end
   };
 
