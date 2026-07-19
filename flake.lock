@@ -287,6 +287,7 @@
         "readline-src": "readline-src",
         "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",
+        "tar-src": "tar-src",
         "xz-src": "xz-src",
         "zlib-src": "zlib-src",
         "zstd-src": "zstd-src"
@@ -316,6 +317,19 @@
       "original": {
         "type": "tarball",
         "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      }
+    },
+    "tar-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1689663323,
+        "narHash": "sha256-HztPW54hxHySvdrzkpMHKyhayOsoLUfDMATshJ95rTI=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz"
       }
     },
     "xz-src": {

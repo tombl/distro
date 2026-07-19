@@ -84,6 +84,10 @@
       url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
       flake = false;
     };
+    tar-src = {
+      url = "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz";
+      flake = false;
+    };
     xz-src = {
       url = "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz";
       flake = false;
