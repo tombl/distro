@@ -55,6 +55,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     bzip2 = callPackage ./bzip2/package.nix { src = inputs.bzip2-src; };
     file = callPackage ./file/package.nix { src = inputs.file-src; };
+    grep = callPackage ./grep/package.nix { src = inputs.grep-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };

@@ -16,6 +16,10 @@
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
     };
+    grep-src = {
+      url = "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz";
+      flake = false;
+    };
     jq-src = {
       url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz";
       flake = false;
