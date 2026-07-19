@@ -19,6 +19,19 @@
 - `flake.nix`: pins nixpkgs and every package source, and instantiates the
   scope.
 
+## Package outputs
+
+Target derivations are FHS-shaped filesystem fragments rooted at `$out`, not
+bare collections of build artifacts. Static linkage makes libraries in
+`buildInputs` build-time dependencies, but packages may still need a
+dependency's data or programs at runtime. In that case, overlay the dependency
+into the package's own output during installation. An image should be able to
+include a package without separately knowing its transitive runtime needs.
+
+Runtime overlays must not contain conflicting paths. If two fragments need to
+provide the same path, resolve that ownership in the packages rather than
+depending on image composition order.
+
 ## Building and running
 
 - `nix run` builds and starts the system in your terminal. Run
