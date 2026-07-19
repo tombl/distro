@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type AddressInfo } from "node:net";
 import { guest_test } from "./fixture.ts";
-import { collect, connect_with_retry } from "./helpers.ts";
+import { collect, connect_with_retry, read_with_retransmit } from "./helpers.ts";
 
 guest_test("networking", async (t, fixture) => {
   const guest = await fixture.spawn();
@@ -28,12 +28,11 @@ guest_test("networking", async (t, fixture) => {
     const server = await guest.exec(["/workspace/network-test", "listen", "udp", "12002"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
-    await new Promise((resolve) => setTimeout(resolve, 25));
     const connection = await guest.network.connect({ port: 12002, transport: "udp" });
     const writer = connection.writable.getWriter();
-    await writer.write(new TextEncoder().encode("host datagram"));
     const reader = connection.readable.getReader();
-    const datagram = await reader.read();
+    const payload = new TextEncoder().encode("host datagram");
+    const datagram = await read_with_retransmit(reader, () => writer.write(payload));
     assert.equal(datagram.done, false);
     assert.equal(new TextDecoder().decode(datagram.value), "host datagram");
     connection.close();
