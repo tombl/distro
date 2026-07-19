@@ -8,21 +8,6 @@ fail() {
   while :; do :; done
 }
 
-# Several GNU coreutils tools that scan a buffer (here readlink and df)
-# intermittently trap with a wasm out-of-bounds read on this platform; retry
-# until an attempt completes and leave its stdout in REPLY. See the port's
-# PLATFORM ISSUES.
-retry() {
-  _i=0
-  while [ "$_i" -lt 25 ]; do
-    if REPLY=$("$@" 2>/dev/null); then
-      return 0
-    fi
-    _i=$((_i + 1))
-  done
-  return 1
-}
-
 export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
@@ -57,8 +42,8 @@ mv "$work/a-copy/file1" "$work/a-copy/file2" || fail "mv failed"
 # Symbolic link.
 ln -s file2 "$work/a-copy/link" || fail "ln -s failed"
 [ -L "$work/a-copy/link" ] || fail "ln -s did not create a symlink"
-retry readlink "$work/a-copy/link" || fail "readlink trapped on every attempt"
-[ "$REPLY" = file2 ] || fail "readlink returned '$REPLY' instead of file2"
+target=$(readlink "$work/a-copy/link") || fail "readlink failed"
+[ "$target" = file2 ] || fail "readlink returned '$target' instead of file2"
 cmp "$work/a-copy/link" "$work/a-copy/file2" || fail "symlink did not resolve to its target"
 
 # Permissions and stat.
@@ -75,8 +60,8 @@ cmp "$work/a/file1" "$work/dd-out" || fail "dd produced different data"
 # du and df run and report something plausible.
 du -s "$work" >/tmp/du-out || fail "du failed"
 grep -q "$work" /tmp/du-out || fail "du did not report the directory"
-retry df /tmp || fail "df trapped on every attempt"
-case "$REPLY" in
+dfout=$(df /tmp) || fail "df failed"
+case "$dfout" in
 *Filesystem*) ;;
 *) fail "df did not produce a filesystem table" ;;
 esac

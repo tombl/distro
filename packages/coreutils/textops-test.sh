@@ -9,24 +9,6 @@ fail() {
   while :; do :; done
 }
 
-# GNU coreutils' line-scanning tools (notably wc -l and tail -n) intermittently
-# trap with a wasm "memory access out of bounds" on this platform: a latent
-# over-read that is harmless on page-based memory but faults under wasm's exact
-# bounds when the buffer abuts the end of linear memory (see the port's
-# PLATFORM ISSUES; busybox's equivalents on the same libc never trap). Retry
-# the command until an attempt completes and leave its stdout in REPLY. A real
-# regression (every attempt trapping) still fails once the retries run out.
-retry() {
-  _i=0
-  while [ "$_i" -lt 25 ]; do
-    if REPLY=$("$@" 2>/dev/null); then
-      return 0
-    fi
-    _i=$((_i + 1))
-  done
-  return 1
-}
-
 export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
 
 sort --version | head -n1 | grep -q 'GNU coreutils' || fail "sort is not GNU coreutils"
@@ -37,17 +19,16 @@ mkdir -p "$work"
 
 # seq feeds most of the pipeline below.
 seq 1 100 >"$work/nums" || fail "seq failed"
-retry wc -l "$work/nums" || fail "wc -l trapped on every attempt"
-[ "${REPLY%% *}" -eq 100 ] || fail "seq/wc counted ${REPLY%% *} lines instead of 100"
+lines=$(wc -l "$work/nums") || fail "wc -l failed"
+[ "${lines%% *}" -eq 100 ] || fail "seq/wc counted ${lines%% *} lines instead of 100"
 
 # head / tail.
 [ "$(head -n1 "$work/nums")" = 1 ] || fail "head returned the wrong first line"
-retry tail -n1 "$work/nums" || fail "tail -n1 trapped on every attempt"
-[ "$REPLY" = 100 ] || fail "tail returned '$REPLY' instead of the last line"
+[ "$(tail -n1 "$work/nums")" = 100 ] || fail "tail -n1 did not return the last line"
 
 # wc word count.
-retry wc -w "$work/nums" || fail "wc -w trapped on every attempt"
-[ "${REPLY%% *}" -eq 100 ] || fail "wc counted ${REPLY%% *} words instead of 100"
+words=$(wc -w "$work/nums") || fail "wc -w failed"
+[ "${words%% *}" -eq 100 ] || fail "wc counted ${words%% *} words instead of 100"
 
 # sort -n and uniq.
 printf '%s\n' 3 1 2 2 3 1 >"$work/dups" || fail "writing dup data failed"
@@ -73,8 +54,7 @@ cd "$work" || fail "cd into work dir failed"
 printf 'coreutils on wasm\n' >payload
 sha256sum payload >payload.sha256 || fail "sha256sum failed"
 sha256sum -c payload.sha256 >/dev/null || fail "sha256sum -c failed"
-# Corrupt it and confirm the check now fails (a crash here is also non-zero,
-# which is the outcome we assert, so no retry is needed).
+# Corrupt it and confirm the check now fails.
 printf 'tampered\n' >payload
 if sha256sum -c payload.sha256 >/dev/null 2>&1; then
   fail "sha256sum -c accepted a tampered file"
