@@ -25,9 +25,12 @@ let
     cc = llvm-toolchain;
     libc = sysroot;
     inherit bintools stdenvNoCC;
-    # Without this the wrapper injects the build platform gcc's library dirs
-    # and libstdc++ headers, which are x86 ELF.
+    # Without these the wrapper injects the build platform gcc's library dirs,
+    # libstdc++ headers, and a --gcc-toolchain flag, which are x86 ELF; the
+    # flag is also an unused argument on every clang invocation, which breaks
+    # ad-hoc `$CC -Werror` compiles.
     useCcForLibs = false;
+    gccForLibs = null;
     extraBuildCommands = ''
       echo "--sysroot=${sysroot} ${toString platform.compilerFlags}" >> $out/nix-support/cc-cflags
     '';
