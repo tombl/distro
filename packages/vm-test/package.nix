@@ -54,7 +54,13 @@ let
       }
       ''
         mkdir -p root/dev root/proc root/sys root/tmp
-        ${lib.concatMapStringsSep "\n" (content: "cp -RP ${content}/. root/") contents}
+        ${lib.concatMapStringsSep "\n" (content: ''
+          cp -RP ${content}/. root/
+          # Each store path arrives read-only; keep the tree writable so a later
+          # content can add files under a directory an earlier one created (e.g.
+          # a second package populating /bin).
+          chmod -R u+w root
+        '') contents}
         cp ${init} root/init
         chmod 0755 root/init
 
