@@ -66,6 +66,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     make = callPackage ./make/package.nix { src = inputs.make-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
+    patch = callPackage ./patch/package.nix { src = inputs.patch-src; };
     readline = callPackage ./readline/package.nix { src = inputs.readline-src; };
     sed = callPackage ./sed/package.nix { src = inputs.sed-src; };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };

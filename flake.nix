@@ -68,6 +68,10 @@
       url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
       flake = false;
     };
+    patch-src = {
+      url = "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz";
+      flake = false;
+    };
     readline-src = {
       url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
       flake = false;

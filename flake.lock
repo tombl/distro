@@ -238,6 +238,19 @@
         "type": "github"
       }
     },
+    "patch-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1517683560,
+        "narHash": "sha256-Ng14vbD6V0ixnoeOxERqCxIuY2JWMaCeHykoGHAHPvo=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
+      }
+    },
     "readline-src": {
       "flake": false,
       "locked": {
@@ -270,6 +283,7 @@
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
+        "patch-src": "patch-src",
         "readline-src": "readline-src",
         "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",
