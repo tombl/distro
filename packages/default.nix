@@ -56,6 +56,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
+    xz = callPackage ./xz/package.nix { src = inputs.xz-src; };
     zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
 
     # images:

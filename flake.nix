@@ -28,6 +28,10 @@
       url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
       flake = false;
     };
+    xz-src = {
+      url = "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz";
+      flake = false;
+    };
     zlib-src = {
       url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz";
       flake = false;
