@@ -16,6 +16,19 @@
         "type": "github"
       }
     },
+    "file-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780875963,
+        "narHash": "sha256-9OtdGy2HegeyiCVUuDo75A0REr+Z0ReR3jk2ORVAgp0=",
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      }
+    },
     "linux-src": {
       "flake": false,
       "locked": {
@@ -84,6 +97,7 @@
     "root": {
       "inputs": {
         "busybox-src": "busybox-src",
+        "file-src": "file-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
         "musl-src": "musl-src",

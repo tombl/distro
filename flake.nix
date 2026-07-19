@@ -8,6 +8,10 @@
       url = "github:tombl/busybox";
       flake = false;
     };
+    file-src = {
+      url = "https://astron.com/pub/file/file-5.48.tar.gz";
+      flake = false;
+    };
     linux-src = {
       url = "github:tombl/linux/clone-vm-threads";
       flake = false;
