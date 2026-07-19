@@ -239,7 +239,22 @@ export const SIG = sig.values;
 // derived from the same checked numbers the control flow uses.
 // ---------------------------------------------------------------------------
 
-/** A guest syscall failed. Carries the errno code. */
+/**
+ * A guest syscall failed. Carries the errno code.
+ *
+ * @example Handle a missing file
+ * ```ts
+ * try {
+ *   await guest.fs.readTextFile("/tmp/missing");
+ * } catch (error) {
+ *   if (error instanceof SystemError && error.code === "ENOENT") {
+ *     console.log("no such file");
+ *   } else {
+ *     throw error;
+ *   }
+ * }
+ * ```
+ */
 export class SystemError extends Error {
   readonly code?: `E${keyof typeof E}`;
 

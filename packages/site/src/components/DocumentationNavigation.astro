@@ -1,6 +1,8 @@
 ---
 import { getCollection } from "astro:content";
 
+import { referencePackages } from "../lib/reference-packages";
+
 interface Props {
   current: string;
 }
@@ -31,7 +33,15 @@ const sections: { heading: string; items: Item[] }[] = [
   { heading: "How-to guides", items: section("howtos") },
   {
     heading: "Reference",
-    items: section("reference"),
+    items: [
+      ...referencePackages.map((pkg) => ({
+        id: `reference:${pkg.slug}`,
+        href: `/reference/${pkg.slug}/`,
+        label: pkg.name,
+        code: true,
+      })),
+      ...section("reference"),
+    ],
   },
   { heading: "Explanation", items: section("explanation") },
 ];

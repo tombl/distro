@@ -36,39 +36,181 @@ import {
 } from "./file.ts";
 import { ChildProcess } from "./process.ts";
 
+/** Data that can be written to a guest file: bytes, a `Blob`, or a stream of bytes. */
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
 
 export interface ExecOptions {
+  /** Working directory for the process. Defaults to `/workspace`. */
   cwd?: string;
+  /**
+   * Environment for the process, merged over the defaults of
+   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/workspace`, and
+   * `TMPDIR=/tmp`. Only the variables being changed need to be set.
+   */
   env?: Readonly<Record<string, string>>;
+  /**
+   * Aborting kills the process, and `status` rejects with the abort reason.
+   *
+   * @example Give a command a time budget
+   * ```ts
+   * const process = await guest.exec(["sleep", "30"], {
+   *   signal: AbortSignal.timeout(1000),
+   * });
+   * try {
+   *   await process.status;
+   * } catch {
+   *   console.log("the command ran out of time");
+   * }
+   * ```
+   */
   signal?: AbortSignal;
 }
 
+/**
+ * File operations in the guest, available as `guest.fs`.
+ *
+ * Paths are guest paths. The packaged root image mounts writable space at
+ * `/tmp` and `/workspace`; the system directories are read-only. A failed
+ * operation rejects with a `SystemError` carrying the errno code — for
+ * example `"ENOENT"` when a path does not exist.
+ */
 export interface FileSystem {
+  /** Reads the whole file into memory. */
   readFile(path: string, options?: { signal?: AbortSignal }): Promise<Uint8Array>;
+  /** Reads the whole file as UTF-8 text. Throws on invalid UTF-8. */
   readTextFile(path: string, options?: { signal?: AbortSignal }): Promise<string>;
+  /**
+   * Writes data to a file, creating or truncating it by default. Accepts
+   * bytes, a `Blob`, or a `ReadableStream` — streaming is the way to move
+   * large data into the guest without buffering it all on the host.
+   *
+   * @example Copy a download straight into the guest
+   * ```ts
+   * const response = await fetch("https://example.com/big.tar.gz");
+   * await guest.fs.writeFile("/tmp/big.tar.gz", response.body!);
+   * ```
+   */
   writeFile(path: string, data: FileData, options?: WriteFileOptions): Promise<void>;
+  /** Writes text, or a stream of text, as UTF-8. */
   writeTextFile(
     path: string,
     data: string | ReadableStream<string>,
     options?: WriteFileOptions,
   ): Promise<void>;
+  /**
+   * Iterates the entries of a directory.
+   *
+   * @example List a directory
+   * ```ts
+   * for await (const entry of guest.fs.readDir("/bin")) {
+   *   if (entry.isFile) console.log(entry.name);
+   * }
+   * ```
+   */
   readDir(path: string): AsyncIterable<DirEntry>;
+  /**
+   * Returns the file's metadata, following symlinks. Rejects with a
+   * `SystemError` whose code is `"ENOENT"` if the path does not exist.
+   *
+   * @example Check whether a path exists
+   * ```ts
+   * try {
+   *   await guest.fs.stat("/tmp/maybe");
+   *   console.log("it exists");
+   * } catch (error) {
+   *   if (error instanceof SystemError && error.code === "ENOENT") {
+   *     console.log("it does not");
+   *   } else {
+   *     throw error;
+   *   }
+   * }
+   * ```
+   */
   stat(path: string): Promise<FileInfo>;
+  /** Like `stat`, but does not follow the final symlink. */
   lstat(path: string): Promise<FileInfo>;
+  /**
+   * Creates a directory. With `recursive: true`, creates missing parents
+   * and does not fail if the directory already exists.
+   */
   mkdir(path: string, options?: MkdirOptions): Promise<void>;
+  /**
+   * Removes a file or an empty directory. With `recursive: true`, removes a
+   * directory and everything in it.
+   */
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
+  /** Renames or moves a file or directory. */
   rename(from: string, to: string): Promise<void>;
+  /** Copies a file's contents. */
   copyFile(from: string, to: string): Promise<void>;
+  /** Resolves symlinks and returns the canonical path. */
   realPath(path: string): Promise<string>;
+  /** Returns the target of a symlink. */
   readLink(path: string): Promise<string>;
+  /** Creates a symlink at `path` pointing at `target`. */
   symlink(target: string, path: string): Promise<void>;
+  /** Changes a file's permission bits. */
   chmod(path: string, mode: number): Promise<void>;
+  /** Changes a file's owner and group. */
   chown(path: string, uid: number, gid: number): Promise<void>;
+  /** Truncates a file to `length` bytes, defaulting to empty. */
   truncate(path: string, length?: number): Promise<void>;
+  /**
+   * Opens a file for incremental or random-access I/O. The whole-file
+   * methods above are simpler when you do not need either.
+   *
+   * @example Read and write at arbitrary offsets
+   * ```ts
+   * await using file = await guest.fs.open("/tmp/data.bin", {
+   *   read: true,
+   *   write: true,
+   *   create: true,
+   * });
+   * await file.write(new Uint8Array([1, 2, 3]));
+   * await file.seek(0, SeekMode.Start);
+   * const buffer = new Uint8Array(3);
+   * await file.read(buffer);
+   * console.log(buffer); // [1, 2, 3]
+   * ```
+   */
   open(path: string, options?: OpenOptions): Promise<FsFile>;
 }
 
+/**
+ * Runs a program in the guest and resolves to the running process.
+ *
+ * Takes an argv array rather than a command string: the array is the argv
+ * the program receives, exactly as `execve` would see it, with no shell in
+ * between to quote, split, or expand. An argument containing spaces is one
+ * element. The first element is looked up on the guest's `PATH`; if the
+ * program does not exist, the promise rejects with a `SystemError` whose
+ * code is `"ENOENT"`.
+ *
+ * A guest runs a bounded number of processes at once — currently eight —
+ * and further calls wait for a slot rather than failing.
+ *
+ * @example Run a command and collect its output
+ * ```ts
+ * const process = await guest.exec(["uname", "-a"]);
+ * console.log(await new Response(process.stdout).text());
+ * ```
+ *
+ * @example Run a shell pipeline
+ * ```ts
+ * const process = await guest.exec(["sh", "-c", "echo hello | tr a-z A-Z"]);
+ * console.log(await new Response(process.stdout).text());
+ * ```
+ *
+ * @example Run commands in parallel
+ * ```ts
+ * const [date, uname] = await Promise.all([
+ *   guest.exec(["date"]),
+ *   guest.exec(["uname", "-a"]),
+ * ]);
+ * console.log(await new Response(date.stdout).text());
+ * console.log(await new Response(uname.stdout).text());
+ * ```
+ */
 export type Exec = (argv: readonly string[], options?: ExecOptions) => Promise<ChildProcess>;
 
 export interface GuestClientCapabilities {
@@ -79,8 +221,8 @@ export interface GuestClientCapabilities {
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
 // stdin write), so this cap keeps worst-case process traffic to half the
-// 64-lane pool and everything else — notably the kill that unblocks a stuck
-// pipe read — can always get a lane.
+// 64-lane pool and everything else - notably the kill that unblocks a stuck
+// pipe read - can always get a lane.
 const MAX_PROCESSES = 8;
 
 function byte_stream(data: FileData): ReadableStream<Uint8Array> {

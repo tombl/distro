@@ -30,6 +30,6 @@
     "@deno/doc": "jsr:0.202.0",
     "@types/node": "^26.1.1",
     "astro": "^7.1.1",
-    "typescript": "^7.0.2"
+    "typescript": "^6.0.3"
   }
 }

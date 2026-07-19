@@ -19,21 +19,33 @@ export interface SpawnGuestOptions extends Omit<
   SpawnMachineOptions,
   "devices" | "initcpio" | "cmdline"
 > {
+  /** Extra virtio devices to boot with — a console or entropy device from `@tombl/linux`, say. */
   devices?: readonly VirtioDevice[];
   /** Guests attached to the same network can connect to each other. */
   network?: Network;
+  /** Extra kernel command line arguments, appended to the defaults. */
   cmdline?: string;
   /** Boot from these assets instead of the ones bundled with the package. */
   assets?: GuestAssets;
 }
 
+/**
+ * A booted Linux guest: the machine itself plus the guest agent's
+ * capabilities — `exec` for processes, `fs` for files, and `network` when
+ * spawned with one.
+ */
 export interface Guest {
+  /** The underlying `@tombl/linux` machine. `machine.close()` shuts the guest down. */
   readonly machine: Machine;
+  /** File operations in the guest. */
   readonly fs: FileSystem;
+  /** Runs programs in the guest. */
   readonly exec: Exec;
+  /** The guest's network attachment; `undefined` unless spawned with `network`. */
   readonly network: GuestNetwork | undefined;
 }
 
+/** A guest spawned with a `network`; `network` is always present. */
 export interface NetworkedGuest extends Guest {
   readonly network: GuestNetwork;
 }
@@ -107,6 +119,32 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
   await run_network_command(exec, ["/sbin/route", "add", "default", "gw", gateway, "eth0"]);
 }
 
+/**
+ * Boots a Linux guest — the packaged kernel and root filesystem, with the
+ * guest agent as init — and resolves once the agent can serve requests:
+ * `exec`, `fs`, and (given `network`) networking are all usable from then
+ * on.
+ *
+ * `guest.machine.close()` shuts the guest down when nothing inside it
+ * should stay running.
+ *
+ * @example Boot a guest and run a command
+ * ```ts
+ * const guest = await spawnGuest();
+ * const process = await guest.exec(["uname", "-a"]);
+ * console.log(await new Response(process.stdout).text());
+ * guest.machine.close();
+ * ```
+ *
+ * @example Put two guests on one network
+ * ```ts
+ * const network = createNetwork({ connectTcp, resolveDns });
+ * const a = await spawnGuest({ network });
+ * const b = await spawnGuest({ network });
+ * const ping = await b.exec(["ping", "-c", "1", a.network.address]);
+ * console.log(await new Response(ping.stdout).text());
+ * ```
+ */
 export function spawnGuest(
   options: SpawnGuestOptions & { network: Network },
 ): Promise<NetworkedGuest>;

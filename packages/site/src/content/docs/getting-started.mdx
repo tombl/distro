@@ -25,35 +25,9 @@ console.log(await new Response(process.stdout).text());`}
 
 That output came from a program that just ran inside a Linux machine in this
 tab. The rest of the page makes you a page of your own that can do the same.
-
-## What you need
-
-A modern browser and a static file server. No Node, no bundler, no build
-step. The library loads as a native ES module from a CDN.
-
-The one real requirement is that your page must be
-[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated).
-After the Spectre and Meltdown vulnerabilities, browsers locked shared-memory
-multithreading behind this opt-in, because shared memory gives code a precise
-clock and precise clocks make those attacks practical. A Linux machine is
-exactly the kind of program that gate exists for. Each virtual CPU is a Web
-Worker and they all share the machine's memory, so your page has to opt in by
-sending two headers:
-
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-If your hosting provider can be configured to send these headers, do
-that.[^coi] To check whether it worked, evaluate `crossOriginIsolated` in the
-console. It must be `true`.
-
-[^coi]:
-    If it cannot, for example on GitHub Pages,
-    [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) adds
-    the headers from a service worker. It works, but real headers are simpler
-    and take effect on the very first load, so prefer them when you can.
+You need a modern browser and any static file server that can send custom
+headers — no bundler, no build step. The library loads as a native ES module
+from a CDN.
 
 ## Create the page
 
@@ -83,22 +57,38 @@ Save this as `index.html`:
 The import map lets the page use bare package names, the same specifiers you
 would use with a bundler, and points them at unpkg. `@tombl/linux-guest` is
 the machine API you will spend most of your time with. It pulls in
-`@tombl/linux`, which is the kernel itself.
-
-Nothing here depends on the CDN. If your application already has a build
-tool, `npm install @tombl/linux @tombl/linux-guest` and the same import
-works in Vite, Next.js, or anything else that speaks ES modules. The how-to
-guides cover setting up the headers and assets in those stacks. This page
-stays with plain files because they show everything the library needs, which
-is two packages and two headers.
+`@tombl/linux`, which is the kernel itself. If your application already has a
+build tool, `npm install @tombl/linux @tombl/linux-guest` and the same
+imports work; [Use a bundler](/use-a-bundler/) covers that setup.
 
 `spawnGuest()` boots the packaged kernel and root filesystem, and its promise
 resolves once the machine can run commands. You do not pass it anything until
 you want something non-default.
 
-Now serve the file with the two headers set. Any static server that can send
-them works. For example, `npx serve` picks up headers from a `serve.json`
-next to `index.html`:
+## Serve the page
+
+Any static server works, with one requirement: the page must be served with
+two headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Together these make the page
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
+which the machine needs because its virtual CPUs share memory.[^why]
+
+[^why]:
+    After the Spectre and Meltdown vulnerabilities, browsers locked
+    shared-memory multithreading behind this opt-in. Each Linux thread is
+    a Web Worker and they all share the machine's memory, which is exactly
+    what the gate exists for. `require-corp` also means everything the page
+    embeds must opt in to being embedded; unpkg sends the right headers, so
+    the imports above work as-is.
+
+For example, `npx serve` picks up headers from a `serve.json` next to
+`index.html`:
 
 ```json
 {
@@ -116,6 +106,17 @@ next to `index.html`:
 
 Open the page. After a few seconds of boot it shows the kernel identifying
 itself, the same line the example at the top of this page printed.
+
+If nothing appears, evaluate `crossOriginIsolated` in the console. It must be
+`true`. If it is `false`, the headers did not reach the browser — check both
+names and values in the server config, and that the document response in the
+network panel actually carries them.[^coi]
+
+[^coi]:
+    On a host that cannot send headers, such as GitHub Pages,
+    [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) adds
+    them from a service worker. It works, but real headers are simpler and
+    take effect on the very first load, so prefer them when you can.
 
 ## Run programs
 
@@ -150,7 +151,8 @@ console.log(await new Response(cat.stdout).text());`}
 
 Files written from the host are immediately visible to guest programs and the
 other way around, because there is only one filesystem. `guest.fs` also has
-`readTextFile`, `readDir`, `stat`, `mkdir`, and friends.
+`readTextFile`, `readDir`, `stat`, `mkdir`, and friends — the
+[reference](/reference/linux-guest/) lists them all.
 
 ## Shut down
 
@@ -165,7 +167,9 @@ their machine.
 
 ## Where next
 
-You now have Linux as a library. The how-to guides cover the next steps:
-running under Node, wiring the console to xterm.js, persisting the
-filesystem, giving machines a network and internet access, and building a
-custom root filesystem with Nix.
+You now have Linux as a library. The
+[`@tombl/linux-guest` reference](/reference/linux-guest/) covers the full
+process and filesystem API with runnable examples. How-to guides for the next
+steps — running under Node, wiring the console to xterm.js, persisting the
+filesystem, networking between guests and out to the internet, and building a
+custom root filesystem — are on the way.

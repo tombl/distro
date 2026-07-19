@@ -13,23 +13,29 @@ import {
   write,
 } from "./syscalls.ts";
 
+/** Metadata about a file, as returned by `guest.fs.stat` and friends. */
 export interface FileInfo {
   readonly isFile: boolean;
   readonly isDirectory: boolean;
   readonly isSymlink: boolean;
+  /** Size in bytes. */
   readonly size: number;
   readonly mtime: Date | null;
   readonly atime: Date | null;
+  /** Always `null`; the guest does not track creation time. */
   readonly birthtime: Date | null;
   readonly dev: number;
   readonly ino: number;
+  /** The full mode, including the file type bits. */
   readonly mode: number;
   readonly nlink: number;
   readonly uid: number;
   readonly gid: number;
+  /** Size in 512-byte blocks. */
   readonly blocks: number;
 }
 
+/** One entry yielded by `guest.fs.readDir`. */
 export interface DirEntry {
   readonly name: string;
   readonly isFile: boolean;
@@ -37,29 +43,47 @@ export interface DirEntry {
   readonly isSymlink: boolean;
 }
 
+/**
+ * Options for `guest.fs.open`. Without `write` or `append` the file opens
+ * read-only.
+ */
 export interface OpenOptions {
   read?: boolean;
   write?: boolean;
+  /** Open for appending: every write goes to the end of the file. */
   append?: boolean;
+  /** Truncate the file to zero length on open. */
   truncate?: boolean;
+  /** Create the file if it does not exist. */
   create?: boolean;
+  /** Create the file, failing with `"EEXIST"` if it already exists. */
   createNew?: boolean;
+  /** Permission bits for a created file. */
   mode?: number;
 }
 
+/** Options for `guest.fs.writeFile` and `guest.fs.writeTextFile`. */
 export interface WriteFileOptions {
+  /** Append to the file instead of truncating it. */
   append?: boolean;
+  /** Create the file if it does not exist. Defaults to `true`. */
   create?: boolean;
+  /** Create the file, failing with `"EEXIST"` if it already exists. */
   createNew?: boolean;
+  /** Permission bits for a created file. */
   mode?: number;
   signal?: AbortSignal;
 }
 
+/** Options for `guest.fs.mkdir`. */
 export interface MkdirOptions {
+  /** Create missing parents, and do not fail if the directory exists. */
   recursive?: boolean;
+  /** Permission bits for the created directory. */
   mode?: number;
 }
 
+/** The starting point for `FsFile.seek`, matching `lseek`'s `whence`. */
 export const SeekMode = {
   Start: 0,
   Current: 1,
@@ -99,12 +123,21 @@ export function openFlags(options: OpenOptions = {}): number {
   return flags;
 }
 
+/**
+ * An open guest file, returned by `guest.fs.open`.
+ *
+ * Reads and writes share the guest file offset, so operations on an `FsFile`
+ * are serialized. The file is an async disposable: `await using` closes it
+ * when the block ends.
+ */
 export class FsFile implements AsyncDisposable {
   #tail = Promise.resolve<void>(undefined);
   #closed = false;
   readonly #fd: GuestFd;
 
+  /** The file as a byte stream, read from the current offset to the end. */
   readonly readable: ReadableStream<Uint8Array>;
+  /** The file as a byte sink; each write goes to the current offset. */
   readonly writable: WritableStream<Uint8Array>;
 
   constructor(fd: GuestFd) {
@@ -152,6 +185,11 @@ export class FsFile implements AsyncDisposable {
     return result;
   }
 
+  /**
+   * Reads up to `buffer.byteLength` bytes at the current offset into
+   * `buffer`. Resolves to the number of bytes read, or `null` at end of
+   * file.
+   */
   read(buffer: Uint8Array): Promise<number | null> {
     if (buffer.byteLength === 0) return Promise.resolve(0);
     return this.#run(async () => {
@@ -170,6 +208,7 @@ export class FsFile implements AsyncDisposable {
     return this.#run(async () => Number(await llseek(this.#fd, BigInt(offset), whence)));
   }
 
+  /** Metadata for the open file. */
   stat(): Promise<FileInfo> {
     return this.#run(async () => {
       // fstatat64 needs a path; stat the fd through /proc/self/fd/N (the
@@ -178,14 +217,17 @@ export class FsFile implements AsyncDisposable {
     });
   }
 
+  /** Truncates the file to `length` bytes, defaulting to empty. */
   truncate(length = 0): Promise<void> {
     return this.#run(() => ftruncate64(this.#fd, BigInt(length)));
   }
 
+  /** Flushes the file's data to the underlying storage. */
   sync(): Promise<void> {
     return this.#run(() => fsync(this.#fd));
   }
 
+  /** Closes the file. Also called when an `await using` scope ends. */
   close(): Promise<void> {
     this.#closed = true;
     return this.#fd.close();

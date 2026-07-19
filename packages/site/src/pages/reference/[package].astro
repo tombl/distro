@@ -1,0 +1,51 @@
+---
+import type { Document } from "@deno/doc";
+
+import ReferenceDocumentation from "../../components/ReferenceDocumentation.astro";
+import Docs from "../../layouts/Docs.astro";
+import { generateReferenceDocs } from "../../lib/reference-docs";
+import {
+  referencePackages,
+  referenceSymbolId,
+  type ReferencePackage,
+} from "../../lib/reference-packages";
+
+interface Props {
+  pkg: ReferencePackage;
+  document: Document;
+}
+
+export async function getStaticPaths() {
+  const paths = [];
+  for (const pkg of referencePackages) {
+    paths.push({
+      params: { package: pkg.slug },
+      props: { pkg, document: await generateReferenceDocs(pkg) },
+    });
+  }
+  return paths;
+}
+
+const { pkg, document } = Astro.props;
+const headings = document.symbols.map(({ name }) => ({
+  depth: 2,
+  slug: referenceSymbolId(name),
+  text: name,
+}));
+---
+
+<Docs
+  title={`${pkg.name} reference`}
+  description={pkg.description}
+  current={`reference:${pkg.slug}`}
+  headings={headings}
+  breadcrumbs={["Reference", pkg.name]}
+  markdown={false}
+>
+  <ReferenceDocumentation
+    name={pkg.name}
+    description={pkg.description}
+    npm={pkg.npm}
+    document={document}
+  />
+</Docs>
