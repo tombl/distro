@@ -6,7 +6,7 @@
   "scripts": {
     "assets": "bash scripts/prepare-assets.sh",
     "build": "astro build",
-    "predev": "npm run assets",
+    "predev": "pnpm assets",
     "dev": "astro dev",
     "check": "astro check"
   },

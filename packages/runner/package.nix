@@ -3,24 +3,30 @@
   lib,
   initramfs,
   linux,
+  node-workspace,
   rootfs,
 }:
 
 let
-  app = pkgs.buildNpmPackage {
+  app = pkgs.stdenvNoCC.mkDerivation {
     pname = "runner-app";
     version = "0.0.0";
     src = ../..;
-    npmDepsHash = "sha256-1NL9O4LvSzJMl9QLJytT5VyYyiSJecsilr26fPOw/A4=";
-    dontNpmBuild = true;
+    pnpmDeps = node-workspace.deps;
+    nativeBuildInputs = [
+      pkgs.nodejs
+      pkgs.pnpmConfigHook
+      node-workspace.pnpm
+    ];
 
-    nativeBuildInputs = [ pkgs.nodejs ];
+    buildPhase = ''
+      runHook preBuild
 
-    preBuild = ''
-      export npm_config_cache=$TMPDIR/npm-cache
-      mkdir -p "$npm_config_cache"
-      npm install --no-save --ignore-scripts ${linux}/linux.tgz
-      npm run check --workspace=@tombl/linux-runner
+      mkdir -p checkouts/linux/tools/wasm
+      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      pnpm --filter=@tombl/linux-runner check
+
+      runHook postBuild
     '';
 
     installPhase = ''

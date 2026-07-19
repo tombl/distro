@@ -98,6 +98,7 @@
               pkgs.cmake
               pkgs.ninja
               pkgs.nodejs
+              pkgs.pnpm_11
             ];
             env.sysroot = "${wasmpkgs.sysroot}";
           };

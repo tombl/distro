@@ -17,6 +17,9 @@
     "build": "tsc",
     "check": "tsc --noEmit"
   },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
   "peerDependencies": {
     "@tombl/linux": "0.0.0"
   }

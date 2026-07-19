@@ -2,22 +2,33 @@
   pkgs,
   initramfs,
   linux,
+  node-workspace,
   rootfs,
 }:
 
-pkgs.buildNpmPackage {
+pkgs.stdenvNoCC.mkDerivation {
   pname = "site";
   version = "0.0.0";
   src = ../..;
-  npmDepsHash = "sha256-s8dd7A1qKak11TarcIMkOvatWHQOtC1CUc/IGOK3/ew=";
-  npmBuildFlags = [ "--workspace=@tombl/linux-site" ];
-  nativeBuildInputs = [ pkgs.gzip ];
+  pnpmDeps = node-workspace.deps;
+  nativeBuildInputs = [
+    pkgs.gzip
+    pkgs.nodejs
+    pkgs.pnpmConfigHook
+    node-workspace.pnpm
+  ];
 
-  preBuild = ''
-    export npm_config_cache=$TMPDIR/npm-cache
-    mkdir -p "$npm_config_cache"
-    npm install --no-save --ignore-scripts ${linux}/linux.tgz
-    npm run check --workspace=@tombl/linux-site
+  buildPhase = ''
+    runHook preBuild
+
+    mkdir -p checkouts/linux/tools/wasm
+    tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+
+    pnpm --filter=@tombl/linux-guest build
+    pnpm --filter=@tombl/linux-site check
+    pnpm --filter=@tombl/linux-site build
+
+    runHook postBuild
   '';
 
   installPhase = ''

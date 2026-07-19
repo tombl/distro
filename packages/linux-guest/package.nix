@@ -3,12 +3,11 @@
   guest-initramfs,
   guest-rootfs,
   linux,
+  node-workspace,
   stdenv,
 }:
 
 let
-  npmDepsHash = "sha256-1NL9O4LvSzJMl9QLJytT5VyYyiSJecsilr26fPOw/A4=";
-
   network-test = stdenv.mkDerivation {
     pname = "linux-guest-network-test";
     version = "0.0.0";
@@ -31,23 +30,28 @@ let
     "network-test" = "${network-test}/bin/network-test";
   };
 
-  package = pkgs.buildNpmPackage {
+  package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
-    version = "0.0.0";
+    inherit ((builtins.fromJSON (builtins.readFile ./package.json))) version;
     src = ../..;
-    inherit npmDepsHash;
-    npmBuildFlags = [ "--workspace=@tombl/linux-guest" ];
+    pnpmDeps = node-workspace.deps;
+    nativeBuildInputs = [
+      pkgs.nodejs
+      pkgs.pnpmConfigHook
+      node-workspace.pnpm
+    ];
 
-    preBuild = ''
-      export npm_config_cache=$TMPDIR/npm-cache
-      mkdir -p "$npm_config_cache"
-      npm install --no-save --ignore-scripts ${linux}/linux.tgz
-      npm run check --workspace=@tombl/linux-guest
-    '';
+    buildPhase = ''
+      runHook preBuild
 
-    postBuild = ''
+      mkdir -p checkouts/linux/tools/wasm
+      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      pnpm --filter=@tombl/linux-guest check
+      pnpm --filter=@tombl/linux-guest build
       cp ${guest-initramfs} packages/linux-guest/initramfs.cpio
       cp ${guest-rootfs} packages/linux-guest/rootfs.squashfs
+
+      runHook postBuild
     '';
 
     installPhase = ''
@@ -58,30 +62,33 @@ let
       cp packages/linux-guest/initramfs.cpio $out/initramfs.cpio
       cp packages/linux-guest/rootfs.squashfs $out/rootfs.squashfs
       cp -r packages/linux-guest/dist $out/dist
-      npm pack ./packages/linux-guest --pack-destination $out
+      pnpm --filter=@tombl/linux-guest pack --pack-destination $out
       mv $out/tombl-linux-guest-*.tgz $out/linux-guest.tgz
 
       runHook postInstall
     '';
   };
 
-  integration = pkgs.buildNpmPackage {
+  integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest-integration-test";
     version = "0.0.0";
     src = ../..;
-    inherit npmDepsHash;
-    nativeBuildInputs = [ pkgs.nodejs ];
+    pnpmDeps = node-workspace.deps;
+    nativeBuildInputs = [
+      pkgs.nodejs
+      pkgs.pnpmConfigHook
+      node-workspace.pnpm
+    ];
 
     buildPhase = ''
       runHook preBuild
 
-      export npm_config_cache=$TMPDIR/npm-cache
-      mkdir -p "$npm_config_cache"
-      npm install --no-save --ignore-scripts ${linux}/linux.tgz
-      npm run check --workspace=@tombl/linux-guest-tests
+      mkdir -p checkouts/linux/tools/wasm
+      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      pnpm --filter=@tombl/linux-guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \
-        timeout 180 npm run test --workspace=@tombl/linux-guest-tests
+        timeout 180 pnpm --filter=@tombl/linux-guest-tests test
 
       runHook postBuild
     '';
