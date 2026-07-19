@@ -35,5 +35,9 @@ rec {
     "--max-memory=4294967296"
     "--shared-memory"
     "--export-table"
+    # wasm-ld's default shadow stack is 64 KiB, which terminal setup in
+    # ncurses/readline overflows; match the 8 MiB Linux convention.
+    "-z"
+    "stack-size=8388608"
   ];
 }
