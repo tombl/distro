@@ -11,9 +11,11 @@ interface Props {
   description: string;
   current: string;
   headings: MarkdownHeading[];
+  breadcrumbs: string[];
+  markdown?: boolean;
 }
 
-const { title, description, current, headings } = Astro.props;
+const { title, description, current, headings, breadcrumbs, markdown = true } = Astro.props;
 // footnote-label is the GFM footnotes section, which Footnotes renders inline.
 const toc = headings
   .filter(({ depth, slug }) => depth > 1 && slug !== "footnote-label")
@@ -21,8 +23,8 @@ const toc = headings
 ---
 
 <Base title={title} description={description}>
-  <span slot="breadcrumb" class="breadcrumb">
-    {" / "}<a href="/docs/">docs</a>
+  <span slot="breadcrumb" class="breadcrumbs">
+    {breadcrumbs.map((breadcrumb) => <span>{" / "}{breadcrumb}</span>)}
   </span>
 
   <div slot="header" class="mobile-header-navigation">
@@ -45,7 +47,7 @@ const toc = headings
 
     <main>
       {/* TODO: link this to the page's raw markdown source. */}
-      <a class="view-markdown">view as markdown</a>
+      {markdown && <a class="view-markdown">view as markdown</a>}
       <slot />
     </main>
 
@@ -74,17 +76,9 @@ const toc = headings
 </Base>
 
 <style>
-  .breadcrumb {
+  .breadcrumbs {
     color: var(--muted);
-
-    a {
-      text-decoration: none;
-      transition: color 120ms;
-
-      &:hover {
-        color: var(--code-foreground);
-      }
-    }
+    font-weight: 400;
   }
 
   .layout {

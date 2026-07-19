@@ -2,8 +2,8 @@
 import type { CollectionEntry } from "astro:content";
 import { getCollection, render } from "astro:content";
 
-import MarkdownCodeBlock from "../../components/MarkdownCodeBlock.astro";
-import Docs from "../../layouts/Docs.astro";
+import MarkdownCodeBlock from "../components/MarkdownCodeBlock.astro";
+import Docs from "../layouts/Docs.astro";
 
 interface Props {
   entry: CollectionEntry<"docs">;
@@ -12,7 +12,7 @@ interface Props {
 export async function getStaticPaths() {
   const docs = await getCollection("docs");
   return docs.map((entry) => ({
-    params: { slug: entry.id === "index" ? undefined : entry.id },
+    params: { slug: entry.id },
     props: { entry },
   }));
 }
@@ -26,6 +26,7 @@ const { Content, headings } = await render(entry);
   description={entry.data.description}
   current={entry.id}
   headings={headings}
+  breadcrumbs={[entry.data.title]}
 >
   <Content components={{ pre: MarkdownCodeBlock }} />
 </Docs>
