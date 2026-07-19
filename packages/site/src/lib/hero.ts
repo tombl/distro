@@ -70,7 +70,11 @@ export function writeConsole(text: string) {
 async function shell(guest: Guest) {
   for (;;) {
     try {
-      const process = await guest.exec(["sh", "-c", "clear >/dev/hvc0; exec setsid cttyhack sh </dev/hvc0 >/dev/hvc0 2>&1"]);
+      const process = await guest.exec([
+        "sh",
+        "-c",
+        "clear >/dev/hvc0; exec setsid cttyhack sh </dev/hvc0 >/dev/hvc0 2>&1",
+      ]);
       await process.status;
     } catch (error) {
       console.error("console shell failed:", error);

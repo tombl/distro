@@ -1,15 +1,8 @@
 ---
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import CodeBlock from "../components/CodeBlock.astro";
 import Terminal from "../components/Terminal.astro";
 import Base from "../layouts/Base.astro";
-
-const guestEntry = createRequire(import.meta.url).resolve("@tombl/linux-guest");
-const guestPackage = JSON.parse(
-  await readFile(new URL("../package.json", pathToFileURL(guestEntry)), "utf8"),
-) as { version: string };
+import { guestVersion } from "../lib/versions";
 
 const execExample = `const process = await guest.exec(["uname", "-a"]);
 console.log(await new Response(process.stdout).text());`;
@@ -52,13 +45,13 @@ const machine = await spawnMachine({
 >
   <main>
     <section class="hero">
-      <h1>linux, running here.</h1>
+      <h1>Linux, running here.</h1>
       <div class="copy">
         <p>
-          this is a real Linux kernel and userspace, ported to <code>wasm32</code> and running in
-          this page. there is no emulated CPU, wasm is simply another architecture, with the
-          browser providing devices around it. the result is a whole Linux machine you can use
-          from JavaScript like any other object. try the shell, every example below talks to this
+          This is a real Linux kernel and userspace, ported to <code>wasm32</code> and running in
+          this page. There is no emulated CPU, wasm is simply another architecture, with the
+          browser providing devices around it. The result is a whole Linux machine you can use
+          from JavaScript like any other object. Try the shell, every example below talks to this
           same machine.
         </p>
 
@@ -69,13 +62,13 @@ const machine = await spawnMachine({
           </p>
           <a class="control" href="/getting-started/">documentation</a>
         </div>
-        <p class="version">currently v{guestPackage.version}</p>
+        <p class="version">currently v{guestVersion}</p>
       </div>
 
       <div class="panel">
         <Terminal />
         <p>
-          try <button class="try" data-try="uname -a" disabled><code>uname -a</code></button>,{" "}
+          Try <button class="try" data-try="uname -a" disabled><code>uname -a</code></button>,{" "}
           <button class="try" data-try="ls /bin" disabled><code>ls /bin</code></button>, or{" "}
           <button class="try" data-try="sqlite3" disabled><code>sqlite3</code></button>.
         </p>
@@ -83,85 +76,85 @@ const machine = await spawnMachine({
     </section>
 
     <section data-demo>
-      <h2>run processes</h2>
+      <h2>Run processes</h2>
       <div class="copy">
         <p>
           <code>guest.exec</code> runs a process in the machine at the top of the page, returning its
-          stdio as web streams. edit the example and run it again, this is all executing in your
-          tab, there is no server behind the demo. <a href="/getting-started/">guest API →</a>
+          stdio as web streams. Edit the example and run it again, this is all executing in your
+          tab, there is no server behind the demo. <a href="/getting-started/">Guest API →</a>
         </p>
       </div>
       <div class="panel">
         <CodeBlock code={execExample} language="javascript" editable />
         <div class="controls">
-          <button class="control" data-run disabled>run</button>
-          <span class="hint">runs in your tab, against the machine above</span>
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Runs in your tab, against the machine above</span>
         </div>
         <pre class="output" data-output aria-live="polite" hidden></pre>
       </div>
     </section>
 
     <section data-demo>
-      <h2>read and write files</h2>
+      <h2>Read and write files</h2>
       <div class="copy">
         <p>
-          <code>guest.fs</code> and the terminal are two views of the same filesystem. write a file
-          from JavaScript, then <code>cat /tmp/hello.txt</code> above and it is there. this is not a
+          <code>guest.fs</code> and the terminal are two views of the same filesystem. Write a file
+          from JavaScript, then <code>cat /tmp/hello.txt</code> above and it is there. This is not a
           new demo machine for each section, everything on the page composes around one guest.
         </p>
       </div>
       <div class="panel">
         <CodeBlock code={filesExample} language="javascript" editable />
         <div class="controls">
-          <button class="control" data-run disabled>run</button>
-          <span class="hint">then go look for the file in the terminal</span>
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Then go look for the file in the terminal</span>
         </div>
         <pre class="output" data-output aria-live="polite" hidden></pre>
       </div>
     </section>
 
     <section data-demo>
-      <h2>network machines together</h2>
+      <h2>Network machines together</h2>
       <div class="copy">
         <p>
-          guests attached to the same network exchange real Ethernet frames through an in-process
-          switch. this example boots a second kernel in your tab and pings the first, neither the
+          Guests attached to the same network exchange real Ethernet frames through an in-process
+          switch. This example boots a second kernel in your tab and pings the first, neither the
           guest agent nor a server sits in the data path.
         </p>
       </div>
       <div class="panel">
         <CodeBlock code={networkExample} language="javascript" editable />
         <div class="controls">
-          <button class="control" data-run disabled>run</button>
-          <span class="hint">boots a whole second machine, so give it a moment</span>
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Boots a whole second machine, so give it a moment</span>
         </div>
         <pre class="output" data-output aria-live="polite" hidden></pre>
       </div>
     </section>
 
     <section>
-      <h2>drop down to the kernel</h2>
+      <h2>Drop down to the kernel</h2>
       <div class="copy">
         <p>
-          <code>@tombl/linux-guest</code> is the opinionated 80% API, it bundles a userspace and
-          guest agent so running a process or moving a file is one call. most applications should
-          use that. if its opinions get in your way, <code>@tombl/linux</code> exposes the kernel
+          <code>@tombl/linux-guest</code> is the opinionated API for most consumers, it bundles a userspace and
+          guest agent so running a process or moving a file is one call. Most applications should
+          use that. If its opinions get in your way, <code>@tombl/linux</code> exposes the kernel
           underneath, where you supply the devices, disk, and init yourself. both APIs are the same
           machine at different levels. <a href="/getting-started/">architecture →</a>
         </p>
       </div>
       <div class="panel">
-        <CodeBlock code={machineExample} language="javascript" editable />
+        <CodeBlock code={machineExample} language="javascript" />
       </div>
     </section>
 
     <section class="limits">
-      <h2>what the port trades away</h2>
+      <h2>Limitations</h2>
       <div class="copy">
-        <h3>requirements</h3>
+        <h3>Requirements</h3>
         <ul>
           <li>Node 22 or a modern browser</li>
-          <li>cross-origin isolation (COOP/COEP headers) in browsers</li>
+          <li>Cross-origin isolation (COOP/COEP headers) in browsers</li>
           <li>WebAssembly threads and <code>SharedArrayBuffer</code></li>
           <li>
             Web Workers, a Linux thread can require another worker and V8 context, so threads are
@@ -170,21 +163,20 @@ const machine = await spawnMachine({
         </ul>
       </div>
       <div class="panel">
-        <h3>honest limits</h3>
+        <h3>Architectural limits</h3>
         <ul>
           <li>
-            there is no MMU, so <code>fork()</code> cannot be implemented honestly.
-            <code>clone()</code> works, and programs that require real <code>fork()</code> get
-            patched rather than lied to
+            WebAssembly requires structured control flow, so <code>fork()</code> cannot be implemented without hacks.
+            <code>clone()</code> works, so porting software to wasm does require some small patches.
+            The situation here could get better if the <a href="https://github.com/WebAssembly/stack-switching">WebAssembly stack-switching proposal</a> is implemented.
           </li>
           <li>
-            there is no <code>mmap()</code> yet, it depends on WebAssembly memory-control. ordinary
-            file I/O works today
+            There is no <code>mmap()</code> yet, this depends on the <a href="https://github.com/WebAssembly/memory-control">WebAssembly memory-control proposal</a>.
+            Apps must be rewritten to use file I/O instead, and memory can't be shared between processes.
           </li>
-          <li>it is slower than native Linux and has known bugs, this is early and experimental</li>
-          <li>
-            the isolation boundary is the machine: every guest is its own kernel inside its own
-            wasm sandbox
+          <li>Linux threads are turned into Web Workers which come with a higher memory overhead,
+              so while we do have true multi-core parallelism, threads are more expensive than normal.
+              This could get better with the <a href="https://github.com/WebAssembly/shared-everything-threads">WebAssembly shared-everything-threads proposal</a>.
           </li>
         </ul>
       </div>
@@ -204,7 +196,6 @@ const machine = await spawnMachine({
     <a href="/getting-started/">docs</a>
     <a href="https://github.com/tombl/distro" target="_blank">github</a>
     <a href="https://www.npmjs.com/package/@tombl/linux-guest" target="_blank">npm</a>
-    <a href="https://tombl.dev" target="_blank">tombl.dev</a>
   </footer>
 </Base>
 
@@ -394,7 +385,6 @@ const machine = await spawnMachine({
     border: 1px solid var(--hairline);
     background: none;
     color: var(--code-foreground);
-    font-family: var(--font-mono);
     font-size: 0.9375rem;
     text-decoration: none;
     cursor: pointer;
