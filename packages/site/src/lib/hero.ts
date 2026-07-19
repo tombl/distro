@@ -63,6 +63,12 @@ export function writeConsole(text: string) {
   inputController.enqueue(encoder.encode(text));
 }
 
+const terminalConsole = consoleDevice(consoleInput, consoleSink());
+
+export function resizeConsole(columns: number, rows: number) {
+  terminalConsole.resize(columns, rows);
+}
+
 // The guest agent is init and starts nothing on the console, so the
 // interactive shell is just a process bound to the console tty — respawned
 // if it exits. cttyhack gives it a controlling terminal (job control,
@@ -115,7 +121,7 @@ async function boot(): Promise<Hero> {
     cpus,
     network,
     assets,
-    devices: [consoleDevice(consoleInput, consoleSink()), entropyDevice()],
+    devices: [terminalConsole, entropyDevice()],
   });
   const bootMs = Math.round(performance.now() - start);
 

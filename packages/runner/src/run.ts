@@ -98,12 +98,20 @@ if (args.console) {
     exitFromSignal("SIGTERM", 143);
   }
 
-  devices.push(
-    consoleDevice(
-      Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
-      Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
-    ),
+  const device = consoleDevice(
+    Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
+    Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
   );
+  devices.push(device);
+
+  if (process.stdout.isTTY) {
+    const resize = () => {
+      const { columns, rows } = process.stdout;
+      if (columns > 0 && rows > 0) device.resize(columns, rows);
+    };
+    resize();
+    process.stdout.on("resize", resize);
+  }
 }
 
 if (args.entropy) {

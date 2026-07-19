@@ -46,7 +46,7 @@
   import { Terminal } from "@xterm/xterm";
   import type { ITheme } from "@xterm/xterm";
   import "@xterm/xterm/css/xterm.css";
-  import { attachConsole, hero, writeConsole } from "../lib/hero";
+  import { attachConsole, booting, hero, resizeConsole, writeConsole } from "../lib/hero";
 
   const element = document.querySelector<HTMLElement>("#terminal");
   if (!element) throw new Error("terminal element not found");
@@ -120,7 +120,9 @@
     }
   }
 
+  terminal.onResize(({ cols, rows }) => resizeConsole(cols, rows));
   fitTerminal();
+  resizeConsole(terminal.cols, terminal.rows);
   new ResizeObserver(fitTerminal).observe(element);
 
   const placeholder = document.createElement("div");
