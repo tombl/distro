@@ -290,6 +290,19 @@
         "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
       }
     },
+    "quickjs-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780584979,
+        "narHash": "sha256-d52EFtBrOO6+DG93R+aWVUisX7SSk2eYLKhWWqX/lII=",
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      }
+    },
     "readline-src": {
       "flake": false,
       "locked": {
@@ -326,6 +339,7 @@
         "nixpkgs": "nixpkgs",
         "patch-src": "patch-src",
         "python-src": "python-src",
+        "quickjs-src": "quickjs-src",
         "readline-src": "readline-src",
         "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",
