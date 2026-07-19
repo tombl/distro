@@ -173,10 +173,24 @@
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
         "readline-src": "readline-src",
+        "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",
         "xz-src": "xz-src",
         "zlib-src": "zlib-src",
         "zstd-src": "zstd-src"
+      }
+    },
+    "sed-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1667771502,
+        "narHash": "sha256-yQTI0WzgSOolziBUNU9ayhASUT2/xFi3jt1C2z1MFZw=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz"
       }
     },
     "sqlite-src": {

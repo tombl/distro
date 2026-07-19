@@ -44,6 +44,10 @@
       url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
       flake = false;
     };
+    sed-src = {
+      url = "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz";
+      flake = false;
+    };
     sqlite-src = {
       url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
       flake = false;
