@@ -46,36 +46,7 @@ pkgs.stdenvNoCC.mkDerivation {
     make -C tools/wasm clean
     mkdir -p $out
 
-    config() {
-      sed -i "/CONFIG_$1=/d" .config
-      sed -i "/CONFIG_$1 is not set/d" .config
-      case $2 in
-        y|n) echo "CONFIG_$1=$2" >> .config ;;
-        *) echo "CONFIG_$1=\"$2\"" >> .config ;;
-      esac
-    }
-
     make defconfig ${lib.optionalString debug "debug.config"}
-    config BLOCK y
-    config BLK_DEV y
-    config BLK_DEV_INITRD y
-    config DEVTMPFS y
-    config EXT4_FS y
-    config FILE_LOCKING y
-    config FUTEX y
-    config INET y
-    config IP_PNP y
-    config IPV6 n
-    config NET y
-    config NETDEVICES y
-    config OVERLAY_FS n
-    config SQUASHFS y
-    config VIRTIO_BLK y
-    config VIRTIO_NET y
-    config VIRTIO_VSOCKETS y
-    config VIRTIO_WASM y
-    config VSOCKETS y
-    make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
