@@ -16,6 +16,19 @@
         "type": "github"
       }
     },
+    "bzip2-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784477577,
+        "narHash": "sha256-Uvi4JZPPERK3gym4yoaeTEJwKXF5brBAEN7GgF+iF6g=",
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      }
+    },
     "file-src": {
       "flake": false,
       "locked": {
@@ -97,6 +110,7 @@
     "root": {
       "inputs": {
         "busybox-src": "busybox-src",
+        "bzip2-src": "bzip2-src",
         "file-src": "file-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
