@@ -3,7 +3,7 @@
   initramfs,
   linux,
   node-workspace,
-  rootfs,
+  site-rootfs,
 }:
 
 pkgs.stdenvNoCC.mkDerivation {
@@ -37,7 +37,7 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
     cp -r packages/site/dist/* $out/
     gzip --best --no-name --stdout ${initramfs} > $out/initramfs.cpio.gz
-    gzip --best --no-name --stdout ${rootfs} > $out/rootfs.ext4.gz
+    gzip --best --no-name --stdout ${site-rootfs} > $out/rootfs.squashfs.gz
 
     runHook postInstall
   '';

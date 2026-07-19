@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",
+    "@astrojs/markdown-remark": "^7.2.1",
     "@astrojs/mdx": "^7.0.3",
     "@deno/doc": "jsr:0.202.0",
     "@types/node": "^26.1.1",

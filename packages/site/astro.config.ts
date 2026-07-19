@@ -50,9 +50,4 @@ export default defineConfig({
       "Cross-Origin-Resource-Policy": "cross-origin",
     },
   },
-  vite: {
-    resolve: {
-      preserveSymlinks: true,
-    },
-  },
 });

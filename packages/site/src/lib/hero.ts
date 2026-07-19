@@ -32,23 +32,22 @@ async function fetchBytes(path: string) {
 
 // Console plumbing. The guest writes through as many streams as it likes
 // (boot console, then the virtio console); a single listener — the xterm —
-// renders them all, with a backlog for output that arrives before it attaches.
-let consoleListener: ((data: Uint8Array) => void) | undefined;
-const consoleBacklog: Uint8Array[] = [];
+// renders them all. Writes wait for it to attach, then remain pending until the
+// listener has consumed them so backpressure reaches the guest's virtqueue.
+type ConsoleListener = (data: Uint8Array) => Promise<void>;
+const consoleListener = Promise.withResolvers<ConsoleListener>();
 
 function consoleSink() {
   return new WritableStream<Uint8Array>({
-    write(data) {
-      if (consoleListener) consoleListener(data);
-      else consoleBacklog.push(data);
+    async write(data) {
+      const listener = await consoleListener.promise;
+      return listener(data);
     },
   });
 }
 
-export function attachConsole(listener: (data: Uint8Array) => void) {
-  consoleListener = listener;
-  for (const data of consoleBacklog) listener(data);
-  consoleBacklog.length = 0;
+export function attachConsole(listener: ConsoleListener) {
+  consoleListener.resolve(listener);
 }
 
 const encoder = new TextEncoder();

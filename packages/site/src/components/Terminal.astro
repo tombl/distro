@@ -153,7 +153,12 @@
   });
 
   terminal.onData((data) => writeConsole(data));
-  attachConsole((data) => terminal.write(Uint8Array.from(data)));
+  attachConsole(
+    (data) =>
+      new Promise<void>((resolve) => {
+        terminal.write(data, resolve);
+      }),
+  );
 
   const status = document.querySelector("[data-terminal-status]");
   void booting.then(() => {
