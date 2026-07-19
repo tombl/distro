@@ -81,6 +81,19 @@
         "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
       }
     },
+    "less-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1728253910,
+        "narHash": "sha256-U3En8L4CnqlVu9Kkh3PhOQIoUyzGDl5msotNKtPn1Dk=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      }
+    },
     "linux-src": {
       "flake": false,
       "locked": {
@@ -125,6 +138,19 @@
       "original": {
         "type": "tarball",
         "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      }
+    },
+    "make-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1677437212,
+        "narHash": "sha256-+Cg7R8wougcWcFf6u5B3lVX6RRgMRYZ1CD+e21URP5A=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
       }
     },
     "musl-src": {
@@ -194,9 +220,11 @@
         "gawk-src": "gawk-src",
         "grep-src": "grep-src",
         "jq-src": "jq-src",
+        "less-src": "less-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
         "lua-src": "lua-src",
+        "make-src": "make-src",
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",

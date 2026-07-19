@@ -28,6 +28,10 @@
       url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz";
       flake = false;
     };
+    less-src = {
+      url = "https://ftp.gnu.org/gnu/less/less-668.tar.gz";
+      flake = false;
+    };
     linux-src = {
       url = "github:tombl/linux/clone-vm-threads";
       flake = false;
@@ -38,6 +42,10 @@
     };
     lua-src = {
       url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+      flake = false;
+    };
+    make-src = {
+      url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz";
       flake = false;
     };
     musl-src = {
