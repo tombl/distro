@@ -67,6 +67,7 @@ let
       name,
       initramfs,
       disk ? null,
+      memoryGrowth ? false,
     }:
     pkgs.runCommand "vm-test-${name}"
       {
@@ -82,6 +83,7 @@ let
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.ext4"} \
+          ${lib.optionalString memoryGrowth "--memory-growth"} \
           2>&1 | awk -f ${runner}/limit-output.awk
         status=''${PIPESTATUS[0]}
         set -e

@@ -11,7 +11,6 @@ function assert(cond: unknown, message = "Assertion failed"): asserts cond {
 }
 
 const cpus = availableParallelism();
-const defaultMemory = cpus > 16 ? 256 : 128;
 
 const args = parseArgs({
   args: process.argv.slice(2),
@@ -21,11 +20,6 @@ const args = parseArgs({
       short: "c",
       type: "string",
       default: "",
-    },
-    memory: {
-      short: "m",
-      type: "string",
-      default: defaultMemory.toString(),
     },
     initcpio: {
       short: "i",
@@ -63,7 +57,6 @@ if (args.help) {
 
 options:
   -c, --cmdline <string>  Command line arguments to pass to the kernel
-  -m, --memory <number>   Amount of memory to allocate in MiB (default: ${defaultMemory})
   -i, --initcpio <string> Path to the initramfs to boot
   -j, --cpus <number>     Number of CPUs to use (default: number of CPUs on the machine)
       --no-console        Don't attach a console device
@@ -75,7 +68,6 @@ options:
 }
 
 assert(!Number.isNaN(parseInt(args.cpus, 10)), "cpus must be a number");
-assert(!Number.isNaN(parseInt(args.memory, 10)), "memory must be a number");
 
 const devices = [];
 
@@ -163,7 +155,6 @@ for (const disk of args.disk) {
 
 const machine = await spawnMachine({
   cmdline: args.cmdline,
-  memoryMib: parseInt(args.memory, 10),
   cpus: parseInt(args.cpus, 10),
   devices,
   initcpio: await readFile(args.initcpio),

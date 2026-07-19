@@ -17,11 +17,8 @@ export interface Hero {
   network: Network;
   bootMs: number;
   cpus: number;
-  memoryMib: number;
   rootfsBytes: number;
 }
-
-const MEMORY_MIB = 128;
 
 async function fetchBytes(path: string) {
   let response = await fetch(path);
@@ -112,7 +109,6 @@ async function boot(): Promise<Hero> {
   bootPhase.resolve();
   const guest = await spawnGuest({
     cpus,
-    memoryMib: MEMORY_MIB,
     network,
     assets,
     devices: [consoleDevice(consoleInput, consoleSink()), entropyDevice()],
@@ -125,7 +121,7 @@ async function boot(): Promise<Hero> {
   await guest.machine.bootConsole.pipeTo(consoleSink(), { preventClose: true });
   void shell(guest);
 
-  return { guest, network, bootMs, cpus, memoryMib: MEMORY_MIB, rootfsBytes: rootfs.byteLength };
+  return { guest, network, bootMs, cpus, rootfsBytes: rootfs.byteLength };
 }
 
 export const hero: Promise<Hero> = boot();
@@ -143,7 +139,6 @@ export async function spawnPeer(options: Partial<SpawnGuestOptions> = {}): Promi
   }
   const peer = await spawnGuest({
     cpus: 1,
-    memoryMib: MEMORY_MIB,
     assets,
     devices: [entropyDevice()],
     ...options,

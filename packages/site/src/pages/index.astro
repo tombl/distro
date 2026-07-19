@@ -38,7 +38,6 @@ const machineExample = `import {
 
 const machine = await spawnMachine({
   cpus: navigator.hardwareConcurrency,
-  memoryMib: 128,
   initcpio: initramfs,
   devices: [
     consoleDevice(input, output),

@@ -158,8 +158,8 @@
     if (status) status.textContent = "booting…";
   });
   hero.then(
-    ({ bootMs, cpus, memoryMib }) => {
-      if (status) status.textContent = `running · ${cpus} cpus · ${memoryMib} MiB · booted in ${bootMs} ms`;
+    ({ bootMs, cpus }) => {
+      if (status) status.textContent = `running · ${cpus} cpus · booted in ${bootMs} ms`;
       terminal.focus();
     },
     (error) => {

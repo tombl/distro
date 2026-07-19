@@ -17,4 +17,5 @@ while [ ! -b /dev/vda ]; do
 done
 
 /bin/busybox mount -t ext4 /dev/vda /newroot
+/bin/busybox mount --bind /dev /newroot/dev
 exec /bin/busybox switch_root /newroot /init

@@ -12,9 +12,11 @@ import {
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-const [linuxPath, initramfsPath, diskPath] = process.argv.slice(2);
-if (!linuxPath || !initramfsPath || process.argv.length > 5) {
-  throw new Error("usage: run-test.js <linux-module> <initramfs> [disk]");
+const memoryGrowth = process.argv.includes("--memory-growth");
+const positional = process.argv.slice(2).filter((argument) => argument !== "--memory-growth");
+const [linuxPath, initramfsPath, diskPath] = positional;
+if (!linuxPath || !initramfsPath || positional.length > 3) {
+  throw new Error("usage: run-test.js <linux-module> <initramfs> [disk] [--memory-growth]");
 }
 
 const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
@@ -26,6 +28,12 @@ const result = new Promise((resolve) => {
   resolveResult = resolve;
 });
 let settled = false;
+let machine;
+let memoryGrowthStage = 0;
+let previousMemoryBytes;
+
+const KERNEL_MEMORY_MAXIMUM_BYTES = 0xffff * 0x10000;
+const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
 
 function finish(value) {
   if (settled) return;
@@ -34,12 +42,52 @@ function finish(value) {
 }
 
 function consumeLine(line) {
+  if (memoryGrowth && line === "::kernel-memory::ready") {
+    observeMemoryGrowth(0);
+    return;
+  }
+  if (memoryGrowth && line === "::kernel-memory::sequential") {
+    observeMemoryGrowth(1);
+    return;
+  }
+
   const testResult = parseResult(line);
   if (testResult) {
+    if (memoryGrowth && testResult.passed) observeMemoryGrowth(2);
     finish(testResult);
   } else if (line.includes("Kernel panic - not syncing")) {
     finish({ passed: false, reason: line });
   }
+}
+
+function observeMemoryGrowth(stage) {
+  if (!machine) {
+    finish({ passed: false, reason: "guest reported before machine initialization completed" });
+    return;
+  }
+  if (stage !== memoryGrowthStage) {
+    finish({ passed: false, reason: `unexpected kernel memory stage ${stage}` });
+    return;
+  }
+
+  const current = machine.memory.buffer.byteLength;
+  const names = ["ready", "sequential", "concurrent"];
+  console.log(`kernel memory after ${names[stage]} stage: ${current} bytes`);
+  if (stage > 0 && current <= previousMemoryBytes) {
+    finish({
+      passed: false,
+      reason: `kernel memory did not grow: ${previousMemoryBytes} -> ${current} bytes`,
+    });
+    return;
+  }
+  if (current >= KERNEL_MEMORY_MAXIMUM_BYTES) {
+    finish({ passed: false, reason: "kernel memory jumped to its maximum" });
+    return;
+  }
+
+  previousMemoryBytes = current;
+  memoryGrowthStage++;
+  if (stage < 2) void inputWriter.write(new Uint8Array([0x0a]));
 }
 
 function consoleOutput({ failWhenClosed }) {
@@ -64,12 +112,13 @@ function consoleOutput({ failWhenClosed }) {
   });
 }
 
-const input = new ReadableStream({
-  start(controller) {
-    controller.close();
-  },
-});
-const devices = [consoleDevice(input, consoleOutput({ failWhenClosed: true })), entropyDevice()];
+const input = new TransformStream();
+const inputWriter = input.writable.getWriter();
+if (!memoryGrowth) void inputWriter.close();
+const devices = [
+  consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
+  entropyDevice(),
+];
 
 let disk;
 if (diskPath) {
@@ -100,15 +149,25 @@ if (diskPath) {
   );
 }
 
-const machine = await spawnMachine({
-  memoryMib: 128,
-  cpus: 1,
+machine = await spawnMachine({
+  cpus: memoryGrowth ? 2 : 1,
   devices,
   initcpio: readFileSync(initramfsPath),
 }).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
   return null;
 });
+
+if (machine) {
+  const initialMemoryBytes = machine.memory.buffer.byteLength;
+  if (memoryGrowth) console.log(`kernel memory after spawn: ${initialMemoryBytes} bytes`);
+  if (memoryGrowth && initialMemoryBytes >= MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES) {
+    finish({
+      passed: false,
+      reason: `kernel memory started at ${initialMemoryBytes} bytes instead of growing on demand`,
+    });
+  }
+}
 
 void machine?.bootConsole
   .pipeTo(consoleOutput({ failWhenClosed: false }), { preventClose: true })

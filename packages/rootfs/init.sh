@@ -1,3 +1,5 @@
 #!/bin/busybox sh
 
-exec /bin/sh
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+exec setsid cttyhack sh
