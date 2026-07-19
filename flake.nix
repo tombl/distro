@@ -16,12 +16,20 @@
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
     };
+    jq-src = {
+      url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz";
+      flake = false;
+    };
     linux-src = {
       url = "github:tombl/linux/clone-vm-threads";
       flake = false;
     };
     llvm-src = {
       url = "github:tombl/llvm-project";
+      flake = false;
+    };
+    lua-src = {
+      url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
       flake = false;
     };
     musl-src = {
