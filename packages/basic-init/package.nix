@@ -5,15 +5,15 @@
 }:
 
 let
-  buildInit =
-    name: source:
+  buildInitWith =
+    name: source: extraFlags:
     stdenv.mkDerivation {
       inherit name;
       src = ./.;
 
       buildPhase = ''
         runHook preBuild
-        $CC -Wl,--fatal-warnings -o init ${source}
+        $CC ${extraFlags} -Wl,--fatal-warnings -o init ${source}
         runHook postBuild
       '';
 
@@ -24,6 +24,8 @@ let
         runHook postInstall
       '';
     };
+
+  buildInit = name: source: buildInitWith name source "";
 
   check =
     name:
@@ -72,6 +74,17 @@ let
     };
   };
 
+  # setjmp/longjmp needs the Wasm SjLj lowering enabled at the call sites, so
+  # this test is compiled with -mllvm -wasm-enable-sjlj rather than the default
+  # flags. It exercises musl's __wasm_setjmp/__wasm_longjmp helpers end to end.
+  setjmpCheck = vm-test.vmTest {
+    name = "basic-init-setjmp";
+    initramfs = vm-test.mkInitramfs {
+      name = "basic-init-setjmp";
+      init = "${buildInitWith "basic-init-setjmp" "tests/setjmp.c" "-mllvm -wasm-enable-sjlj"}/bin/init";
+    };
+  };
+
   kernelMemoryGrowthCheck = vm-test.vmTest {
     name = "basic-init-kernel-memory-growth";
     initramfs = vm-test.mkInitramfs {
@@ -104,6 +117,7 @@ in
     malloc-thread = check "malloc-thread";
     memory-abi = memoryAbiCheck;
     proc-self-mem = check "proc-self-mem";
+    setjmp = setjmpCheck;
     pthread-no-tls = check "pthread-no-tls";
     thread-local = check "thread-local";
     threads = check "threads";
