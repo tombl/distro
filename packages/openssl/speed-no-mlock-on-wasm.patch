@@ -1,0 +1,27 @@
+apps/speed.c: don't call mlock() on wasm
+
+musl on wasm32 hides every <sys/mman.h> function behind `#ifndef __wasm__`
+(the platform has no mmap/mlock), but apps/speed.c assumes OPENSSL_SYS_LINUX
+implies mlock() is available. Treat wasm like the other platforms that lack
+it: `-mlock` reports "not supported" instead of failing to compile.
+
+--- a/apps/speed.c
++++ b/apps/speed.c
+@@ -2265,7 +2265,7 @@
+             break;
+         case OPT_MLOCK:
+             domlock = 1;
+-#if !defined(_WIN32) && !defined(OPENSSL_SYS_LINUX)
++#if !defined(_WIN32) && (!defined(OPENSSL_SYS_LINUX) || defined(__wasm__))
+             BIO_printf(bio_err,
+                 "%s: -mlock not supported on this platform\n",
+                 prog);
+@@ -2609,7 +2609,7 @@
+ #if defined(_WIN32)
+             (void)VirtualLock(loopargs[i].buf_malloc, buflen);
+             (void)VirtualLock(loopargs[i].buf2_malloc, buflen);
+-#elif defined(OPENSSL_SYS_LINUX)
++#elif defined(OPENSSL_SYS_LINUX) && !defined(__wasm__)
+             (void)mlock(loopargs[i].buf_malloc, buflen);
+             (void)mlock(loopargs[i].buf_malloc, buflen);
+ #endif

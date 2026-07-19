@@ -76,6 +76,10 @@
       url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
       flake = false;
     };
+    openssl-src = {
+      url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz";
+      flake = false;
+    };
     patch-src = {
       url = "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz";
       flake = false;

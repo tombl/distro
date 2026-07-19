@@ -68,6 +68,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     make = callPackage ./make/package.nix { src = inputs.make-src; };
     mbedtls = callPackage ./mbedtls/package.nix { src = inputs.mbedtls-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
+    openssl = callPackage ./openssl/package.nix { src = inputs.openssl-src; };
     patch = callPackage ./patch/package.nix { src = inputs.patch-src; };
     python = callPackage ./python/package.nix { src = inputs.python-src; };
     quickjs = callPackage ./quickjs/package.nix { src = inputs.quickjs-src; };

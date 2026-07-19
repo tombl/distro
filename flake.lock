@@ -264,6 +264,19 @@
         "type": "github"
       }
     },
+    "openssl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781006065,
+        "narHash": "sha256-/xKRDxk7BhrzhcOzazbvkpEje2YejT+9U9QzqjQg1QA=",
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+      }
+    },
     "patch-src": {
       "flake": false,
       "locked": {
@@ -337,6 +350,7 @@
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
+        "openssl-src": "openssl-src",
         "patch-src": "patch-src",
         "python-src": "python-src",
         "quickjs-src": "quickjs-src",
