@@ -10,8 +10,9 @@
 }:
 
 pkgs.stdenvNoCC.mkDerivation {
-  name = "linux";
+  pname = "linux";
   inherit src;
+  inherit ((builtins.fromJSON (builtins.readFile "${src}/tools/wasm/package.json"))) version;
 
   outputs = [
     "out"
@@ -35,6 +36,15 @@ pkgs.stdenvNoCC.mkDerivation {
     pkgs.wabt
   ];
 
+  # npm trusted publishing verifies that package metadata names the repository
+  # containing the release workflow, while the upstream source keeps pointing
+  # at the kernel repository.
+  postPatch = ''
+    substituteInPlace tools/wasm/package.json \
+      --replace-fail 'git+https://github.com/tombl/linux.git' 'git+https://github.com/tombl/distro.git' \
+      --replace-fail '"directory": "tools/wasm"' '"directory": "packages/linux"'
+  '';
+
   buildPhase = ''
     runHook preBuild
 
@@ -55,7 +65,7 @@ pkgs.stdenvNoCC.mkDerivation {
       fi
     done
 
-    make -C tools/wasm pack PACKAGE_VERSION=0.0.0
+    make -C tools/wasm pack
     cp -r tools/wasm/dist $out/
     cp tools/wasm/linux.tgz $out/
     cp tools/wasm/vmlinux.wasm $out/

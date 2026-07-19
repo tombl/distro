@@ -1,6 +1,14 @@
 {
   "name": "@tombl/linux-guest",
   "version": "0.0.0",
+  "description": "A bootable Linux guest for JavaScript with processes, files, and networking.",
+  "homepage": "https://linux.tombl.dev/reference/linux-guest/",
+  "license": "MIT AND GPL-2.0-only AND (GPL-2.0-only WITH Linux-syscall-note)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombl/distro.git",
+    "directory": "packages/linux-guest"
+  },
   "files": [
     "dist",
     "initramfs.cpio",

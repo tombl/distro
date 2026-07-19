@@ -59,6 +59,8 @@ let
 
       mkdir -p $out
       cp packages/linux-guest/package.json $out/package.json
+      cp packages/linux-guest/README.md $out/README.md
+      cp packages/linux-guest/LICENSE $out/LICENSE
       cp packages/linux-guest/initramfs.cpio $out/initramfs.cpio
       cp packages/linux-guest/rootfs.squashfs $out/rootfs.squashfs
       cp -r packages/linux-guest/dist $out/dist
