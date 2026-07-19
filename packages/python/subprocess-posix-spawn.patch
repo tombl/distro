@@ -1,0 +1,92 @@
+Make subprocess work on a fork-less platform (wasm) via os.posix_spawn().
+
+wasm32-unknown-linux-musl has no working fork(): musl exposes the symbol but
+the clone/fork syscall fails at runtime, so _posixsubprocess (fork_exec) is not
+built (py_cv_module__posixsubprocess=n/a). Upstream subprocess falls back to
+fork_exec for anything the posix_spawn() fast path does not cover (bare program
+names resolved via PATH, close_fds without addclosefrom_np, ...), which cannot
+work here. Route every child launch through os.posix_spawn() when fork_exec is
+unavailable: tolerate a missing _posixsubprocess at import, force
+_USE_POSIX_SPAWN on, only emit POSIX_SPAWN_CLOSEFROM where the platform has it
+(musl lacks addclosefrom_np, so os.POSIX_SPAWN_CLOSEFROM is absent), and in the
+POSIX _execute_child resolve a bare program name against PATH before spawning.
+preexec_fn/pass_fds cannot be honoured without fork(), so they raise
+NotImplementedError rather than being silently ignored.
+
+--- a/Lib/subprocess.py
++++ b/Lib/subprocess.py
+@@ -76,6 +76,9 @@
+ 
+ # some platforms do not support subprocesses
+ _can_fork_exec = sys.platform not in {"emscripten", "wasi", "ios", "tvos", "watchos"}
++# Becomes True below iff _posixsubprocess is importable. On fork-less platforms
++# (e.g. wasm) that module is not built and subprocess uses os.posix_spawn only.
++_HAVE_FORK_EXEC = False
+ 
+ if _mswindows:
+     import _winapi
+@@ -103,7 +106,12 @@
+                     "CREATE_DEFAULT_ERROR_MODE", "CREATE_BREAKAWAY_FROM_JOB"])
+ else:
+     if _can_fork_exec:
+-        from _posixsubprocess import fork_exec as _fork_exec
++        try:
++            from _posixsubprocess import fork_exec as _fork_exec
++            _HAVE_FORK_EXEC = True
++        except ImportError:
++            # No fork() on this platform (wasm): _posixsubprocess is absent.
++            _fork_exec = None
+         # used in methods that are called by __del__
+         class _del_safe:
+             waitpid = os.waitpid
+@@ -755,6 +763,11 @@
+ _USE_VFORK = True
+ _HAVE_POSIX_SPAWN_CLOSEFROM = hasattr(os, 'POSIX_SPAWN_CLOSEFROM')
+ 
++if _can_fork_exec and not _HAVE_FORK_EXEC:
++    # Without fork()/_posixsubprocess, os.posix_spawn() is the only launcher,
++    # so use it unconditionally regardless of the libc heuristics above.
++    _USE_POSIX_SPAWN = True
++
+ 
+ class Popen:
+     """ Execute a child program in a new process.
+@@ -1811,7 +1824,7 @@
+                 if fd != -1:
+                     file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+ 
+-            if close_fds:
++            if close_fds and _HAVE_POSIX_SPAWN_CLOSEFROM:
+                 file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
+ 
+             if file_actions:
+@@ -1858,6 +1871,29 @@
+ 
+             sys.audit("subprocess.Popen", executable, args, cwd, env)
+ 
++            if not _HAVE_FORK_EXEC:
++                # No fork(): _posixsubprocess is absent, so every child is
++                # launched with os.posix_spawn(). posix_spawn() does no PATH
++                # search, so resolve a bare program name here the way
++                # os._execvpe()/fork_exec() otherwise would.
++                if preexec_fn is not None:
++                    raise NotImplementedError(
++                        "preexec_fn is not supported without fork()")
++                if pass_fds:
++                    raise NotImplementedError(
++                        "pass_fds is not supported without fork()")
++                spawn_executable = executable
++                if not os.path.dirname(executable):
++                    for spawn_dir in os.get_exec_path(env):
++                        candidate = os.path.join(spawn_dir, executable)
++                        if os.access(candidate, os.X_OK):
++                            spawn_executable = candidate
++                            break
++                self._posix_spawn(args, spawn_executable, env, restore_signals,
++                                  close_fds, p2cread, p2cwrite,
++                                  c2pread, c2pwrite, errread, errwrite)
++                return
++
+             if (_USE_POSIX_SPAWN
+                     and os.path.dirname(executable)
+                     and preexec_fn is None

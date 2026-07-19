@@ -251,6 +251,19 @@
         "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
       }
     },
+    "python-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781094244,
+        "narHash": "sha256-v1lJgk5aS5tS19HH8k6cs5NlFpTDtmFOWSepvldlVm8=",
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      }
+    },
     "readline-src": {
       "flake": false,
       "locked": {
@@ -284,6 +297,7 @@
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
         "patch-src": "patch-src",
+        "python-src": "python-src",
         "readline-src": "readline-src",
         "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",
