@@ -53,7 +53,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
-    clang = callPackage ./clang/package.nix { src = inputs.llvm-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
 

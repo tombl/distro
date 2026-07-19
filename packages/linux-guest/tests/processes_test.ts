@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { SystemError } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
 
@@ -67,6 +68,15 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
+    await t.test("reports explicit exit statuses", async () => {
+      const exited = await guest.exec(["sh", "-c", "exit 37"]);
+      assert.deepEqual(await exited.status, {
+        success: false,
+        code: 37,
+        signal: null,
+      });
+    });
+
     await t.test("aborts processes", async () => {
       const abort_controller = new AbortController();
       const aborted = await guest.exec(["sleep", "30"], {
@@ -77,30 +87,31 @@ guest_test("processes", async (t, fixture) => {
       await assert.rejects(aborted.status, (error) => error === abort_reason);
     });
 
-    await t.test("allows commands to orphan child processes", async () => {
+    await t.test("reaps adopted orphan processes", async () => {
+      const pid_file = `${directory}/orphan.pid`;
       const orphaned = await guest.exec([
         "sh",
         "-c",
-        "sh -c 'i=0; while [ $i -lt 1000 ]; do i=$((i + 1)); done' &",
+        `sh -c 'sleep 0.1' & echo $! > "${pid_file}"`,
       ]);
       assert.deepEqual(await orphaned.status, {
         success: true,
         code: 0,
         signal: null,
       });
-    });
 
-    await t.test("reaps orphaned processes", async () => {
-      const zombie_check = await guest.exec([
-        "sh",
-        "-c",
-        'for stat in /proc/[0-9]*/stat; do case "$(cat "$stat")" in *") Z 1 "*) exit 1;; esac; done',
-      ]);
-      assert.deepEqual(await zombie_check.status, {
-        success: true,
-        code: 0,
-        signal: null,
-      });
+      const orphan_pid = new TextDecoder().decode(await guest.fs.readFile(pid_file)).trim();
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        try {
+          await guest.fs.stat(`/proc/${orphan_pid}`);
+        } catch (error) {
+          if (error instanceof SystemError && error.code === "ENOENT") break;
+          throw error;
+        }
+        if (Date.now() >= deadline) assert.fail(`orphan ${orphan_pid} was not reaped`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
     });
   } finally {
     await guest.fs.remove(directory, { recursive: true });

@@ -66,8 +66,11 @@ enum arg_kind {
 static struct {
 	pid_t pid;
 	bool used;
+	bool reaped;
+	int status;
 } children[process_capacity];
 static pthread_mutex_t children_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t children_changed = PTHREAD_COND_INITIALIZER;
 
 static struct {
 	pthread_mutex_t mutex;
@@ -278,6 +281,52 @@ static void close_fd(int *fd)
 	}
 }
 
+/* PID 1 owns every child, including descendants orphaned by commands. Keep
+ * waitpid in exactly one thread so adopted children are discarded without
+ * racing status delivery for children registered by the host protocol. */
+static void *reap_children(void *unused)
+{
+	(void)unused;
+	for (;;) {
+		int status;
+		pid_t pid = waitpid(-1, &status, 0);
+		size_t i;
+
+		if (pid == -1) {
+			if (errno == EINTR)
+				continue;
+			if (errno == ECHILD) {
+				pthread_mutex_lock(&children_mutex);
+				while (true) {
+					for (i = 0; i < process_capacity; i++)
+						if (children[i].used &&
+						    children[i].pid > 0 &&
+						    !children[i].reaped)
+							break;
+					if (i != process_capacity)
+						break;
+					pthread_cond_wait(&children_changed,
+							  &children_mutex);
+				}
+				pthread_mutex_unlock(&children_mutex);
+				continue;
+			}
+			perror("waitpid");
+			abort();
+		}
+
+		pthread_mutex_lock(&children_mutex);
+		for (i = 0; i < process_capacity; i++)
+			if (children[i].used && children[i].pid == pid) {
+				children[i].status = status;
+				children[i].reaped = true;
+				break;
+			}
+		pthread_cond_broadcast(&children_changed);
+		pthread_mutex_unlock(&children_mutex);
+	}
+}
+
 /* Spawn request body: { len u32 } then { argc u32 } argc x string,
  * string cwd, { envc u32 } envc x string. The length prefix exists so a
  * payload that fails to parse is already consumed and can get an EINVAL
@@ -343,6 +392,8 @@ static int serve_spawn(int fd)
 		if (!children[i].used) {
 			children[i].used = true;
 			children[i].pid = 0;
+			children[i].reaped = false;
+			children[i].status = 0;
 			slot = (int)i;
 			break;
 		}
@@ -369,16 +420,20 @@ static int serve_spawn(int fd)
 	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])) ||
 	    (spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
 		goto spawn_failed;
+	/* Publish the pid before the sole reaper can classify a fast exit. */
+	pthread_mutex_lock(&children_mutex);
 	spawn_errno = posix_spawnp(&pid, argv[0], &actions, NULL, argv, envp);
+	if (!spawn_errno) {
+		children[slot].pid = pid;
+		pthread_cond_broadcast(&children_changed);
+	}
+	pthread_mutex_unlock(&children_mutex);
 	if (spawn_errno)
 		goto spawn_failed;
 	posix_spawn_file_actions_destroy(&actions);
 	close_fd(&in[0]);
 	close_fd(&out[1]);
 	close_fd(&err[1]);
-	pthread_mutex_lock(&children_mutex);
-	children[slot].pid = pid;
-	pthread_mutex_unlock(&children_mutex);
 	store_u32(body, (uint32_t)pid);
 	store_u32(body + 4, (uint32_t)in[1]);
 	store_u32(body + 8, (uint32_t)out[0]);
@@ -399,6 +454,7 @@ spawn_failed:
 	close_fd(&err[1]);
 	pthread_mutex_lock(&children_mutex);
 	children[slot].used = false;
+	pthread_cond_broadcast(&children_changed);
 	pthread_mutex_unlock(&children_mutex);
 	rc = write_reply(fd, -1, spawn_errno > 0 ? (uint32_t)spawn_errno : EIO);
 	goto out;
@@ -426,23 +482,26 @@ static int serve_reap(int fd)
 	uint8_t pid_bytes[4];
 	uint8_t body[4];
 	uint32_t pid;
-	int status = 0;
-	int wait_errno;
-	pid_t r;
+	int status;
 	size_t i;
 
 	if (read_all(fd, pid_bytes, sizeof(pid_bytes)))
 		return -1;
 	pid = load_u32(pid_bytes);
-	r = waitpid((pid_t)pid, &status, 0);
-	wait_errno = errno;
 	pthread_mutex_lock(&children_mutex);
 	for (i = 0; i < process_capacity; i++)
 		if (children[i].used && children[i].pid == (pid_t)pid)
-			children[i].used = false;
+			break;
+	if (i == process_capacity) {
+		pthread_mutex_unlock(&children_mutex);
+		return write_reply(fd, -1, ECHILD);
+	}
+	while (!children[i].reaped)
+		pthread_cond_wait(&children_changed, &children_mutex);
+	status = children[i].status;
+	children[i].used = false;
+	pthread_cond_broadcast(&children_changed);
 	pthread_mutex_unlock(&children_mutex);
-	if (r == -1)
-		return write_reply(fd, -1, (uint32_t)wait_errno);
 	if (write_reply(fd, 0, 0))
 		return -1;
 	store_u32(body, (uint32_t)status);
@@ -570,7 +629,8 @@ static void teardown(void)
 	 * waitpid, so it must happen before waiting for them. */
 	pthread_mutex_lock(&children_mutex);
 	for (i = 0; i < process_capacity; i++)
-		if (children[i].used && children[i].pid > 0)
+		if (children[i].used && children[i].pid > 0 &&
+		    !children[i].reaped)
 			kill(children[i].pid, SIGKILL);
 	pthread_mutex_unlock(&children_mutex);
 
@@ -581,15 +641,18 @@ static void teardown(void)
 
 	/* All lanes have drained, so the table is quiescent. A spawn that was
 	 * still in flight during the kill pass completed after it; kill again
-	 * (idempotent) or the waitpid below blocks forever. */
+	 * (idempotent), then let the sole reaper collect every remaining status. */
+	pthread_mutex_lock(&children_mutex);
 	for (i = 0; i < process_capacity; i++)
-		if (children[i].used) {
-			int status;
-
+		if (children[i].used && !children[i].reaped)
 			kill(children[i].pid, SIGKILL);
-			waitpid(children[i].pid, &status, 0);
-			children[i].used = false;
-		}
+	for (i = 0; i < process_capacity; i++) {
+		while (children[i].used && !children[i].reaped)
+			pthread_cond_wait(&children_changed, &children_mutex);
+		children[i].used = false;
+	}
+	pthread_cond_broadcast(&children_changed);
+	pthread_mutex_unlock(&children_mutex);
 
 }
 
@@ -620,9 +683,16 @@ static int mount_if_needed(const char *source, const char *target,
 int main(void)
 {
 	pthread_attr_t worker_attr;
+	pthread_t reaper;
 	int session_listener, lane_listener, rc;
 
 	signal(SIGPIPE, SIG_IGN);
+	rc = pthread_create(&reaper, NULL, reap_children, NULL);
+	if (rc) {
+		errno = rc;
+		perror("pthread reaper");
+		return 1;
+	}
 	/* /proc is load-bearing: the host's realPath and FsFile.stat go
 	 * through /proc/self/fd/N. */
 	if (mount_if_needed("proc", "/proc", "proc") == -1 ||

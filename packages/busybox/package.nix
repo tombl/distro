@@ -52,29 +52,30 @@ let
 
       config BOOTCHARTD n
       config CONSPY n
-      config CROND n
-      config CRONTAB n
+      config CROND y
+      config CRONTAB y
       config DEVMEM n
       config FBSPLASH n
-      config FTPD n
+      config FTPD y
+      config FEATURE_FTPD_AUTHENTICATION n
       config HDPARM n
       config HEXEDIT n
-      config HTTPD n
-      config IFDOWN n
-      config IFUP n
+      config HTTPD y
+      config IFDOWN y
+      config IFUP y
       config INETD n
-      config NC n
+      config NC y
       config NSENTER n
-      config SCRIPT n
-      config START_STOP_DAEMON n
+      config SCRIPT y
+      config START_STOP_DAEMON y
       config SWAPOFF n
       config SWAPON n
-      config TCPSVD n
+      config TCPSVD y
       config TELNETD n
-      config TIME n
-      config TS n
-      config UDPSVD n
-      config WGET n
+      config TIME y
+      config TS y
+      config UDPSVD y
+      config WGET y
 
       config SENDMAIL n
       config REFORMIME n
@@ -88,7 +89,7 @@ let
       config RUNSVDIR n
       config SVLOGD n
 
-      config HUSH_TICK n
+      config HUSH_TICK y
 
       config HWCLOCK n
       config RTCWAKE n
@@ -116,14 +117,24 @@ let
       runHook postInstall
     '';
 
-    passthru.checks.smoke = vm-test.vmTest {
-      name = "busybox-smoke";
-      initramfs = vm-test.mkInitramfs {
-        name = "busybox-smoke";
-        init = ./smoke-test.sh;
-        contents = [ finalAttrs.finalPackage ];
+    passthru.checks =
+      let
+        check =
+          name: init:
+          vm-test.vmTest {
+            name = "busybox-${name}";
+            initramfs = vm-test.mkInitramfs {
+              name = "busybox-${name}";
+              inherit init;
+              contents = [ finalAttrs.finalPackage ];
+            };
+          };
+      in
+      {
+        smoke = check "smoke" ./smoke-test.sh;
+        processes = check "processes" ./process-test.sh;
+        networking = check "networking" ./network-test.sh;
       };
-    };
   });
 in
 package
