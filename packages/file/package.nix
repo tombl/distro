@@ -27,11 +27,6 @@ let
       "--disable-libseccomp"
     ];
 
-    # AC_FUNC_MMAP hard-codes "yes" for linux* hosts without running its probe,
-    # so libmagic would compile in the mmap path for loading the magic database.
-    # wasm has no mmap; force the malloc+read fallback (apprentice.c's #else).
-    ac_cv_func_mmap_fixed_mapped = "no";
-
     passthru.checks =
       let
         # Sample files of known types for the detection test.
