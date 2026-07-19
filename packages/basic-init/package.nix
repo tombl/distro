@@ -69,6 +69,7 @@ in
     credentials = check "credentials";
     cwd = check "cwd";
     futex = check "futex";
+    large-executable = check "large-executable";
     malloc = check "malloc";
     malloc-failure = check "malloc-failure";
     malloc-thread = check "malloc-thread";
