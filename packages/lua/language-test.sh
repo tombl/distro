@@ -10,9 +10,7 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 # os.execute/io.popen spawn /bin/sh, which wants /dev/null.
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 
-# Core language features that do not depend on longjmp: arithmetic, strings,
-# tables, and file io. The wasm musl ships a stub longjmp (it traps), so Lua's
-# error propagation and coroutine yield cannot work; those are probed below.
+# Core language features: arithmetic, strings, tables, and file io.
 cat >/tmp/core.lua <<'LUA'
 assert(2 ^ 10 == 1024, "pow")
 assert(7 // 2 == 3, "floordiv")
@@ -56,47 +54,48 @@ lua /tmp/core.lua >/tmp/core.out 2>&1 ||
 grep -qx '::lua::core-pass' /tmp/core.out ||
   fail "lua core features failed: $(cat /tmp/core.out)"
 
-# Everything below exercises platform edges. Report behavior; do not gate the
-# test, since the point is to record how the no-fork/no-longjmp platform reacts.
-
-# Coroutine yield unwinds through luaD_throw -> longjmp, which traps here.
+# Coroutines and pcall unwind through luaD_throw -> longjmp, which needs the
+# SjLj lowering the package is built with; assert they really work.
 cat >/tmp/coro.lua <<'LUA'
 local co = coroutine.create(function(a)
   local b = coroutine.yield(a + 1)
   return b * 2
 end)
-print("resume1:", coroutine.resume(co, 10))
-print("resume2:", coroutine.resume(co, 5))
-print("status:", coroutine.status(co))
-LUA
-lua /tmp/coro.lua >/tmp/coro.out 2>&1
-echo "--- coroutine (exit $?) ---"
-cat /tmp/coro.out
+local ok1, v1 = coroutine.resume(co, 10)
+assert(ok1 and v1 == 11, "yield value")
+local ok2, v2 = coroutine.resume(co, 5)
+assert(ok2 and v2 == 10, "resume value")
+assert(coroutine.status(co) == "dead", "status")
 
-# Error handling: pcall recovers via longjmp, which traps here.
-cat >/tmp/err.lua <<'LUA'
-print("pcall:", pcall(function() error("boom") end))
+local ok, err = pcall(function() error("boom") end)
+assert(not ok and err:match("boom"), "pcall catches error")
+local ok2b, err2 = pcall(function() error({ code = 7 }) end)
+assert(not ok2b and err2.code == 7, "pcall table error")
+
+print("::lua::unwind-pass")
 LUA
-lua /tmp/err.lua >/tmp/err.out 2>&1
-echo "--- pcall/error (exit $?) ---"
-cat /tmp/err.out
+lua /tmp/coro.lua >/tmp/coro.out 2>&1 ||
+  fail "lua coroutine/pcall script exited nonzero: $(cat /tmp/coro.out)"
+grep -qx '::lua::unwind-pass' /tmp/coro.out ||
+  fail "lua coroutine/pcall failed: $(cat /tmp/coro.out)"
 
 # os.execute (system()) and io.popen (popen()) go through the no-fork spawn
-# path; package.loadlib should fail gracefully (no dlopen).
+# path; package.loadlib should fail gracefully (no dlopen). Assert the spawn
+# results; loadlib just needs to not crash.
 cat >/tmp/probe.lua <<'LUA'
-print("os.execute:", os.execute("exit 3"))
-local ph = io.popen("echo popen-output")
-if ph then
-  print("io.popen:", (ph:read("a") or ""):gsub("%s+$", ""), ph:close())
-else
-  print("io.popen: open-failed")
-end
+local ok, how, code = os.execute("exit 3")
+assert(ok == nil and how == "exit" and code == 3, "os.execute status")
+local ph = assert(io.popen("echo popen-output"), "popen open")
+local out = ph:read("a")
+assert(out:match("popen%-output"), "popen output")
+assert(ph:close(), "popen close")
 print("loadlib:", package.loadlib("/nonexistent.so", "luaopen_x"))
+print("::lua::spawn-pass")
 LUA
-lua /tmp/probe.lua >/tmp/probe.out 2>&1
-echo "--- spawn/loadlib (exit $?) ---"
-cat /tmp/probe.out
-echo "--- end probes ---"
+lua /tmp/probe.lua >/tmp/probe.out 2>&1 ||
+  fail "lua spawn script exited nonzero: $(cat /tmp/probe.out)"
+grep -qx '::lua::spawn-pass' /tmp/probe.out ||
+  fail "lua spawn probes failed: $(cat /tmp/probe.out)"
 
 echo "::vm-test::pass"
 while :; do :; done

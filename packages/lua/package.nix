@@ -10,10 +10,9 @@ stdenv.mkDerivation (finalAttrs: {
   version = "5.4.8";
   inherit src;
 
-  # Lua's LUA_USE_POSIX error path calls _setjmp/_longjmp. The wasm musl fork
-  # declares them but omits the aliases stock musl exports, and on musl neither
-  # variant touches the signal mask, so mapping to the plain names is exact.
-  env.NIX_CFLAGS_COMPILE = "-D_setjmp=setjmp -D_longjmp=longjmp";
+  # Lua's error propagation and coroutine yield unwind with _setjmp/_longjmp;
+  # on wasm those only work in code compiled with the SjLj lowering.
+  env.NIX_CFLAGS_COMPILE = "-mllvm -wasm-enable-sjlj";
 
   # The plain Makefile hardcodes gcc/ar/ranlib; point them at the wasm
   # toolchain. The `posix` target enables POSIX libc features without
