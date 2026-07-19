@@ -54,6 +54,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     bzip2 = callPackage ./bzip2/package.nix { src = inputs.bzip2-src; };
+    coreutils = callPackage ./coreutils/package.nix { src = inputs.coreutils-src; };
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     gawk = callPackage ./gawk/package.nix { src = inputs.gawk-src; };
     grep = callPackage ./grep/package.nix { src = inputs.grep-src; };

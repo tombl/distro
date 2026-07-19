@@ -29,6 +29,19 @@
         "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
       }
     },
+    "coreutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1744197214,
+        "narHash": "sha256-TFDtvw5E4y9UPfMyOV+KiMnIeSum54fXSOIbT7qRsXA=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
+      }
+    },
     "file-src": {
       "flake": false,
       "locked": {
@@ -216,6 +229,7 @@
       "inputs": {
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
+        "coreutils-src": "coreutils-src",
         "file-src": "file-src",
         "gawk-src": "gawk-src",
         "grep-src": "grep-src",

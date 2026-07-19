@@ -12,6 +12,10 @@
       url = "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz";
       flake = false;
     };
+    coreutils-src = {
+      url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
+      flake = false;
+    };
     file-src = {
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
