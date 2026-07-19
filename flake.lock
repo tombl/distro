@@ -55,6 +55,19 @@
         "url": "https://astron.com/pub/file/file-5.48.tar.gz"
       }
     },
+    "findutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1717259038,
+        "narHash": "sha256-VnE/TPw/fOD9I3aVmMfzZKdULcmEoljpAPjugMiq+p4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz"
+      }
+    },
     "gawk-src": {
       "flake": false,
       "locked": {
@@ -231,6 +244,7 @@
         "bzip2-src": "bzip2-src",
         "coreutils-src": "coreutils-src",
         "file-src": "file-src",
+        "findutils-src": "findutils-src",
         "gawk-src": "gawk-src",
         "grep-src": "grep-src",
         "jq-src": "jq-src",

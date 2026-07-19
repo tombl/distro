@@ -1,0 +1,352 @@
+--- a/find/exec.c
++++ b/find/exec.c
+@@ -25,6 +25,10 @@
+ #include <signal.h>
+ #include <sys/wait.h>
+ 
++/* wasm has no fork(); children come from posix_spawn (clone+execve). */
++#include <spawn.h>
++extern char **environ;
++
+ 
+ /* gnulib headers */
+ #include "cloexec.h"
+@@ -310,34 +314,42 @@
+       signal (SIGCHLD, SIG_DFL);
+     }
+ 
+-  child_pid = fork ();
+-  if (child_pid == -1)
+-    error (EXIT_FAILURE, errno, _("cannot fork"));
+-  if (child_pid == 0)
+-    {
+-      /* We are the child. */
+-      assert (NULL != execp->wd_for_exec);
+-      if (!prep_child_for_exec (execp->close_stdin, execp->wd_for_exec))
+-	{
+-	  _exit (1);
+-	}
+-      else
+-	{
+-	  if (fd_leak_check_is_enabled ())
+-	    {
+-	      complain_about_leaky_fds ();
+-	    }
+-	}
+-
+-      if (bc_args_exceed_testing_limit (argv))
+-	errno = E2BIG;
+-      else
+-	execvp (argv[0], argv);
+-      /* TODO: use a pipe to pass back the errno value, like xargs does */
+-      error (0, errno, "%s",
+-	     safely_quote_err_filename (0, argv[0]));
+-      _exit (1);
+-    }
++  /*
++   * wasm has no fork(); create the child with posix_spawn (clone+execve).
++   * The work prep_child_for_exec() did between fork() and exec() -- redirect
++   * stdin from /dev/null and change into wd_for_exec -- becomes posix_spawn
++   * file actions.  posix_spawnp keeps execvp's PATH search, and musl reports
++   * a failed exec through its return value, so the child's old error()/_exit()
++   * diagnostic moves to the parent.  The fd-leak diagnostic and the
++   * testing-limit hook were child-only debugging aids and are dropped.
++   */
++  {
++    posix_spawn_file_actions_t fa;
++    int rc;
++
++    assert (NULL != execp->wd_for_exec);
++    posix_spawn_file_actions_init (&fa);
++    if (execp->close_stdin)
++      {
++	posix_spawn_file_actions_addclose (&fa, 0);
++	posix_spawn_file_actions_addopen (&fa, 0, "/dev/null", O_RDONLY, 0);
++      }
++    if (0 <= execp->wd_for_exec->desc)
++      posix_spawn_file_actions_addfchdir_np (&fa, execp->wd_for_exec->desc);
++    else
++      posix_spawn_file_actions_addchdir_np (&fa, execp->wd_for_exec->name);
++
++    rc = posix_spawnp (&child_pid, argv[0], &fa, NULL, argv, environ);
++    posix_spawn_file_actions_destroy (&fa);
++    if (rc != 0)
++      {
++	errno = rc;
++	error (0, errno, "%s", safely_quote_err_filename (0, argv[0]));
++	if (execp->multiple)
++	  state.exit_status = EXIT_FAILURE;
++	return 1;		/* FAIL (but don't try again) */
++      }
++  }
+ 
+   while (waitpid (child_pid, &(execp->last_child_status), 0) == (pid_t) -1)
+     {
+--- a/xargs/xargs.c
++++ b/xargs/xargs.c
+@@ -51,6 +51,10 @@
+ #include <unistd.h>
+ #include <wchar.h>
+ 
++/* wasm has no fork(); children come from posix_spawn (clone+execve). */
++#include <spawn.h>
++extern char **environ;
++
+ /* gnulib headers. */
+ #include "closein.h"
+ #include "fcntl--.h"
+@@ -1223,61 +1227,6 @@
+ }
+ 
+ 
+-/* Close stdin and attach /dev/null to it.
+- * This resolves Savannah bug #3992.
+- */
+-static void
+-prep_child_for_exec (void)
+-{
+-  if (fd_leak_check_is_enabled ())
+-    {
+-      complain_about_leaky_fds ();
+-    }
+-
+-  /* The parent will call add_proc to allocate a slot.  We do the same in the
+-     child to make sure we get the same value.
+-
+-     We use 0 here in order to avoid generating a data structure that appears
+-     to indicate that we (the child) have a child. */
+-  unsigned int slot = add_proc (0);
+-  set_slot_var (slot);
+-
+-  if (!keep_stdin || open_tty)
+-    {
+-      int fd;
+-      const char *inputfile = open_tty ? "/dev/tty" : "/dev/null";
+-
+-      close (0);
+-      if ((fd = open (inputfile, O_RDONLY)) < 0)
+-	{
+-	  /* Treat a failure to open /dev/tty as fatal.
+-	   * The other case is not entirely fatal, since
+-	   * executing the child with a closed
+-	   * stdin is almost as good as executing it
+-	   * with its stdin attached to /dev/null.
+-	   */
+-	  if (open_tty)
+-	    {
+-	      error (EXIT_FAILURE, errno, "%s",
+-		     quotearg_n_style (0, locale_quoting_style, inputfile));
+-	    }
+-	  else
+-	    {
+-	      error (0, errno, "%s",
+-		     quotearg_n_style (0, locale_quoting_style, inputfile));
+-	    }
+-	}
+-      if (STDIN_FILENO < fd)
+-	{
+-	  if (dup2(fd, STDIN_FILENO) != 0)
+-	    error (EXIT_FAILURE, errno,
+-	           _("failed to redirect standard input of the child process"));
+-	  close(fd);
+-	}
+-    }
+-}
+-
+-
+ /* Execute the command that has been built in `cmd_argv'.  This may involve
+    waiting for processes that were previously executed.
+ 
+@@ -1290,9 +1239,6 @@
+ xargs_do_exec (struct buildcmd_control *ctl, void *usercontext, int argc, char **argv)
+ {
+   pid_t child;
+-  int fd[2];
+-  int buf;
+-  size_t r;
+ 
+   (void) ctl;
+   (void) argc;
+@@ -1322,136 +1268,60 @@
+       */
+       wait_for_proc (false, 0u);
+ 
+-      if (pipe (fd))
+-	error (EXIT_FAILURE, errno, _("could not create pipe before fork"));
+-      fcntl (fd[1], F_SETFD, FD_CLOEXEC);
+-
+-      /* If we run out of processes, wait for a child to return and
+-         try again.  */
+-      while ((child = fork ()) < 0 && errno == EAGAIN && procs_executing)
+-	wait_for_proc (false, 1u);
+-
+-      switch (child)
+-	{
+-	case -1:
+-	  error (EXIT_FAILURE, errno, _("cannot fork"));
+-
+-	case 0:		/* Child.  */
+-	  {
+-	    close (fd[0]);
+-	    child_error = EXIT_SUCCESS;
+-
+-	    prep_child_for_exec ();
+-
+-	    if (bc_args_exceed_testing_limit (argv))
+-	      errno = E2BIG;
+-	    else
+-	      execvp (argv[0], argv);
+-	    if (errno)
+-	      {
+-		/* Write errno value to parent.  We do this even if
+-		 * the error was not E2BIG, because we need to
+-		 * distinguish successful execs from unsuccessful
+-		 * ones.  The reason we need to do this is to know
+-		 * whether to reap the child here (preventing the
+-		 * exit status processing in wait_for_proc () from
+-		 * changing the value of child_error) or leave it
+-		 * for wait_for_proc () to handle.  We need to have
+-		 * wait_for_proc () handle the exit values from the
+-		 * utility if we run it, for POSIX compliance on the
+-		 * handling of exit values.
+-		 */
+-		write (fd[1], &errno, sizeof (int));
+-	      }
+-
+-	    close (fd[1]);
+-	    if (E2BIG != errno)
+-	      {
+-		error (0, errno, "%s", argv[0]);
+-	      }
+-	    /* The actual value returned here should be irrelevant,
+-	     * because the parent will test our value of errno.
+-	     */
+-	    _exit (errno == ENOENT ? XARGS_EXIT_COMMAND_NOT_FOUND : XARGS_EXIT_COMMAND_CANNOT_BE_RUN);
+-
+-	  /*NOTREACHED*/
+-	  } /* child */
++      /*
++       * wasm has no fork(); create the child with posix_spawn
++       * (clone+execve).  The work the old child did between fork() and exec()
++       * -- redirect stdin from /dev/null (or /dev/tty) and, for
++       * --process-slot-var, publish the process slot in the environment --
++       * moves to the parent: the stdin redirect becomes posix_spawn file
++       * actions, and the slot variable is set before the spawn.  The former
++       * errno hand-off pipe is gone: posix_spawnp reports a failed exec
++       * through its return value on musl, so there is no exec-failure child to
++       * reap and no need to distinguish it via a pipe.
++       */
++      {
++	posix_spawn_file_actions_t fa;
++	int rc;
++	unsigned int slot;
++
++	/* add_proc () below fills the first empty slot; publish that same
++	   index for --process-slot-var before spawning, as the old child's
++	   prep_child_for_exec () -> add_proc (0) computed it. */
++	for (slot = 0; slot < pids_alloc && pids[slot]; slot++)
++	  ;
++	set_slot_var (slot);
+ 
+-	default:
++	posix_spawn_file_actions_init (&fa);
++	if (!keep_stdin || open_tty)
+ 	  {
+-	    /* Parent */
+-	    close (fd[1]);
++	    const char *inputfile = open_tty ? "/dev/tty" : "/dev/null";
++	    posix_spawn_file_actions_addclose (&fa, STDIN_FILENO);
++	    posix_spawn_file_actions_addopen (&fa, STDIN_FILENO, inputfile,
++					      O_RDONLY, 0);
+ 	  }
+ 
+-	} /* switch (child) */
+-      /*fprintf (stderr, "forked child (bc_state.cmd_argc=%d) -> ", bc_state.cmd_argc);*/
+-
+-      /* We use safe_read here in order to avoid an error if
+-	 SIGUSR[12] is handled during the read system call. */
+-      switch (r = safe_read (fd[0], &buf, sizeof (int)))
+-	{
+-	case SAFE_READ_ERROR:
+-	  {
+-	    close (fd[0]);
+-	    error (0, errno,
+-		   _("errno-buffer safe_read failed in xargs_do_exec "
+-		     "(this is probably a bug, please report it)"));
+-	    break;
+-	  }
++	/* If we run out of processes, wait for a child to return and try
++	   again, matching the old fork() EAGAIN retry loop. */
++	while ((rc = posix_spawnp (&child, argv[0], &fa, NULL, argv, environ))
++	         == EAGAIN
++	       && procs_executing)
++	  wait_for_proc (false, 1u);
++	posix_spawn_file_actions_destroy (&fa);
+ 
+-	case sizeof (int):
++	if (rc != 0)
+ 	  {
+-	    /* Failure */
+-	    int childstatus;
+-
+-	    close (fd[0]);
+-
+-	    /* we know the child is about to exit, so wait for that.
+-	     * We have to do this so that wait_for_proc () does not
+-	     * change the value of child_error on the basis of the
+-	     * return value -- since in this case we did not launch
+-	     * the utility.
+-	     *
+-	     * We do the wait before deciding if we failed in order to
+-	     * avoid creating a zombie, even briefly.
+-	     */
+-	    waitpid (child, &childstatus, 0);
+-
+-
+-	    if (E2BIG == buf)
+-	      {
+-		return 0; /* Failure; caller should pass fewer args */
+-	      }
+-	    else if (ENOENT == buf)
+-	      {
+-		exit (XARGS_EXIT_COMMAND_NOT_FOUND); /* command cannot be found */
+-	      }
++	    /* exec (or spawn) failed; posix_spawnp already reaped any internal
++	       child, so mirror the old failure exit codes directly. */
++	    if (E2BIG == rc)
++	      return 0;		/* caller should pass fewer args */
++	    error (0, rc, "%s", argv[0]);
++	    if (ENOENT == rc)
++	      exit (XARGS_EXIT_COMMAND_NOT_FOUND);
+ 	    else
+-	      {
+-		exit (XARGS_EXIT_COMMAND_CANNOT_BE_RUN); /* command cannot be run */
+-	      }
+-	    break;
+-	  }
+-
+-	case 0:
+-	  {
+-	    /* Failed to read data from pipe; the exec must have
+-	     * succeeded.  We call add_proc only in this case,
+-	     * because it increments procs_executing, and we only
+-	     * want to do that if we didn't already wait for the
+-	     * child.
+-	     */
+-	    add_proc (child);
+-	    break;
+-	  }
+-	default:
+-	  {
+-	    error (EXIT_FAILURE, errno,
+-		   _("read returned unexpected value %"PRIuMAX"; "
+-		     "this is probably a bug, please report it"), r);
++	      exit (XARGS_EXIT_COMMAND_CANNOT_BE_RUN);
+ 	  }
+-	} /* switch on bytes read */
+-      close (fd[0]);
++	add_proc (child);
++      }
+     }
+   return 1;			/* Success */
+ }

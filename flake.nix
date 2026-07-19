@@ -20,6 +20,10 @@
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
     };
+    findutils-src = {
+      url = "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz";
+      flake = false;
+    };
     gawk-src = {
       url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
       flake = false;
