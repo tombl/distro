@@ -1,0 +1,127 @@
+---
+import CodeBlock from "./CodeBlock.astro";
+
+interface Props {
+  code: string;
+}
+
+const { code } = Astro.props;
+---
+
+<div data-executable>
+  <CodeBlock {code} language="javascript" editable />
+  <div class="controls">
+    <button class="control" type="button" data-run>Run</button>
+    <span class="hint" data-hint hidden>Booting the machine…</span>
+  </div>
+  <pre class="output" data-output hidden></pre>
+</div>
+
+<script>
+  import { demoGuest } from "../lib/demo-guest";
+
+  type Runnable = HTMLElement & { getCode?: () => string };
+  type AnyAsyncFn = (...args: unknown[]) => Promise<unknown>;
+  const AsyncFunction = Object.getPrototypeOf(async function () {})
+    .constructor as new (...args: string[]) => AnyAsyncFn;
+
+  function format(value: unknown) {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  let booted = false;
+
+  for (const demo of document.querySelectorAll<HTMLElement>("[data-executable]")) {
+    const button = demo.querySelector<HTMLButtonElement>("[data-run]");
+    const hint = demo.querySelector<HTMLElement>("[data-hint]");
+    const output = demo.querySelector<HTMLElement>("[data-output]");
+    const block = demo.querySelector<Runnable>("[data-code-block]");
+    if (!button || !hint || !output || !block) continue;
+
+    const print = (text: string) => {
+      output.hidden = false;
+      output.textContent += text.replace(/\n$/, "") + "\n";
+    };
+
+    button.addEventListener("click", async () => {
+      const code = block.getCode?.() ?? block.textContent ?? "";
+      button.disabled = true;
+      hint.hidden = booted;
+      output.hidden = true;
+      output.textContent = "";
+      const consoleShim = {
+        log: (...args: unknown[]) => print(args.map(format).join(" ")),
+        error: (...args: unknown[]) => print(args.map(format).join(" ")),
+      };
+      try {
+        const guest = await demoGuest();
+        booted = true;
+        hint.hidden = true;
+        const fn = new AsyncFunction("guest", "console", code);
+        await fn(guest, consoleShim);
+      } catch (error) {
+        print(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      } finally {
+        hint.hidden = true;
+        button.disabled = false;
+      }
+    });
+  }
+</script>
+
+<style>
+  [data-executable] {
+    margin-block-end: 1rem;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-block-end: 1rem;
+  }
+
+  .control {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    padding-inline: 0.75rem;
+    border: 1px solid var(--hairline);
+    background: none;
+    color: var(--code-foreground);
+    font-size: 0.9375rem;
+    cursor: pointer;
+    transition:
+      border-color 120ms,
+      background-color 120ms;
+
+    &:hover:not(:disabled) {
+      background: var(--surface);
+    }
+
+    &:disabled {
+      color: var(--muted);
+      cursor: default;
+    }
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .output {
+    margin: 0 0 1rem;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    white-space: pre-wrap;
+  }
+</style>

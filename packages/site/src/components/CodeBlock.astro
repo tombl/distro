@@ -1,6 +1,9 @@
 ---
+import type { Parser } from "@lezer/common";
 import { classHighlighter, highlightCode } from "@lezer/highlight";
+import { configureNesting, parser as htmlBaseParser } from "@lezer/html";
 import { parser as javascriptParser } from "@lezer/javascript";
+import { parser as jsonParser } from "@lezer/json";
 
 interface Props {
   code: string;
@@ -16,10 +19,29 @@ interface Token {
 const { code, language, editable = false } = Astro.props;
 const tokens: Token[] = [];
 
-if (["javascript", "js", "jsx", "mjs"].includes(language ?? "")) {
+// Script bodies highlight in the language their type attribute implies, so
+// an inline import map reads as JSON rather than misparsed JavaScript.
+const htmlParser = htmlBaseParser.configure({
+  wrap: configureNesting([
+    { tag: "script", attrs: (attrs) => attrs.type === "importmap", parser: jsonParser },
+    { tag: "script", attrs: (attrs) => !attrs.type || attrs.type === "module", parser: javascriptParser },
+  ]),
+});
+
+const parsers: Record<string, Parser> = {
+  javascript: javascriptParser,
+  js: javascriptParser,
+  jsx: javascriptParser,
+  mjs: javascriptParser,
+  html: htmlParser,
+  json: jsonParser,
+};
+
+const parser = parsers[language ?? ""];
+if (parser) {
   highlightCode(
     code,
-    javascriptParser.parse(code),
+    parser.parse(code),
     classHighlighter,
     (text, classes) => tokens.push({ text, classes }),
     () => tokens.push({ text: "\n", classes: "" }),
@@ -148,7 +170,7 @@ if (["javascript", "js", "jsx", "mjs"].includes(language ?? "")) {
 
   .tok-string,
   .tok-string2 {
-    color: var(--prose);
+    color: var(--code-string);
   }
 
   .tok-emphasis {

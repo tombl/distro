@@ -1,0 +1,171 @@
+---
+title: Run Linux in your browser
+description: Boot a Linux machine in a plain web page and control it from JavaScript.
+section: tutorials
+order: 1
+---
+
+import CodeBlock from "../../components/CodeBlock.astro";
+import ExecutableCodeBlock from "../../components/ExecutableCodeBlock.astro";
+import { guestVersion, linuxVersion } from "../../lib/versions";
+
+# Run Linux in your browser
+
+This tutorial builds a web page that boots a Linux machine and controls it
+from JavaScript. The kernel is a real Linux kernel compiled to WebAssembly,
+and everything runs inside the page. There is no server behind it.
+
+The examples on this page are editable and runnable. They share one machine,
+booted in your browser the first time you press run. Try it:
+
+<ExecutableCodeBlock
+  code={`const process = await guest.exec(["uname", "-a"]);
+console.log(await new Response(process.stdout).text());`}
+/>
+
+That output came from a program that just ran inside a Linux machine in this
+tab. The rest of the page makes you a page of your own that can do the same.
+
+## What you need
+
+A modern browser and a static file server. No Node, no bundler, no build
+step. The library loads as a native ES module from a CDN.
+
+The one real requirement is that your page must be
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated).
+After the Spectre and Meltdown vulnerabilities, browsers locked shared-memory
+multithreading behind this opt-in, because shared memory gives code a precise
+clock and precise clocks make those attacks practical. A Linux machine is
+exactly the kind of program that gate exists for. Each virtual CPU is a Web
+Worker and they all share the machine's memory, so your page has to opt in by
+sending two headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+If your hosting provider can be configured to send these headers, do
+that.[^coi] To check whether it worked, evaluate `crossOriginIsolated` in the
+console. It must be `true`.
+
+[^coi]:
+    If it cannot, for example on GitHub Pages,
+    [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) adds
+    the headers from a service worker. It works, but real headers are simpler
+    and take effect on the very first load, so prefer them when you can.
+
+## Create the page
+
+Save this as `index.html`:
+
+<CodeBlock
+  language="html"
+  code={`<!doctype html>
+<title>linux</title>
+<script type="importmap">
+  {
+    "imports": {
+      "@tombl/linux": "https://unpkg.com/@tombl/linux@${linuxVersion}/dist/index.js",
+      "@tombl/linux-guest": "https://unpkg.com/@tombl/linux-guest@${guestVersion}/dist/index.js"
+    }
+  }
+</script>
+<script type="module">
+  import { spawnGuest } from "@tombl/linux-guest";
+
+  const guest = await spawnGuest();
+  const process = await guest.exec(["uname", "-a"]);
+  document.body.textContent = await new Response(process.stdout).text();
+</script>`}
+/>
+
+The import map lets the page use bare package names, the same specifiers you
+would use with a bundler, and points them at unpkg. `@tombl/linux-guest` is
+the machine API you will spend most of your time with. It pulls in
+`@tombl/linux`, which is the kernel itself.
+
+Nothing here depends on the CDN. If your application already has a build
+tool, `npm install @tombl/linux @tombl/linux-guest` and the same import
+works in Vite, Next.js, or anything else that speaks ES modules. The how-to
+guides cover setting up the headers and assets in those stacks. This page
+stays with plain files because they show everything the library needs, which
+is two packages and two headers.
+
+`spawnGuest()` boots the packaged kernel and root filesystem, and its promise
+resolves once the machine can run commands. You do not pass it anything until
+you want something non-default.
+
+Now serve the file with the two headers set. Any static server that can send
+them works. For example, `npx serve` picks up headers from a `serve.json`
+next to `index.html`:
+
+```json
+{
+  "headers": [
+    {
+      "source": "**",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}
+```
+
+Open the page. After a few seconds of boot it shows the kernel identifying
+itself, the same line the example at the top of this page printed.
+
+## Run programs
+
+`guest.exec` takes an argv array. There is no shell in between, so nothing
+quotes, splits, or expands. The first element is looked up on the guest's
+`PATH`. When you want shell behaviour, run a shell and say so explicitly:
+
+<ExecutableCodeBlock
+  code={`const process = await guest.exec(["sh", "-c", "echo hello; date"]);
+console.log(await new Response(process.stdout).text());
+console.log("exit code:", (await process.status).code);`}
+/>
+
+A process hands you three things: `stdout` and `stderr` as web
+`ReadableStream`s, and `status`, a promise for its exit. `new Response(...)`
+is the shortest way to collect a whole stream, but for a long-running program
+you can read the stream incrementally instead of buffering it all.
+
+## Work with files
+
+The filesystem starts from the packaged root image. The system directories
+are read-only, and writable space is mounted at `/tmp` and `/workspace`, in
+memory and private to this machine. `guest.fs` reads and writes it directly
+from JavaScript, no exec required:
+
+<ExecutableCodeBlock
+  code={`await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\\n");
+
+const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
+console.log(await new Response(cat.stdout).text());`}
+/>
+
+Files written from the host are immediately visible to guest programs and the
+other way around, because there is only one filesystem. `guest.fs` also has
+`readTextFile`, `readDir`, `stat`, `mkdir`, and friends.
+
+## Shut down
+
+```js
+guest.machine.close();
+```
+
+Closing terminates the machine's processes and releases its workers and
+memory. Keep the guest for as long as anything inside it should stay
+running. This block is not runnable because the examples on this page share
+their machine.
+
+## Where next
+
+You now have Linux as a library. The how-to guides cover the next steps:
+running under Node, wiring the console to xterm.js, persisting the
+filesystem, giving machines a network and internet access, and building a
+custom root filesystem with Nix.
