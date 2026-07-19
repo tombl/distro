@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc",
-    "test": "for file in *_test.ts; do node --test \"$file\" || exit; done"
+    "test": "node --test"
   },
   "dependencies": {
     "@tombl/linux": "0.0.0"
