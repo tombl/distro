@@ -53,6 +53,10 @@ pkgs.stdenv.override (old: {
   # the wrappers only read NIX_LDFLAGS when the compiler runs, so it can
   # still be dropped here.
   preHook = (old.preHook or "") + ''
+    # The toolchain ships unprefixed llvm-* binutils, so the bintools wrapper
+    # never exports the tool variables the way prefixed cross wrappers do;
+    # plain Makefiles otherwise fall back to the build platform's `ar`.
+    export AR=llvm-ar RANLIB=llvm-ranlib NM=llvm-nm
     export NIX_CFLAGS_LINK="${
       toString (map (flag: "-Wl,${flag}") platform.linkerFlags)
     } ''${NIX_CFLAGS_LINK-}"
