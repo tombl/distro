@@ -42,6 +42,19 @@
         "url": "https://astron.com/pub/file/file-5.48.tar.gz"
       }
     },
+    "gawk-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1726598637,
+        "narHash": "sha256-dw4WPFQhuh+UXPKA48zlulFbuKbFc96eoNHHoiIDhL4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz"
+      }
+    },
     "grep-src": {
       "flake": false,
       "locked": {
@@ -178,6 +191,7 @@
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
         "file-src": "file-src",
+        "gawk-src": "gawk-src",
         "grep-src": "grep-src",
         "jq-src": "jq-src",
         "linux-src": "linux-src",

@@ -16,6 +16,10 @@
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
     };
+    gawk-src = {
+      url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
+      flake = false;
+    };
     grep-src = {
       url = "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz";
       flake = false;
