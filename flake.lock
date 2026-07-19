@@ -117,6 +117,19 @@
         "type": "github"
       }
     },
+    "ncurses-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767137046,
+        "narHash": "sha256-YpXsAx/jqbxBpTLljJBfLEyeG4vSY94K4HYHSqyXYyg=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784356753,
@@ -143,6 +156,7 @@
         "llvm-src": "llvm-src",
         "lua-src": "lua-src",
         "musl-src": "musl-src",
+        "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
         "sqlite-src": "sqlite-src",
         "xz-src": "xz-src",
