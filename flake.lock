@@ -42,6 +42,19 @@
         "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
       }
     },
+    "diffutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1684659217,
+        "narHash": "sha256-R6LYAfi/lcZ+zK9SZJ5aUzYarq/VguvJbEZbWZmmnY0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
+      }
+    },
     "file-src": {
       "flake": false,
       "locked": {
@@ -243,6 +256,7 @@
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
         "coreutils-src": "coreutils-src",
+        "diffutils-src": "diffutils-src",
         "file-src": "file-src",
         "findutils-src": "findutils-src",
         "gawk-src": "gawk-src",

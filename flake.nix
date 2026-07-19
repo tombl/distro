@@ -16,6 +16,10 @@
       url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
       flake = false;
     };
+    diffutils-src = {
+      url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
+      flake = false;
+    };
     file-src = {
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;
