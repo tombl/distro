@@ -88,7 +88,8 @@
         "llvm-src": "llvm-src",
         "musl-src": "musl-src",
         "nixpkgs": "nixpkgs",
-        "sqlite-src": "sqlite-src"
+        "sqlite-src": "sqlite-src",
+        "zlib-src": "zlib-src"
       }
     },
     "sqlite-src": {
@@ -102,6 +103,19 @@
       "original": {
         "type": "tarball",
         "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      }
+    },
+    "zlib-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1705948357,
+        "narHash": "sha256-acY8yFzIRYbrZ2CGODoxLnZuppsP6KZy19I9Yy77pfc=",
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
       }
     }
   },

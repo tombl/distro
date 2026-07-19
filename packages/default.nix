@@ -55,6 +55,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
+    zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
 
     # images:
     guest-initramfs = callPackage ./guest-initramfs/package.nix { };
