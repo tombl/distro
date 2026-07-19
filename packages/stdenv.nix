@@ -35,6 +35,17 @@ let
       echo "--sysroot=${sysroot} ${toString platform.compilerFlags}" >> $out/nix-support/cc-cflags
     '';
   };
+  # Autoconf answers for probes that lie under cross-compilation: AC_FUNC_MMAP
+  # hard-codes yes for linux hosts though wasm has no mmap, and musl's static
+  # dlopen stub links though dynamic loading can never work, so configures
+  # enable code paths that fail at compile time or runtime. A site file states
+  # the platform truth once for every port.
+  configSite = pkgs.writeText "wasm-config.site" ''
+    ac_cv_func_mmap_fixed_mapped=no
+    ac_cv_func_dlopen=no
+    ac_cv_search_dlopen=no
+    ac_cv_lib_dl_dlopen=no
+  '';
 in
 
 pkgs.stdenv.override (old: {
@@ -57,6 +68,7 @@ pkgs.stdenv.override (old: {
     # never exports the tool variables the way prefixed cross wrappers do;
     # plain Makefiles otherwise fall back to the build platform's `ar`.
     export AR=llvm-ar RANLIB=llvm-ranlib NM=llvm-nm
+    export CONFIG_SITE=${configSite}
     export NIX_CFLAGS_LINK="${
       toString (map (flag: "-Wl,${flag}") platform.linkerFlags)
     } ''${NIX_CFLAGS_LINK-}"
