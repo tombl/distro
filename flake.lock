@@ -42,6 +42,19 @@
         "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
       }
     },
+    "curl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782280409,
+        "narHash": "sha256-nrvbU5C6oeCMAecrEqYE3CNPyFVsTEqaqhhCoLe5fMo=",
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      }
+    },
     "diffutils-src": {
       "flake": false,
       "locked": {
@@ -192,6 +205,19 @@
         "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
       }
     },
+    "mbedtls-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784489454,
+        "narHash": "sha256-t1ZPeFA3ftKaEIaXQ7RXZEsiOAYK4KSSm55SFr9g17A=",
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      }
+    },
     "musl-src": {
       "flake": false,
       "locked": {
@@ -282,6 +308,7 @@
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
         "coreutils-src": "coreutils-src",
+        "curl-src": "curl-src",
         "diffutils-src": "diffutils-src",
         "file-src": "file-src",
         "findutils-src": "findutils-src",
@@ -293,6 +320,7 @@
         "llvm-src": "llvm-src",
         "lua-src": "lua-src",
         "make-src": "make-src",
+        "mbedtls-src": "mbedtls-src",
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",

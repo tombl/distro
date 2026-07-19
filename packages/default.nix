@@ -55,6 +55,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     bzip2 = callPackage ./bzip2/package.nix { src = inputs.bzip2-src; };
     coreutils = callPackage ./coreutils/package.nix { src = inputs.coreutils-src; };
+    curl = callPackage ./curl/package.nix { src = inputs.curl-src; };
     diffutils = callPackage ./diffutils/package.nix { src = inputs.diffutils-src; };
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     findutils = callPackage ./findutils/package.nix { src = inputs.findutils-src; };
@@ -65,6 +66,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     less = callPackage ./less/package.nix { src = inputs.less-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     make = callPackage ./make/package.nix { src = inputs.make-src; };
+    mbedtls = callPackage ./mbedtls/package.nix { src = inputs.mbedtls-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
     patch = callPackage ./patch/package.nix { src = inputs.patch-src; };
     python = callPackage ./python/package.nix { src = inputs.python-src; };

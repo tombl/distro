@@ -16,6 +16,10 @@
       url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
       flake = false;
     };
+    curl-src = {
+      url = "https://curl.se/download/curl-8.21.0.tar.xz";
+      flake = false;
+    };
     diffutils-src = {
       url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
       flake = false;
@@ -58,6 +62,10 @@
     };
     make-src = {
       url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz";
+      flake = false;
+    };
+    mbedtls-src = {
+      url = "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2";
       flake = false;
     };
     musl-src = {
