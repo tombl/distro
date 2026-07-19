@@ -1,0 +1,37 @@
+The wasm process-args ABI (arch/wasm32/crt_arch.h's struct wasm_process_args,
+filled by the kernel's binfmt_wasm loader) delivers argv and envp but no
+auxiliary vector. __init_libc nonetheless takes the auxv to sit immediately
+after the envp array, as it does on a conventional ELF stack, and walks it:
+
+	libc.auxv = auxv = (void *)(envp+i+1);
+	for (i=0; auxv[i]; i+=2) ...
+
+On wasm the memory after envp is the argv/envp string data, not a terminated
+auxv, so this walk reads arbitrary bytes. mallocng's get_random_secret() does
+the same walk on the first malloc and, when it hits a word that looks like
+AT_RANDOM, dereferences the following (bogus) pointer with an 8-byte memcpy.
+The result is an intermittent "memory access out of bounds" trap at process
+startup whose frequency depends on the argv/env layout. Until the loader
+provides a real auxv, use an empty, properly terminated one on wasm.
+
+--- a/src/env/__libc_start_main.c
++++ b/src/env/__libc_start_main.c
+@@ -25,7 +25,18 @@ void __init_libc(char **envp, char *pn)
+ 	size_t i, *auxv, aux[AUX_CNT] = { 0 };
+ 	__environ = envp;
+ 	for (i=0; envp[i]; i++);
++#ifdef __wasm__
++	/* The wasm process-args ABI (arch/wasm32/crt_arch.h) delivers argv and
++	   envp but no auxv, so the memory following the envp array is not a
++	   terminated auxv. Walking it (here and in e.g. mallocng's
++	   get_random_secret) reads arbitrary bytes and can dereference a bogus
++	   AT_RANDOM pointer, trapping with an out-of-bounds access. Use an empty,
++	   properly terminated auxv instead. */
++	static size_t wasm_empty_auxv[1];
++	libc.auxv = auxv = wasm_empty_auxv;
++#else
+ 	libc.auxv = auxv = (void *)(envp+i+1);
++#endif
+ 	for (i=0; auxv[i]; i+=2) if (auxv[i]<AUX_CNT) aux[auxv[i]] = auxv[i+1];
+ 	__hwcap = aux[AT_HWCAP];
+ 	if (aux[AT_SYSINFO]) __sysinfo = aux[AT_SYSINFO];
