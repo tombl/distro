@@ -146,6 +146,19 @@
         "type": "github"
       }
     },
+    "readline-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1751291999,
+        "narHash": "sha256-PhQxBHY8g6OaC7w2vHyGYVJVy7BtF6RjvH1EAF/Hza0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      }
+    },
     "root": {
       "inputs": {
         "busybox-src": "busybox-src",
@@ -158,6 +171,7 @@
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
+        "readline-src": "readline-src",
         "sqlite-src": "sqlite-src",
         "xz-src": "xz-src",
         "zlib-src": "zlib-src",

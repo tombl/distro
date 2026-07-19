@@ -40,6 +40,10 @@
       url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
       flake = false;
     };
+    readline-src = {
+      url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
+      flake = false;
+    };
     sqlite-src = {
       url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
       flake = false;

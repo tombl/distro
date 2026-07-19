@@ -59,6 +59,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
+    readline = callPackage ./readline/package.nix { src = inputs.readline-src; };
     sqlite3 = callPackage ./sqlite3/package.nix { src = inputs.sqlite-src; };
     xz = callPackage ./xz/package.nix { src = inputs.xz-src; };
     zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
