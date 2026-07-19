@@ -33,7 +33,7 @@
       flake = false;
     };
     musl-src = {
-      url = "github:tombl/musl";
+      url = "github:tombl/musl/wasm-setjmp";
       flake = false;
     };
     ncurses-src = {

@@ -104,15 +104,16 @@
     "musl-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784446922,
-        "narHash": "sha256-c5QtiS7CSiIlNL6CSnJ9Y7eiyGSDdHGiO6kZBxQm67E=",
+        "lastModified": 1784480478,
+        "narHash": "sha256-7jKmgDdwKkHPUPszI5mpUjNeIP7i79rGCU3oS7SVG4Y=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "b43b6768a4d2ad8025ed1a1a86171db062a8c2c6",
+        "rev": "55ba7af9fc52c4850232de9127f12b859ae4f636",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
+        "ref": "wasm-setjmp",
         "repo": "musl",
         "type": "github"
       }
