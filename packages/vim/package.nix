@@ -58,13 +58,11 @@ stdenv.mkDerivation (finalAttrs: {
   # --- other platform gaps -----------------------------------------------------
   # No mmap: vim never calls mmap and nothing probes for it, so there is nothing
   #   to force off (the stdenv's config.site answer is moot here).
-  # PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers; the
-  # fix is pending a kernel repoint. Vim's mapping timeouts and timer_start()
-  #   fire off poll() deadlines in the main input loop, not signals, so they
-  #   degrade rather than hang. timer_create() is only consulted for
-  #   nanosecond profiling precision (HUGE-only FEAT_PROFILE), so
-  #   vim_cv_timer_create_works=no below just keeps vim off a timer it cannot
-  #   rely on. The only alarm()/SIGALRM call sites are X11 and cscope, both off.
+  # POSIX timers work on the pinned kernel. timer_create() is only consulted
+  #   for nanosecond profiling precision (HUGE-only FEAT_PROFILE), but the
+  #   configure cache still records the platform truth. Vim's mapping timeouts
+  #   and timer_start() use poll() deadlines in the main input loop. The only
+  #   alarm()/SIGALRM call sites are X11 and cscope, both off.
   # sigaltstack() TRAPS on this platform (a wasm `unreachable`, not an ENOSYS
   #   return -- see the PLATFORM ISSUE note). vim calls it once, unconditionally
   #   at startup (mch_early_init -> init_signal_stack), to install an alternate
@@ -113,7 +111,7 @@ stdenv.mkDerivation (finalAttrs: {
   #                                for mch_memmove (memcpy/bcopy probes skipped).
   #   terminfo=yes / tgetent=zero  ncurses is a terminfo library and returns 0
   #                                (TGETENT_ZERO_ERR) for an unknown terminal.
-  #   timer_create_works=no      see the timers note above.
+  #   timer_create_works=yes     POSIX timer creation and delivery work.
   preConfigure = ''
     export vim_cv_toupper_broken=no
     export vim_cv_getcwd_broken=no
@@ -121,7 +119,7 @@ stdenv.mkDerivation (finalAttrs: {
     export vim_cv_memmove_handles_overlap=yes
     export vim_cv_terminfo=yes
     export vim_cv_tgetent=zero
-    export vim_cv_timer_create_works=no
+    export vim_cv_timer_create_works=yes
     # Route every shell-out through system()/posix_spawn (see the long note).
     export NIX_CFLAGS_COMPILE="''${NIX_CFLAGS_COMPILE-} -DUSE_SYSTEM"
   '';
