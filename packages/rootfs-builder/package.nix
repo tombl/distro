@@ -64,8 +64,16 @@ else
           echo "mkRootfs: content must be a directory, got $source" >&2
           exit 1
         fi
-        cp -a --update=none-fail -- "$source/." root/
-        find root -type d -exec chmod u+w -- {} +
+        # --remove-destination so a later content replaces an earlier one's
+        # entry outright: this is how a GNU tool shadows the matching busybox
+        # applet (contents apply in list order, later wins). -RP keeps source
+        # symlinks as symlinks and, combined with --remove-destination, replaces
+        # rather than writing *through* an existing symlink -- otherwise a GNU
+        # binary copied over busybox's applet symlink (e.g. bin/sed -> busybox)
+        # would clobber the busybox binary itself instead of shadowing it. This
+        # mirrors the initramfs builder's merge semantics.
+        cp -RP --remove-destination -- "$source/." root/
+        chmod -R u+w root
       }
 
       copy_file() {

@@ -125,12 +125,19 @@ stdenv.mkDerivation (finalAttrs: {
     "--enable-flock" # advisory file locking (posix_spawn for -c)
   ];
 
+  # nixpkgs' sbin->bin hook moves the binaries into bin and leaves a
+  # `sbin -> bin` symlink behind. That symlink collides with busybox's real
+  # sbin directory when a rootfs/initramfs builder merges the trees (cp cannot
+  # replace a directory with a symlink), so drop it -- every binary is in bin.
+  postFixup = ''
+    rm -f $out/sbin
+  '';
+
   passthru.checks =
     let
-      # Ship only the binaries into the initramfs. The install tree also carries
-      # a `sbin -> bin` symlink (nixpkgs moves sbin into bin), and cp'ing that
-      # symlink on top of busybox's real sbin directory fails; a flat bin-only
-      # dir sidesteps it and drops the unused lib/include/share weight.
+      # Ship only the binaries into the initramfs: a flat bin-only dir drops the
+      # unused lib/include/share weight. (The install tree's `sbin -> bin`
+      # symlink is already removed in postFixup above.)
       utilLinuxBin = pkgs.runCommand "util-linux-bin" { } ''
         mkdir -p $out/bin
         cp ${finalAttrs.finalPackage}/bin/* $out/bin/

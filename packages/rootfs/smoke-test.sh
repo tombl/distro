@@ -20,5 +20,22 @@ mount -t ext4 /dev/vda /newroot || fail "mounting ext4 rootfs failed"
 [ -x /newroot/bin/basic-init ] || fail "rootfs is missing basic-init"
 [ -x /newroot/bin/busybox ] || fail "rootfs is missing busybox"
 
+# Prove a few of the ported binaries actually execute from the mounted image,
+# not just that the files are present. git, vim and python exercise the biggest
+# and most representative parts of the userland (libexec fan-out, the runtime
+# share tree, the stdlib respectively).
+check_runs() {
+  bin=$1
+  pattern=$2
+  out=$("/newroot/bin/$bin" --version 2>&1)
+  status=$?
+  [ "$status" -eq 0 ] || fail "$bin --version exited $status: $out"
+  echo "$out" | grep -q "$pattern" || fail "$bin --version output unexpected: $out"
+}
+
+check_runs git "git version"
+check_runs vim "VIM - Vi IMproved"
+check_runs python3 "Python 3.13"
+
 echo "::vm-test::pass"
 while :; do :; done
