@@ -1,0 +1,130 @@
+--- a/configure.ac
++++ b/configure.ac
+@@ -1556,7 +1556,11 @@
+ UL_REQUIRES_BUILD([uuidgen], [libuuid])
+ AM_CONDITIONAL([BUILD_UUIDGEN], [test "x$build_uuidgen" = xyes])
+ 
+-UL_BUILD_INIT([uuidparse], [check])
++AC_ARG_ENABLE([uuidparse],
++  AS_HELP_STRING([--disable-uuidparse], [do not build uuidparse]),
++  [], [UL_DEFAULT_ENABLE([uuidparse], [check])]
++)
++UL_BUILD_INIT([uuidparse])
+ UL_REQUIRES_BUILD([uuidparse], [libuuid])
+ UL_REQUIRES_BUILD([uuidparse], [libsmartcols])
+ AM_CONDITIONAL([BUILD_UUIDPARSE], [test "x$build_uuidparse" = xyes])
+@@ -1950,13 +1954,25 @@
+ UL_BUILD_INIT([logger])
+ AM_CONDITIONAL([BUILD_LOGGER], [test "x$build_logger" = xyes])
+ 
+-UL_BUILD_INIT([look], [yes])
++AC_ARG_ENABLE([look],
++  AS_HELP_STRING([--disable-look], [do not build look]),
++  [], [UL_DEFAULT_ENABLE([look], [yes])]
++)
++UL_BUILD_INIT([look])
+ AM_CONDITIONAL([BUILD_LOOK], [test "x$build_look" = xyes])
+ 
+-UL_BUILD_INIT([mcookie], [yes])
++AC_ARG_ENABLE([mcookie],
++  AS_HELP_STRING([--disable-mcookie], [do not build mcookie]),
++  [], [UL_DEFAULT_ENABLE([mcookie], [yes])]
++)
++UL_BUILD_INIT([mcookie])
+ AM_CONDITIONAL([BUILD_MCOOKIE], [test "x$build_mcookie" = xyes])
+ 
+-UL_BUILD_INIT([namei], [yes])
++AC_ARG_ENABLE([namei],
++  AS_HELP_STRING([--disable-namei], [do not build namei]),
++  [], [UL_DEFAULT_ENABLE([namei], [yes])]
++)
++UL_BUILD_INIT([namei])
+ AM_CONDITIONAL([BUILD_NAMEI], [test "x$build_namei" = xyes])
+ 
+ matriplet="$($CC -print-multiarch 2>/dev/null || true)"
+@@ -2016,7 +2032,11 @@
+ UL_REQUIRES_BUILD([lsclocks], [libsmartcols])
+ AM_CONDITIONAL([BUILD_LSCLOCKS], [test "x$build_lsclocks" = xyes])
+ 
+-UL_BUILD_INIT([getopt], [yes])
++AC_ARG_ENABLE([getopt],
++  AS_HELP_STRING([--disable-getopt], [do not build getopt]),
++  [], [UL_DEFAULT_ENABLE([getopt], [yes])]
++)
++UL_BUILD_INIT([getopt])
+ AM_CONDITIONAL([BUILD_GETOPT], [test "x$build_getopt" = xyes])
+ 
+ 
+@@ -2025,7 +2045,11 @@
+ AM_CONDITIONAL([BUILD_BLOCKDEV], [test "x$build_blockdev" = xyes])
+ 
+ 
+-UL_BUILD_INIT([prlimit], [check])
++AC_ARG_ENABLE([prlimit],
++  AS_HELP_STRING([--disable-prlimit], [do not build prlimit]),
++  [], [UL_DEFAULT_ENABLE([prlimit], [check])]
++)
++UL_BUILD_INIT([prlimit])
+ UL_REQUIRES_LINUX([prlimit])
+ UL_REQUIRES_BUILD([prlimit], [libsmartcols])
+ UL_REQUIRES_SYSCALL_CHECK([prlimit], [UL_CHECK_SYSCALL([prlimit64])], [prlimit64])
+@@ -2080,7 +2104,11 @@
+ AM_CONDITIONAL([BUILD_PIVOT_ROOT], [test "x$build_pivot_root" = xyes])
+ 
+ 
+-UL_BUILD_INIT([flock], [check])
++AC_ARG_ENABLE([flock],
++  AS_HELP_STRING([--disable-flock], [do not build flock]),
++  [], [UL_DEFAULT_ENABLE([flock], [check])]
++)
++UL_BUILD_INIT([flock])
+ UL_REQUIRES_HAVE([flock], [timer], [timer_create/setitimer function])
+ AM_CONDITIONAL([BUILD_FLOCK], [test "x$build_flock" = xyes])
+ 
+@@ -2193,7 +2221,11 @@
+ UL_BUILD_INIT([setpgid], [yes])
+ AM_CONDITIONAL([BUILD_SETPGID], [test "x$build_setpgid" = xyes])
+ 
+-UL_BUILD_INIT([setsid], [yes])
++AC_ARG_ENABLE([setsid],
++  AS_HELP_STRING([--disable-setsid], [do not build setsid]),
++  [], [UL_DEFAULT_ENABLE([setsid], [yes])]
++)
++UL_BUILD_INIT([setsid])
+ AM_CONDITIONAL([BUILD_SETSID], [test "x$build_setsid" = xyes])
+ 
+ UL_BUILD_INIT([readprofile], [check])
+@@ -2298,10 +2330,18 @@
+ UL_BUILD_INIT([colcrt], [yes])
+ AM_CONDITIONAL([BUILD_COLCRT], [test "x$build_colcrt" = xyes])
+ 
+-UL_BUILD_INIT([colrm], [yes])
++AC_ARG_ENABLE([colrm],
++  AS_HELP_STRING([--disable-colrm], [do not build colrm]),
++  [], [UL_DEFAULT_ENABLE([colrm], [yes])]
++)
++UL_BUILD_INIT([colrm])
+ AM_CONDITIONAL([BUILD_COLRM], [test "x$build_colrm" = xyes])
+ 
+-UL_BUILD_INIT([column], [check])
++AC_ARG_ENABLE([column],
++  AS_HELP_STRING([--disable-column], [do not build column]),
++  [], [UL_DEFAULT_ENABLE([column], [check])]
++)
++UL_BUILD_INIT([column])
+ UL_REQUIRES_BUILD([column], [libsmartcols])
+ AM_CONDITIONAL([BUILD_COLUMN], [test "x$build_column" = xyes])
+ 
+@@ -2312,7 +2352,11 @@
+ UL_BUILD_INIT([hexdump])
+ AM_CONDITIONAL([BUILD_HEXDUMP], [test "x$build_hexdump" = xyes])
+ 
+-UL_BUILD_INIT([rev], [yes])
++AC_ARG_ENABLE([rev],
++  AS_HELP_STRING([--disable-rev], [do not build rev]),
++  [], [UL_DEFAULT_ENABLE([rev], [yes])]
++)
++UL_BUILD_INIT([rev])
+ AM_CONDITIONAL([BUILD_REV], [test "x$build_rev" = xyes])
+ 
+ 

@@ -1,0 +1,56 @@
+--- a/sys-utils/flock.c	2026-07-20 09:07:28.140807993 +0800
++++ b/sys-utils/flock.c	2026-07-20 09:08:26.485932207 +0800
+@@ -41,6 +41,10 @@
+ #include <sys/wait.h>
+ #include <unistd.h>
+ 
++/* wasm has no fork(); the -c/command child comes from posix_spawn. */
++#include <spawn.h>
++extern char **environ;
++
+ #include "c.h"
+ #include "nls.h"
+ #include "strutils.h"
+@@ -439,15 +443,33 @@
+ 			printf(_("%s: executing %s\n"), program_invocation_short_name, cmd_argv[0]);
+ 
+ 		if (!no_fork) {
+-			f = fork();
+-			if (f < 0)
+-				err(EX_OSERR, _("fork failed"));
+-
+-			/* child */
+-			else if (f == 0) {
+-				if (do_close)
+-					close(fd);
+-				run_program(cmd_argv);
++			posix_spawn_file_actions_t fa;
++			posix_spawn_file_actions_t *fap = NULL;
++			int rc;
++
++			/*
++			 * wasm has no fork(); spawn the command with
++			 * posix_spawnp (PATH search, matching the old
++			 * execvp()). --close is expressed as a spawn file
++			 * action so the child does not inherit the lock fd.
++			 * The lock itself is held by this waiting parent for
++			 * the child's lifetime and released when flock exits,
++			 * exactly as before.
++			 */
++			if (do_close) {
++				posix_spawn_file_actions_init(&fa);
++				posix_spawn_file_actions_addclose(&fa, fd);
++				fap = &fa;
++			}
++			rc = posix_spawnp(&f, cmd_argv[0], fap, NULL,
++					  cmd_argv, environ);
++			if (fap)
++				posix_spawn_file_actions_destroy(fap);
++
++			if (rc != 0) {
++				errno = rc;
++				warn(_("failed to execute %s"), cmd_argv[0]);
++				status = (errno == ENOMEM) ? EX_OSERR : EX_UNAVAILABLE;
+ 
+ 			/* parent */
+ 			} else {

@@ -116,6 +116,10 @@
       url = "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz";
       flake = false;
     };
+    util-linux-src = {
+      url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz";
+      flake = false;
+    };
     xz-src = {
       url = "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz";
       flake = false;
