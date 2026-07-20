@@ -68,6 +68,19 @@
         "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
       }
     },
+    "dropbear-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783348200,
+        "narHash": "sha256-xXjKWj6tMW/Qlq4DttxKAqOwsER2QEeb1Qw3Gllu2QQ=",
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
+      }
+    },
     "file-src": {
       "flake": false,
       "locked": {
@@ -349,6 +362,7 @@
         "coreutils-src": "coreutils-src",
         "curl-src": "curl-src",
         "diffutils-src": "diffutils-src",
+        "dropbear-src": "dropbear-src",
         "file-src": "file-src",
         "findutils-src": "findutils-src",
         "gawk-src": "gawk-src",

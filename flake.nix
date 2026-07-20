@@ -24,6 +24,10 @@
       url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
       flake = false;
     };
+    dropbear-src = {
+      url = "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2";
+      flake = false;
+    };
     file-src = {
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
       flake = false;

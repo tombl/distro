@@ -57,6 +57,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     coreutils = callPackage ./coreutils/package.nix { src = inputs.coreutils-src; };
     curl = callPackage ./curl/package.nix { src = inputs.curl-src; };
     diffutils = callPackage ./diffutils/package.nix { src = inputs.diffutils-src; };
+    dropbear = callPackage ./dropbear/package.nix { src = inputs.dropbear-src; };
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     findutils = callPackage ./findutils/package.nix { src = inputs.findutils-src; };
     gawk = callPackage ./gawk/package.nix { src = inputs.gawk-src; };
