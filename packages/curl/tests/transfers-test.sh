@@ -31,9 +31,8 @@ curl -sS file:///tmp/data -o /tmp/out 2>/tmp/curlerr ||
 cmp /tmp/data /tmp/out || fail "file:// round trip content mismatch"
 
 # (c) Real loopback HTTP round trip. Readiness is the observable LISTEN state,
-# not a timing sleep. The host's 20-second VM deadline bounds an actual curl
-# hang. PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers;
-# curl --max-time is inert until the pending kernel repoint.
+# not a timing sleep. curl's progress timers initialize against working POSIX
+# timers; the host's 20-second VM deadline bounds an actual transfer hang.
 ip link set lo up 2>/tmp/iperr || fail "bringing up loopback failed: $(cat /tmp/iperr)"
 mkdir -p /www || fail "creating HTTP root failed"
 cp /tmp/data /www/data || fail "creating HTTP fixture failed"
