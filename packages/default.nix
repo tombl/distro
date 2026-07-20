@@ -67,6 +67,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     grep = callPackage ./grep/package.nix { src = inputs.grep-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
+    kselftests = callPackage ./kselftests/package.nix { src = inputs.linux-src; };
     less = callPackage ./less/package.nix { src = inputs.less-src; };
     ltp = callPackage ./ltp/package.nix { src = inputs.ltp-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };

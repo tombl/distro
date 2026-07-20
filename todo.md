@@ -26,6 +26,11 @@
 
 ## Later
 
+- Fix `futex_waitv` on wasm. Syscall 449 returns `EFAULT` for a valid
+  stack-resident `struct futex_waitv`, where `futex_wait_wouldblock` expects
+  `EWOULDBLOCK`; plain `FUTEX_WAIT` on the same address succeeds, narrowing the
+  bug to the waitv parsing/user-copy path. Add the upstream test to the green
+  kselftest run set with the kernel fix.
 - Land framebuffer and input support with guest-visible integration tests, then add basic DRM only when its userspace memory requirements are supportable.
 - Add outbound UDP and browser `fetch` transports to the networking layer.
 - Package a useful initial software set and document the Nix-to-JavaScript build path.
