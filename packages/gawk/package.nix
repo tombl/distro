@@ -17,12 +17,13 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   # gawk creates every child with fork()+execl(): the system() builtin and the
-  # pipe/coprocess redirections in io.c. wasm has no fork(); rewrite each site to
-  # posix_spawn (clone+execve), carrying the between-fork-and-exec fd plumbing in
-  # posix_spawn file actions. The pty-coprocess path needs setsid()/ioctl() that
-  # posix_spawn cannot express, but it is unreachable on wasm (no /dev/ptmx), so
-  # it is stubbed to fail and fall back to an ordinary pipe coprocess.
-  patches = [ ./wasm-posix-spawn.patch ];
+  # pipe/coprocess redirections in io.c. wasm has no fork(); ordinary children
+  # use posix_spawn with file actions. The pty coprocess uses callback clone so
+  # setsid(), TIOCSCTTY, stdio attachment, and exec happen on a fresh child stack.
+  patches = [
+    ./wasm-posix-spawn.patch
+    ./pty-callback-clone.patch
+  ];
 
   passthru.checks = {
     functionality = vm-test.vmTest {

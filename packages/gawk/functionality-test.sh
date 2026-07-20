@@ -8,6 +8,11 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
+mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
+mkdir -p /dev/pts || fail "create /dev/pts"
+mount -t devpts devpts /dev/pts || fail "mount devpts"
+mount -t proc proc /proc || fail "mount proc"
+
 # Prove the GNU gawk shadows busybox's awk applet.
 gawk --version | grep -q 'GNU Awk' || fail "not running GNU gawk"
 
@@ -49,6 +54,21 @@ gawk 'BEGIN { rc = system("exit 3"); if (rc != 3) exit 1 }' ||
 # print | command: exercises the posix_spawn write pipe.
 out=$(gawk 'BEGIN { print "two\none" | "sort"; close("sort") }')
 [ "$out" = "$(printf 'one\ntwo')" ] || fail "output pipe to command: $out"
+
+# A requested |& pty coprocess must expose devpts and carry data both ways.
+out=$(gawk 'BEGIN {
+  cmd = "tty; read line; echo reply:$line"
+  PROCINFO[cmd, "pty"] = 1
+  cmd |& getline ttyname
+  print "PTY_MARKER" |& cmd
+  fflush(cmd)
+  cmd |& getline reply
+  close(cmd)
+  print ttyname
+  print reply
+}')
+expected=$(printf '/dev/pts/0\nreply:PTY_MARKER')
+[ "$out" = "$expected" ] || fail "pty coprocess: $out"
 
 # Error-path probe: a runtime fatal error (division by zero) must print a
 # fatal diagnostic and exit nonzero, NOT trap. This is the path that would
