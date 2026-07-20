@@ -24,10 +24,7 @@ work=/tmp/coreutils-spawn
 rm -rf "$work"
 mkdir -p "$work" || fail "mkdir failed"
 
-# --- timeout: spawns the command via posix_spawn and waits on it.
-# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
-# SIGALRM does not fire until the pending kernel repoint. The command must run
-# to completion and its stdout and exit status must come back intact. ---
+# --- timeout: spawns the command via posix_spawn and waits on it. ------------
 out=$(timeout 10 seq 1 3) || fail "timeout failed"
 [ "$(printf '%s' "$out" | tr '\n' ' ')" = "1 2 3" ] ||
   fail "timeout did not relay the command output (got '$out')"
@@ -35,6 +32,18 @@ out=$(timeout 10 seq 1 3) || fail "timeout failed"
 if timeout 10 false 2>/dev/null; then
   fail "timeout masked the command's non-zero exit"
 fi
+
+# setitimer/SIGALRM must enforce the deadline, kill the sleeping child, and
+# return timeout's conventional status. The real wall clock proves this was a
+# one-second timeout rather than the child completing its 30-second sleep.
+timeout_start=$(date +%s) || fail "reading timeout start time failed"
+timeout 1 sleep 30
+timeout_rc=$?
+timeout_end=$(date +%s) || fail "reading timeout end time failed"
+timeout_elapsed=$((timeout_end - timeout_start))
+[ "$timeout_rc" -eq 124 ] || fail "timeout returned $timeout_rc instead of 124"
+[ "$timeout_elapsed" -ge 1 ] || fail "timeout fired too early (${timeout_elapsed}s)"
+[ "$timeout_elapsed" -le 5 ] || fail "timeout fired too late (${timeout_elapsed}s)"
 
 # --- split --filter: each chunk is piped to a freshly spawned shell running
 # the filter, with $FILE set to the piece name. 'cat > "$FILE"' therefore
