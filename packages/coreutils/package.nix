@@ -44,16 +44,11 @@ stdenv.mkDerivation (finalAttrs: {
     # stdbuf works by LD_PRELOADing a shared libstdbuf.so; this is a
     # static-only, no-dlopen target, so it can never function here.
     "--enable-no-install-program=stdbuf"
-
-    # wasm musl compiles no fork()/vfork() (the symbols do not exist), but
-    # autoconf's link-only probe is fooled because undefined wasm imports link
-    # cleanly, so it would set HAVE_FORK and miss the no-fork code paths. Force
-    # the probes to "no": gnulib and coreutils then select their fork-free
-    # fallbacks (e.g. sort drops --compress-program), and the remaining direct
-    # fork+exec callers are converted to posix_spawn by our patches.
-    "ac_cv_func_fork=no"
-    "ac_cv_func_vfork=no"
   ];
+
+  # The stdenv CONFIG_SITE states that fork/vfork are absent. gnulib therefore
+  # selects its fork-free paths (e.g. sort drops --compress-program); the
+  # remaining direct fork+exec callers are converted by the patches above.
 
   # The real tree is the "." entry of SUBDIRS; gnulib-tests is test-only
   # scaffolding that pulls in mmap-based helpers (vma-iter) that cannot compile

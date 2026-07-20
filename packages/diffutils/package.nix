@@ -12,15 +12,11 @@ stdenv.mkDerivation (finalAttrs: {
 
   configureFlags = [
     "--disable-nls"
-    # diff3, sdiff, and diff --paginate spawn a child (diff, an editor, or pr)
-    # with fork()+exec under HAVE_WORKING_FORK, and fall back to popen()/system()
-    # otherwise. wasm has no fork(), but musl's popen()/system() are built on
-    # posix_spawn, so force the no-fork path: gnulib's AC_FUNC_FORK
-    # cross-compile heuristic otherwise guesses fork works and picks the dead
-    # fork+exec branch. This keeps plain diff/cmp (which never fork) unchanged.
-    "ac_cv_func_fork_works=no"
-    "ac_cv_func_vfork_works=no"
   ];
+
+  # diff3, sdiff, and diff --paginate use fork+exec under HAVE_WORKING_FORK and
+  # fall back to popen/system otherwise. The stdenv CONFIG_SITE supplies the
+  # platform-wide no-fork answer, selecting musl's posix_spawn-backed fallback.
 
   # gnulib's libsigsegv treats every __linux__ target as able to catch SIGSEGV
   # and recover from stack overflow, then compiles stackvma.c/sigsegv.c against

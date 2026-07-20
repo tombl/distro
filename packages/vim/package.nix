@@ -68,11 +68,10 @@ stdenv.mkDerivation (finalAttrs: {
   #   return -- see the PLATFORM ISSUE note). vim calls it once, unconditionally
   #   at startup (mch_early_init -> init_signal_stack), to install an alternate
   #   stack so a stack-overflow SIGSEGV can still be reported. That call killed
-  #   `vim --version` before it printed a byte. ac_cv_func_sigaltstack=no below
-  #   makes configure leave HAVE_SIGALTSTACK undefined; with HAVE_SIGSTACK also
-  #   absent, the entire alternate-signal-stack block (its only sigaltstack
-  #   caller) is compiled out. The cost is only a less graceful message on a
-  #   genuine stack overflow, which would crash the wasm module regardless.
+  #   `vim --version` before it printed a byte. The stdenv CONFIG_SITE answers
+  #   ac_cv_func_sigaltstack=no, so configure leaves HAVE_SIGALTSTACK undefined;
+  #   with HAVE_SIGSTACK also absent, the alternate-signal-stack block is
+  #   compiled out. The cost is only a less graceful stack-overflow message.
   configureFlags = [
     "--with-features=normal"
     "--with-tlib=ncurses"
@@ -122,8 +121,6 @@ stdenv.mkDerivation (finalAttrs: {
     export vim_cv_terminfo=yes
     export vim_cv_tgetent=zero
     export vim_cv_timer_create_works=no
-    # sigaltstack() traps on this platform; compile out the code that calls it.
-    export ac_cv_func_sigaltstack=no
     # Route every shell-out through system()/posix_spawn (see the long note).
     export NIX_CFLAGS_COMPILE="''${NIX_CFLAGS_COMPILE-} -DUSE_SYSTEM"
   '';

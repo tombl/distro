@@ -22,9 +22,8 @@ let
     # AF_UNIX socketpair (EAFNOSUPPORT). curl's multi handle prefers eventfd for
     # its internal wakeup and, when it cannot create one, aborts handle creation
     # in a way the easy interface reports as CURLE_OUT_OF_MEMORY on every
-    # transfer. Telling configure eventfd is absent makes curl fall back to
-    # pipe(), which the guest does support. See PLATFORM ISSUE in the port notes.
-    env.ac_cv_func_eventfd = "no";
+    # transfer. The stdenv CONFIG_SITE reports eventfd absent on the pinned
+    # kernel, making curl fall back to pipe(), which the guest supports.
 
     # Static-only, mbedTLS backend, zlib for content encoding. Everything that
     # would pull in an unavailable transport or a library we do not ship is

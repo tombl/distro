@@ -41,10 +41,23 @@ let
   # enable code paths that fail at compile time or runtime. A site file states
   # the platform truth once for every port.
   configSite = pkgs.writeText "wasm-config.site" ''
+    # wasm musl does not provide fork/vfork. The *_works forms are gnulib's
+    # runtime-probe cache names; both spellings are platform-wide facts.
+    ac_cv_func_fork=no
+    ac_cv_func_vfork=no
+    ac_cv_func_fork_works=no
+    ac_cv_func_vfork_works=no
     ac_cv_func_mmap_fixed_mapped=no
     ac_cv_func_dlopen=no
     ac_cv_search_dlopen=no
     ac_cv_lib_dl_dlopen=no
+    # PENDING-REPOINT(sigaltstack): the current musl implementation traps via a
+    # wasm `unreachable`; retest this answer after the musl/toolchain repoint.
+    ac_cv_func_sigaltstack=no
+    # PENDING-REPOINT(eventfd): libc exposes eventfd, but the pinned kernel
+    # returns ENOSYS. Retest after the kernel repoint and delete this answer if
+    # eventfd is implemented.
+    ac_cv_func_eventfd=no
   '';
 in
 
