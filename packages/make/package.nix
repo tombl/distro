@@ -10,14 +10,6 @@ stdenv.mkDerivation (finalAttrs: {
   version = "4.4.1";
   inherit src;
 
-  # make's main() takes the non-standard third envp argument. clang's wasm
-  # entry ABI only lowers main(void)/main(int,char**) (renaming the latter to
-  # __main_argc_argv, which crt1.o calls); a 3-arg main stays a plain "main"
-  # the startup never references, so the final link dies with "crt1.o:
-  # undefined symbol: main". Switch to the 2-arg form and read environ, as the
-  # z/OS build already does. See PLATFORM ISSUES.
-  patches = [ ./wasm-two-arg-main.patch ];
-
   # make runs every recipe through a child process. On wasm there is no
   # fork()/vfork(), only posix_spawn (clone+execve); make already has a full
   # posix_spawn job path (src/job.c, USE_POSIX_SPAWN) used on macOS. configure

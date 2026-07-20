@@ -38,11 +38,8 @@ rec {
     # The runtime routes SA_SIGINFO delivery through musl so siginfo_t and the
     # minimal ucontext_t are materialized in userspace rather than kernel memory.
     "--export=__wasm_call_siginfo_handler"
-    # Linux's signal ABI reserves function-pointer value 1 for SIG_IGN, and
-    # musl's public signal API uses value 2 for SIG_HOLD. Wasm function pointers
-    # are table indices, so leave those slots empty rather than letting real
-    # address-taken functions collide with the signal sentinels.
-    "--table-base=3"
+    # clang's wasm-linux toolchain defaults the table base to 3, reserving
+    # function-pointer values 1 and 2 for SIG_IGN and SIG_HOLD.
     # wasm-ld's default shadow stack is 64 KiB, which terminal setup in
     # ncurses/readline overflows; match the 8 MiB Linux convention.
     "-z"

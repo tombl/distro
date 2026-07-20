@@ -205,11 +205,11 @@
     "llvm-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1779503432,
-        "narHash": "sha256-GCLjs1tb/9AKDQGVAyk/qJ9X3zQGmL+VgySUKQWQ1Bw=",
+        "lastModified": 1784529913,
+        "narHash": "sha256-MlGBk3ffxku9/SXYGSA+531Cb4uiqwcG5buB+V4z4Qw=",
         "owner": "tombl",
         "repo": "llvm-project",
-        "rev": "ff5671ca630630276cc185db3e017305eae59bc1",
+        "rev": "0771d7da467f3d9c3a960b8ac7486ed233850fc2",
         "type": "github"
       },
       "original": {
@@ -260,11 +260,11 @@
     "musl-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784523666,
-        "narHash": "sha256-PWtz/UpXsmPtkiTkPE4lQ1ejTkNaPfV5spdaYKn0/Ss=",
+        "lastModified": 1784526171,
+        "narHash": "sha256-llIkUcUffDcKz8FfdtSlgj5oq80i63PtwHs/tA0P+KE=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "f3d81c2c186104e043ec0a6387528a7987d79119",
+        "rev": "50dfd623be9a9e8ef87996c42fa94c9994684fbd",
         "type": "github"
       },
       "original": {
