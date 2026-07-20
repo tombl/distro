@@ -1,0 +1,52 @@
+--- a/src/os_unixx.h	2026-07-20 09:13:49.311583773 +0800
++++ b/src/os_unixx.h	2026-07-20 09:14:01.980391150 +0800
+@@ -15,29 +15,30 @@
+ # include <sys/ioctl.h>
+ #endif
+ 
+-#ifndef USE_SYSTEM	// use fork/exec to start the shell
+-
+-# if defined(HAVE_SYS_WAIT_H) || defined(HAVE_UNION_WAIT)
+-#  include <sys/wait.h>
+-# endif
++// wait4pid() (used by the fork/exec shell path and left compiled even when
++// USE_SYSTEM routes mch_call_shell through system()) needs waitpid() and the
++// W* macros unconditionally. Upstream only pulled <sys/wait.h> in for the
++// fork/exec build, so with USE_SYSTEM defined wait4pid() got an implicit
++// waitpid() -- a hard error under a modern clang. Include it regardless.
++#if defined(HAVE_SYS_WAIT_H) || defined(HAVE_UNION_WAIT)
++# include <sys/wait.h>
++#endif
+ 
+-# ifndef WEXITSTATUS
+-#  ifdef HAVE_UNION_WAIT
+-#   define WEXITSTATUS(stat_val) ((stat_val).w_T.w_Retcode)
+-#  else
+-#   define WEXITSTATUS(stat_val) (((stat_val) >> 8) & 0377)
+-#  endif
++#ifndef WEXITSTATUS
++# ifdef HAVE_UNION_WAIT
++#  define WEXITSTATUS(stat_val) ((stat_val).w_T.w_Retcode)
++# else
++#  define WEXITSTATUS(stat_val) (((stat_val) >> 8) & 0377)
+ # endif
++#endif
+ 
+-# ifndef WIFEXITED
+-#  ifdef HAVE_UNION_WAIT
+-#   define WIFEXITED(stat_val) ((stat_val).w_T.w_Termsig == 0)
+-#  else
+-#   define WIFEXITED(stat_val) (((stat_val) & 255) == 0)
+-#  endif
++#ifndef WIFEXITED
++# ifdef HAVE_UNION_WAIT
++#  define WIFEXITED(stat_val) ((stat_val).w_T.w_Termsig == 0)
++# else
++#  define WIFEXITED(stat_val) (((stat_val) & 255) == 0)
+ # endif
+-
+-#endif // !USE_SYSTEM
++#endif
+ 
+ #ifdef HAVE_STROPTS_H
+ # ifdef sinix

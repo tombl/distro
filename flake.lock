@@ -387,6 +387,7 @@
         "sqlite-src": "sqlite-src",
         "tar-src": "tar-src",
         "util-linux-src": "util-linux-src",
+        "vim-src": "vim-src",
         "xz-src": "xz-src",
         "zlib-src": "zlib-src",
         "zstd-src": "zstd-src"
@@ -442,6 +443,19 @@
       "original": {
         "type": "tarball",
         "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz"
+      }
+    },
+    "vim-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771008824,
+        "narHash": "sha256-4ZEbfpffPp6kqSQRp7NFioWGRdG+JsVf7unU0Hqn/Xk=",
+        "type": "tarball",
+        "url": "https://github.com/vim/vim/archive/refs/tags/v9.1.2148.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/vim/vim/archive/refs/tags/v9.1.2148.tar.gz"
       }
     },
     "xz-src": {
