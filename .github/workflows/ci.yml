@@ -96,9 +96,6 @@ jobs:
           if-no-files-found: error
 
   deploy-site:
-    needs:
-      - browser
-      - build
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == 'tombl/distro'
     runs-on: ubuntu-24.04
     steps:
@@ -112,11 +109,15 @@ jobs:
         run: |
           eval "$(nix print-dev-env .#ci)"
           nix build .#site --print-build-logs
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{secrets.CLOUDFLARE_API_TOKEN}}
-          accountId: 7d87194d9d4af2959fb81de343dd63d9
-          command: pages deploy result/ --project-name=linux --branch=${{ github.head_ref || github.ref_name }}
+      - name: Deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: 7d87194d9d4af2959fb81de343dd63d9
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          DEPLOY_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          nix develop .#ci --command wrangler pages deploy result/ \
+            --project-name=linux \
+            --branch="$DEPLOY_BRANCH"
 
   stage-npm:
     name: Stage ${{ matrix.name }} on npm

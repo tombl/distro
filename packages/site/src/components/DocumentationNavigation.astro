@@ -19,7 +19,7 @@ interface Item {
 
 function section(name: (typeof docs)[number]["data"]["section"]): Item[] {
   return docs
-    .filter((doc) => doc.data.section === name)
+    .filter((doc) => doc.data.section === name && !doc.data.draft)
     .sort((left, right) => left.data.order - right.data.order)
     .map((doc) => ({
       id: doc.id,
@@ -44,7 +44,7 @@ const sections: { heading: string; items: Item[] }[] = [
     ],
   },
   { heading: "Explanation", items: section("explanation") },
-];
+].filter(({ items }) => items.length > 0);
 ---
 
 <nav aria-label="Documentation">

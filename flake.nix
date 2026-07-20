@@ -233,6 +233,9 @@
             packages = [
               pkgs.jq
               pkgs.nix-eval-jobs
+              pkgs.nodejs
+              pkgs.pnpm_11
+              pkgs.wrangler
             ];
           };
         }
