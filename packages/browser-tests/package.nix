@@ -43,7 +43,7 @@ let
       cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
       cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
       tar -xzf ${linux}/linux.tgz --strip-components=1 -C $out/node_modules/@tombl/linux
-      tar -xzf ${linux-guest}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+      tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
 
       runHook postInstall
     '';

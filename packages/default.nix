@@ -1,6 +1,7 @@
 # The wasm32 package scope. This attrset is the product: consumers import it,
 # build their own packages with `callPackage`, and replace or extend members
-# with `overrideScope`.
+# with `overrideScope`. Product-owned artifacts are nested under their owner;
+# shared construction machinery lives under `image` and `vm-test`.
 #
 # Dependency provenance is explicit: build-platform packages come from `pkgs.*`,
 # wasm packages come from the scope by bare name. Inside the scope, `stdenv`
@@ -85,20 +86,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
     zstd = callPackage ./zstd/package.nix { src = inputs.zstd-src; };
 
-    # images:
-    guest-initramfs = callPackage ./guest-initramfs/package.nix { };
-    guest-rootfs = callPackage ./guest-rootfs/package.nix { };
-    initramfs = callPackage ./initramfs/package.nix { };
-    mkRootfs = callPackage ./rootfs-builder/package.nix { };
-    rootfs = callPackage ./rootfs/package.nix { };
-    site-rootfs = callPackage ./site/rootfs.nix { };
+    # Shared image construction. Product-specific images live with and under
+    # the package that owns them: site.image, runner.image, linux-guest.image.
+    image = callPackage ./image { };
 
     # host tools and tests:
     browser-tests = callPackage ./browser-tests/package.nix { };
     node-workspace = callPackage ./node-workspace.nix { };
-    linux-guest = callPackage ./linux-guest/package.nix { };
-    runner = callPackage ./runner/package.nix { };
-    site = callPackage ./site/package.nix { };
+    linux-guest = callPackage ./linux-guest { };
+    runner = callPackage ./runner { };
+    site = callPackage ./site { };
     vm-test = callPackage ./vm-test/package.nix { };
   }
 )

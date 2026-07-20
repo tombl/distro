@@ -39,6 +39,7 @@ let
 
       config MOUNT y
       config SWITCH_ROOT y
+      config CHROOT y
       config HUSH y
       config SH_IS_ASH n
       config SH_IS_HUSH y

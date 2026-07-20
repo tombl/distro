@@ -3,6 +3,7 @@
 {
   pkgs,
   lib,
+  image,
   linux,
 }:
 
@@ -50,41 +51,16 @@ let
         '';
   };
 
-  mkInitramfs =
-    {
-      name,
-      init,
-      contents ? [ ],
-    }:
-    pkgs.runCommand "${name}.cpio"
-      {
-        nativeBuildInputs = [
-          pkgs.cpio
-          pkgs.findutils
-        ];
+  mkTestInitramfs =
+    args:
+    image.mkInitramfs (
+      args
+      // {
+        files = (args.files or { }) // {
+          "/vm-test-setup-dev-fd" = ./setup-dev-fd.sh;
+        };
       }
-      ''
-        mkdir -p root/dev root/proc root/sys root/tmp
-        ${lib.concatMapStringsSep "\n" (content: ''
-          # --remove-destination so a later content's real file replaces an
-          # earlier content's entry outright. Without it, cp writes *through* an
-          # existing symlink: a GNU tool copied over busybox's applet symlink
-          # (e.g. bin/sed -> busybox) would clobber the busybox binary itself
-          # instead of shadowing the applet. "later wins" must replace, not follow.
-          cp -RP --remove-destination ${content}/. root/
-          # Each store path arrives read-only; keep the tree writable so a later
-          # content can add files under a directory an earlier one created (e.g.
-          # a second package populating /bin).
-          chmod -R u+w root
-        '') contents}
-        cp ${./setup-dev-fd.sh} root/vm-test-setup-dev-fd
-        chmod 0755 root/vm-test-setup-dev-fd
-        cp ${init} root/init
-        chmod 0755 root/init
-
-        cd root
-        find . -print0 | sort -z | cpio --null --reproducible --owner=0:0 -H newc -o > $out
-      '';
+    );
 
   vmTest =
     {
@@ -99,14 +75,14 @@ let
       }
       ''
         ${lib.optionalString (disk != null) ''
-          cp ${disk} disk.ext4
-          chmod u+w disk.ext4
+          cp ${disk} disk.img
+          chmod u+w disk.img
         ''}
         set +e
         timeout 20 node ${runner}/run-test.js \
           ${linux}/dist/index.js \
           ${initramfs} \
-          ${lib.optionalString (disk != null) "disk.ext4"} \
+          ${lib.optionalString (disk != null) "disk.img"} \
           ${lib.optionalString memoryGrowth "--memory-growth"} \
           2>&1 | awk -f ${runner}/limit-output.awk
         status=''${PIPESTATUS[0]}
@@ -119,6 +95,7 @@ let
       '';
 in
 {
-  inherit mkInitramfs runner vmTest;
+  mkInitramfs = mkTestInitramfs;
+  inherit runner vmTest;
   recurseForDerivations = true;
 }

@@ -1,8 +1,7 @@
 {
   busybox,
   pkgs,
-  guest-initramfs,
-  guest-rootfs,
+  image,
   linux,
   node-workspace,
   runner,
@@ -34,11 +33,11 @@ let
   # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
-    "initramfs.cpio" = guest-initramfs;
+    "initramfs.cpio" = "${image}/initramfs.cpio";
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
-    "rootfs.squashfs" = guest-rootfs;
+    "rootfs.squashfs" = "${image}/rootfs.squashfs";
     "network-test" = "${network-test}/bin/network-test";
-    "runner" = "${runner}/bin/wasm-linux-runner";
+    "runner" = "${runner.package}/bin/wasm-linux-runner";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
@@ -59,8 +58,8 @@ let
       tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
       pnpm --filter=@tombl/linux-guest check
       pnpm --filter=@tombl/linux-guest build
-      cp ${guest-initramfs} packages/linux-guest/initramfs.cpio
-      cp ${guest-rootfs} packages/linux-guest/rootfs.squashfs
+      cp ${image}/initramfs.cpio packages/linux-guest/initramfs.cpio
+      cp ${image}/rootfs.squashfs packages/linux-guest/rootfs.squashfs
 
       runHook postBuild
     '';

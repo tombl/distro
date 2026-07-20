@@ -1,9 +1,8 @@
 {
+  image,
   pkgs,
-  initramfs,
   linux,
   node-workspace,
-  site-rootfs,
 }:
 
 pkgs.stdenvNoCC.mkDerivation {
@@ -36,8 +35,17 @@ pkgs.stdenvNoCC.mkDerivation {
 
     mkdir -p $out
     cp -r packages/site/dist/* $out/
-    gzip --best --no-name --stdout ${initramfs} > $out/initramfs.cpio.gz
-    gzip --best --no-name --stdout ${site-rootfs} > $out/rootfs.squashfs.gz
+    gzip --best --no-name --stdout ${image}/initramfs.cpio > $out/initramfs.cpio.gz
+    gzip --best --no-name --stdout ${image}/rootfs.squashfs > $out/rootfs.squashfs.gz
+
+    # The hosting provider rejects individual assets larger than 25 MB. Keep
+    # this product constraint next to the artifact rather than relying on a
+    # comment in the rootfs package list.
+    rootfs_bytes=$(wc -c < $out/rootfs.squashfs.gz)
+    if [ "$rootfs_bytes" -gt 25000000 ]; then
+      echo "site rootfs is $rootfs_bytes bytes; hosting limit is 25000000" >&2
+      exit 1
+    fi
 
     runHook postInstall
   '';

@@ -171,14 +171,24 @@
               formatter = self.formatter.${system};
             }
           );
+      isPackage =
+        _name: value:
+        lib.isDerivation value || (builtins.isAttrs value && lib.isDerivation (value.package or null));
+      packageFrom = _name: value: if lib.isDerivation value then value else value.package;
     in
     {
-      # The package scope is the product: a flat attrset in the style of a
-      # nixpkgs sub-scope. It contains a few non-derivation members (platform,
-      # vm-test helpers), hence legacyPackages rather than packages.
+      # The package scope is the product. It contains owner-oriented package
+      # sets and non-derivation helpers, hence legacyPackages rather than only
+      # the flat packages output.
       legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs inputs; });
 
-      packages = eachSystem ({ wasmpkgs, ... }: lib.filterAttrs (_name: lib.isDerivation) wasmpkgs);
+      # legacyPackages preserves the owner-oriented package sets. The packages
+      # output projects each set's primary derivation back to the conventional
+      # flat flake interface, so `nix build .#site` remains the obvious command
+      # while `legacyPackages.${system}.site.image.rootfs` stays navigable.
+      packages = eachSystem (
+        { wasmpkgs, ... }: lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
+      );
 
       checks = eachSystem (
         {
@@ -233,14 +243,14 @@
         {
           runner = {
             type = "app";
-            program = lib.getExe wasmpkgs.runner;
+            program = lib.getExe wasmpkgs.runner.package;
           };
 
           serve = {
             type = "app";
             program = lib.getExe (
               pkgs.writeShellScriptBin "wasm-linux-serve" ''
-                ${lib.getExe pkgs.miniserve} ${wasmpkgs.site} --index index.html \
+                ${lib.getExe pkgs.miniserve} ${wasmpkgs.site.package} --index index.html \
                   --header Cache-Control:no-store,no-cache,must-revalidate,max-age=0 \
                   --header Pragma:no-cache \
                   --header Expires:0 \

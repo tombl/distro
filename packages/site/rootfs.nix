@@ -2,14 +2,42 @@
   busybox,
   curl,
   git,
-  guest-agent,
+  image,
   jq,
   less,
-  mkRootfs,
   pkgs,
   sqlite3,
   vim,
+  vm-test,
 }:
+
+let
+  # The distro packages are SDK-style outputs containing headers, static
+  # archives, servers, and helper programs as well as their user-facing tools.
+  # The browser demo only ships the runtime slice it exercises. In particular,
+  # Git keeps its main binary and HTTP transport without carrying daemon,
+  # server, CVS, SVN, and mail tooling that would dominate the download.
+  runtime = pkgs.runCommand "site-userland" { } ''
+    mkdir -p $out/bin $out/libexec/git-core $out/share
+
+    cp -a ${sqlite3}/bin/sqlite3 $out/bin/
+    cp -a ${jq}/bin/jq $out/bin/
+    cp -a ${curl}/bin/curl $out/bin/
+    cp -a ${less}/bin/less ${less}/bin/lesskey ${less}/bin/lessecho $out/bin/
+
+    cp -a ${vim}/bin/vim ${vim}/bin/xxd $out/bin/
+    cp -a ${vim}/share/vim $out/share/
+
+    cp -a ${git}/bin/git $out/bin/
+    cp -a ${git}/libexec/git-core/git-remote-http $out/libexec/git-core/
+    ln -s git-remote-http $out/libexec/git-core/git-remote-https
+    cp -a ${git}/share/git-core $out/share/
+  '';
+  package = image.mkGuestRootfs {
+    name = "site-rootfs";
+    contents = [ runtime ];
+  };
+in
 
 # The image behind the site's live demos: the guest agent as init, so the
 # page can exec/read/write against the machine, plus a userspace worth
@@ -36,20 +64,15 @@
 # 30MB gzipped, more than doubling the download for a demo whose interactive
 # story (sqlite3 + jq + git + vim + a shell) is already strong without it. It
 # lives in the `nix run` image for anyone who wants the full system.
-mkRootfs {
-  name = "site-rootfs";
-  init = "${guest-agent}/bin/linux-guest-agent";
-  contents = [
-    busybox
-    sqlite3
-    jq
-    git
-    vim
-    less
-    curl
-  ];
-  files."/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
-    nameserver 192.0.2.1
-  '';
-  format = "squashfs";
+package
+// {
+  checks.runtime = vm-test.vmTest {
+    name = "site-rootfs-runtime";
+    initramfs = vm-test.mkInitramfs {
+      name = "site-rootfs-runtime";
+      init = ./rootfs-smoke-test.sh;
+      contents = [ busybox ];
+    };
+    disk = package;
+  };
 }

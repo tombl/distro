@@ -15,7 +15,7 @@
   less,
   lua,
   make,
-  mkRootfs,
+  image,
   openssl,
   patch,
   python,
@@ -32,16 +32,11 @@
 
 let
   # busybox is the base layer; everything after it shadows the matching
-  # busybox applet (mkRootfs applies contents in order, later wins). This is
-  # the "nix run" terminal system, so it carries the whole ported userland --
-  # size is not a concern here the way it is for the browser demo image.
-  package = mkRootfs {
-    name = "rootfs";
-    init = ./init.sh;
-    # The ext4 image is a sparse file; a generous cap just leaves headroom for
-    # the full userland (python's stdlib and git's libexec dominate) plus the
-    # filesystem's own overhead. It does not consume real disk until written.
-    size = "512M";
+  # busybox applet (image.mkRootfs applies contents in order, later wins). This is
+  # the `nix run` terminal system, so it carries the whole ported userland.
+  package = image.mkRootfs {
+    name = "runner-rootfs";
+    init = ./rootfs-init.sh;
     contents = [
       busybox
       # GNU/BSD userland, shadowing busybox where they overlap.
@@ -81,10 +76,10 @@ in
 package
 // {
   checks.mount = vm-test.vmTest {
-    name = "rootfs-mount";
+    name = "runner-rootfs-mount";
     initramfs = vm-test.mkInitramfs {
-      name = "rootfs-mount";
-      init = ./smoke-test.sh;
+      name = "runner-rootfs-mount";
+      init = ./rootfs-smoke-test.sh;
       contents = [ busybox ];
     };
     disk = package;

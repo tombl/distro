@@ -8,7 +8,7 @@ mount -t devtmpfs devtmpfs /dev
 i=0
 while [ ! -b /dev/vda ]; do
   if [ "$i" -ge 100 ]; then
-    echo "linux-guest: timed out waiting for /dev/vda"
+    echo "boot-initramfs: timed out waiting for /dev/vda"
     exec sh
   fi
   i=$((i + 1))

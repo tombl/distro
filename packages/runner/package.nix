@@ -1,10 +1,9 @@
 {
   pkgs,
   lib,
-  initramfs,
   linux,
   node-workspace,
-  rootfs,
+  image,
 }:
 
 let
@@ -43,11 +42,9 @@ let
 in
 pkgs.writeShellScriptBin "wasm-linux-runner" ''
   has_disk=0
-  help=0
   has_initcpio=0
   for arg in "$@"; do
     case "$arg" in
-      --help | -h) help=1 ;;
       --disk | --disk=*) has_disk=1 ;;
       --initcpio | --initcpio=* | -i) has_initcpio=1 ;;
     esac
@@ -55,25 +52,14 @@ pkgs.writeShellScriptBin "wasm-linux-runner" ''
 
   initcpio_args=()
   if [ "$has_initcpio" -eq 0 ]; then
-    initcpio_args=(--initcpio ${initramfs})
+    initcpio_args=(--initcpio ${image}/initramfs.cpio)
   fi
 
-  if [ "$help" -eq 1 ] || [ "$has_disk" -eq 1 ]; then
-    exec ${lib.getExe pkgs.nodejs} ${app}/run.ts "''${initcpio_args[@]}" "$@"
+  disk_args=()
+  if [ "$has_disk" -eq 0 ]; then
+    disk_args=(--disk ${image}/rootfs.squashfs)
   fi
 
-  state_dir="''${XDG_STATE_HOME:-$HOME/.local/state}/wasm-linux"
-  seed="${rootfs}"
-  disk="$state_dir/rootfs.ext4"
-  stamp="$state_dir/rootfs.seed"
-
-  mkdir -p "$state_dir"
-  if [ ! -f "$disk" ] || [ ! -f "$stamp" ] || [ "$(cat "$stamp")" != "$seed" ]; then
-    rm -f "$disk"
-    cp "$seed" "$disk"
-    chmod u+w "$disk"
-    printf '%s' "$seed" > "$stamp"
-  fi
-
-  exec ${lib.getExe pkgs.nodejs} ${app}/run.ts "''${initcpio_args[@]}" --disk "$disk" "$@"
+  exec ${lib.getExe pkgs.nodejs} ${app}/run.ts \
+    "''${initcpio_args[@]}" "''${disk_args[@]}" "$@"
 ''
