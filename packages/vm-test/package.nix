@@ -68,6 +68,7 @@ let
       initramfs,
       disk ? null,
       memoryGrowth ? false,
+      timeout ? 20,
     }:
     pkgs.runCommand "vm-test-${name}"
       {
@@ -79,16 +80,17 @@ let
           chmod u+w disk.img
         ''}
         set +e
-        timeout 20 node ${runner}/run-test.js \
+        timeout ${toString (timeout + 5)} node ${runner}/run-test.js \
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
           ${lib.optionalString memoryGrowth "--memory-growth"} \
+          --timeout-seconds ${toString timeout} \
           2>&1 | awk -f ${runner}/limit-output.awk
         status=''${PIPESTATUS[0]}
         set -e
         if [ "$status" -eq 124 ]; then
-          echo "vm test failed: host timeout after 20 seconds" >&2
+          echo "vm test failed: host timeout after ${toString (timeout + 5)} seconds" >&2
         fi
         [ "$status" -eq 0 ] || exit "$status"
         mkdir $out

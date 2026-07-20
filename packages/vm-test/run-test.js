@@ -12,11 +12,27 @@ import {
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-const memoryGrowth = process.argv.includes("--memory-growth");
-const positional = process.argv.slice(2).filter((argument) => argument !== "--memory-growth");
+let memoryGrowth = false;
+let timeoutSeconds = 15;
+const positional = [];
+const args = process.argv.slice(2);
+for (let index = 0; index < args.length; index++) {
+  if (args[index] === "--memory-growth") {
+    memoryGrowth = true;
+  } else if (args[index] === "--timeout-seconds") {
+    timeoutSeconds = Number(args[++index]);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+      throw new Error("--timeout-seconds must be positive");
+    }
+  } else {
+    positional.push(args[index]);
+  }
+}
 const [linuxPath, initramfsPath, diskPath] = positional;
 if (!linuxPath || !initramfsPath || positional.length > 3) {
-  throw new Error("usage: run-test.js <linux-module> <initramfs> [disk] [--memory-growth]");
+  throw new Error(
+    "usage: run-test.js <linux-module> <initramfs> [disk] [--memory-growth] [--timeout-seconds N]",
+  );
 }
 
 const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
@@ -177,8 +193,8 @@ void machine?.closed.catch((error) => {
 });
 
 const timeout = setTimeout(() => {
-  finish({ passed: false, reason: "timed out after 15 seconds" });
-}, 15_000);
+  finish({ passed: false, reason: `timed out after ${timeoutSeconds} seconds` });
+}, timeoutSeconds * 1000);
 
 const outcome = await result;
 clearTimeout(timeout);

@@ -68,6 +68,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     guest-agent = callPackage ./guest-agent/package.nix { };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
     less = callPackage ./less/package.nix { src = inputs.less-src; };
+    ltp = callPackage ./ltp/package.nix { src = inputs.ltp-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     make = callPackage ./make/package.nix { src = inputs.make-src; };
     mbedtls = callPackage ./mbedtls/package.nix { src = inputs.mbedtls-src; };
