@@ -42,10 +42,8 @@ stdenv.mkDerivation (finalAttrs: {
   # the build entirely, but a build-time generator can still be perl.
   nativeBuildInputs = [ pkgs.perl ];
 
-  # PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers; the
-  # fix is pending a kernel repoint. Git's curl transport may emit a kernel
-  # warning while initializing its progress timer, but transport operations
-  # remain hard assertions in the VM test and are never skipped or tolerated.
+  # POSIX timers work on the pinned kernel, including libcurl's progress timer;
+  # the remote VM check exercises the transport without tolerating warnings.
 
   # zlib is mandatory: git deflates every object and pack with it. curl (built
   # against mbedtls + zlib) provides the http/https smart transport used by
@@ -92,9 +90,11 @@ stdenv.mkDerivation (finalAttrs: {
   #   #ifndef __wasm__), so git uses compat/mmap.c, which reads whole objects
   #   into memory instead of mapping them. Loud-failure-by-absence is avoided
   #   because git ships this fallback for exactly this case.
-  # NO_UNIX_SOCKETS: AF_UNIX is unavailable on this kernel, so the unix-socket
-  #   code (credential-cache's daemon, the Simple-IPC / fsmonitor daemon) is
-  #   compiled out rather than left to fail at connect() time.
+  # Unix sockets are enabled. In Git 2.55 credential-cache launches
+  #   credential-cache--daemon directly through start_command(), so the
+  #   posix_spawn conversion creates the long-lived daemon without any
+  #   fork-without-exec step. The remote VM check covers a real cache round trip
+  #   and proves the unsupported historical `--daemon` spelling fails cleanly.
   # NO_POSIX_GOODIES: removes the only remaining fork() reference (setup.c
   #   daemonize()); `gc --daemonize` and git-daemon then return ENOSYS.
   # NO_RUST: git 2.55 can build an experimental libgitcore.a with cargo. We have
@@ -125,7 +125,6 @@ stdenv.mkDerivation (finalAttrs: {
     "NO_RUST=YesPlease"
     "NO_MMAP=YesPlease"
     "NO_REGEX=YesPlease"
-    "NO_UNIX_SOCKETS=YesPlease"
     "NO_POSIX_GOODIES=YesPlease"
     "NO_OPENSSL=YesPlease"
     "NO_PERL=YesPlease"

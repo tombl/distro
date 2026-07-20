@@ -23,13 +23,35 @@ cd /tmp || fail "cd /tmp failed"
 [ -e /libexec/git-core/git-remote-http ] || fail "git-remote-http not installed"
 [ -e /libexec/git-core/git-remote-https ] || fail "git-remote-https not installed"
 
+# Exercise the AF_UNIX credential cache. Git 2.55 starts the daemon as a fresh
+# credential-cache--daemon executable through start_command()/posix_spawn; it
+# does not use the historical fork-without-exec daemonization path.
+git credential-cache --daemon >/tmp/cache-misuse.out 2>/tmp/cache-misuse.err
+cache_misuse_rc=$?
+[ "$cache_misuse_rc" -ne 0 ] || fail "credential-cache --daemon unexpectedly succeeded"
+grep -q 'unknown option' /tmp/cache-misuse.err ||
+  fail "credential-cache --daemon did not fail with a diagnostic: $(cat /tmp/cache-misuse.err)"
+
+cache_socket=/tmp/git-credential-cache/socket
+printf 'protocol=https\nhost=example.test\nusername=alice\npassword=secret\n\n' |
+  git credential-cache --socket "$cache_socket" store 2>/tmp/err ||
+  fail "credential-cache store failed: $(cat /tmp/err)"
+cached=$(printf 'protocol=https\nhost=example.test\n\n' |
+  git credential-cache --socket "$cache_socket" get 2>/tmp/err) ||
+  fail "credential-cache get failed: $(cat /tmp/err)"
+printf '%s\n' "$cached" | grep -qx 'username=alice' ||
+  fail "credential-cache omitted username: [$cached]"
+printf '%s\n' "$cached" | grep -qx 'password=secret' ||
+  fail "credential-cache omitted password: [$cached]"
+git credential-cache --socket "$cache_socket" exit 2>/tmp/err ||
+  fail "credential-cache exit failed: $(cat /tmp/err)"
+[ ! -e "$cache_socket" ] || fail "credential-cache exit left its socket behind"
+
 # Build a real dumb-HTTP remote. This drives git -> git-remote-http -> libcurl ->
 # BusyBox httpd over the guest TCP stack, then verifies both discovery and object
 # transfer. A broad error-message grep against a deliberately closed port would
-# pass even if the useful transport path were broken.
-# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
-# git-remote-http may produce a kernel warning until the pending kernel repoint.
-# The host VM deadline bounds hangs; every transport result is asserted below.
+# pass even if the useful transport path were broken. The host VM deadline
+# bounds hangs; every transport result is asserted below.
 git init -b main source >/dev/null 2>/tmp/err || fail "init source: $(cat /tmp/err)"
 git -C source config user.name Test
 git -C source config user.email test@example.com
