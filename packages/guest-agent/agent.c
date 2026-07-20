@@ -31,6 +31,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <linux/vm_sockets.h>
@@ -695,7 +696,9 @@ int main(void)
 	}
 	/* /proc is load-bearing: the host's realPath and FsFile.stat go
 	 * through /proc/self/fd/N. */
-	if (mount_if_needed("proc", "/proc", "proc") == -1 ||
+	if ((mkdir("/dev/pts", 0755) == -1 && errno != EEXIST) ||
+	    mount_if_needed("devpts", "/dev/pts", "devpts") == -1 ||
+	    mount_if_needed("proc", "/proc", "proc") == -1 ||
 	    mount_if_needed("sysfs", "/sys", "sysfs") == -1) {
 		perror("mount");
 		return 1;
