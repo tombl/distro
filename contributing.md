@@ -34,12 +34,30 @@ depending on image composition order.
 
 ## Building and running
 
+- **Stage new files before running any Nix command.** Flakes copy a Git worktree
+  through the dirty-tree fetcher, which includes tracked edits but silently
+  omits untracked files. Run `git add <new-file>` before `nix build`,
+  `nix develop`, `nix fmt`, or `nix flake check`; otherwise a build can pass
+  without seeing the file you just added.
 - `nix run` builds and starts the system in your terminal. Run
   `nix run . -- --help` for debug flags and host integration options.
 - `nix run .#serve` hosts the same site published at https://linux.tombl.dev so
   you can poke it locally with browser devtools.
 - `nix build .#<pkg>` builds one package; `nix flake check` builds every VM and
   formatting check.
+
+## Git hooks
+
+Install the repository's portable pre-commit hook once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+The hook resolves the formatter through the flake on every run, so it does not
+embed a Nix store path that can go stale after garbage collection. It runs the
+same formatter set as the flake's formatting check and rejects commits that
+would change files.
 
 ## Working on dependencies
 
