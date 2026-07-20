@@ -114,7 +114,7 @@ pty_size=$(sed -n '2{s/\r$//;p;}' /tmp/pty.out)
 pty_rows=${pty_size%% *}
 pty_cols=${pty_size#* }
 case $pty_rows$pty_cols in
-""|*[!0-9]*) fail "stty size was not numeric: $(cat /tmp/pty.out)" ;;
+"" | *[!0-9]*) fail "stty size was not numeric: $(cat /tmp/pty.out)" ;;
 esac
 [ "$pty_rows $pty_cols" = "$pty_size" ] ||
   fail "stty size did not report rows and columns: $pty_size"
