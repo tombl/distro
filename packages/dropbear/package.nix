@@ -59,15 +59,6 @@ let
     # dropbear in sbin and the client tools in bin.
     installTargets = [ "install" ];
 
-    # dropbear installs to sbin; the stdenv's sbin->bin hook then moves the
-    # binaries into bin and leaves sbin as a symlink to bin. That symlink
-    # collides with busybox's real sbin directory when the initramfs builder
-    # merges package trees (cp cannot replace a directory with a symlink), so
-    # drop it -- every binary already lives in bin.
-    postFixup = ''
-      rm -f $out/sbin
-    '';
-
     passthru.checks =
       let
         tcpSpawn = stdenv.mkDerivation {

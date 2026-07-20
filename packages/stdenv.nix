@@ -68,6 +68,11 @@ pkgs.stdenv.override (old: {
     # never exports the tool variables the way prefixed cross wrappers do;
     # plain Makefiles otherwise fall back to the build platform's `ar`.
     export AR=llvm-ar RANLIB=llvm-ranlib NM=llvm-nm
+    # This target is assembled into an FHS root with a real /sbin. nixpkgs'
+    # move-sbin hook replaces package sbin directories with `sbin -> bin`, which
+    # cannot be overlaid with another package's real sbin directory. Keep the
+    # installed layout and let the rootfs builders merge directories normally.
+    export dontMoveSbin=1
     export CONFIG_SITE=${configSite}
     export NIX_CFLAGS_LINK="${
       toString (map (flag: "-Wl,${flag}") platform.linkerFlags)

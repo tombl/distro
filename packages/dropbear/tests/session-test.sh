@@ -65,8 +65,10 @@ chmod 600 /root/.ssh/authorized_keys || fail "chmod authorized_keys failed"
 # (no timers on this kernel).
 rm -f /tmp/listener-ready
 # posix_spawn (in tcp-spawn) does no PATH search, so name dropbear by full path.
+# The scope keeps FHS sbin directories intact instead of applying nixpkgs'
+# sbin-to-bin move hook.
 tcp-spawn "$PORT" /tmp/listener-ready \
-  /bin/dropbear -i -E -s -r /etc/dropbear/host_ed25519 &
+  /sbin/dropbear -i -E -s -r /etc/dropbear/host_ed25519 &
 listener_pid=$!
 
 i=0

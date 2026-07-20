@@ -17,9 +17,6 @@ let
     # busybox builds host tools with HOSTCC during the target build.
     depsBuildBuild = [ pkgs.stdenv.cc ];
 
-    # The rootfs ships this FHS tree as-is; keep sbin a real directory.
-    dontMoveSbin = true;
-
     configurePhase = ''
       runHook preConfigure
 
