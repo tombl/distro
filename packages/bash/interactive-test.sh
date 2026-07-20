@@ -12,6 +12,8 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mkdir -p /dev/pts || fail "creating /dev/pts failed"
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
+mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 {
   printf '%s\n' 'case $- in *i*) printf "%s\n" interactive >/tmp/interactive ;; *) printf "%s\n" noninteractive >/tmp/interactive ;; esac'

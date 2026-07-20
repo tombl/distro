@@ -9,6 +9,8 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 bash --version >/tmp/bash-version 2>&1 ||
   fail "bash --version failed: $(cat /tmp/bash-version)"
@@ -68,6 +70,10 @@ if ! bash -c 'read -r line <<<"here-string"; test "$line" = here-string'; then
   fail "here-string failed"
 fi
 
+if ! bash -c '< /dev/null'; then
+  fail "forced-child redirection-only command failed"
+fi
+
 bash /tests/bash-functional-test.sh || fail "comprehensive Bash checks failed"
 
 # The target has no dlopen, so loadable builtins must fail explicitly.
@@ -77,19 +83,13 @@ fi
 grep -q 'dynamic loading not available' /tmp/loadable.out ||
   fail "loadable builtin failure was not explicit: $(cat /tmp/loadable.out)"
 
-# Until every make_child consumer is converted, remaining process-creating
-# syntax must fail at the temporary fork guard instead of degrading quietly.
-if bash -c 'cat <(printf process-substitution)' >/tmp/procsub.out 2>&1; then
-  fail "unconverted process substitution unexpectedly succeeded"
+if ! bash -c 'test "$(cat <(printf process-substitution))" = process-substitution'; then
+  fail "process substitution failed"
 fi
-grep -q 'unconverted fork() call reached on wasm Linux' /tmp/procsub.out ||
-  fail "unconverted process substitution missed the fork guard: $(cat /tmp/procsub.out)"
 
-if bash -c 'coproc child { :; }' >/tmp/fork.out 2>&1; then
-  fail "unconverted coprocess unexpectedly succeeded"
+if ! bash -c 'coproc child { read -r value; printf "reply:%s\n" "$value"; }; child_pid=$child_PID; printf "smoke\n" >&"${child[1]}"; read -r reply <&"${child[0]}"; wait "$child_pid" && test "$reply" = reply:smoke'; then
+  fail "coprocess bidirectional I/O or PID variable failed"
 fi
-grep -q 'unconverted fork() call reached on wasm Linux' /tmp/fork.out ||
-  fail "unconverted coprocess did not report the fork guard: $(cat /tmp/fork.out)"
 
 echo "::vm-test::pass"
 while :; do :; done

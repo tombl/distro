@@ -29,6 +29,9 @@ stdenv.mkDerivation (finalAttrs: {
     ./wasm-main.patch
     ./wasm-simple-command-clone.patch
     ./wasm-disk-command-clone.patch
+    ./wasm-process-substitution-clone.patch
+    ./wasm-coproc-clone.patch
+    ./wasm-null-command-clone.patch
   ];
 
   depsBuildBuild = [ pkgs.stdenv.cc ];
@@ -57,10 +60,10 @@ stdenv.mkDerivation (finalAttrs: {
     "bash_cv_getcwd_malloc=yes"
     "bash_cv_getenv_redef=yes"
     "bash_cv_func_sigsetjmp=present"
-    # Cross configure sees the build host's /dev/fd. The guest mounts only
-    # devtmpfs and has no /dev/fd, as verified by the process-substitution VM
-    # probe; force Bash onto its named-pipe fallback.
-    "bash_cv_dev_fd=absent"
+    # Device setup links /dev/fd to the mounted procfs descriptor directory.
+    # The VM regression also proves an inherited descriptor remains usable
+    # through callback clone and exec.
+    "bash_cv_dev_fd=standard"
     "bash_cv_pgrp_pipe=no"
     "bash_cv_wcontinued_broken=no"
   ];

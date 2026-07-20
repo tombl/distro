@@ -70,6 +70,41 @@ subshell_value=$(
 nested=$(printf '%s' "$(printf '%s' "$(printf deep)")")
 [[ $nested == deep ]] || fail "nested command substitution"
 
+if ! diff <(printf 'same\ncontent\n') <(printf 'same\ncontent\n'); then
+  fail "input process substitution"
+fi
+
+printf 'writer-data\n' > >(cat >/tmp/bash-process-substitution-writer)
+wait
+read -r process_writer </tmp/bash-process-substitution-writer
+[[ $process_writer == writer-data ]] || fail "output process substitution"
+
+# This descriptor originates in the parent shell, crosses the process-
+# substitution clone, and remains readable after its command execs cat.
+printf 'inherited-fd\n' >/tmp/bash-inherited-fd
+exec 9</tmp/bash-inherited-fd
+inherited_fd=$(cat <(cat /dev/fd/9))
+exec 9<&-
+[[ $inherited_fd == inherited-fd ]] ||
+  fail "inherited descriptor through process substitution and exec"
+
+coproc ROUNDTRIP {
+  for _ in 1 2; do
+    IFS= read -r coproc_request || exit
+    printf 'reply:%s\n' "$coproc_request"
+  done
+}
+coprocess_pid=$ROUNDTRIP_PID
+[[ $coprocess_pid =~ ^[0-9]+$ && $coprocess_pid -eq $! ]] ||
+  fail "coprocess PID variable"
+printf 'one\n' >&"${ROUNDTRIP[1]}"
+IFS= read -r coprocess_reply_one <&"${ROUNDTRIP[0]}"
+printf 'two\n' >&"${ROUNDTRIP[1]}"
+IFS= read -r coprocess_reply_two <&"${ROUNDTRIP[0]}"
+wait "$coprocess_pid" || fail "waiting for coprocess"
+[[ $coprocess_reply_one == reply:one && $coprocess_reply_two == reply:two ]] ||
+  fail "bidirectional coprocess I/O"
+
 outer=parent
 (
   outer=subshell
@@ -99,6 +134,13 @@ EOF
 read -r herestring_line <<<"here-string"
 [[ $herestring_line == here-string ]] || fail "here-string"
 
+# An input redirection on a command with no words sets execute_null_command's
+# forcefork safety path; it must run through the callback continuation.
+# shellcheck disable=SC2188 # The commandless redirection is the behavior under test.
+if ! </dev/null; then
+  fail "forced-child redirection-only command"
+fi
+
 cat_output=$(
   cat <<'EOF'
 external here-document
@@ -121,9 +163,9 @@ signal_child=$!
 wait "$signal_child"
 signal_wait_status=$?
 [[ $usr1_value == delivered ]] || fail "SIGUSR1 trap"
-if [[ $signal_wait_status -gt 128 ]]; then
-  wait "$signal_child" || fail "reaping SIGUSR1 sender after interrupted wait"
-fi
+[[ $signal_wait_status -gt 128 ]] ||
+  fail "wait was not interrupted by trapped SIGUSR1: $signal_wait_status"
+wait "$signal_child" || fail "reaping SIGUSR1 sender after interrupted wait"
 trap - USR1
 
 printf 'bash functional checks passed\n'
