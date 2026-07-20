@@ -123,7 +123,7 @@ let
       name = "basic-init-kernel-memory-growth";
       init = "${buildInit "basic-init-kernel-memory-growth" "tests/kernel-memory-growth.c"}/bin/init";
     };
-    memoryGrowth = true;
+    cpus = 2;
   };
 in
 (buildInit "basic-init" "init.c").overrideAttrs {

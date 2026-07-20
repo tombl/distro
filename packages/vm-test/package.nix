@@ -67,7 +67,7 @@ let
       name,
       initramfs,
       disk ? null,
-      memoryGrowth ? false,
+      cpus ? 1,
       timeout ? 20,
     }:
     pkgs.runCommand "vm-test-${name}"
@@ -81,10 +81,10 @@ let
         ''}
         set +e
         timeout ${toString (timeout + 5)} node ${runner}/run-test.js \
+          --cpus ${toString cpus} \
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
-          ${lib.optionalString memoryGrowth "--memory-growth"} \
           --timeout-seconds ${toString timeout} \
           2>&1 | awk -f ${runner}/limit-output.awk
         status=''${PIPESTATUS[0]}

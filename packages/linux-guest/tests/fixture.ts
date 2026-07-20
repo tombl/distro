@@ -42,7 +42,7 @@ export function guest_test(
 
     async function spawn() {
       const guest = await spawnGuest({
-        cpus: 2,
+        cpus: 1,
         network,
         assets,
         devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],

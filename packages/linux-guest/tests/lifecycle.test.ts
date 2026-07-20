@@ -38,7 +38,7 @@ async function run_machine(mode: string) {
   const output = { text: "" };
   const machine = await spawnMachine({
     cmdline: `lifecycle=${mode}`,
-    cpus: 2,
+    cpus: 1,
     devices: [consoleDevice(closed_input(), output_sink(output))],
     initcpio: lifecycle_assets.initramfs,
   });
@@ -53,7 +53,7 @@ interface RunnerResult {
   milliseconds_after_trigger: number | undefined;
 }
 
-async function run_runner(cmdline: string, cpus = 2): Promise<RunnerResult> {
+async function run_runner(cmdline: string, cpus = 1): Promise<RunnerResult> {
   const child = spawn(
     lifecycle_assets.runner,
     [

@@ -12,13 +12,13 @@ import {
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-let memoryGrowth = false;
 let timeoutSeconds = 15;
+let cpus = 1;
 const positional = [];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
-  if (args[index] === "--memory-growth") {
-    memoryGrowth = true;
+  if (args[index] === "--cpus") {
+    cpus = Number(args[++index]);
   } else if (args[index] === "--timeout-seconds") {
     timeoutSeconds = Number(args[++index]);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
@@ -29,9 +29,15 @@ for (let index = 0; index < args.length; index++) {
   }
 }
 const [linuxPath, initramfsPath, diskPath] = positional;
-if (!linuxPath || !initramfsPath || positional.length > 3) {
+if (
+  !linuxPath ||
+  !initramfsPath ||
+  positional.length > 3 ||
+  !Number.isSafeInteger(cpus) ||
+  cpus < 1
+) {
   throw new Error(
-    "usage: run-test.js <linux-module> <initramfs> [disk] [--memory-growth] [--timeout-seconds N]",
+    "usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk] [--timeout-seconds N]",
   );
 }
 
@@ -45,6 +51,8 @@ const result = new Promise((resolve) => {
 });
 let settled = false;
 let machine;
+let initialMemoryBytes;
+let observingMemoryGrowth = false;
 let memoryGrowthStage = 0;
 let previousMemoryBytes;
 
@@ -58,18 +66,27 @@ function finish(value) {
 }
 
 function consumeLine(line) {
-  if (memoryGrowth && line === "::kernel-memory::ready") {
+  if (line === "::kernel-memory::ready") {
+    observingMemoryGrowth = true;
+    console.log(`kernel memory after spawn: ${initialMemoryBytes} bytes`);
+    if (initialMemoryBytes >= MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES) {
+      finish({
+        passed: false,
+        reason: `kernel memory started at ${initialMemoryBytes} bytes instead of growing on demand`,
+      });
+      return;
+    }
     observeMemoryGrowth(0);
     return;
   }
-  if (memoryGrowth && line === "::kernel-memory::sequential") {
+  if (line === "::kernel-memory::sequential") {
     observeMemoryGrowth(1);
     return;
   }
 
   const testResult = parseResult(line);
   if (testResult) {
-    if (memoryGrowth && testResult.passed) observeMemoryGrowth(2);
+    if (observingMemoryGrowth && testResult.passed) observeMemoryGrowth(2);
     finish(testResult);
   } else if (line.includes("Kernel panic - not syncing")) {
     finish({ passed: false, reason: line });
@@ -130,7 +147,6 @@ function consoleOutput({ failWhenClosed }) {
 
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
-if (!memoryGrowth) void inputWriter.close();
 const devices = [
   consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
   entropyDevice(),
@@ -166,7 +182,7 @@ if (diskPath) {
 }
 
 machine = await spawnMachine({
-  cpus: memoryGrowth ? 2 : 1,
+  cpus,
   devices,
   initcpio: readFileSync(initramfsPath),
 }).catch((error) => {
@@ -174,16 +190,7 @@ machine = await spawnMachine({
   return null;
 });
 
-if (machine) {
-  const initialMemoryBytes = machine.memory.buffer.byteLength;
-  if (memoryGrowth) console.log(`kernel memory after spawn: ${initialMemoryBytes} bytes`);
-  if (memoryGrowth && initialMemoryBytes >= MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES) {
-    finish({
-      passed: false,
-      reason: `kernel memory started at ${initialMemoryBytes} bytes instead of growing on demand`,
-    });
-  }
-}
+if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
 void machine?.bootConsole
   .pipeTo(consoleOutput({ failWhenClosed: false }), { preventClose: true })
