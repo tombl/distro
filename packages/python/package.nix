@@ -8,6 +8,7 @@
   sqlite3,
   readline,
   ncurses,
+  openssl,
   vm-test,
   busybox,
 }:
@@ -35,6 +36,7 @@ let
       sqlite3 # _sqlite3
       readline # readline (REPL line editing)
       ncurses # _curses, and termcap backing for readline
+      openssl # _ssl + _hashlib (static libssl.a/libcrypto.a)
     ];
 
     # subprocess must launch children on a platform with no working fork().
@@ -47,7 +49,18 @@ let
     configureFlags = [
       "--disable-shared"
       "--with-build-python=${pkgs.python313}/bin/python3"
-      "--with-ensurepip=no" # pip needs ssl/network we don't have
+      # No pip, and it is not worth chasing. Two independent blockers:
+      # (1) --with-ensurepip=install misfires on a cross build: the Makefile hook
+      #     runs the *build-host* python with --root=/, so pip lands in the host
+      #     interpreter's scheme, never the target site-packages.
+      # (2) Even side-stepping that (unpack the bundled wheel into the guest's
+      #     site-packages by hand; it is pure python and imports fine), pip
+      #     cannot run: its vendored cachecontrol.filewrapper does an
+      #     unconditional `import mmap`, and mmap is disabled here (no
+      #     <sys/mman.h> on wasm), so `pip install --no-index <localwheel>`
+      #     fails at import before doing any work. Revisit only if pip drops
+      #     that mmap dependency or an mmap shim appears on this platform.
+      "--with-ensurepip=no"
       "--disable-test-modules" # skip the _test* C extensions and Lib/test
 
       # mimalloc (default on) and the mmap module both need <sys/mman.h>, which
@@ -65,12 +78,22 @@ let
       # getaddrinfo is fine, so assert it and keep ipv6 enabled.
       "ac_cv_buggy_getaddrinfo=no"
 
+      # Point CPython at the ported static OpenSSL. With --with-openssl set,
+      # configure takes the ssldir branch (never the pkg-config branch, so the
+      # missing pkg-config in this stdenv is irrelevant): it finds
+      # <prefix>/include/openssl/ssl.h and sets OPENSSL_LIBS="-lssl -lcrypto"
+      # itself, in the right static link order (libssl depends on libcrypto).
+      # The three OpenSSL probes (SSL_new, ac_cv_working_openssl_ssl/_hashlib)
+      # are link-only, so cross-compiling never runs the wasm binary. Our
+      # libcrypto has no dlopen (no-dso) or zlib deps, and musl folds pthreads
+      # into libc, so -lssl -lcrypto resolves with no extra plumbing. This
+      # enables both _ssl and _hashlib.
+      "--with-openssl=${openssl}"
+
       # Module selection. py_cv_module_<name>=n/a forces a module off.
       "py_cv_module__posixsubprocess=n/a" # fork_exec: no usable fork(); see patch
       "py_cv_module_mmap=n/a" # no <sys/mman.h>
       "py_cv_module__ctypes=n/a" # no libffi by platform policy
-      "py_cv_module__ssl=n/a" # no OpenSSL yet (hashlib still works via _hacl)
-      "py_cv_module__hashlib=n/a" # no OpenSSL; builtin _md5/_sha*/_blake2 cover it
 
       # POSIX named semaphores need sem_open(), which musl does not provide on
       # wasm (only sem_unlink/sem_getvalue/sem_timedwait link). _multiprocessing
@@ -106,8 +129,12 @@ let
           name = "python-interpreter";
           init = ./python-test.sh;
           # busybox first so its applets (echo, sh) are present; python later.
+          # openssl CLI generates the ephemeral TLS test cert/key in-guest, so
+          # its validity window tracks the guest clock (no build-vs-guest time
+          # skew) and no PEM fixture has to be baked into the image.
           contents = [
             busybox
+            openssl
             finalAttrs.finalPackage
           ];
         };
