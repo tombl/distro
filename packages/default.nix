@@ -94,6 +94,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     site-rootfs = callPackage ./site/rootfs.nix { };
 
     # host tools and tests:
+    browser-tests = callPackage ./browser-tests/package.nix { };
     node-workspace = callPackage ./node-workspace.nix { };
     linux-guest = callPackage ./linux-guest/package.nix { };
     runner = callPackage ./runner/package.nix { };
