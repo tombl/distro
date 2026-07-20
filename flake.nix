@@ -36,6 +36,10 @@
       url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
       flake = false;
     };
+    git-src = {
+      url = "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz";
+      flake = false;
+    };
     grep-src = {
       url = "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz";
       flake = false;

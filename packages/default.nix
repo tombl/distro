@@ -60,6 +60,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     findutils = callPackage ./findutils/package.nix { src = inputs.findutils-src; };
     gawk = callPackage ./gawk/package.nix { src = inputs.gawk-src; };
+    git = callPackage ./git/package.nix { src = inputs.git-src; };
     grep = callPackage ./grep/package.nix { src = inputs.grep-src; };
     guest-agent = callPackage ./guest-agent/package.nix { };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
