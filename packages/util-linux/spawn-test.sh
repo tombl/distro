@@ -1,8 +1,9 @@
 #!/bin/busybox sh
 # Exercises the two tools whose fork+exec was converted to posix_spawn:
 # flock (advisory locking, -c spawns a shell) and setsid (new session via
-# POSIX_SPAWN_SETSID). Assertions are deterministic -- no reliance on timing
-# or on SIGALRM, which does not fire on this kernel.
+# POSIX_SPAWN_SETSID). Assertions are deterministic -- no reliance on timing.
+# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
+# SIGALRM does not fire until the pending kernel repoint.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"

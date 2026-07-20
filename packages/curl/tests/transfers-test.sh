@@ -32,8 +32,8 @@ cmp /tmp/data /tmp/out || fail "file:// round trip content mismatch"
 
 # (c) Real loopback HTTP round trip. Readiness is the observable LISTEN state,
 # not a timing sleep. The host's 20-second VM deadline bounds an actual curl
-# hang; curl --max-time cannot do that on the pinned kernel because POSIX timers
-# are inert until the pending kernel repoint.
+# hang. PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers;
+# curl --max-time is inert until the pending kernel repoint.
 ip link set lo up 2>/tmp/iperr || fail "bringing up loopback failed: $(cat /tmp/iperr)"
 mkdir -p /www || fail "creating HTTP root failed"
 cp /tmp/data /www/data || fail "creating HTTP fixture failed"

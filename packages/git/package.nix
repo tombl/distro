@@ -42,6 +42,11 @@ stdenv.mkDerivation (finalAttrs: {
   # the build entirely, but a build-time generator can still be perl.
   nativeBuildInputs = [ pkgs.perl ];
 
+  # PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers; the
+  # fix is pending a kernel repoint. Git's curl transport may emit a kernel
+  # warning while initializing its progress timer, but transport operations
+  # remain hard assertions in the VM test and are never skipped or tolerated.
+
   # zlib is mandatory: git deflates every object and pack with it. curl (built
   # against mbedtls + zlib) provides the http/https smart transport used by
   # git-remote-http; mbedtls supplies its TLS. All are static and picked up

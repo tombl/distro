@@ -27,6 +27,9 @@ cd /tmp || fail "cd /tmp failed"
 # BusyBox httpd over the guest TCP stack, then verifies both discovery and object
 # transfer. A broad error-message grep against a deliberately closed port would
 # pass even if the useful transport path were broken.
+# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
+# git-remote-http may produce a kernel warning until the pending kernel repoint.
+# The host VM deadline bounds hangs; every transport result is asserted below.
 git init -b main source >/dev/null 2>/tmp/err || fail "init source: $(cat /tmp/err)"
 git -C source config user.name Test
 git -C source config user.email test@example.com

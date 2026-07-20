@@ -20,9 +20,10 @@ stdenv.mkDerivation (finalAttrs: {
   #     it only works by LD_PRELOADing libstdbuf.so, and this target has no
   #     dlopen and no dynamic linking, so it could never function.
   #   * timeout is installed and launches its command correctly, but the timeout
-  #     itself is inert: enforcement relies on setitimer/SIGALRM, and interval
-  #     timers do not fire on this kernel yet (see PLATFORM ISSUES / the itimer
-  #     bug). It behaves as an unconditional "run to completion" until that lands.
+  #     itself is inert: enforcement relies on setitimer/SIGALRM.
+  #     PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers;
+  #     the fix is pending a kernel repoint. Until then timeout behaves as an
+  #     unconditional "run to completion" wrapper.
   #   * sort's --compress-program forked a helper; with fork forced off (below)
   #     autoconf selects sort's fork-free path, which silently drops that option.
   # Everything else is installed and exercised by the passthru VM checks.

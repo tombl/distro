@@ -11,6 +11,11 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 mount -t proc proc /proc || fail "mounting proc failed"
 ip link set lo up || fail "bringing up loopback failed"
 
+# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so the
+# -w deadlines below and wget's progress timer are inert until the pending
+# kernel repoint. Socket readiness is observed via /proc and the host VM
+# deadline fails a hang; all network results remain hard assertions.
+
 wait_for_socket() {
   table=$1
   port=$2

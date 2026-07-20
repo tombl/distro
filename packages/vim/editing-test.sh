@@ -34,7 +34,7 @@ grep -q '\-python3' /tmp/ver || fail "expected -python3 (no interpreters)"
 printf 'foo one\nfoo two\nfoo three\n' >edit.txt
 # The single-quoted arguments below are vim ex commands ($ is "last line" /
 # "end of line" in vim), not shell expansions, so single quotes are correct.
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016 # $ is Vim syntax inside the single-quoted commands
 vim -u NONE -N -es \
   -c '%s/foo/bar/g' \
   -c '2s/$/ EDITED/' \

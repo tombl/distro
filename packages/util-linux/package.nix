@@ -48,8 +48,9 @@ stdenv.mkDerivation (finalAttrs: {
   #
   # Degraded but shipped:
   #   * flock -w <timeout> is inert: the timeout relies on setitimer/SIGALRM,
-  #     which do not fire on this kernel yet (see PLATFORM ISSUES / the itimer
-  #     bug). Plain locking works; only the -w deadline is a no-op.
+  #     which do not fire on the pinned kernel. PENDING-REPOINT(timers): the fix
+  #     is pending a kernel repoint. Plain locking works; only the -w deadline
+  #     is a no-op.
   #   * setsid -c (set controlling terminal) errors out: it needs
   #     ioctl(TIOCSCTTY) in the child after setsid(), which posix_spawn cannot
   #     express, and there is no controlling terminal here anyway.

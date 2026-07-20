@@ -64,9 +64,9 @@ cd / || fail "cd back failed"
 
 # expr arithmetic and string ops. expr is deliberately under test here, so the
 # "expr is antiquated" style advice does not apply.
-# shellcheck disable=SC2003
+# shellcheck disable=SC2003 # expr is deliberately the command under test
 [ "$(expr 6 \* 7)" -eq 42 ] || fail "expr multiplication failed"
-# shellcheck disable=SC2003
+# shellcheck disable=SC2003 # expr is deliberately the command under test
 [ "$(expr abcde : '.*')" -eq 5 ] || fail "expr string match failed"
 
 # printf.

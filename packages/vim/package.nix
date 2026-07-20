@@ -58,7 +58,8 @@ stdenv.mkDerivation (finalAttrs: {
   # --- other platform gaps -----------------------------------------------------
   # No mmap: vim never calls mmap and nothing probes for it, so there is nothing
   #   to force off (the stdenv's config.site answer is moot here).
-  # No working POSIX timers/SIGALRM: vim's mapping timeouts and timer_start()
+  # PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers; the
+  # fix is pending a kernel repoint. Vim's mapping timeouts and timer_start()
   #   fire off poll() deadlines in the main input loop, not signals, so they
   #   degrade rather than hang. timer_create() is only consulted for
   #   nanosecond profiling precision (HUGE-only FEAT_PROFILE), so

@@ -24,9 +24,10 @@ work=/tmp/coreutils-spawn
 rm -rf "$work"
 mkdir -p "$work" || fail "mkdir failed"
 
-# --- timeout: spawns the command via posix_spawn and waits on it. The timer
-# itself is inert on this platform (SIGALRM does not fire), so the command must
-# run to completion and its stdout and exit status must come back intact. ---
+# --- timeout: spawns the command via posix_spawn and waits on it.
+# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
+# SIGALRM does not fire until the pending kernel repoint. The command must run
+# to completion and its stdout and exit status must come back intact. ---
 out=$(timeout 10 seq 1 3) || fail "timeout failed"
 [ "$(printf '%s' "$out" | tr '\n' ' ')" = "1 2 3" ] ||
   fail "timeout did not relay the command output (got '$out')"
