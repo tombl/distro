@@ -171,6 +171,12 @@ const machine = await spawnMachine({
             The situation here could get better if the <a href="https://github.com/WebAssembly/stack-switching">WebAssembly stack-switching proposal</a> is implemented.
           </li>
           <li>
+            Signal delivery is cooperative. WebAssembly has no way to interrupt running code, so
+            signals and timers are only delivered when a process enters the kernel or the CPU goes
+            idle. A compute loop that never makes a syscall cannot be preempted, stopped, or
+            killed until it does.
+          </li>
+          <li>
             There is no <code>mmap()</code> yet, this depends on the <a href="https://github.com/WebAssembly/memory-control">WebAssembly memory-control proposal</a>.
             Apps must be rewritten to use file I/O instead, and memory can't be shared between processes.
           </li>
