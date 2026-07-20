@@ -70,12 +70,13 @@ options:
 assert(!Number.isNaN(parseInt(args.cpus, 10)), "cpus must be a number");
 
 const devices = [];
+let restoreTerminal = () => {};
 
 if (args.console) {
   if (process.stdin.isTTY) {
     let raw = false;
 
-    const restore = () => {
+    restoreTerminal = () => {
       if (!raw) return;
       raw = false;
       process.stdin.setRawMode(false);
@@ -83,7 +84,7 @@ if (args.console) {
 
     const exitFromSignal = (signal: NodeJS.Signals, code: number) => {
       process.on(signal, () => {
-        restore();
+        restoreTerminal();
         process.exit(code);
       });
     };
@@ -91,7 +92,7 @@ if (args.console) {
     process.stdin.setRawMode(true);
     raw = true;
 
-    process.on("exit", restore);
+    process.on("exit", restoreTerminal);
     exitFromSignal("SIGHUP", 129);
     exitFromSignal("SIGINT", 130);
     exitFromSignal("SIGQUIT", 131);
@@ -168,11 +169,19 @@ const machine = await spawnMachine({
   initcpio: await readFile(args.initcpio),
 });
 
-void machine.bootConsole
+const bootConsole = machine.bootConsole
   .pipeTo(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>, {
     preventClose: true,
   })
   .catch(() => {});
-void machine.closed.catch((error) => {
+
+try {
+  await machine.closed;
+} catch (error) {
   console.error(error);
-});
+  process.exitCode = 1;
+} finally {
+  restoreTerminal();
+  if (args.console) process.stdin.pause();
+  await bootConsole;
+}
