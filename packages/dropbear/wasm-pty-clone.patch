@@ -1,0 +1,124 @@
+--- a/src/svr-chansession.c
++++ b/src/svr-chansession.c
+@@ -23,6 +23,7 @@
+  * SOFTWARE. */
+ 
+ #include "includes.h"
++#include <sched.h>
+ #include "packet.h"
+ #include "buffer.h"
+ #include "session.h"
+@@ -48,6 +49,7 @@
+ static int ptycommand(struct Channel *channel, struct ChanSess *chansess);
+ static int sessionwinchange(const struct ChanSess *chansess);
+ static void prepare_child_environ(const struct ChanSess *chansess);
++static int pty_child(void *user_data);
+ static void addchildpid(struct ChanSess *chansess, pid_t pid);
+ static void sesssigchild_handler(int val);
+ static void closechansess(const struct Channel *channel);
+@@ -844,20 +846,67 @@
+ /* Execute a command or shell within a pty environment.
+  * Returns DROPBEAR_SUCCESS or DROPBEAR_FAILURE */
+ static int ptycommand(struct Channel *channel, struct ChanSess *chansess) {
+-	(void)channel;
+-	(void)chansess;
++	const size_t stack_size = 64 * 1024;
++	char *stack;
++	pid_t pid;
++
++	TRACE(("enter ptycommand"))
++
++	if (chansess->master == -1 || chansess->tty == NULL) {
++		dropbear_log(LOG_WARNING, "No pty was allocated, couldn't execute");
++		return DROPBEAR_FAILURE;
++	}
++
++	/* The callback child gets an ordinary, non-CLONE_VM process image, so it
++	 * can perform the session and controlling-terminal setup that posix_spawn
++	 * cannot express, then exec the shell. */
++	prepare_child_environ(chansess);
++	stack = m_malloc(stack_size);
++	pid = clone(pty_child, stack + stack_size, SIGCHLD, chansess);
++	m_free(stack);
++	if (pid < 0)
++		return DROPBEAR_FAILURE;
+ 
+-	/* A pty session's child must setsid() and ioctl(TIOCSCTTY) to acquire the
+-	 * slave as its controlling terminal before exec. wasm has no fork(), and
+-	 * posix_spawn cannot run that in-child setup; the guest kernel also ships
+-	 * no /dev/ptmx, so pty allocation (sessionpty) fails before we ever get
+-	 * here for a well-behaved client. Interactive/pty sessions are therefore
+-	 * unsupported: fail loudly rather than hang. Command execution and non-pty
+-	 * shells go through noptycommand and work. */
+-	dropbear_log(LOG_WARNING,
+-		"PTY sessions are not supported on this platform (no fork/ptmx)");
+-	TRACE(("leave ptycommand: unsupported on wasm"))
+-	return DROPBEAR_FAILURE;
++	chansess->pid = pid;
++	addchildpid(chansess, pid);
++
++	close(chansess->slave);
++	channel->writefd = chansess->master;
++	channel->readfd = chansess->master;
++	ses.maxfd = MAX(ses.maxfd, chansess->master);
++	channel->bidir_fd = 0;
++	setnonblocking(chansess->master);
++
++	TRACE(("leave ptycommand"))
++	return DROPBEAR_SUCCESS;
++}
++
++/* Run in a callback-clone child on its fresh stack. TIOCSCTTY after setsid()
++ * makes the inherited slave the controlling terminal before stdio is attached
++ * and the shell replaces the child. */
++static int pty_child(void *user_data) {
++	struct ChanSess *chansess = user_data;
++	char *usershell;
++	int slave = chansess->slave;
++
++	if (signal(SIGCHLD, SIG_DFL) == SIG_ERR)
++		return 120;
++	close(chansess->master);
++	if (setsid() < 0)
++		return 121;
++
++	if (ioctl(slave, TIOCSCTTY, 0) < 0)
++		return 123;
++	if (dup2(slave, STDIN_FILENO) < 0
++			|| dup2(slave, STDOUT_FILENO) < 0
++			|| dup2(slave, STDERR_FILENO) < 0)
++		return 124;
++	if (slave > STDERR_FILENO)
++		close(slave);
++
++	usershell = m_strdup(get_user_shell());
++	run_shell_command(chansess->cmd, ses.maxfd, usershell);
++	return errno == ENOENT ? 127 : 126;
+ }
+ 
+ /* Add the pid of a child to the list for exit-handling */
+--- a/src/common-session.c
++++ b/src/common-session.c
+@@ -208,6 +208,7 @@
+ 			dropbear_fd_set(ses.sock_out, &writefd);
+ 		}
+ 
++		errno = 0;
+ 		val = select(ses.maxfd+1, &readfd, &writefd, NULL, &timeout);
+ 
+ 		if (ses.exitflag) {
+@@ -214,8 +215,12 @@
+ 			dropbear_exit("Terminated by signal");
+ 		}
+ 		
+-		if (val < 0 && errno != EINTR) {
++		/* Cooperative signal delivery on wasm can interrupt select() with
++		 * errno left at zero or the kernel-internal ERESTARTNOHAND value 514.
++		 * Treat both like EINTR so the next iteration drains the SIGCHLD
++		 * self-pipe and reaps the callback-clone child. */
++		if (val < 0 && errno != EINTR && errno != 0 && errno != 514) {
+-			dropbear_exit("Error in select");
++			dropbear_exit("Error in select: errno %d (%s)", errno, strerror(errno));
+ 		}
+ 
+ 		if (val <= 0) {

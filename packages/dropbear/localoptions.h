@@ -1,11 +1,9 @@
 /* Build-time configuration for the wasm32-unknown-linux-musl port.
  *
  * The platform has no fork()/vfork() (the symbols do not exist, so any
- * reference fails to link), no AF_UNIX, and the guest kernel does not deliver
- * SIGALRM. Every option here either removes a fork()/daemon()/popen() call site
- * that cannot link, or drops a feature that depends on an unavailable facility.
- * The fork()+exec() site that DOES survive (running the user's command) is
- * rewritten to posix_spawn in wasm-posix-spawn.patch. */
+ * reference fails to link). Every option here removes a fork(), daemon(), or
+ * popen() call site that cannot link. Ordinary exec children use posix_spawn;
+ * PTY session children use callback clone for their pre-exec session setup. */
 
 /* Inetd-only. NON_INETD_MODE is the accept()-loop server that fork()s a child
  * per connection (svr-main.c) and daemon()ises; both are unlinkable here. The
@@ -34,9 +32,9 @@
 #define DROPBEAR_CLI_PROXYCMD 0
 #define DROPBEAR_CLI_NETCAT 0
 
-/* Agent forwarding uses AF_UNIX sockets, which the guest kernel rejects. */
-#define DROPBEAR_SVR_AGENTFWD 0
-#define DROPBEAR_CLI_AGENTFWD 0
+/* AF_UNIX sockets are available, so both ends of agent forwarding are built. */
+#define DROPBEAR_SVR_AGENTFWD 1
+#define DROPBEAR_CLI_AGENTFWD 1
 
 /* X11 forwarding shells out to xauth via popen(); unavailable. (Already 0 by
  * default, set explicitly for the record.) */

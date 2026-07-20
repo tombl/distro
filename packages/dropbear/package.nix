@@ -17,12 +17,15 @@ let
     # command in svr-chansession -- to posix_spawn (clone+execve), moving the
     # pre-exec environment/cwd/privilege setup into the parent (safe in
     # single-connection inetd mode) and expressing the fd plumbing as posix_spawn
-    # file actions. It also converts the shared spawn_command helper (dbutil.c),
-    # stubs the pty session path (needs setsid()+TIOCSCTTY that posix_spawn
-    # cannot express, and the guest has no /dev/ptmx) to fail loudly, and
-    # removes the client's daemon()-based "-f" backgrounding. Every other fork()
-    # site is compiled out via localoptions.h (see there).
-    patches = [ ./wasm-posix-spawn.patch ];
+    # file actions. It also converts the shared spawn_command helper (dbutil.c)
+    # and removes the client's daemon()-based "-f" backgrounding. PTY sessions
+    # use callback clone so the child can setsid, acquire the slave as its
+    # controlling terminal, attach stdio, and exec on a fresh stack. Every other
+    # fork() site is compiled out via localoptions.h (see there).
+    patches = [
+      ./wasm-posix-spawn.patch
+      ./wasm-pty-clone.patch
+    ];
 
     # localoptions.h must sit in the build root: Makefile.in adds -I. and
     # options.h does #include "localoptions.h", guarded by LOCALOPTIONS_H_EXISTS
