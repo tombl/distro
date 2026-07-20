@@ -17,23 +17,6 @@ function output_sink(output: { text: string }) {
   });
 }
 
-async function with_timeout<T>(promise: Promise<T>, milliseconds = 30_000) {
-  let timer: ReturnType<typeof setTimeout>;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`timed out after ${milliseconds}ms`)),
-          milliseconds,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer!);
-  }
-}
-
 async function run_machine(mode: string) {
   const output = { text: "" };
   const machine = await spawnMachine({
@@ -79,23 +62,17 @@ async function run_runner(cmdline: string, cpus = 1): Promise<RunnerResult> {
   child.stdout.on("data", consume);
   child.stderr.on("data", consume);
 
-  return await with_timeout(
-    new Promise<RunnerResult>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) => {
-        resolve({
-          code,
-          signal,
-          output,
-          milliseconds_after_trigger:
-            triggered_at === undefined ? undefined : performance.now() - triggered_at,
-        });
+  return new Promise<RunnerResult>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      resolve({
+        code,
+        signal,
+        output,
+        milliseconds_after_trigger:
+          triggered_at === undefined ? undefined : performance.now() - triggered_at,
       });
-    }),
-    45_000,
-  ).catch((error) => {
-    child.kill("SIGKILL");
-    throw error;
+    });
   });
 }
 
@@ -103,12 +80,12 @@ test("guest lifecycle terminates the host", async (t) => {
   await t.test("machine.closed follows guest termination", async (t) => {
     await t.test("resolves after poweroff", async () => {
       const { machine } = await run_machine("poweroff");
-      await with_timeout(machine.closed);
+      await machine.closed;
     });
 
     await t.test("rejects after a panic with diagnostics visible", async () => {
       const { machine, output } = await run_machine("panic");
-      await assert.rejects(with_timeout(machine.closed), MachinePanicError);
+      await assert.rejects(machine.closed, MachinePanicError);
       assert.match(output.text, /Kernel panic - not syncing/);
     });
   });

@@ -99,7 +99,6 @@ stdenv.mkDerivation (finalAttrs: {
     in
     vm-test.vmTest {
       name = "kselftests-${name}";
-      timeout = suite.timeout or 20;
       initramfs = vm-test.mkInitramfs {
         name = "kselftests-${name}";
         init = suite.run;

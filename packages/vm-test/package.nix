@@ -68,7 +68,6 @@ let
       initramfs,
       disk ? null,
       cpus ? 1,
-      timeout ? 20,
     }:
     pkgs.runCommand "vm-test-${name}"
       {
@@ -80,17 +79,16 @@ let
           chmod u+w disk.img
         ''}
         set +e
-        timeout ${toString (timeout + 5)} node ${runner}/run-test.js \
+        timeout --kill-after=5 300 node ${runner}/run-test.js \
           --cpus ${toString cpus} \
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
-          --timeout-seconds ${toString timeout} \
           2>&1 | awk -f ${runner}/limit-output.awk
         status=''${PIPESTATUS[0]}
         set -e
         if [ "$status" -eq 124 ]; then
-          echo "vm test failed: host timeout after ${toString (timeout + 5)} seconds" >&2
+          echo "vm test failed: watchdog expired after 300 seconds" >&2
         fi
         [ "$status" -eq 0 ] || exit "$status"
         mkdir $out

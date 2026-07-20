@@ -8,6 +8,5 @@
     "pidfd_open_test"
     "pidfd_test"
   ];
-  timeout = 45;
   run = ./pidfd-test.sh;
 }

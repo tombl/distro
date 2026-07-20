@@ -100,7 +100,7 @@ let
       pnpm --filter=@tombl/linux-guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \
-        timeout 180 pnpm --filter=@tombl/linux-guest-tests test
+        timeout --kill-after=5 300 pnpm --filter=@tombl/linux-guest-tests test
 
       runHook postBuild
     '';

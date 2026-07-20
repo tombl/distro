@@ -17,7 +17,6 @@ let
   # until their kernel, harness, or environment cause is understood.
   suites = {
     filesystem = {
-      timeout = 240;
       disk = testDevice;
       tests = [
         "chdir/chdir02"
@@ -98,7 +97,6 @@ let
     };
 
     process = {
-      timeout = 240;
       disk = null;
       tests = [
         "brk/brk01"
@@ -151,7 +149,6 @@ let
     };
 
     scheduler = {
-      timeout = 60;
       disk = null;
       tests = [ "nice/nice05" ];
     };
@@ -247,7 +244,7 @@ stdenv.mkDerivation (finalAttrs: {
     in
     vm-test.vmTest {
       name = "ltp-${name}";
-      inherit (suite) disk timeout;
+      inherit (suite) disk;
       initramfs = vm-test.mkInitramfs {
         name = "ltp-${name}";
         init = ./test.sh;

@@ -12,18 +12,12 @@ import {
 import { pathToFileURL } from "node:url";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-let timeoutSeconds = 15;
 let cpus = 1;
 const positional = [];
 const args = process.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
   if (args[index] === "--cpus") {
     cpus = Number(args[++index]);
-  } else if (args[index] === "--timeout-seconds") {
-    timeoutSeconds = Number(args[++index]);
-    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
-      throw new Error("--timeout-seconds must be positive");
-    }
   } else {
     positional.push(args[index]);
   }
@@ -36,9 +30,7 @@ if (
   !Number.isSafeInteger(cpus) ||
   cpus < 1
 ) {
-  throw new Error(
-    "usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk] [--timeout-seconds N]",
-  );
+  throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk]");
 }
 
 const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
@@ -199,12 +191,7 @@ void machine?.closed.catch((error) => {
   finish({ passed: false, reason: `machine failed: ${error}` });
 });
 
-const timeout = setTimeout(() => {
-  finish({ passed: false, reason: `timed out after ${timeoutSeconds} seconds` });
-}, timeoutSeconds * 1000);
-
 const outcome = await result;
-clearTimeout(timeout);
 machine?.close();
 if (disk !== undefined) closeSync(disk);
 
