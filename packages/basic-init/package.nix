@@ -157,6 +157,7 @@ in
     malloc-failure = check "malloc-failure";
     malloc-thread = check "malloc-thread";
     memory-abi = memoryAbiCheck;
+    named-semaphore = check "named-semaphore";
     proc-self-mem = check "proc-self-mem";
     pty = check "pty";
     setjmp = setjmpCheck;
