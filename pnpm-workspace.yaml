@@ -1,4 +1,5 @@
 packages:
+  - packages/browser-tests
   - packages/linux-guest
   - packages/linux-guest/tests
   - packages/runner
