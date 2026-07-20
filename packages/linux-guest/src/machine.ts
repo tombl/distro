@@ -108,6 +108,11 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
   }
   if (failure) throw new Error("guest network device did not appear", { cause: failure });
 
+  // Bring loopback up: the kernel creates lo but leaves it down, so anything
+  // binding or connecting to 127.0.0.1 (a local server, ssh to localhost)
+  // fails until it is up. It has no dependency on eth0 appearing.
+  await run_network_command(exec, ["/sbin/ifconfig", "lo", "up"]);
+
   await run_network_command(exec, [
     "/sbin/ifconfig",
     "eth0",
