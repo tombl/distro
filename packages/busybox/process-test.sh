@@ -14,6 +14,18 @@ mkdir -p /dev/pts /etc/network/if-pre-up.d /etc/network/if-up.d \
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
 mount -t proc proc /proc || fail "mounting proc failed"
 
+# The forkless timeout watcher sleeps for the requested interval, then signals
+# the target. The target is in nanosleep, so cooperative delivery reaches it on
+# a kernel entry rather than relying on a pure userspace spin.
+timeout_start=$(date +%s) || fail "reading timeout start time failed"
+/bin/busybox timeout 1 /bin/busybox sleep 30
+timeout_rc=$?
+timeout_end=$(date +%s) || fail "reading timeout end time failed"
+timeout_elapsed=$((timeout_end - timeout_start))
+[ "$timeout_rc" -eq 143 ] || fail "timeout returned $timeout_rc instead of 143"
+[ "$timeout_elapsed" -ge 1 ] || fail "timeout fired too early (${timeout_elapsed}s)"
+[ "$timeout_elapsed" -le 5 ] || fail "timeout fired too late (${timeout_elapsed}s)"
+
 printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >/etc/passwd || fail "creating passwd failed"
 printf '%s\n' 'root:x:0:' >/etc/group || fail "creating group failed"
 
