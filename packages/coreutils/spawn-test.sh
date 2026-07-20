@@ -16,6 +16,7 @@ export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 install --version >/tmp/iv || fail "install --version failed"
 grep -q 'GNU coreutils' /tmp/iv || fail "install is not GNU coreutils"

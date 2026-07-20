@@ -12,6 +12,7 @@ mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mkdir -p /dev/pts || fail "create /dev/pts"
 mount -t devpts devpts /dev/pts || fail "mount devpts"
 mount -t proc proc /proc || fail "mount proc"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 script -q -c 'tty && test -t 0 && test -t 1 && test -t 2 && echo SCRIPT_MARKER' \
   -T /tmp/timing /tmp/typescript </dev/null >/tmp/script.out 2>/tmp/script.err

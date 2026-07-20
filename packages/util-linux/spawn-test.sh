@@ -16,6 +16,7 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 # assertion reads the child's /proc entry.
 mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mount -t proc proc /proc || fail "mount proc"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 # --- flock: -c runs a command through the shell (posix_spawn path) ----------
 out=$(flock /tmp/lockA -c 'echo locked-ok')

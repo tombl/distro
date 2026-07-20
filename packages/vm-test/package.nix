@@ -77,6 +77,8 @@ let
           # a second package populating /bin).
           chmod -R u+w root
         '') contents}
+        cp ${./setup-dev-fd.sh} root/vm-test-setup-dev-fd
+        chmod 0755 root/vm-test-setup-dev-fd
         cp ${init} root/init
         chmod 0755 root/init
 

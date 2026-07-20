@@ -10,6 +10,7 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 # (a) --version must report the mbedTLS backend and the expected protocols.
 curl --version >/tmp/ver 2>&1 || fail "curl --version failed: $(cat /tmp/ver)"

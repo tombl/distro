@@ -17,6 +17,7 @@ mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mkdir -p /dev/pts || fail "creating /dev/pts failed"
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
 mount -t proc proc /proc 2>/dev/null
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 mount -t sysfs sysfs /sys 2>/dev/null
 
 # Loopback is down at boot; the SSH session runs over 127.0.0.1.

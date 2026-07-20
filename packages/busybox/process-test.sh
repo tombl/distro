@@ -13,6 +13,17 @@ mkdir -p /dev/pts /etc/network/if-pre-up.d /etc/network/if-up.d \
   /etc/network/if-down.d /etc/network/if-post-down.d /var/run || fail "creating runtime directories failed"
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
+
+# The shell opens fd 9 in the parent. Command substitution enters through
+# BusyBox's callback-clone path and execs cat; the child must retain the same
+# open-file description and resolve it through the normal Linux /dev/fd link.
+printf '%s\n' inherited-fd >/tmp/inherited-fd || fail "creating fd fixture failed"
+exec 9</tmp/inherited-fd || fail "opening inherited fd failed"
+inherited_fd=$(cat /dev/fd/9) || fail "reading inherited fd in child failed"
+exec 9<&-
+[ "$inherited_fd" = inherited-fd ] ||
+  fail "inherited fd returned [$inherited_fd]"
 
 # The forkless timeout watcher sleeps for the requested interval, then signals
 # the target. The target is in nanosleep, so cooperative delivery reaches it on

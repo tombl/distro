@@ -9,6 +9,7 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 ip link set lo up || fail "bringing up loopback failed"
 
 # POSIX timers are available to nc's -w deadline and wget's progress timer.

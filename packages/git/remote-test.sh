@@ -15,6 +15,7 @@ export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 # git spawns git-remote-http (posix_spawn) and it opens /dev/null.
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 mkdir -p /root /tmp
 cd /tmp || fail "cd /tmp failed"
 

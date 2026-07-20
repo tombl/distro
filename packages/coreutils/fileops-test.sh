@@ -13,6 +13,7 @@ export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 # Prove we are running GNU coreutils and not the busybox applets.
 ls --version >/tmp/ls-version || fail "ls --version failed"

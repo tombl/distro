@@ -12,6 +12,7 @@ mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mkdir -p /dev/pts || fail "create /dev/pts"
 mount -t devpts devpts /dev/pts || fail "mount devpts"
 mount -t proc proc /proc || fail "mount proc"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 # Prove the GNU gawk shadows busybox's awk applet.
 gawk --version | grep -q 'GNU Awk' || fail "not running GNU gawk"

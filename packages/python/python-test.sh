@@ -17,6 +17,7 @@ export PYTHONHOME=/
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
+/vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 # Generate an ephemeral P-256 self-signed cert/key for the in-memory TLS test
 # below, using the ported openssl CLI. Doing it in-guest means the validity
