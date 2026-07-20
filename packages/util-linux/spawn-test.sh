@@ -1,9 +1,8 @@
 #!/bin/busybox sh
 # Exercises the two tools whose fork+exec was converted to posix_spawn:
 # flock (advisory locking, -c spawns a shell) and setsid (new session via
-# POSIX_SPAWN_SETSID). Assertions are deterministic -- no reliance on timing.
-# PENDING-REPOINT(timers): the pinned kernel lacks working POSIX timers, so
-# SIGALRM does not fire until the pending kernel repoint.
+# POSIX_SPAWN_SETSID). Timer assertions use the real wall clock and a generous
+# upper bound below the host VM deadline.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -37,6 +36,15 @@ flock -n 9 || fail "could not acquire lock on fd 9"
 if flock -n /tmp/lockB -c true; then
   fail "second flock acquired an already-held lock"
 fi
+
+flock_start=$(date +%s) || fail "reading flock start time failed"
+flock -w 1 /tmp/lockB -c true
+flock_rc=$?
+flock_end=$(date +%s) || fail "reading flock end time failed"
+flock_elapsed=$((flock_end - flock_start))
+[ "$flock_rc" -eq 1 ] || fail "timed flock returned $flock_rc instead of 1"
+[ "$flock_elapsed" -ge 1 ] || fail "flock timed out too early (${flock_elapsed}s)"
+[ "$flock_elapsed" -le 5 ] || fail "flock timed out too late (${flock_elapsed}s)"
 
 exec 9>&- # close fd 9, releasing the lock
 flock -n /tmp/lockB -c true || fail "flock could not acquire a freed lock"

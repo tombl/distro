@@ -46,11 +46,11 @@ stdenv.mkDerivation (finalAttrs: {
   #   * mount / losetup / fdisk / mkfs & friends: block-device machinery.
   #   * su / login / agetty / setpriv: PAM/tty/capability auth.
   #
+  # Timer-backed behavior:
+  #   * flock -w <timeout> uses setitimer/SIGALRM; the spawn check holds a
+  #     conflicting lock and asserts both its timeout status and elapsed time.
+  #
   # Degraded but shipped:
-  #   * flock -w <timeout> is inert: the timeout relies on setitimer/SIGALRM,
-  #     which do not fire on the pinned kernel. PENDING-REPOINT(timers): the fix
-  #     is pending a kernel repoint. Plain locking works; only the -w deadline
-  #     is a no-op.
   #   * setsid -c (set controlling terminal) errors out: it needs
   #     ioctl(TIOCSCTTY) in the child after setsid(), which posix_spawn cannot
   #     express, and there is no controlling terminal here anyway.
@@ -73,6 +73,11 @@ stdenv.mkDerivation (finalAttrs: {
     # setsid uses POSIX_SPAWN_SETSID so the child becomes a session leader.
     ./setsid-posix-spawn.patch
     ./flock-posix-spawn.patch
+    # The wasm signal trampoline does not support SA_SIGINFO handlers, and an
+    # interrupted blocking flock may return without preserving EINTR in errno.
+    # flock's SIGALRM handler only marks expiration, so use a conventional
+    # one-argument handler and make that expiration flag authoritative.
+    ./timer-no-siginfo.patch
     # wasm has no mmap: look mapped its dictionary file read-only for a binary
     # search; read it into a heap buffer instead (same [front, back) range).
     ./look-no-mmap.patch
