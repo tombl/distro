@@ -41,8 +41,6 @@ stdenv.mkDerivation (finalAttrs: {
   #     target has no mmap, and porting libblkid is out of scope for the subset.
   #   * ipcs / ipcmk / ipcrm: SysV IPC (shared memory attach) needs mmap-family
   #     primitives that are absent here; not shipped.
-  #   * script / scriptreplay: fork a pty child and need /dev/ptmx, which this
-  #     platform lacks.
   #   * mount / losetup / fdisk / mkfs & friends: block-device machinery.
   #   * su / login / agetty / setpriv: PAM/tty/capability auth.
   #
@@ -73,6 +71,12 @@ stdenv.mkDerivation (finalAttrs: {
     # setsid uses POSIX_SPAWN_SETSID so the child becomes a session leader.
     ./setsid-posix-spawn.patch
     ./flock-posix-spawn.patch
+    # script's PTY child uses callback clone so its existing setsid, TIOCSCTTY,
+    # stdio attachment, and exec sequence runs on a fresh child stack.
+    ./script-callback-clone.patch
+    # signalfd is absent; retain the same poll-driven signal model with a
+    # nonblocking self-pipe populated by minimal signal handlers.
+    ./pty-session-self-pipe.patch
     # The wasm signal trampoline does not support SA_SIGINFO handlers, and an
     # interrupted blocking flock may return without preserving EINTR in errno.
     # flock's SIGALRM handler only marks expiration, so use a conventional
@@ -106,7 +110,6 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-btrfs"
     "--without-econf"
     "--without-user"
-    "--without-util"
 
     # Libraries the subset needs, static only.
     "--enable-libuuid"
@@ -129,6 +132,8 @@ stdenv.mkDerivation (finalAttrs: {
     "--enable-prlimit" # get/set resource limits (libsmartcols)
     "--enable-setsid" # run a command in a new session (posix_spawn)
     "--enable-flock" # advisory file locking (posix_spawn for -c)
+    "--enable-script" # record a command through a real pty (callback clone)
+    "--enable-scriptreplay" # replay script timing/output logs
   ];
 
   passthru.checks =
@@ -158,5 +163,6 @@ stdenv.mkDerivation (finalAttrs: {
     {
       text = check "text" ./text-test.sh;
       spawn = check "spawn" ./spawn-test.sh;
+      pty = check "pty" ./pty-test.sh;
     };
 })
