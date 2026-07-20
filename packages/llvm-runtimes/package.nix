@@ -9,7 +9,7 @@
 }:
 
 let
-  llvmMajorVersion = "19";
+  llvmMajorVersion = lib.versions.major llvm-toolchain-unwrapped.version;
   wasmCompileFlags = "--sysroot=${sysroot-base} ${toString platform.compilerFlags}";
 
   cmakeFlags = [
@@ -19,12 +19,15 @@ let
     "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
     "-DCMAKE_C_COMPILER=${llvm-toolchain-unwrapped}/bin/clang"
     "-DCMAKE_CXX_COMPILER=${llvm-toolchain-unwrapped}/bin/clang++"
+    "-DCMAKE_ASM_COMPILER=${llvm-toolchain-unwrapped}/bin/clang"
     "-DCMAKE_AR=${llvm-toolchain-unwrapped}/bin/llvm-ar"
     "-DCMAKE_RANLIB=${llvm-toolchain-unwrapped}/bin/llvm-ranlib"
     "-DCMAKE_C_COMPILER_TARGET=${platform.targetTriple}"
     "-DCMAKE_CXX_COMPILER_TARGET=${platform.targetTriple}"
+    "-DCMAKE_ASM_COMPILER_TARGET=${platform.targetTriple}"
     "-DCMAKE_C_FLAGS=${wasmCompileFlags}"
     "-DCMAKE_CXX_FLAGS=${wasmCompileFlags}"
+    "-DCMAKE_ASM_FLAGS=-mexception-handling"
     "-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF"
     "-DCMAKE_SKIP_BUILD_RPATH=ON"
     "-DCMAKE_SKIP_INSTALL_RPATH=ON"
@@ -36,8 +39,15 @@ let
     "-DLLVM_INCLUDE_DOCS=OFF"
     "-DLLVM_BUILD_TOOLS=OFF"
     "-DLLVM_USE_LINKER=lld"
+    "-DCOMPILER_RT_BUILD_CTX_PROFILE=OFF"
     "-DCOMPILER_RT_BUILD_CRT=OFF"
     "-DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON"
+    "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF"
+    "-DCOMPILER_RT_BUILD_MEMPROF=OFF"
+    "-DCOMPILER_RT_BUILD_ORC=OFF"
+    "-DCOMPILER_RT_BUILD_PROFILE=OFF"
+    "-DCOMPILER_RT_BUILD_SANITIZERS=OFF"
+    "-DCOMPILER_RT_BUILD_XRAY=OFF"
     "-DLIBCXX_ENABLE_SHARED=OFF"
     "-DLIBCXX_HAS_MUSL_LIBC=ON"
     "-DLIBCXX_USE_COMPILER_RT=ON"
@@ -49,7 +59,7 @@ in
 
 pkgs.stdenvNoCC.mkDerivation {
   pname = "llvm-runtimes";
-  version = "19.1.7";
+  inherit (llvm-toolchain-unwrapped) version;
   inherit src;
 
   nativeBuildInputs = [

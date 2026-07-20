@@ -49,7 +49,7 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preBuild
 
     make() {
-      command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_19.clang}/bin/clang "$@"
+      command make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_22.clang}/bin/clang "$@"
     }
 
     make mrproper

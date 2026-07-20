@@ -26,12 +26,6 @@
 
 ## Later
 
-- Update the LLVM fork from 19.1.7 to 20.1.0 or later: that is the first
-  upstream release containing lld's `ObjFile::parseLazy` binding-local fix
-  (`5403123197f8`, merged 2024-08-20, not backported to any 19.x point
-  release), which we currently carry as a local cherry-pick
-  (`396e449f4109` on `wasm-linux`). Dropping the cherry-pick once the pin
-  moves past 20.1.0 removes the last reason we're pinned behind upstream.
 - Land framebuffer and input support with guest-visible integration tests, then add basic DRM only when its userspace memory requirements are supportable.
 - Add outbound UDP and browser `fetch` transports to the networking layer.
 - Package a useful initial software set and document the Nix-to-JavaScript build path.

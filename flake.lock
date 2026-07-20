@@ -188,11 +188,11 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784531844,
-        "narHash": "sha256-AtnZu04IZjGg8iw20kKLsL3Sq3UrQa8hN3ZBBnYlXn0=",
+        "lastModified": 1784550641,
+        "narHash": "sha256-PUvLG0ZhFj88TauTyQyvdjQU1x56L1XWEE5dVlvOFCg=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "037a1e806396950decc19caf11ba50997cb53d65",
+        "rev": "2afc0b4e7509dda656d5a568c5af58d168fd0ce6",
         "type": "github"
       },
       "original": {
@@ -205,15 +205,16 @@
     "llvm-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784529913,
-        "narHash": "sha256-MlGBk3ffxku9/SXYGSA+531Cb4uiqwcG5buB+V4z4Qw=",
+        "lastModified": 1784540141,
+        "narHash": "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=",
         "owner": "tombl",
         "repo": "llvm-project",
-        "rev": "0771d7da467f3d9c3a960b8ac7486ed233850fc2",
+        "rev": "9aaceb42fef4f924a00126e0d66140d01482921c",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
+        "ref": "wasm-linux",
         "repo": "llvm-project",
         "type": "github"
       }
@@ -289,11 +290,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1784356753,
-        "narHash": "sha256-12KrbMiWLcf8m7pCvAtZh1ZrgF85ZXDXvfR/fWTKy84=",
+        "lastModified": 1784497964,
+        "narHash": "sha256-vlHUuqAcbcH2RKmHbPiuQzbv1pnzzavXnI62RD0bqCU=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "61b7c44c4073f0b827768aff0049561b5110ea5a",
+        "rev": "241313f4e8e508cb9b13278c2b0fa25b9ca27163",
         "type": "github"
       },
       "original": {

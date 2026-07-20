@@ -4,12 +4,18 @@
 # `ld` is wasm-ld.
 {
   pkgs,
+  lib,
   platform,
   llvm-runtimes,
   llvm-toolchain-unwrapped,
 }:
 
-pkgs.runCommand "llvm-toolchain-19.1.7"
+let
+  inherit (llvm-toolchain-unwrapped) version;
+  llvmMajorVersion = lib.versions.major version;
+in
+
+pkgs.runCommand "llvm-toolchain-${version}"
   {
     passthru = {
       isClang = true;
@@ -32,11 +38,11 @@ pkgs.runCommand "llvm-toolchain-19.1.7"
   ''
     cp -r ${llvm-toolchain-unwrapped} $out
     chmod -R u+w $out
-    mkdir -p $out/lib/clang/19/lib
+    mkdir -p $out/lib/clang/${llvmMajorVersion}/lib
 
-    cp -r ${llvm-runtimes}/lib/clang/19/lib/${platform.targetTriple} $out/lib/clang/19/lib/
-    cp -r ${llvm-runtimes}/lib/clang/19/lib/wasm32 $out/lib/clang/19/lib/
-    cp -r ${llvm-runtimes}/lib/clang/19/lib/wasm32-unknown $out/lib/clang/19/lib/
+    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/
+    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32 $out/lib/clang/${llvmMajorVersion}/lib/
+    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32-unknown $out/lib/clang/${llvmMajorVersion}/lib/
 
     ln -sf wasm-ld $out/bin/ld
   ''

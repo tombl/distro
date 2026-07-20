@@ -6,6 +6,8 @@
 }:
 
 let
+  llvmPackages = pkgs.llvmPackages_22;
+
   nativeTarget =
     if pkgs.stdenv.hostPlatform.isx86_64 then
       "X86"
@@ -16,10 +18,10 @@ let
 
   cmakeFlags = [
     "-DCMAKE_BUILD_TYPE=Release"
-    "-DCMAKE_C_COMPILER=${pkgs.llvmPackages_19.clang}/bin/clang"
-    "-DCMAKE_CXX_COMPILER=${pkgs.llvmPackages_19.clang}/bin/clang++"
-    "-DCMAKE_AR=${pkgs.llvmPackages_19.llvm}/bin/llvm-ar"
-    "-DCMAKE_RANLIB=${pkgs.llvmPackages_19.llvm}/bin/llvm-ranlib"
+    "-DCMAKE_C_COMPILER=${llvmPackages.clang}/bin/clang"
+    "-DCMAKE_CXX_COMPILER=${llvmPackages.clang}/bin/clang++"
+    "-DCMAKE_AR=${llvmPackages.llvm}/bin/llvm-ar"
+    "-DCMAKE_RANLIB=${llvmPackages.llvm}/bin/llvm-ranlib"
     "-DLLVM_ENABLE_PROJECTS=clang;lld"
     "-DLLVM_ENABLE_RUNTIMES="
     "-DBUILD_SHARED_LIBS=OFF"
@@ -48,9 +50,9 @@ let
   ];
 in
 
-pkgs.llvmPackages_19.stdenv.mkDerivation {
+llvmPackages.stdenv.mkDerivation {
   pname = "llvm-toolchain-unwrapped";
-  version = "19.1.7";
+  version = llvmPackages.release_version;
   inherit src;
 
   nativeBuildInputs = [

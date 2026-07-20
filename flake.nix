@@ -65,7 +65,7 @@
       flake = false;
     };
     llvm-src = {
-      url = "github:tombl/llvm-project";
+      url = "github:tombl/llvm-project/wasm-linux";
       flake = false;
     };
     lua-src = {
