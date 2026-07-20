@@ -1,5 +1,5 @@
 // The only nix-aware part of the test suite. The contract is a single
-// directory containing initramfs.cpio, rootfs.squashfs, and network-test:
+// directory containing the guest and lifecycle assets:
 // the nix check points LINUX_GUEST_TEST_ASSETS at it, and outside nix we
 // build it ourselves.
 import { dirname, join, resolve } from "node:path";
@@ -31,3 +31,10 @@ export const assets = {
 
 /** A static guest executable that exercises the guest-side network stack. */
 export const network_test = await readFile(join(directory, "network-test"));
+
+export const lifecycle_assets = {
+  initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
+  initramfs_path: join(directory, "lifecycle-initramfs.cpio"),
+  rootfs_path: join(directory, "rootfs.squashfs"),
+  runner: join(directory, "runner"),
+};

@@ -1,10 +1,13 @@
 {
+  busybox,
   pkgs,
   guest-initramfs,
   guest-rootfs,
   linux,
   node-workspace,
+  runner,
   stdenv,
+  vm-test,
 }:
 
 let
@@ -22,12 +25,20 @@ let
     '';
   };
 
+  lifecycle-initramfs = vm-test.mkInitramfs {
+    name = "linux-guest-lifecycle";
+    init = ./tests/lifecycle-init.sh;
+    contents = [ busybox ];
+  };
+
   # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
     "initramfs.cpio" = guest-initramfs;
+    "lifecycle-initramfs.cpio" = lifecycle-initramfs;
     "rootfs.squashfs" = guest-rootfs;
     "network-test" = "${network-test}/bin/network-test";
+    "runner" = "${runner}/bin/wasm-linux-runner";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
