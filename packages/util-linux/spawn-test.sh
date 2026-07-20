@@ -5,7 +5,8 @@
 # or on SIGALRM, which does not fire on this kernel.
 
 fail() {
-  echo "::vm-test::fail: $*"
+  printf 'vm test guest failure: %s\n' "$*"
+  echo "::vm-test::fail"
   while :; do :; done
 }
 

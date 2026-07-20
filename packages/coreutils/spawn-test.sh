@@ -7,7 +7,8 @@
 # the chunk on its stdin), and timeout (spawns and waits on the command).
 
 fail() {
-  echo "::vm-test::fail: $*"
+  printf 'vm test guest failure: %s\n' "$*"
+  echo "::vm-test::fail"
   while :; do :; done
 }
 

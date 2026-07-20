@@ -1,4 +1,12 @@
-/vm test failed:/ {
+/^vm test guest failure:/ {
+    guest_failure = 1
+}
+
+guest_failure {
+    failures[++failure_count] = $0
+}
+
+/vm test failed:/ && !guest_failure {
     failures[++failure_count] = $0
 }
 

@@ -5,7 +5,8 @@
 # the wrong-key failure mode.
 
 fail() {
-  echo "::vm-test::fail: $*"
+  printf 'vm test guest failure: %s\n' "$*"
+  echo "::vm-test::fail"
   while :; do :; done
 }
 

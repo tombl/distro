@@ -28,13 +28,24 @@ let
           node --test protocol-test.js
           for line in $(seq 1 200); do
             if [ "$line" -eq 120 ]; then
-              echo "vm test failed: expected failure"
+              echo "vm test guest failure: Traceback (most recent call last):"
+            elif [ "$line" -eq 121 ]; then
+              echo "  File \"test.py\", line 7, in <module>"
+            elif [ "$line" -eq 122 ]; then
+              echo "ValueError: expected failure"
+            elif [ "$line" -eq 123 ]; then
+              echo "::vm-test::fail"
+            elif [ "$line" -eq 124 ]; then
+              echo "vm test failed: guest reported failure"
             else
               echo "line $line"
             fi
           done | awk -f limit-output.awk > output
           grep -F "[vm test output truncated: 70 lines omitted]" output
-          grep -F "vm test failed: expected failure" output
+          grep -F "vm test guest failure: Traceback (most recent call last):" output
+          grep -F '  File "test.py", line 7, in <module>' output
+          grep -F "ValueError: expected failure" output
+          grep -F "vm test failed: guest reported failure" output
           mkdir $out
         '';
   };

@@ -4,7 +4,8 @@
 # (installed under /gnu/bin, ahead of busybox on PATH).
 
 fail() {
-  echo "::vm-test::fail: $*"
+  printf 'vm test guest failure: %s\n' "$*"
+  echo "::vm-test::fail"
   while :; do :; done
 }
 
