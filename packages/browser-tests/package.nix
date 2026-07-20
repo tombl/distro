@@ -2,7 +2,6 @@
   lib,
   linux,
   linux-guest,
-  node-workspace,
   pkgs,
 }:
 
@@ -11,60 +10,53 @@ let
   playwrightVersion = packageJson.devDependencies."@playwright/test";
   driverVersion = pkgs.playwright-driver.version;
 
-  suite = pkgs.stdenvNoCC.mkDerivation {
-    pname = "browser-tests-suite";
-    version = "0.0.0";
-    src = ../..;
-    pnpmDeps = node-workspace.deps;
-    nativeBuildInputs = [
-      pkgs.nodejs
-      pkgs.pnpmConfigHook
-      node-workspace.pnpm
-    ];
+  suite =
+    pkgs.runCommand "browser-tests"
+      {
+        passthru.checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (lib.genAttrs projects check);
+      }
+      ''
+        mkdir -p \
+          $out/node_modules/@playwright \
+          $out/node_modules/@tombl/linux \
+          $out/node_modules/@tombl/linux-guest
+        cp ${./app.js} $out/app.js
+        cp ${./index.html} $out/index.html
+        cp ${./playwright.config.js} $out/playwright.config.js
+        cp ${./server.js} $out/server.js
+        cp -r ${./tests} $out/tests
+        cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
+        cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
+        cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+        tar -xzf ${linux}/linux.tgz --strip-components=1 -C $out/node_modules/@tombl/linux
+        tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+      '';
 
-    buildPhase = ''
-      runHook preBuild
-
-      pnpm --filter=@tombl/browser-tests check
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      runHook preInstall
-
-      mkdir -p \
-        $out/node_modules/@playwright \
-        $out/node_modules/@tombl/linux \
-        $out/node_modules/@tombl/linux-guest
-      cp packages/browser-tests/{app.js,index.html,playwright.config.js,server.js} $out/
-      cp -r packages/browser-tests/tests $out/
-      cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
-      cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
-      cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
-      tar -xzf ${linux}/linux.tgz --strip-components=1 -C $out/node_modules/@tombl/linux
-      tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
-
-      runHook postInstall
-    '';
-  };
+  projects = [
+    "chromium"
+    "firefox"
+    "webkit"
+  ];
 
   fontconfig = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
 
   browsersFor =
     project:
     pkgs.playwright-driver.selectBrowsers {
-      withChromium = project == "all" || project == "chromium";
-      withChromiumHeadlessShell = project == "all" || project == "chromium";
-      withFirefox = project == "all" || project == "firefox";
-      withWebkit = project == "all" || project == "webkit";
+      withChromium = project == "chromium";
+      withChromiumHeadlessShell = project == "chromium";
+      withFirefox = project == "firefox";
+      withWebkit = project == "webkit";
       withFfmpeg = false;
       fontconfig_file = fontconfig;
     };
 
   environment = project: ''
+    export __EGL_VENDOR_LIBRARY_FILENAMES=${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
     export FONTCONFIG_FILE=${fontconfig}
     export HOME=$TMPDIR/home
+    export LIBGL_ALWAYS_SOFTWARE=1
+    export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
     export PLAYWRIGHT_BROWSERS_PATH=${browsersFor project}
     export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu-24.04
     export PLAYWRIGHT_OUTPUT_DIR=$TMPDIR/test-results
@@ -75,26 +67,18 @@ let
     mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
   '';
 
-  app = pkgs.writeShellScriptBin "browser-tests" ''
-    set -euo pipefail
-
-    workdir=$(mktemp -d)
-    trap 'rm -rf "$workdir"' EXIT
-    cp -r ${suite}/. "$workdir/"
-    chmod -R u+w "$workdir"
-    cd "$workdir"
-    export TMPDIR="$workdir/tmp"
-    mkdir "$TMPDIR"
-    ${environment "all"}
-    ${lib.getExe pkgs.nodejs} node_modules/@playwright/test/cli.js test --reporter=line "$@"
-  '';
+  check =
+    project:
+    pkgs.runCommand "browser-tests-${project}" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+      export TMPDIR="$NIX_BUILD_TOP/tmp"
+      mkdir "$TMPDIR"
+      ${environment project}
+      cd ${suite}
+      node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
+      touch $out
+    '';
 in
 assert lib.assertMsg (playwrightVersion == driverVersion) ''
   packages/browser-tests pins @playwright/test ${playwrightVersion}, but nixpkgs playwright-driver is ${driverVersion}
 '';
-app
-// {
-  passthru = {
-    inherit suite;
-  };
-}
+suite

@@ -264,11 +264,6 @@
             );
           };
 
-          browser-tests = {
-            type = "app";
-            program = lib.getExe wasmpkgs.browser-tests;
-          };
-
           default = self.apps.${pkgs.stdenv.hostPlatform.system}.runner;
         }
       );

@@ -53,26 +53,6 @@ jobs:
           eval "$(nix print-dev-env .#ci)"
           nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
 
-  browser:
-    name: Browser (${{ matrix.engine }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        engine:
-          - chromium
-          - firefox
-          - webkit
-    steps:
-      - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
-      - uses: cachix/cachix-action@v17
-        with:
-          name: linuxwasm
-          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: Test
-        run: nix run .#browser-tests -- --project=${{ matrix.engine }}
-
   packages:
     runs-on: ubuntu-24.04
     steps:
@@ -122,7 +102,6 @@ jobs:
   stage-npm:
     name: Stage ${{ matrix.name }} on npm
     needs:
-      - browser
       - build
       - packages
     if: github.event_name == 'release' && github.repository == 'tombl/linux'
