@@ -85,6 +85,18 @@ let
     };
   };
 
+  signalSyscallReturnCheck =
+    name: extraFlags:
+    vm-test.vmTest {
+      name = "basic-init-signal-syscall-return-${name}";
+      initramfs = vm-test.mkInitramfs {
+        name = "basic-init-signal-syscall-return-${name}";
+        init = "${
+          buildInitWith "basic-init-signal-syscall-return-${name}" "tests/signal-syscall-return.c" extraFlags
+        }/bin/init";
+      };
+    };
+
   kernelMemoryGrowthCheck = vm-test.vmTest {
     name = "basic-init-kernel-memory-growth";
     initramfs = vm-test.mkInitramfs {
@@ -118,6 +130,8 @@ in
     memory-abi = memoryAbiCheck;
     proc-self-mem = check "proc-self-mem";
     setjmp = setjmpCheck;
+    signal-syscall-return = signalSyscallReturnCheck "plain" "";
+    signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ -mllvm -wasm-enable-sjlj";
     pthread-no-tls = check "pthread-no-tls";
     thread-local = check "thread-local";
     threads = check "threads";

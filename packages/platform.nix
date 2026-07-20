@@ -35,6 +35,11 @@ rec {
     "--max-memory=4294967296"
     "--shared-memory"
     "--export-table"
+    # Linux's signal ABI reserves function-pointer value 1 for SIG_IGN, and
+    # musl's public signal API uses value 2 for SIG_HOLD. Wasm function pointers
+    # are table indices, so leave those slots empty rather than letting real
+    # address-taken functions collide with the signal sentinels.
+    "--table-base=3"
     # wasm-ld's default shadow stack is 64 KiB, which terminal setup in
     # ncurses/readline overflows; match the 8 MiB Linux convention.
     "-z"
