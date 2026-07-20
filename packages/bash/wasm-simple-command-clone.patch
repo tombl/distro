@@ -1,0 +1,259 @@
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -4491,6 +4491,66 @@
+   return ret;
+ }
+ 
++/* Private marker used only in clone's copied SIMPLE_COM. */
++#define CMD_CLONE_CHILD_INTERNAL 0x10000
++
++typedef struct
++{
++  SIMPLE_COM *simple_command;
++  struct fd_bitmap *fds_to_close;
++  char *job_command;
++  int pipe_in;
++  int pipe_out;
++  int async;
++  pid_t old_last_async_pid;
++} EXECUTE_SIMPLE_ARGS;
++
++static int
++execute_simple_command_child (void *vargs)
++{
++  EXECUTE_SIMPLE_ARGS *args;
++  int result;
++
++  args = (EXECUTE_SIMPLE_ARGS *)vargs;
++
++  /* The marker makes the recursive call enter immediately after the old
++     fork child setup, without repeating the parent-side DEBUG trap. */
++  args->simple_command->flags |= CMD_CLONE_CHILD_INTERNAL;
++
++  subshell_environment = SUBSHELL_FORK|SUBSHELL_IGNTRAP;
++  if (args->pipe_in != NO_PIPE || args->pipe_out != NO_PIPE)
++    subshell_environment |= SUBSHELL_PIPE;
++  if (args->async)
++    subshell_environment |= SUBSHELL_ASYNC;
++
++  if (args->fds_to_close)
++    close_fd_bitmap (args->fds_to_close);
++
++  stdin_redir |= args->pipe_in != NO_PIPE;
++  do_piping (args->pipe_in, args->pipe_out);
++
++#if defined (COPROCESS_SUPPORT)
++  coproc_closeall ();
++#endif
++
++#if defined (PROCESS_SUBSTITUTION)
++  clear_fifo_list ();
++#endif
++
++  last_asynchronous_pid = args->old_last_async_pid;
++  if (args->async)
++    subshell_level++;
++
++#if defined (JOB_CONTROL)
++  FREE (args->job_command);
++#endif
++
++  result = execute_simple_command (args->simple_command, NO_PIPE, NO_PIPE,
++                                   args->async, args->fds_to_close);
++  sh_exit (result);
++  return result;
++}
++
+ /* The meaty part of all the executions.  We have to start hacking the
+    real execution of commands here.  Fork a process, set things up,
+    execute the command. */
+@@ -4500,7 +4560,7 @@
+   WORD_LIST *words, *lastword;
+   char *command_line, *lastarg, *temp;
+   int first_word_quoted, result, builtin_is_special, already_forked, dofork;
+-  int fork_flags, cmdflags;
++  int clone_child, fork_flags, cmdflags;
+   pid_t old_last_async_pid;
+   sh_builtin_func_t *builtin;
+   SHELL_VAR *func;
+@@ -4507,39 +4567,43 @@
+   volatile int old_builtin, old_command_builtin;
+ 
++  clone_child = (simple_command->flags & CMD_CLONE_CHILD_INTERNAL) != 0;
++  simple_command->flags &= ~CMD_CLONE_CHILD_INTERNAL;
++
+   result = EXECUTION_SUCCESS;
+   special_builtin_failed = builtin_is_special = 0;
+   command_line = (char *)0;
+ 
+-  QUIT;
+-
+-  /* If we're in a function, update the line number information. */
+-  ADJUST_LINE_NUMBER ();
+-
+-  /* Remember what this command line looks like at invocation. */
+-  command_string_index = 0;
+-  if (the_printed_command)
+-    the_printed_command[0] = '\0';
+-  print_simple_command (simple_command);
++  if (clone_child == 0)
++    {
++      QUIT;
+ 
++      /* If we're in a function, update the line number information. */
++      ADJUST_LINE_NUMBER ();
++
++      /* Remember what this command line looks like at invocation. */
++      command_string_index = 0;
++      if (the_printed_command)
++        the_printed_command[0] = '\0';
++      print_simple_command (simple_command);
++
+ #if 0
+-  if (signal_in_progress (DEBUG_TRAP) == 0 && (this_command_name == 0 || (STREQ (this_command_name, "trap") == 0)))
++      if (signal_in_progress (DEBUG_TRAP) == 0 && (this_command_name == 0 || (STREQ (this_command_name, "trap") == 0)))
+ #else
+-  if (signal_in_progress (DEBUG_TRAP) == 0 && running_trap == 0)
++      if (signal_in_progress (DEBUG_TRAP) == 0 && running_trap == 0)
+ #endif
+-    {
+-      FREE (the_printed_command_except_trap);
+-      the_printed_command_except_trap = the_printed_command ? savestring (the_printed_command) : (char *)0;
+-    }
++        {
++          FREE (the_printed_command_except_trap);
++          the_printed_command_except_trap = the_printed_command ? savestring (the_printed_command) : (char *)0;
++        }
+ 
+-  /* Run the debug trap before each simple command, but do it after we
+-     update the line number information. */
+-  result = run_debug_trap ();
++      /* Run the debug trap before each simple command, but do it after we
++         update the line number information. */
++      result = run_debug_trap ();
+ #if defined (DEBUGGER)
+-  /* In debugging mode, if the DEBUG trap returns a non-zero status, we
+-     skip the command. */
+-  if (debugging_mode && result != EXECUTION_SUCCESS)
+-    return (EXECUTION_SUCCESS);
++      if (debugging_mode && result != EXECUTION_SUCCESS)
++        return (EXECUTION_SUCCESS);
+ #endif
++    }
+ 
+   cmdflags = simple_command->flags;
+ 
+@@ -4549,13 +4613,16 @@
+   last_command_subst_pid = NO_PID;
+   old_last_async_pid = last_asynchronous_pid;
+ 
+-  already_forked = 0;
++  already_forked = clone_child;
++  if (clone_child)
++    cmdflags |= CMD_NO_FORK;
+ 
+   /* If we're in a pipeline or run in the background, set DOFORK so we
+      make the child early, before word expansion.  This keeps assignment
+      statements from affecting the parent shell's environment when they
+      should not. */
+-  dofork = pipe_in != NO_PIPE || pipe_out != NO_PIPE || async;
++  dofork = clone_child == 0 &&
++           (pipe_in != NO_PIPE || pipe_out != NO_PIPE || async);
+ 
+   /* Something like `%2 &' should restart job 2 in the background, not cause
+      the shell to fork here. */
+@@ -4568,6 +4635,7 @@
+   if (dofork)
+     {
+       char *p, *xc;
++      EXECUTE_SIMPLE_ARGS *child_args;
+ 
+       /* Do this now, because execute_disk_command will do it anyway in the
+ 	 vast majority of cases. */
+@@ -4577,57 +4645,25 @@
+ 	 process/job associated with this child. */
+       fork_flags = async ? FORK_ASYNC : 0;
+       xc = the_printed_command_except_trap;
+-      if (make_child_fork (p = xc ? savestring (xc) : savestring (""), fork_flags) == 0)
+-	{
+-	  already_forked = 1;
+-	  cmdflags |= CMD_NO_FORK;
+-
+-	  /* We redo some of what make_child() does with SUBSHELL_IGNTRAP */
+-	  subshell_environment = SUBSHELL_FORK|SUBSHELL_IGNTRAP;	/* XXX */
+-	  if (pipe_in != NO_PIPE || pipe_out != NO_PIPE)
+-	    subshell_environment |= SUBSHELL_PIPE;
+-	  if (async)
+-	    subshell_environment |= SUBSHELL_ASYNC;
+-
+-	  /* We need to do this before piping to handle some really
+-	     pathological cases where one of the pipe file descriptors
+-	     is < 2. */
+-	  if (fds_to_close)
+-	    close_fd_bitmap (fds_to_close);
+-
+-	  /* If we fork because of an input pipe, note input pipe for later to
+-	     inhibit async commands from redirecting stdin from /dev/null */
+-	  stdin_redir |= pipe_in != NO_PIPE;
+-
+-	  do_piping (pipe_in, pipe_out);
+-	  pipe_in = pipe_out = NO_PIPE;
+-#if defined (COPROCESS_SUPPORT)
+-	  coproc_closeall ();
+-#endif
+-
+-#if defined (PROCESS_SUBSTITUTION)
+-	  clear_fifo_list ();		/* subshells don't inherit fifos */
+-#endif
+-
+-	  last_asynchronous_pid = old_last_async_pid;
+-
+-	  if (async)
+-	    subshell_level++;		/* not for pipes yet */
+-
+-#if defined (JOB_CONTROL)
+-	  FREE (p);			/* child doesn't use pointer */
+-#endif
+-	}
+-      else
+-	{
+-	  /* Don't let simple commands that aren't the last command in a
+-	     pipeline change $? for the rest of the pipeline (or at all). */
+-	  if (pipe_out != NO_PIPE)
+-	    result = last_command_exit_value;
+-	  close_pipes (pipe_in, pipe_out);
+-	  command_line = (char *)NULL;      /* don't free this. */
+-	  return (result);
+-	}
++      p = xc ? savestring (xc) : savestring ("");
++      child_args = (EXECUTE_SIMPLE_ARGS *)xmalloc (sizeof (*child_args));
++      child_args->simple_command = simple_command;
++      child_args->fds_to_close = fds_to_close;
++      child_args->job_command = p;
++      child_args->pipe_in = pipe_in;
++      child_args->pipe_out = pipe_out;
++      child_args->async = async;
++      child_args->old_last_async_pid = old_last_async_pid;
++      make_child (p, fork_flags, execute_simple_command_child, child_args);
++      free (child_args);
++
++      /* Don't let simple commands that aren't the last command in a
++         pipeline change $? for the rest of the pipeline (or at all). */
++      if (pipe_out != NO_PIPE)
++        result = last_command_exit_value;
++      close_pipes (pipe_in, pipe_out);
++      command_line = (char *)NULL;
++      return (result);
+     }
+ 
+   QUIT;		/* XXX */
+--- a/command.h
++++ b/command.h
+@@ -194,4 +194,7 @@
+ #define CMD_TRY_OPTIMIZING  0x8000	/* try to optimize this simple command */
+ 
++/* 0x10000 is reserved by the wasm callback-clone execution patch for an
++   internal child-continuation marker. */
++
+ /* What a command looks like. */
+ typedef struct command {
