@@ -37,6 +37,17 @@ let
       };
     };
 
+  schedulerHandoffInitramfs = vm-test.mkInitramfs {
+    name = "basic-init-scheduler-handoff";
+    init = "${buildInit "basic-init-scheduler-handoff" "tests/scheduler-handoff.c"}/bin/init";
+  };
+
+  schedulerHandoffCheck = vm-test.vmTest {
+    name = "basic-init-scheduler-handoff";
+    initramfs = schedulerHandoffInitramfs;
+    cpus = 2;
+  };
+
   moduleDefinedMemory =
     pkgs.runCommand "module-defined-memory.wasm"
       {
@@ -127,52 +138,56 @@ let
   };
 in
 (buildInit "basic-init" "init.c").overrideAttrs {
-  passthru.checks = {
-    auxv = check "auxv";
-    boot = check "boot";
-    brk = check "brk";
-    cancellation = check "cancellation";
-    clone = check "clone";
-    clone-fd = check "clone-fd";
-    clone-job-control = check "clone-job-control";
-    clone-latency = check "clone-latency";
-    clone-multithreaded-no-vm = check "clone-multithreaded-no-vm";
-    clone-memory-limit = check "clone-memory-limit";
-    clone-nested = check "clone-nested";
-    clone-no-vm = check "clone-no-vm";
-    clone-return = check "clone-return";
-    clone-signal-handler = check "clone-signal-handler";
-    clone-signals = check "clone-signals";
-    clone-tid = check "clone-tid";
-    clone-tls = check "clone-tls";
-    credentials = check "credentials";
-    cwd = check "cwd";
-    eventfd-unix = check "eventfd-unix";
-    futex = check "futex";
-    heap-boundary-overread = check "heap-boundary-overread";
-    initcpio = initcpioCheck;
-    kernel-memory-growth = kernelMemoryGrowthCheck;
-    large-executable = check "large-executable";
-    malloc = check "malloc";
-    malloc-failure = check "malloc-failure";
-    malloc-thread = check "malloc-thread";
-    memory-abi = memoryAbiCheck;
-    named-semaphore = check "named-semaphore";
-    proc-self-mem = check "proc-self-mem";
-    pty = check "pty";
-    setjmp = setjmpCheck;
-    signal-syscall-return = signalSyscallReturnCheck "plain" "";
-    signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ -mllvm -wasm-enable-sjlj";
-    signal-correctness = check "signal-correctness";
-    sigsetjmp = sigsetjmpCheck;
-    sigsetjmp-handler = sigsetjmpHandlerCheck;
-    pthread-no-tls = check "pthread-no-tls";
-    thread-local = check "thread-local";
-    threads = check "threads";
-    timer = check "timer";
-    tls = check "tls";
-    user-memory-growth = check "user-memory-growth";
-    user-memory-rlimit = check "user-memory-rlimit";
-    wallclock = check "wallclock";
+  passthru = {
+    inherit schedulerHandoffInitramfs;
+    checks = {
+      auxv = check "auxv";
+      boot = check "boot";
+      brk = check "brk";
+      cancellation = check "cancellation";
+      clone = check "clone";
+      clone-fd = check "clone-fd";
+      clone-job-control = check "clone-job-control";
+      clone-latency = check "clone-latency";
+      clone-multithreaded-no-vm = check "clone-multithreaded-no-vm";
+      clone-memory-limit = check "clone-memory-limit";
+      clone-nested = check "clone-nested";
+      clone-no-vm = check "clone-no-vm";
+      clone-return = check "clone-return";
+      clone-signal-handler = check "clone-signal-handler";
+      clone-signals = check "clone-signals";
+      clone-tid = check "clone-tid";
+      clone-tls = check "clone-tls";
+      credentials = check "credentials";
+      cwd = check "cwd";
+      eventfd-unix = check "eventfd-unix";
+      futex = check "futex";
+      heap-boundary-overread = check "heap-boundary-overread";
+      initcpio = initcpioCheck;
+      kernel-memory-growth = kernelMemoryGrowthCheck;
+      large-executable = check "large-executable";
+      malloc = check "malloc";
+      malloc-failure = check "malloc-failure";
+      malloc-thread = check "malloc-thread";
+      memory-abi = memoryAbiCheck;
+      named-semaphore = check "named-semaphore";
+      proc-self-mem = check "proc-self-mem";
+      pty = check "pty";
+      scheduler-handoff = schedulerHandoffCheck;
+      setjmp = setjmpCheck;
+      signal-syscall-return = signalSyscallReturnCheck "plain" "";
+      signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ -mllvm -wasm-enable-sjlj";
+      signal-correctness = check "signal-correctness";
+      sigsetjmp = sigsetjmpCheck;
+      sigsetjmp-handler = sigsetjmpHandlerCheck;
+      pthread-no-tls = check "pthread-no-tls";
+      thread-local = check "thread-local";
+      threads = check "threads";
+      timer = check "timer";
+      tls = check "tls";
+      user-memory-growth = check "user-memory-growth";
+      user-memory-rlimit = check "user-memory-rlimit";
+      wallclock = check "wallclock";
+    };
   };
 }
