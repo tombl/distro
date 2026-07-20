@@ -175,16 +175,16 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784478073,
-        "narHash": "sha256-z82Jnv9mMe9VRWDUK204ySenW7X1gxSYMlzOeeG4Yeg=",
+        "lastModified": 1784516580,
+        "narHash": "sha256-/t21ADNgTznwjq90112lSaTrXEJ2wXw46YPKI5TabVk=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "10c50146c241ccc51415df8998c4661008971b59",
+        "rev": "c699a2e93f1aec8f53eb1fe0a8097b59a89e55ea",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
-        "ref": "clone-vm-threads",
+        "ref": "wasm-auxv",
         "repo": "linux",
         "type": "github"
       }
@@ -247,11 +247,11 @@
     "musl-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784480478,
-        "narHash": "sha256-7jKmgDdwKkHPUPszI5mpUjNeIP7i79rGCU3oS7SVG4Y=",
+        "lastModified": 1784516127,
+        "narHash": "sha256-fCk30ydjywihSmdP18cbnWSiM2rWJq/RNDv8cXGV3Ec=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "55ba7af9fc52c4850232de9127f12b859ae4f636",
+        "rev": "2c0e019c745dc3ca416904204c8e80f6063e460f",
         "type": "github"
       },
       "original": {

@@ -57,7 +57,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/clone-vm-threads";
+      url = "github:tombl/linux/wasm-auxv";
       flake = false;
     };
     llvm-src = {

@@ -51,13 +51,10 @@ let
     ac_cv_func_dlopen=no
     ac_cv_search_dlopen=no
     ac_cv_lib_dl_dlopen=no
-    # PENDING-REPOINT(sigaltstack): the current musl implementation traps via a
-    # wasm `unreachable`; retest this answer after the musl/toolchain repoint.
+    # The wasm sigaltstack wrapper still traps via a wasm `unreachable` rather
+    # than returning ENOSYS; keep this answered no until that is fixed at the
+    # musl/kernel layer.
     ac_cv_func_sigaltstack=no
-    # PENDING-REPOINT(eventfd): libc exposes eventfd, but the pinned kernel
-    # returns ENOSYS. Retest after the kernel repoint and delete this answer if
-    # eventfd is implemented.
-    ac_cv_func_eventfd=no
   '';
 in
 

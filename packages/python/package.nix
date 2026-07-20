@@ -68,9 +68,9 @@ let
       # malloc-based arenas, so pymalloc still works.
       "--without-mimalloc"
 
-      # Cross builds can't probe for /dev/ptmx; answer the AC_CHECK_FILE probes
-      # (no ptmx/ptc device on the wasm guest anyway).
-      "ac_cv_file__dev_ptmx=no"
+      # Cross builds can't probe for /dev/ptmx; the guest mounts devpts and has
+      # a working /dev/ptmx, so answer yes. There is no legacy /dev/ptc.
+      "ac_cv_file__dev_ptmx=yes"
       "ac_cv_file__dev_ptc=no"
 
       # The getaddrinfo "is it buggy" probe is a run test; cross builds default
