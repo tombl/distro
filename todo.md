@@ -10,6 +10,11 @@
 
 ## Later
 
+- Move the `--table-base=3` signal-sentinel reservation from `packages/platform.nix`
+  into the LLVM fork's wasm32-unknown-linux-musl link driver default, so builds
+  outside this stdenv can't silently regress it. Deferred because changing clang
+  forces a full toolchain + world rebuild; batch it with the next LLVM bump.
+
 - Land framebuffer and input support with guest-visible integration tests, then add basic DRM only when its userspace memory requirements are supportable.
 - Add outbound UDP and browser `fetch` transports to the networking layer.
 - Package a useful initial software set and document the Nix-to-JavaScript build path.
