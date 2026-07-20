@@ -46,6 +46,10 @@ let
       initramfs,
       disk ? null,
       cpus ? 1,
+      graphics ? false,
+      input ? false,
+      gpuWidth ? 1024,
+      gpuHeight ? 768,
     }:
     pkgs.runCommand "vm-test-${name}"
       {
@@ -62,6 +66,8 @@ let
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
+          ${lib.optionalString graphics "--graphics --gpu-width ${toString gpuWidth} --gpu-height ${toString gpuHeight}"} \
+          ${lib.optionalString input "--input"} \
           2>&1
         status=$?
         set -e

@@ -10,18 +10,21 @@ import {
   writeSync,
 } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import { LineDecoder, parseResult } from "./protocol.js";
 
-let cpus = 1;
-const positional = [];
-const args = process.argv.slice(2);
-for (let index = 0; index < args.length; index++) {
-  if (args[index] === "--cpus") {
-    cpus = Number(args[++index]);
-  } else {
-    positional.push(args[index]);
-  }
-}
+const { positionals: positional, values: args } = parseArgs({
+  args: process.argv.slice(2),
+  allowPositionals: true,
+  options: {
+    cpus: { type: "string", default: "1" },
+    graphics: { type: "boolean", default: false },
+    input: { type: "boolean", default: false },
+    "gpu-width": { type: "string", default: "1024" },
+    "gpu-height": { type: "string", default: "768" },
+  },
+});
+const cpus = Number(args.cpus);
 const [linuxPath, initramfsPath, diskPath] = positional;
 if (
   !linuxPath ||
@@ -30,12 +33,21 @@ if (
   !Number.isSafeInteger(cpus) ||
   cpus < 1
 ) {
-  throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk]");
+  throw new Error(
+    "usage: run-test.js [--cpus <count>] [--graphics] [--input] <linux-module> <initramfs> [disk]",
+  );
 }
 
-const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
-  pathToFileURL(linuxPath).href
-);
+const linux = await import(pathToFileURL(linuxPath).href);
+const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = linux;
+const framebufferWidth = Number.parseInt(args["gpu-width"], 10);
+const framebufferHeight = Number.parseInt(args["gpu-height"], 10);
+if (!Number.isInteger(framebufferWidth) || framebufferWidth <= 0) {
+  throw new Error("gpu-width must be positive");
+}
+if (!Number.isInteger(framebufferHeight) || framebufferHeight <= 0) {
+  throw new Error("gpu-height must be positive");
+}
 
 let resolveResult;
 const result = new Promise((resolve) => {
@@ -171,6 +183,24 @@ if (diskPath) {
       flush: async () => fsyncSync(disk),
     }),
   );
+}
+
+// REFERENCE: graphical devices now attach through the same spawn-time array
+// as every other host device. The pinned kernel package has no factories yet;
+// graphical test variants therefore fail explicitly instead of silently
+// running without the requested guest-visible devices.
+if (args.graphics) {
+  if (typeof linux.framebufferDevice !== "function") {
+    throw new Error("graphics requested but the Linux module has no framebufferDevice factory");
+  }
+  devices.push(linux.framebufferDevice({ width: framebufferWidth, height: framebufferHeight }));
+}
+
+if (args.input) {
+  if (typeof linux.inputDevice !== "function") {
+    throw new Error("input requested but the Linux module has no inputDevice factory");
+  }
+  devices.push(linux.inputDevice({ kind: "keyboard" }), linux.inputDevice({ kind: "mouse" }));
 }
 
 machine = await spawnMachine({

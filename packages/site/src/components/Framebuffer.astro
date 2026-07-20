@@ -1,0 +1,199 @@
+<section class="framebuffer" data-framebuffer hidden>
+  <canvas
+    width="1024"
+    height="768"
+    tabindex="0"
+    aria-label="Linux framebuffer; click to capture keyboard and mouse input"
+  ></canvas>
+  <p>Click the display to capture keyboard and mouse input. Press Escape to release the pointer.</p>
+</section>
+
+<script>
+  import { framebuffer, keyboard, mouse } from "../lib/hero";
+
+  const KEY_CODES: Record<string, number> = {
+    Escape: 1,
+    Digit1: 2,
+    Digit2: 3,
+    Digit3: 4,
+    Digit4: 5,
+    Digit5: 6,
+    Digit6: 7,
+    Digit7: 8,
+    Digit8: 9,
+    Digit9: 10,
+    Digit0: 11,
+    Minus: 12,
+    Equal: 13,
+    Backspace: 14,
+    Tab: 15,
+    KeyQ: 16,
+    KeyW: 17,
+    KeyE: 18,
+    KeyR: 19,
+    KeyT: 20,
+    KeyY: 21,
+    KeyU: 22,
+    KeyI: 23,
+    KeyO: 24,
+    KeyP: 25,
+    BracketLeft: 26,
+    BracketRight: 27,
+    Enter: 28,
+    ControlLeft: 29,
+    KeyA: 30,
+    KeyS: 31,
+    KeyD: 32,
+    KeyF: 33,
+    KeyG: 34,
+    KeyH: 35,
+    KeyJ: 36,
+    KeyK: 37,
+    KeyL: 38,
+    Semicolon: 39,
+    Quote: 40,
+    Backquote: 41,
+    ShiftLeft: 42,
+    Backslash: 43,
+    KeyZ: 44,
+    KeyX: 45,
+    KeyC: 46,
+    KeyV: 47,
+    KeyB: 48,
+    KeyN: 49,
+    KeyM: 50,
+    Comma: 51,
+    Period: 52,
+    Slash: 53,
+    ShiftRight: 54,
+    AltLeft: 56,
+    Space: 57,
+    ControlRight: 97,
+    AltRight: 100,
+    ArrowUp: 103,
+    ArrowLeft: 105,
+    ArrowRight: 106,
+    ArrowDown: 108,
+    Delete: 111,
+    MetaLeft: 125,
+    MetaRight: 126,
+  };
+
+  const REL_X = 0;
+  const REL_Y = 1;
+  const BTN_LEFT = 0x110;
+  const BTN_RIGHT = 0x111;
+  const BTN_MIDDLE = 0x112;
+
+  const section = document.querySelector<HTMLElement>("[data-framebuffer]");
+  const canvas = section?.querySelector("canvas");
+  const context = canvas?.getContext("2d");
+
+  if (framebuffer && section && canvas && context) {
+    section.hidden = false;
+    let pixels: Uint8ClampedArray | undefined;
+
+    function draw() {
+      if (!framebuffer || !canvas || !context) return;
+      if (canvas.width !== framebuffer.width || canvas.height !== framebuffer.height) {
+        canvas.width = framebuffer.width;
+        canvas.height = framebuffer.height;
+        pixels = undefined;
+      }
+      pixels = framebuffer.readRgba(pixels);
+      // ImageData does not accept a SharedArrayBuffer-backed typed array in
+      // every browser, so take a regular ArrayBuffer copy at the canvas edge.
+      context.putImageData(
+        new ImageData(new Uint8ClampedArray(pixels), framebuffer.width, framebuffer.height),
+        0,
+        0,
+      );
+      requestAnimationFrame(draw);
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  addEventListener("keydown", (event) => {
+    const active = document.activeElement === canvas || document.pointerLockElement === canvas;
+    const code = KEY_CODES[event.code];
+    if (!active || code === undefined || event.repeat) return;
+    keyboard?.enqueueKeyEvent(code, true);
+    event.preventDefault();
+  });
+
+  addEventListener("keyup", (event) => {
+    const active = document.activeElement === canvas || document.pointerLockElement === canvas;
+    const code = KEY_CODES[event.code];
+    if (!active || code === undefined) return;
+    keyboard?.enqueueKeyEvent(code, false);
+    event.preventDefault();
+  });
+
+  canvas?.addEventListener("click", () => {
+    canvas.focus();
+    void canvas.requestPointerLock();
+  });
+
+  addEventListener("mousemove", (event) => {
+    if (document.pointerLockElement !== canvas) return;
+    if (event.movementX !== 0) mouse?.enqueueRelativeEvent(REL_X, event.movementX);
+    if (event.movementY !== 0) mouse?.enqueueRelativeEvent(REL_Y, event.movementY);
+  });
+
+  function buttonCode(button: number) {
+    if (button === 2) return BTN_RIGHT;
+    if (button === 1) return BTN_MIDDLE;
+    return BTN_LEFT;
+  }
+
+  canvas?.addEventListener("mousedown", (event) => {
+    mouse?.enqueueButtonEvent(buttonCode(event.button), true);
+    event.preventDefault();
+  });
+
+  canvas?.addEventListener("mouseup", (event) => {
+    mouse?.enqueueButtonEvent(buttonCode(event.button), false);
+    event.preventDefault();
+  });
+
+  canvas?.addEventListener("wheel", (event) => {
+    mouse?.enqueueWheelEvent(Math.sign(-event.deltaY));
+    event.preventDefault();
+  });
+
+  canvas?.addEventListener("contextmenu", (event) => event.preventDefault());
+</script>
+
+<style>
+  .framebuffer {
+    margin-block: 1rem;
+    border: 1px solid var(--hairline);
+    background: #111;
+
+    &[hidden] {
+      display: none;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      max-height: 45vh;
+      object-fit: contain;
+      image-rendering: pixelated;
+      outline: none;
+    }
+
+    canvas:focus {
+      box-shadow: inset 0 0 0 2px var(--code-cursor);
+    }
+
+    p {
+      margin: 0;
+      padding: 0.5rem 0.75rem;
+      border-block-start: 1px solid var(--hairline);
+      color: var(--muted);
+      font-size: 0.8125rem;
+    }
+  }
+</style>

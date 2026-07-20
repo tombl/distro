@@ -63,6 +63,22 @@ pkgs.stdenvNoCC.mkDerivation {
 
     make defconfig ${lib.optionalString debug "debug.config"}
 
+    # Reference framebuffer/input configuration. The pinned wasm kernel has
+    # the generic Linux drivers, but its host package does not yet export the
+    # matching devices (and FB_WASM names a source file which is absent).
+    ${pkgs.bash}/bin/bash scripts/config \
+      --enable FB \
+      --enable FB_SIMPLE \
+      --enable FRAMEBUFFER_CONSOLE \
+      --enable INPUT \
+      --enable INPUT_EVDEV \
+      --enable TTY \
+      --enable UNIX98_PTYS \
+      --enable VT \
+      --enable VIRTIO_INPUT \
+      --enable VIRTIO_MENU
+    make olddefconfig
+
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
       if make -C tools/wasm; then
