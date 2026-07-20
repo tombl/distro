@@ -165,9 +165,8 @@ stdenv.mkDerivation (finalAttrs: {
     {
       workflow = check "workflow" ./workflow-test.sh;
       packing = check "packing" ./packing-test.sh;
-      # The http transport cannot be exercised end to end in the sandbox (no
-      # network), so this check proves git-remote-http linked against libcurl
-      # and that `git ls-remote` over http fails gracefully instead of crashing.
+      # Serve a real repository over guest loopback and fetch it through
+      # git-remote-http/libcurl.
       remote = check "remote" ./remote-test.sh;
     };
 })

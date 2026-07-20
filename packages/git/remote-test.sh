@@ -14,6 +14,7 @@ export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
 # git spawns git-remote-http (posix_spawn) and it opens /dev/null.
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+mount -t proc proc /proc || fail "mounting proc failed"
 mkdir -p /root /tmp
 cd /tmp || fail "cd /tmp failed"
 
@@ -22,25 +23,47 @@ cd /tmp || fail "cd /tmp failed"
 [ -e /libexec/git-core/git-remote-http ] || fail "git-remote-http not installed"
 [ -e /libexec/git-core/git-remote-https ] || fail "git-remote-https not installed"
 
-# git must recognise http as a supported protocol (built-in curl transport),
-# which it only reports when compiled without NO_CURL.
-git remote-http 2>/tmp/rh
-grep -qi 'curl\|usage\|remote-curl\|http' /tmp/rh ||
-  fail "git-remote-http produced no recognisable output: $(cat /tmp/rh)"
+# Build a real dumb-HTTP remote. This drives git -> git-remote-http -> libcurl ->
+# BusyBox httpd over the guest TCP stack, then verifies both discovery and object
+# transfer. A broad error-message grep against a deliberately closed port would
+# pass even if the useful transport path were broken.
+git init -b main source >/dev/null 2>/tmp/err || fail "init source: $(cat /tmp/err)"
+git -C source config user.name Test
+git -C source config user.email test@example.com
+printf 'served over HTTP\n' >source/payload
+git -C source add payload || fail "add source payload"
+git -C source commit -m initial >/dev/null 2>/tmp/err || fail "commit source: $(cat /tmp/err)"
+want=$(git -C source rev-parse HEAD) || fail "resolve source HEAD"
 
-# A real end-to-end fetch needs a server and network, neither of which exists in
-# the sandbox. Instead point ls-remote at a closed local port and require a
-# clean, fast, non-zero failure: the transport must report an error and exit,
-# not crash (SIGSEGV/trap) or hang. 127.0.0.1:1 refuses or is unreachable
-# immediately, so curl returns at once rather than waiting on a connect timeout.
-if git ls-remote http://127.0.0.1:1/repo.git >/tmp/out 2>/tmp/err; then
-  fail "ls-remote unexpectedly succeeded against a closed port"
-fi
-# Some diagnostic must have been emitted (connection refused / unable to
-# connect / could not read), proving the helper ran and reported cleanly.
-if ! grep -qiE 'unable to|could not|connect|refused|errno|fatal|fail' /tmp/err; then
-  fail "ls-remote failed without a diagnostic: $(cat /tmp/err)"
-fi
+mkdir -p /srv || fail "create HTTP root"
+git clone --bare source /srv/repo.git >/dev/null 2>/tmp/err || fail "create bare remote: $(cat /tmp/err)"
+git --git-dir=/srv/repo.git update-server-info || fail "prepare dumb HTTP metadata"
+
+ip link set lo up || fail "bringing up loopback failed"
+httpd -f -p 127.0.0.1:18085 -h /srv &
+httpd_pid=$!
+attempts=0
+while kill -0 "$httpd_pid" 2>/dev/null; do
+  if awk '$2 ~ /:46A5$/ && $4 == "0A" { found = 1 } END { exit !found }' /proc/net/tcp; then
+    break
+  fi
+  attempts=$((attempts + 1))
+  [ "$attempts" -lt 100000 ] || fail "httpd did not publish its listening socket"
+done
+kill -0 "$httpd_pid" 2>/dev/null || fail "httpd exited before becoming ready"
+
+remote=http://127.0.0.1:18085/repo.git
+refs=$(git ls-remote "$remote" refs/heads/main 2>/tmp/err) ||
+  fail "ls-remote over HTTP failed: $(cat /tmp/err)"
+[ "$refs" = "$(printf '%s\trefs/heads/main' "$want")" ] ||
+  fail "ls-remote returned [$refs]"
+
+git clone --quiet "$remote" fetched 2>/tmp/err || fail "HTTP clone failed: $(cat /tmp/err)"
+[ "$(cat fetched/payload)" = "served over HTTP" ] || fail "HTTP clone payload mismatch"
+[ "$(git -C fetched rev-parse HEAD)" = "$want" ] || fail "HTTP clone HEAD mismatch"
+
+kill "$httpd_pid" 2>/dev/null || :
+wait "$httpd_pid" 2>/dev/null || :
 
 echo "::vm-test::pass"
 while :; do :; done

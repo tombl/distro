@@ -38,21 +38,18 @@ ifdown -i /tmp/interfaces test || fail "ifdown failed"
 grep -qx down /tmp/ifdown-result || fail "ifdown did not run the interface hook"
 
 mkdir -p /tmp/crontabs || fail "creating crontab directory failed"
-printf '%s\n' '@reboot printf "%s\n" cron-ran > /tmp/cron-result' >/tmp/root.crontab ||
+mkfifo /tmp/cron-ready || fail "creating cron readiness fifo failed"
+printf '%s\n' '@reboot printf "%s\n" cron-ran > /tmp/cron-ready' >/tmp/root.crontab ||
   fail "creating crontab failed"
 crontab -c /tmp/crontabs /tmp/root.crontab || fail "installing crontab failed"
 crontab -c /tmp/crontabs -l | grep -q '^@reboot ' || fail "listing crontab failed"
 
 crond -f -c /tmp/crontabs -L /tmp/crond.log &
 crond_pid=$!
-tries=0
-while [ ! -e /tmp/cron-result ] && [ "$tries" -lt 50 ]; do
-  sleep 0.02
-  tries=$((tries + 1))
-done
+read -r cron_result </tmp/cron-ready || fail "reading crond @reboot result failed"
 kill "$crond_pid" 2>/dev/null || :
 wait "$crond_pid" 2>/dev/null || :
-grep -qx cron-ran /tmp/cron-result || fail "crond did not run an @reboot job"
+[ "$cron_result" = cron-ran ] || fail "crond @reboot returned [$cron_result]"
 
 crontab -c /tmp/crontabs -r || fail "removing crontab failed"
 [ ! -e /tmp/crontabs/root ] || fail "crontab was not removed"
