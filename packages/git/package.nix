@@ -4,6 +4,8 @@
   src,
   busybox,
   zlib,
+  curl,
+  mbedtls,
   vm-test,
 }:
 
@@ -40,9 +42,15 @@ stdenv.mkDerivation (finalAttrs: {
   # the build entirely, but a build-time generator can still be perl.
   nativeBuildInputs = [ pkgs.perl ];
 
-  # zlib is mandatory: git deflates every object and pack with it. The scope's
-  # static zlib is picked up through the cc-wrapper's -I/-L.
-  buildInputs = [ zlib ];
+  # zlib is mandatory: git deflates every object and pack with it. curl (built
+  # against mbedtls + zlib) provides the http/https smart transport used by
+  # git-remote-http; mbedtls supplies its TLS. All are static and picked up
+  # through the cc-wrapper's -I/-L.
+  buildInputs = [
+    zlib
+    curl
+    mbedtls
+  ];
 
   enableParallelBuilding = true;
 
@@ -55,10 +63,20 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   # CC/AR come from the wasm toolchain the stdenv exports; git's Makefile hard
-  # assigns `CC = cc`, so pass them on the command line (makeFlagsArray is
-  # expanded by the build shell) to win over that assignment.
+  # assigns `CC = cc`, so pass CC/AR on the command line (makeFlagsArray is
+  # expanded by the build shell) to win over that assignment. CURL_LDFLAGS pins
+  # the static libcurl link line: a static libcurl cannot resolve its own TLS
+  # and compression symbols, so its private deps (mbedtls + zlib) must be named
+  # on the link line after -lcurl. Setting CURL_LDFLAGS makes git use exactly
+  # this line rather than deriving one from curl-config, keeping the static link
+  # deterministic. It has spaces, so it must go through makeFlagsArray rather
+  # than the makeFlags list (whose entries are split on whitespace); the -L
+  # search paths for those libs come from buildInputs via the cc-wrapper.
   preBuild = ''
-    makeFlagsArray+=("CC=$CC" "AR=$AR")
+    makeFlagsArray+=(
+      "CC=$CC" "AR=$AR"
+      "CURL_LDFLAGS=-lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz"
+    )
   '';
 
   # uname_S=Linux: the build host is Linux, so config.mak.uname already selects
@@ -84,8 +102,14 @@ stdenv.mkDerivation (finalAttrs: {
   #   (for imap-send's TLS) and would link libssl. We do not build against
   #   openssl: git's own SHA-1 (sha1dc/DC_SHA1) and SHA-256 (block) backends are
   #   the defaults, so no crypto library is needed for the object store.
-  # NO_{PERL,TCLTK,PYTHON,GETTEXT,CURL}: out of scope for the core local port.
-  #   NO_CURL drops the http/https remote transport (a later commit may add it).
+  # NO_{PERL,TCLTK,PYTHON,GETTEXT}: out of scope for this port.
+  # curl is enabled (NO_CURL is *not* set): git-remote-http links libcurl for
+  #   the smart http/https transport. CURL_CFLAGS/CURL_LDFLAGS are supplied
+  #   explicitly (see preBuild) so the cross build never consults a host
+  #   curl-config for link flags; CURL_CONFIG still points at the wasm curl's
+  #   config script for git's version probe. NO_EXPAT: git-http-push (the dumb
+  #   push protocol) needs expat, which we do not ship; the smart transport
+  #   used by fetch/clone/ls-remote does not, so only http-push is dropped.
   # NO_INSTALL_HARDLINKS + INSTALL_SYMLINKS: install the ~100 git-<cmd> entries
   #   in libexec/git-core as symlinks to the git binary, not hardlinks. The
   #   initramfs builder copies contents with `cp -RP`, which turns each hardlink
@@ -103,7 +127,9 @@ stdenv.mkDerivation (finalAttrs: {
     "NO_TCLTK=YesPlease"
     "NO_PYTHON=YesPlease"
     "NO_GETTEXT=YesPlease"
-    "NO_CURL=YesPlease"
+    "NO_EXPAT=YesPlease"
+    "CURL_CONFIG=${curl}/bin/curl-config"
+    "CURL_CFLAGS=-I${curl}/include"
     "NO_INSTALL_HARDLINKS=YesPlease"
     "INSTALL_SYMLINKS=YesPlease"
     # config.mak.uname's Linux block sets LINK_FUZZ_PROGRAMS, which pulls the
@@ -139,5 +165,9 @@ stdenv.mkDerivation (finalAttrs: {
     {
       workflow = check "workflow" ./workflow-test.sh;
       packing = check "packing" ./packing-test.sh;
+      # The http transport cannot be exercised end to end in the sandbox (no
+      # network), so this check proves git-remote-http linked against libcurl
+      # and that `git ls-remote` over http fails gracefully instead of crashing.
+      remote = check "remote" ./remote-test.sh;
     };
 })
