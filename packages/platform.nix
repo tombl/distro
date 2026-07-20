@@ -35,6 +35,9 @@ rec {
     "--max-memory=4294967296"
     "--shared-memory"
     "--export-table"
+    # The runtime routes SA_SIGINFO delivery through musl so siginfo_t and the
+    # minimal ucontext_t are materialized in userspace rather than kernel memory.
+    "--export=__wasm_call_siginfo_handler"
     # Linux's signal ABI reserves function-pointer value 1 for SIG_IGN, and
     # musl's public signal API uses value 2 for SIG_HOLD. Wasm function pointers
     # are table indices, so leave those slots empty rather than letting real

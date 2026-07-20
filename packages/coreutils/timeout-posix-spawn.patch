@@ -1,8 +1,7 @@
 wasm has no fork(); launch the monitored command through posix_spawn. The
 child's pre-exec signal setup (restore mask, default SIGTTIN/SIGTTOU) maps onto
-POSIX_SPAWN_SETSIGMASK and POSIX_SPAWN_SETSIGDEF. Note: timeout enforcement
-still depends on setitimer/SIGALRM, which does not fire on this platform, so
-the timeout itself is currently ineffective (see PLATFORM ISSUES).
+POSIX_SPAWN_SETSIGMASK and POSIX_SPAWN_SETSIGDEF. Timeout enforcement retains
+the upstream setitimer/SIGALRM path.
 
 --- a/src/timeout.c
 +++ b/src/timeout.c

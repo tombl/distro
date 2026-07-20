@@ -97,28 +97,4 @@
  }
  
  /* Add the pid of a child to the list for exit-handling */
---- a/src/common-session.c
-+++ b/src/common-session.c
-@@ -208,6 +208,7 @@
- 			dropbear_fd_set(ses.sock_out, &writefd);
- 		}
- 
-+		errno = 0;
- 		val = select(ses.maxfd+1, &readfd, &writefd, NULL, &timeout);
- 
- 		if (ses.exitflag) {
-@@ -214,8 +215,12 @@
- 			dropbear_exit("Terminated by signal");
- 		}
- 		
--		if (val < 0 && errno != EINTR) {
-+		/* Cooperative signal delivery on wasm can interrupt select() with
-+		 * errno left at zero or the kernel-internal ERESTARTNOHAND value 514.
-+		 * Treat both like EINTR so the next iteration drains the SIGCHLD
-+		 * self-pipe and reaps the callback-clone child. */
-+		if (val < 0 && errno != EINTR && errno != 0 && errno != 514) {
--			dropbear_exit("Error in select");
-+			dropbear_exit("Error in select: errno %d (%s)", errno, strerror(errno));
- 		}
- 
  		if (val <= 0) {

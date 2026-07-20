@@ -51,9 +51,8 @@ let
     ac_cv_func_dlopen=no
     ac_cv_search_dlopen=no
     ac_cv_lib_dl_dlopen=no
-    # The wasm sigaltstack wrapper still traps via a wasm `unreachable` rather
-    # than returning ENOSYS; keep this answered no until that is fixed at the
-    # musl/kernel layer.
+    # wasm reports sigaltstack as ENOSYS: alternate signal stacks remain
+    # unsupported, so configure probes must keep the function disabled.
     ac_cv_func_sigaltstack=no
   '';
 in

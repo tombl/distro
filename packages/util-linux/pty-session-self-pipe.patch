@@ -164,7 +164,7 @@
  		/* error */
  		if (ret < 0) {
 -			if (errsv == EAGAIN)
-+			if (errsv == EAGAIN || errsv == EINTR || errsv == 0 || errsv == 514)
++			if (errsv == EAGAIN || errsv == EINTR)
  				continue;
  			rc = -errno;
  			break;

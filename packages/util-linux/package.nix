@@ -77,11 +77,6 @@ stdenv.mkDerivation (finalAttrs: {
     # signalfd is absent; retain the same poll-driven signal model with a
     # nonblocking self-pipe populated by minimal signal handlers.
     ./pty-session-self-pipe.patch
-    # The wasm signal trampoline does not support SA_SIGINFO handlers, and an
-    # interrupted blocking flock may return without preserving EINTR in errno.
-    # flock's SIGALRM handler only marks expiration, so use a conventional
-    # one-argument handler and make that expiration flag authoritative.
-    ./timer-no-siginfo.patch
     # wasm has no mmap: look mapped its dictionary file read-only for a binary
     # search; read it into a heap buffer instead (same [front, back) range).
     ./look-no-mmap.patch

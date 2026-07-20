@@ -11,8 +11,8 @@
  * usage: tcp-spawn <port> <ready-file> <prog> [args...]
  *
  * After bind()+listen() succeeds it creates <ready-file>, which the test script
- * waits for before starting the client -- avoiding a connect-before-listen race
- * without relying on timers (SIGALRM does not fire on the guest kernel).
+ * waits for before starting the client, avoiding a connect-before-listen race
+ * without relying on an arbitrary delay.
  */
 #include <arpa/inet.h>
 #include <netinet/in.h>

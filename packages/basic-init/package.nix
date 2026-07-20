@@ -162,6 +162,7 @@ in
     setjmp = setjmpCheck;
     signal-syscall-return = signalSyscallReturnCheck "plain" "";
     signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ -mllvm -wasm-enable-sjlj";
+    signal-correctness = check "signal-correctness";
     sigsetjmp = sigsetjmpCheck;
     sigsetjmp-handler = sigsetjmpHandlerCheck;
     pthread-no-tls = check "pthread-no-tls";
