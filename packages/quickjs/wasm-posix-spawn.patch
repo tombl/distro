@@ -1,0 +1,129 @@
+--- a/quickjs-libc.c
++++ b/quickjs-libc.c
+@@ -60,6 +60,9 @@
+ #include <poll.h>
+ #if !defined(__wasi__)
+ #include <dlfcn.h>
++#if defined(__wasm__)
++#include <spawn.h>
++#endif
+ #include <termios.h>
+ #include <sys/resource.h>
+ #include <sys/wait.h>
+@@ -3498,6 +3501,8 @@
+     goto done;
+ }
+ 
++#ifndef __wasm__
++
+ /* execvpe is not available on non GNU systems */
+ static int my_execvpe(const char *filename, char **argv, char **envp)
+ {
+@@ -3567,6 +3572,80 @@
+ 
+ #endif
+ 
++#else
++
++static int js_os_spawn(pid_t *pid, const char *file, char **argv, char **envp,
++                       const int std_fds[3], const char *cwd, bool use_path)
++{
++    posix_spawn_file_actions_t actions;
++    DIR *dir = NULL;
++    struct dirent *entry;
++    uint32_t i;
++    int ret;
++
++    ret = posix_spawn_file_actions_init(&actions);
++    if (ret)
++        return ret;
++
++    for(i = 0; i < 3; i++) {
++        if (std_fds[i] != i) {
++            ret = posix_spawn_file_actions_adddup2(&actions, std_fds[i], i);
++            if (ret)
++                goto done;
++        }
++    }
++
++    /* QuickJS children inherit only stdin, stdout, and stderr. musl has no
++       closefrom spawn action, so turn the parent's current descriptor set into
++       ordered close actions after the stdio duplications. */
++    dir = opendir("/proc/self/fd");
++    if (!dir) {
++        ret = errno;
++        goto done;
++    }
++    for(;;) {
++        char *end;
++        long fd;
++
++        errno = 0;
++        entry = readdir(dir);
++        if (!entry) {
++            ret = errno;
++            break;
++        }
++        fd = strtol(entry->d_name, &end, 10);
++        if (end != entry->d_name && *end == '\0' &&
++            fd >= 3 && fd <= INT_MAX) {
++            ret = posix_spawn_file_actions_addclose(&actions, fd);
++            if (ret)
++                break;
++        }
++    }
++    closedir(dir);
++    dir = NULL;
++    if (ret)
++        goto done;
++
++    if (cwd) {
++        ret = posix_spawn_file_actions_addchdir_np(&actions, cwd);
++        if (ret)
++            goto done;
++    }
++
++    if (use_path)
++        ret = posix_spawnp(pid, file, &actions, NULL, argv, envp);
++    else
++        ret = posix_spawn(pid, file, &actions, NULL, argv, envp);
++
++ done:
++    if (dir)
++        closedir(dir);
++    posix_spawn_file_actions_destroy(&actions);
++    return ret;
++}
++
++#endif
++
+ /* exec(args[, options]) -> exitcode */
+ static JSValue js_os_exec(JSContext *ctx, JSValueConst this_val,
+                           int argc, JSValueConst *argv)
+@@ -3722,6 +3801,18 @@
+ 
+     }
+ 
++#ifdef __wasm__
++    if (uid != (uint32_t)-1 || gid != (uint32_t)-1 || ngroups != -1) {
++        JS_ThrowTypeError(ctx, "os.exec uid, gid, and groups options are not supported on wasm");
++        goto exception;
++    }
++    ret = js_os_spawn(&pid, file ? file : exec_argv[0],
++                      (char **)exec_argv, envp, std_fds, cwd, use_path);
++    if (ret) {
++        JS_ThrowInternalError(ctx, "posix_spawn: %s", strerror(ret));
++        goto exception;
++    }
++#else
+ #if !defined(EMSCRIPTEN) && !defined(__wasi__)
+     // should happen pre-fork because it calls dlsym()
+     // and that's not an async-signal-safe function
+@@ -3776,6 +3867,7 @@
+             ret = execve(file, (char **)exec_argv, envp);
+         _exit(127);
+     }
++#endif
+     /* parent */
+     if (block_flag) {
+         for(;;) {

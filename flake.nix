@@ -76,6 +76,14 @@
       url = "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz";
       flake = false;
     };
+    python-src = {
+      url = "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz";
+      flake = false;
+    };
+    quickjs-src = {
+      url = "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz";
+      flake = false;
+    };
     readline-src = {
       url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
       flake = false;
