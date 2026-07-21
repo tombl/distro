@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm --filter=@tombl/linux-guest build && pnpm --recursive check"
+  },
+  "dependencies": {
+    "@tombl/linux": "link:checkouts/linux/tools/wasm"
+  },
+  "packageManager": "pnpm@11.13.1"
+}

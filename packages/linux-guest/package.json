@@ -1,0 +1,34 @@
+{
+  "name": "@tombl/linux-guest",
+  "version": "0.0.0",
+  "description": "A bootable Linux guest for JavaScript with processes and files.",
+  "homepage": "https://linux.tombl.dev/reference/linux-guest/",
+  "license": "MIT AND GPL-2.0-only AND (GPL-2.0-only WITH Linux-syscall-note)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombl/distro.git",
+    "directory": "packages/linux-guest"
+  },
+  "files": [
+    "dist",
+    "initramfs.cpio",
+    "rootfs.squashfs"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@tombl/linux": "0.0.0"
+  }
+}

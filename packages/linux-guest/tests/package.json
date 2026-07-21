@@ -1,0 +1,16 @@
+{
+  "name": "@tombl/linux-guest-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc",
+    "test": "node --test --test-concurrency=1"
+  },
+  "dependencies": {
+    "@tombl/linux": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.9.3"
+  }
+}

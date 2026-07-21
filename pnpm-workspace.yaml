@@ -1,0 +1,12 @@
+packages:
+  - packages/linux-guest
+  - packages/linux-guest/tests
+  - packages/runner
+
+allowBuilds:
+  esbuild: true
+
+# Co-develop against the kernel checkout instead of the registry package
+# until the docs are ready to release against a published version.
+overrides:
+  '@tombl/linux': link:./checkouts/linux/tools/wasm
