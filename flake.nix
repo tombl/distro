@@ -9,7 +9,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/safari-memory";
+      url = "github:tombl/linux";
       flake = false;
     };
     llvm-src = {
@@ -17,7 +17,7 @@
       flake = false;
     };
     musl-src = {
-      url = "github:tombl/musl/platform-core";
+      url = "github:tombl/musl";
       flake = false;
     };
     # keep-sorted end
