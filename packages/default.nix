@@ -94,6 +94,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
 
     # The private guest protocol and its JavaScript SDK ship together.
     guest-agent = callPackage ./guest-agent/package.nix { };
+    ltp = callPackage ./ltp/package.nix { src = inputs.ltp-src; };
     node-workspace = callPackage ./node-workspace.nix { };
     linux-guest = callPackage ./linux-guest { };
     runner = callPackage ./runner { };
