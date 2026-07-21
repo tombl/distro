@@ -58,5 +58,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.
     vm-test = callPackage ./vm-test/package.nix { };
+
+    # Shared immutable filesystem construction. Product-specific images remain
+    # owned by their consumer packages.
+    image = callPackage ./image { };
   }
 )
