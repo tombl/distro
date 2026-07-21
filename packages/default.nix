@@ -68,5 +68,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     node-workspace = callPackage ./node-workspace.nix { };
     linux-guest = callPackage ./linux-guest { };
     runner = callPackage ./runner { };
+    browser-tests = callPackage ./browser-tests/package.nix { };
   }
 )

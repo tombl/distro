@@ -1,0 +1,16 @@
+{
+  "name": "@tombl/browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "playwright test --list",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@tombl/linux": "0.0.0",
+    "@tombl/linux-guest": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}
