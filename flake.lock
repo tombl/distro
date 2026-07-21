@@ -42,6 +42,19 @@
         "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
       }
     },
+    "curl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782280409,
+        "narHash": "sha256-nrvbU5C6oeCMAecrEqYE3CNPyFVsTEqaqhhCoLe5fMo=",
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      }
+    },
     "diffutils-src": {
       "flake": false,
       "locked": {
@@ -53,6 +66,19 @@
       "original": {
         "type": "tarball",
         "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
+      }
+    },
+    "dropbear-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783348200,
+        "narHash": "sha256-xXjKWj6tMW/Qlq4DttxKAqOwsER2QEeb1Qw3Gllu2QQ=",
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
       }
     },
     "file-src": {
@@ -92,6 +118,19 @@
       "original": {
         "type": "tarball",
         "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz"
+      }
+    },
+    "git-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782750746,
+        "narHash": "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=",
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
       }
     },
     "grep-src": {
@@ -322,10 +361,13 @@
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
         "coreutils-src": "coreutils-src",
+        "curl-src": "curl-src",
         "diffutils-src": "diffutils-src",
+        "dropbear-src": "dropbear-src",
         "file-src": "file-src",
         "findutils-src": "findutils-src",
         "gawk-src": "gawk-src",
+        "git-src": "git-src",
         "grep-src": "grep-src",
         "jq-src": "jq-src",
         "less-src": "less-src",

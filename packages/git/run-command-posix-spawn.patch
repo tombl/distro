@@ -1,0 +1,438 @@
+--- a/run-command.c	2026-07-20 04:25:10.023063869 +0800
++++ b/run-command.c	2026-07-20 04:26:32.981688584 +0800
+@@ -18,6 +18,14 @@
+ #include "packfile.h"
+ #include "compat/nonblock.h"
+ 
++/*
++ * WebAssembly Linux (musl) has no fork(); the symbol does not exist. Every
++ * child is created with posix_spawn (clone+execve). start_command() below
++ * expresses the fork child's between-fork-and-exec fd plumbing as posix_spawn
++ * file actions instead.
++ */
++#include <spawn.h>
++
+ void child_process_init(struct child_process *child)
+ {
+ 	struct child_process blank = CHILD_PROCESS_INIT;
+@@ -309,104 +317,13 @@
+ }
+ 
+ #ifndef GIT_WINDOWS_NATIVE
+-static int child_notifier = -1;
+-
+-enum child_errcode {
+-	CHILD_ERR_CHDIR,
+-	CHILD_ERR_DUP2,
+-	CHILD_ERR_CLOSE,
+-	CHILD_ERR_SIGPROCMASK,
+-	CHILD_ERR_SILENT,
+-	CHILD_ERR_ERRNO
+-};
+-
+-struct child_err {
+-	enum child_errcode err;
+-	int syserr; /* errno */
+-};
+-
+-static void child_die(enum child_errcode err)
+-{
+-	struct child_err buf;
+-
+-	buf.err = err;
+-	buf.syserr = errno;
+-
+-	/* write(2) on buf smaller than PIPE_BUF (min 512) is atomic: */
+-	xwrite(child_notifier, &buf, sizeof(buf));
+-	_exit(1);
+-}
+-
+-static void child_dup2(int fd, int to)
+-{
+-	if (dup2(fd, to) < 0)
+-		child_die(CHILD_ERR_DUP2);
+-}
+-
+-static void child_close(int fd)
+-{
+-	if (close(fd))
+-		child_die(CHILD_ERR_CLOSE);
+-}
+-
+-static void child_close_pair(int fd[2])
+-{
+-	child_close(fd[0]);
+-	child_close(fd[1]);
+-}
+-
+-static void child_error_fn(const char *err UNUSED, va_list params UNUSED)
+-{
+-	const char msg[] = "error() should not be called in child\n";
+-	xwrite(2, msg, sizeof(msg) - 1);
+-}
+-
+-static void child_warn_fn(const char *err UNUSED, va_list params UNUSED)
+-{
+-	const char msg[] = "warn() should not be called in child\n";
+-	xwrite(2, msg, sizeof(msg) - 1);
+-}
+-
+-static void NORETURN child_die_fn(const char *err UNUSED, va_list params UNUSED)
+-{
+-	const char msg[] = "die() should not be called in child\n";
+-	xwrite(2, msg, sizeof(msg) - 1);
+-	_exit(2);
+-}
+-
+-/* this runs in the parent process */
+-static void child_err_spew(struct child_process *cmd, struct child_err *cerr)
+-{
+-	static void (*old_errfn)(const char *err, va_list params);
+-	report_fn die_message_routine = get_die_message_routine();
+-
+-	old_errfn = get_error_routine();
+-	set_error_routine(die_message_routine);
+-	errno = cerr->syserr;
+-
+-	switch (cerr->err) {
+-	case CHILD_ERR_CHDIR:
+-		error_errno("exec '%s': cd to '%s' failed",
+-			    cmd->args.v[0], cmd->dir);
+-		break;
+-	case CHILD_ERR_DUP2:
+-		error_errno("dup2() in child failed");
+-		break;
+-	case CHILD_ERR_CLOSE:
+-		error_errno("close() in child failed");
+-		break;
+-	case CHILD_ERR_SIGPROCMASK:
+-		error_errno("sigprocmask failed restoring signals");
+-		break;
+-	case CHILD_ERR_SILENT:
+-		break;
+-	case CHILD_ERR_ERRNO:
+-		error_errno("cannot exec '%s'", cmd->args.v[0]);
+-		break;
+-	}
+-	set_error_routine(old_errfn);
+-}
+-
++/*
++ * The fork-era child helpers (child_notifier / child_die / child_dup2 /
++ * child_close / child_err_spew and the child_err struct) are gone: with
++ * posix_spawn no code runs in the child, so there is no notify pipe to
++ * report a failed dup2/chdir/exec back through. posix_spawn reports those
++ * failures through its own return value instead.
++ */
+ static int prepare_cmd(struct strvec *out, const struct child_process *cmd)
+ {
+ 	if (!cmd->args.v[0])
+@@ -496,55 +413,11 @@
+ 	return childenv;
+ }
+ 
+-struct atfork_state {
+-#ifndef NO_PTHREADS
+-	int cs;
+-#endif
+-	sigset_t old;
+-};
+-
+-#define CHECK_BUG(err, msg) \
+-	do { \
+-		int e = (err); \
+-		if (e) \
+-			BUG("%s: %s", msg, strerror(e)); \
+-	} while(0)
+-
+-static void atfork_prepare(struct atfork_state *as)
+-{
+-	sigset_t all;
+-
+-	/*
+-	 * POSIX says sigfillset() can fail, but an overly clever
+-	 * compiler can see through the header files and decide
+-	 * it cannot fail on a particular platform it is compiling for,
+-	 * triggering -Wunreachable-code false positive.
+-	 */
+-	if (NOT_CONSTANT(sigfillset(&all)))
+-		die_errno("sigfillset");
+-#ifdef NO_PTHREADS
+-	if (sigprocmask(SIG_SETMASK, &all, &as->old))
+-		die_errno("sigprocmask");
+-#else
+-	CHECK_BUG(pthread_sigmask(SIG_SETMASK, &all, &as->old),
+-		"blocking all signals");
+-	CHECK_BUG(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &as->cs),
+-		"disabling cancellation");
+-#endif
+-}
+-
+-static void atfork_parent(struct atfork_state *as)
+-{
+-#ifdef NO_PTHREADS
+-	if (sigprocmask(SIG_SETMASK, &as->old, NULL))
+-		die_errno("sigprocmask");
+-#else
+-	CHECK_BUG(pthread_setcancelstate(as->cs, NULL),
+-		"re-enabling cancellation");
+-	CHECK_BUG(pthread_sigmask(SIG_SETMASK, &as->old, NULL),
+-		"restoring signal mask");
+-#endif
+-}
++/*
++ * The atfork_prepare()/atfork_parent() signal-blocking dance existed only to
++ * keep a signal handler from running in the forked child between fork() and
++ * exec(). posix_spawn runs no such window, so it is gone too.
++ */
+ 
+ #endif /* GIT_WINDOWS_NATIVE */
+ 
+@@ -747,12 +620,11 @@
+ 
+ #ifndef GIT_WINDOWS_NATIVE
+ {
+-	int notify_pipe[2];
+ 	int null_fd = -1;
+ 	char **childenv;
+ 	struct strvec argv = STRVEC_INIT;
+-	struct child_err cerr;
+-	struct atfork_state as;
++	posix_spawn_file_actions_t fa;
++	int rc;
+ 
+ 	if (prepare_cmd(&argv, cmd) < 0) {
+ 		failed_errno = errno;
+@@ -764,142 +636,115 @@
+ 
+ 	trace_argv_printf(&argv.v[1], "trace: start_command:");
+ 
+-	if (pipe(notify_pipe))
+-		notify_pipe[0] = notify_pipe[1] = -1;
+-
+ 	if (cmd->no_stdin || cmd->no_stdout || cmd->no_stderr) {
+ 		null_fd = xopen("/dev/null", O_RDWR | O_CLOEXEC);
+ 		set_cloexec(null_fd);
+ 	}
+ 
+ 	childenv = prep_childenv(cmd->env.v);
+-	atfork_prepare(&as);
+ 
+ 	/*
+-	 * NOTE: In order to prevent deadlocking when using threads special
+-	 * care should be taken with the function calls made in between the
+-	 * fork() and exec() calls.  No calls should be made to functions which
+-	 * require acquiring a lock (e.g. malloc) as the lock could have been
+-	 * held by another thread at the time of forking, causing the lock to
+-	 * never be released in the child process.  This means only
+-	 * Async-Signal-Safe functions are permitted in the child.
++	 * The fork child performed these dup2()s and close()s between fork()
++	 * and exec(); posix_spawn runs them from file actions instead. The
++	 * actions execute in the order added, so every dup2 is recorded before
++	 * the close of its source descriptor. null_fd is O_CLOEXEC and so
++	 * closes itself on exec, matching the fork path (which never closed it
++	 * explicitly).
+ 	 */
+-	cmd->pid = fork();
+-	failed_errno = errno;
+-	if (!cmd->pid) {
+-		int sig;
+-		/*
+-		 * Ensure the default die/error/warn routines do not get
+-		 * called, they can take stdio locks and malloc.
+-		 */
+-		set_die_routine(child_die_fn);
+-		set_error_routine(child_error_fn);
+-		set_warn_routine(child_warn_fn);
+-
+-		close(notify_pipe[0]);
+-		set_cloexec(notify_pipe[1]);
+-		child_notifier = notify_pipe[1];
+-
+-		if (cmd->no_stdin)
+-			child_dup2(null_fd, 0);
+-		else if (need_in) {
+-			child_dup2(fdin[0], 0);
+-			child_close_pair(fdin);
+-		} else if (cmd->in) {
+-			child_dup2(cmd->in, 0);
+-			child_close(cmd->in);
+-		}
+-
+-		if (cmd->no_stderr)
+-			child_dup2(null_fd, 2);
+-		else if (need_err) {
+-			child_dup2(fderr[1], 2);
+-			child_close_pair(fderr);
+-		} else if (cmd->err > 1) {
+-			child_dup2(cmd->err, 2);
+-			child_close(cmd->err);
+-		}
+-
+-		if (cmd->no_stdout)
+-			child_dup2(null_fd, 1);
+-		else if (cmd->stdout_to_stderr)
+-			child_dup2(2, 1);
+-		else if (need_out) {
+-			child_dup2(fdout[1], 1);
+-			child_close_pair(fdout);
+-		} else if (cmd->out > 1) {
+-			child_dup2(cmd->out, 1);
+-			child_close(cmd->out);
+-		}
+-
+-		if (cmd->close_fd_above_stderr) {
+-			long max_fd = sysconf(_SC_OPEN_MAX);
+-			int fd;
+-			if (max_fd < 0 || max_fd > 4096)
+-				max_fd = 4096;
+-			for (fd = 3; fd < max_fd; fd++) {
+-				if (fd != child_notifier)
+-					close(fd);
+-			}
+-		}
++	posix_spawn_file_actions_init(&fa);
+ 
+-		if (cmd->dir && chdir(cmd->dir))
+-			child_die(CHILD_ERR_CHDIR);
++	if (cmd->no_stdin)
++		posix_spawn_file_actions_adddup2(&fa, null_fd, 0);
++	else if (need_in)
++		posix_spawn_file_actions_adddup2(&fa, fdin[0], 0);
++	else if (cmd->in)
++		posix_spawn_file_actions_adddup2(&fa, cmd->in, 0);
++
++	if (cmd->no_stderr)
++		posix_spawn_file_actions_adddup2(&fa, null_fd, 2);
++	else if (need_err)
++		posix_spawn_file_actions_adddup2(&fa, fderr[1], 2);
++	else if (cmd->err > 1)
++		posix_spawn_file_actions_adddup2(&fa, cmd->err, 2);
++
++	if (cmd->no_stdout)
++		posix_spawn_file_actions_adddup2(&fa, null_fd, 1);
++	else if (cmd->stdout_to_stderr)
++		posix_spawn_file_actions_adddup2(&fa, 2, 1);
++	else if (need_out)
++		posix_spawn_file_actions_adddup2(&fa, fdout[1], 1);
++	else if (cmd->out > 1)
++		posix_spawn_file_actions_adddup2(&fa, cmd->out, 1);
+ 
++	if (cmd->close_fd_above_stderr) {
+ 		/*
+-		 * restore default signal handlers here, in case
+-		 * we catch a signal right before execve below
++		 * fsmonitor asks for every descriptor above stderr to be
++		 * closed in the child. posix_spawn cannot express "close all",
++		 * so close each descriptor that is open in this process right
++		 * now: the child inherits our table, and the dup2 actions above
++		 * are already recorded to run first. This single sweep also
++		 * covers the pipe descriptors the explicit-close branch below
++		 * would otherwise handle, so that branch is skipped here.
+ 		 */
+-		for (sig = 1; sig < NSIG; sig++) {
+-			/* ignored signals get reset to SIG_DFL on execve */
+-			if (signal(sig, SIG_DFL) == SIG_IGN)
+-				signal(sig, SIG_IGN);
+-		}
+-
+-		if (sigprocmask(SIG_SETMASK, &as.old, NULL) != 0)
+-			child_die(CHILD_ERR_SIGPROCMASK);
+-
++		long max_fd = sysconf(_SC_OPEN_MAX);
++		int fd;
++		if (max_fd < 0 || max_fd > 4096)
++			max_fd = 4096;
++		for (fd = 3; fd < max_fd; fd++)
++			if (fcntl(fd, F_GETFD) >= 0)
++				posix_spawn_file_actions_addclose(&fa, fd);
++	} else {
+ 		/*
+-		 * Attempt to exec using the command and arguments starting at
+-		 * argv.argv[1].  argv.argv[0] contains SHELL_PATH which will
+-		 * be used in the event exec failed with ENOEXEC at which point
+-		 * we will try to interpret the command using 'sh'.
++		 * Close the parent's ends of the pipes in the child, mirroring
++		 * the fork path's child_close()/child_close_pair() calls.
+ 		 */
+-		execve(argv.v[1], (char *const *) argv.v + 1,
+-		       (char *const *) childenv);
+-		if (errno == ENOEXEC)
+-			execve(argv.v[0], (char *const *) argv.v,
+-			       (char *const *) childenv);
+-
+-		if (cmd->silent_exec_failure && errno == ENOENT)
+-			child_die(CHILD_ERR_SILENT);
+-		child_die(CHILD_ERR_ERRNO);
+-	}
+-	atfork_parent(&as);
+-	if (cmd->pid < 0)
+-		error_errno("cannot fork() for %s", cmd->args.v[0]);
+-	else if (cmd->clean_on_exit)
+-		mark_child_for_cleanup(cmd->pid, cmd);
++		if (need_in) {
++			posix_spawn_file_actions_addclose(&fa, fdin[0]);
++			posix_spawn_file_actions_addclose(&fa, fdin[1]);
++		} else if (cmd->in)
++			posix_spawn_file_actions_addclose(&fa, cmd->in);
++
++		if (need_err) {
++			posix_spawn_file_actions_addclose(&fa, fderr[0]);
++			posix_spawn_file_actions_addclose(&fa, fderr[1]);
++		} else if (cmd->err > 1)
++			posix_spawn_file_actions_addclose(&fa, cmd->err);
++
++		if (need_out) {
++			posix_spawn_file_actions_addclose(&fa, fdout[0]);
++			posix_spawn_file_actions_addclose(&fa, fdout[1]);
++		} else if (cmd->out > 1)
++			posix_spawn_file_actions_addclose(&fa, cmd->out);
++	}
++
++	if (cmd->dir)
++		posix_spawn_file_actions_addchdir_np(&fa, cmd->dir);
+ 
+ 	/*
+-	 * Wait for child's exec. If the exec succeeds (or if fork()
+-	 * failed), EOF is seen immediately by the parent. Otherwise, the
+-	 * child process sends a child_err struct.
+-	 * Note that use of this infrastructure is completely advisory,
+-	 * therefore, we keep error checks minimal.
++	 * Attempt to exec argv.v[1] (the resolved program). posix_spawn
++	 * reports a failed exec through its return value; if that value is
++	 * ENOEXEC we retry through the shell using argv.v[0] (SHELL_PATH),
++	 * mirroring the fork path's ENOEXEC fallback. There is no separate
++	 * signal-restoration step: execve resets caught handlers to their
++	 * default and preserves ignored ones, which is exactly the child
++	 * signal state the removed fork-path loop reconstructed by hand.
+ 	 */
+-	close(notify_pipe[1]);
+-	if (xread(notify_pipe[0], &cerr, sizeof(cerr)) == sizeof(cerr)) {
+-		/*
+-		 * At this point we know that fork() succeeded, but exec()
+-		 * failed. Errors have been reported to our stderr.
+-		 */
+-		wait_or_whine(cmd->pid, cmd->args.v[0], 0);
+-		child_err_spew(cmd, &cerr);
+-		failed_errno = errno;
++	rc = posix_spawn(&cmd->pid, argv.v[1], &fa, NULL,
++			 (char *const *) argv.v + 1, childenv);
++	if (rc == ENOEXEC)
++		rc = posix_spawn(&cmd->pid, argv.v[0], &fa, NULL,
++				 (char *const *) argv.v, childenv);
++
++	posix_spawn_file_actions_destroy(&fa);
++
++	if (rc) {
++		failed_errno = rc;
++		errno = rc;
++		if (!cmd->silent_exec_failure || rc != ENOENT)
++			die_message_errno("cannot exec '%s'", cmd->args.v[0]);
+ 		cmd->pid = -1;
+-	}
+-	close(notify_pipe[0]);
++	} else if (cmd->clean_on_exit)
++		mark_child_for_cleanup(cmd->pid, cmd);
+ 
+ 	if (null_fd >= 0)
+ 		close(null_fd);
