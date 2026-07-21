@@ -20,6 +20,10 @@
       url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz";
       flake = false;
     };
+    less-src = {
+      url = "https://ftp.gnu.org/gnu/less/less-668.tar.gz";
+      flake = false;
+    };
     linux-src = {
       url = "github:tombl/linux";
       flake = false;
@@ -28,8 +32,24 @@
       url = "github:tombl/llvm-project/wasm-linux";
       flake = false;
     };
+    lua-src = {
+      url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
+      flake = false;
+    };
     musl-src = {
       url = "github:tombl/musl";
+      flake = false;
+    };
+    ncurses-src = {
+      url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
+      flake = false;
+    };
+    readline-src = {
+      url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
+      flake = false;
+    };
+    sqlite-src = {
+      url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
       flake = false;
     };
     xz-src = {
