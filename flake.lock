@@ -188,11 +188,11 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784565786,
-        "narHash": "sha256-KzmMxkhnLn1IrpFHansSf+DvMs0fum/S4t/2jVR/HPc=",
+        "lastModified": 1784636592,
+        "narHash": "sha256-fuuitTs7AcTpJOxC9qhsv16RJM6ANSkhSfTGWV/g4G4=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "6b92ba881aa65391cf17e1b3ae116c9e6f3a91c1",
+        "rev": "5d66013352ed737d46165dd1f8ba26409ad553f3",
         "type": "github"
       },
       "original": {
