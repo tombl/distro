@@ -15,6 +15,25 @@ function externalLinkTargets() {
   };
 }
 
+type LocalVariant = {
+  src: [string];
+  weight: number;
+  style: "normal" | "italic";
+};
+
+function fontsourceVariants(
+  family: string,
+  weights: [number, ...number[]],
+): [LocalVariant, ...LocalVariant[]] {
+  return weights.flatMap((weight) =>
+    (["normal", "italic"] as const).map((style) => ({
+      src: [`@fontsource/${family}/files/${family}-latin-${weight}-${style}.woff2`],
+      weight,
+      style,
+    })),
+  ) as [LocalVariant, ...LocalVariant[]];
+}
+
 export default defineConfig({
   markdown: {
     syntaxHighlight: false,
@@ -22,18 +41,24 @@ export default defineConfig({
   },
   fonts: [
     {
-      provider: fontProviders.fontsource(),
+      provider: fontProviders.local(),
       name: "Adwaita Sans",
       cssVariable: "--font-sans",
       weights: [400, 500, 600, 700],
       fallbacks: ["system-ui", "sans-serif"],
+      options: {
+        variants: fontsourceVariants("adwaita-sans", [400, 500, 600, 700]),
+      },
     },
     {
-      provider: fontProviders.fontsource(),
+      provider: fontProviders.local(),
       name: "Adwaita Mono",
       cssVariable: "--font-mono",
       weights: [400, 700],
       fallbacks: ["ui-monospace", "SFMono-Regular", "Consolas", "monospace"],
+      options: {
+        variants: fontsourceVariants("adwaita-mono", [400, 700]),
+      },
     },
   ],
   integrations: [

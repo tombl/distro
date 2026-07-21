@@ -74,6 +74,12 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.6
         version: 6.43.6
+      '@fontsource/adwaita-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/adwaita-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@lezer/common':
         specifier: ^1.5.2
         version: 1.5.2
@@ -526,6 +532,12 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fontsource/adwaita-mono@5.3.0':
+    resolution: {integrity: sha512-bKIQPNKcB0u0Pd/T5BdVXY/FW+YrwymIhWjE3lZoTamLSH2fOuMqfcoXbbFnF+VmdPXRson1LMeoMyB6hvK8zA==}
+
+  '@fontsource/adwaita-sans@5.3.0':
+    resolution: {integrity: sha512-uv3c6Pu0ArIy2d8xYfd+hU6iSSFmxDHJO012dt6qLtCHqFw0YFC4ShZIZU8+ZQ9BVJkM//Gw8oDqcGpzE9OwSQ==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2847,6 +2859,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
+
+  '@fontsource/adwaita-mono@5.3.0': {}
+
+  '@fontsource/adwaita-sans@5.3.0': {}
 
   '@img/colour@1.1.0':
     optional: true
