@@ -12,8 +12,28 @@
       url = "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz";
       flake = false;
     };
+    coreutils-src = {
+      url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
+      flake = false;
+    };
+    diffutils-src = {
+      url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
+      flake = false;
+    };
     file-src = {
       url = "https://astron.com/pub/file/file-5.48.tar.gz";
+      flake = false;
+    };
+    findutils-src = {
+      url = "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz";
+      flake = false;
+    };
+    gawk-src = {
+      url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
+      flake = false;
+    };
+    grep-src = {
+      url = "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz";
       flake = false;
     };
     jq-src = {
@@ -36,6 +56,10 @@
       url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
       flake = false;
     };
+    make-src = {
+      url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz";
+      flake = false;
+    };
     musl-src = {
       url = "github:tombl/musl";
       flake = false;
@@ -44,12 +68,24 @@
       url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
       flake = false;
     };
+    patch-src = {
+      url = "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz";
+      flake = false;
+    };
     readline-src = {
       url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
       flake = false;
     };
+    sed-src = {
+      url = "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz";
+      flake = false;
+    };
     sqlite-src = {
       url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
+      flake = false;
+    };
+    tar-src = {
+      url = "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz";
       flake = false;
     };
     xz-src = {

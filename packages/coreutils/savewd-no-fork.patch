@@ -1,0 +1,26 @@
+gnulib's savewd falls back to forking a subprocess to "save" the working
+directory when open (".", O_SEARCH) fails. wasm has no fork(), so treat a
+platform without a working fork the same way this code already treats native
+Windows: never enter the forking path (open + O_SEARCH always succeeds on this
+kernel, so the optimization is never needed).
+
+--- a/lib/savewd.c
++++ b/lib/savewd.c
+@@ -39,7 +39,7 @@
+ # include "fcntl--.h"
+ #endif
+
+-#if defined _WIN32 && !defined __CYGWIN__
++#if (defined _WIN32 && !defined __CYGWIN__) || !HAVE_WORKING_FORK
+ # define fork() (assure (false), -1)
+ #endif
+
+@@ -66,7 +66,7 @@
+            Although there is also no point on systems that support O_SEARCH,
+            macOS 12.6 APFS open (".", O_SEARCH) incorrectly fails if "." is
+            mode 311, so do not attempt to optimize for O_SEARCH != O_RDONLY.  */
+-# if defined _WIN32 && !defined __CYGWIN__
++# if (defined _WIN32 && !defined __CYGWIN__) || !HAVE_WORKING_FORK
+         bool try_fork = false;
+ # else
+         bool try_fork = errno == EACCES || errno == ESTALE;

@@ -1,0 +1,97 @@
+wasm has no fork(); run split --filter's shell child through posix_spawn.
+The descriptor plumbing the forked child did before exec (closing inherited
+pipes, moving the read end onto stdin, restoring SIGPIPE) becomes posix_spawn
+file actions and attributes.
+
+--- a/src/split.c
++++ b/src/split.c
+@@ -25,6 +25,7 @@
+ #include <stdio.h>
+ #include <getopt.h>
+ #include <signal.h>
++#include <spawn.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ 
+@@ -509,38 +510,51 @@
+         fprintf (stdout, _("executing with FILE=%s\n"), quotef (name));
+       if (pipe (fd_pair) != 0)
+         error (EXIT_FAILURE, errno, _("failed to create pipe"));
+-      child_pid = fork ();
+-      if (child_pid == 0)
++
++      /* This platform has no fork(); express what the classic forked child
++         did before exec (close inherited pipes, move the read end onto stdin,
++         restore SIGPIPE) as posix_spawn actions instead.  */
++      posix_spawn_file_actions_t actions;
++      posix_spawnattr_t attr;
++      int spawn_err = posix_spawn_file_actions_init (&actions);
++      if (!spawn_err)
++        spawn_err = posix_spawnattr_init (&attr);
++      /* Close any pipes opened during an earlier call, otherwise this child
++         would hold a write-pipe that prevents the earlier process from
++         reading EOF on the corresponding read-pipe.  */
++      for (int j = 0; j < n_open_pipes && !spawn_err; ++j)
++        spawn_err = posix_spawn_file_actions_addclose (&actions,
++                                                       open_pipes[j]);
++      if (!spawn_err)
++        spawn_err = posix_spawn_file_actions_addclose (&actions, fd_pair[1]);
++      if (!spawn_err && fd_pair[0] != STDIN_FILENO)
+         {
+-          /* This is the child process.  If an error occurs here, the
+-             parent will eventually learn about it after doing a wait,
+-             at which time it will emit its own error message.  */
+-          int j;
+-          /* We have to close any pipes that were opened during an
+-             earlier call, otherwise this process will be holding a
+-             write-pipe that will prevent the earlier process from
+-             reading an EOF on the corresponding read-pipe.  */
+-          for (j = 0; j < n_open_pipes; ++j)
+-            if (close (open_pipes[j]) != 0)
+-              error (EXIT_FAILURE, errno, _("closing prior pipe"));
+-          if (close (fd_pair[1]))
+-            error (EXIT_FAILURE, errno, _("closing output pipe"));
+-          if (fd_pair[0] != STDIN_FILENO)
+-            {
+-              if (dup2 (fd_pair[0], STDIN_FILENO) != STDIN_FILENO)
+-                error (EXIT_FAILURE, errno, _("moving input pipe"));
+-              if (close (fd_pair[0]) != 0)
+-                error (EXIT_FAILURE, errno, _("closing input pipe"));
+-            }
+-          if (default_SIGPIPE)
+-            signal (SIGPIPE, SIG_DFL);
+-          execl (shell_prog, last_component (shell_prog), "-c",
+-                 filter_command, (char *) nullptr);
+-          error (EXIT_FAILURE, errno, _("failed to run command: \"%s -c %s\""),
+-                 shell_prog, filter_command);
++          spawn_err = posix_spawn_file_actions_adddup2 (&actions, fd_pair[0],
++                                                        STDIN_FILENO);
++          if (!spawn_err)
++            spawn_err = posix_spawn_file_actions_addclose (&actions,
++                                                           fd_pair[0]);
++        }
++      if (!spawn_err && default_SIGPIPE)
++        {
++          sigset_t sigpipe;
++          sigemptyset (&sigpipe);
++          sigaddset (&sigpipe, SIGPIPE);
++          spawn_err = posix_spawnattr_setsigdefault (&attr, &sigpipe);
++          if (!spawn_err)
++            spawn_err = posix_spawnattr_setflags (&attr, POSIX_SPAWN_SETSIGDEF);
+         }
+-      if (child_pid < 0)
+-        error (EXIT_FAILURE, errno, _("fork system call failed"));
++      char *child_argv[] = { last_component (shell_prog), (char *) "-c",
++                             (char *) filter_command, nullptr };
++      if (!spawn_err)
++        spawn_err = posix_spawn (&child_pid, shell_prog, &actions, &attr,
++                                 child_argv, environ);
++      posix_spawn_file_actions_destroy (&actions);
++      posix_spawnattr_destroy (&attr);
++      if (spawn_err)
++        error (EXIT_FAILURE, spawn_err,
++               _("failed to run command: \"%s -c %s\""),
++               shell_prog, filter_command);
+       if (close (fd_pair[0]) != 0)
+         error (EXIT_FAILURE, errno, _("failed to close input pipe"));
+       filter_pid = child_pid;
