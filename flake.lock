@@ -278,6 +278,32 @@
         "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
       }
     },
+    "python-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781094244,
+        "narHash": "sha256-v1lJgk5aS5tS19HH8k6cs5NlFpTDtmFOWSepvldlVm8=",
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      }
+    },
+    "quickjs-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780584979,
+        "narHash": "sha256-d52EFtBrOO6+DG93R+aWVUisX7SSk2eYLKhWWqX/lII=",
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      }
+    },
     "readline-src": {
       "flake": false,
       "locked": {
@@ -313,6 +339,8 @@
         "nixpkgs": "nixpkgs",
         "openssl-src": "openssl-src",
         "patch-src": "patch-src",
+        "python-src": "python-src",
+        "quickjs-src": "quickjs-src",
         "readline-src": "readline-src",
         "sed-src": "sed-src",
         "sqlite-src": "sqlite-src",

@@ -1,0 +1,50 @@
+--- a/cutils.h
++++ b/cutils.h
+@@ -1952,13 +1952,26 @@
+     return -1;
+ }
+ 
++typedef struct {
++    void (*start)(void *);
++    void *arg;
++} JSThreadStartArgs;
++
++static inline void *js_thread_start(void *opaque)
++{
++    JSThreadStartArgs *args = (JSThreadStartArgs *)opaque;
++    void (*start)(void *) = args->start;
++    void *arg = args->arg;
++
++    free(args);
++    start(arg);
++    return NULL;
++}
++
+ static inline int js_thread_create(js_thread_t *thrd, void (*start)(void *), void *arg,
+                      int flags)
+ {
+-    union {
+-        void (*x)(void *);
+-        void *(*f)(void *);
+-    } u = {start};
++    JSThreadStartArgs *start_args;
+     pthread_attr_t attr;
+     int ret;
+ 
+@@ -1973,8 +1985,15 @@
+     if (flags & JS_THREAD_CREATE_DETACHED)
+         if (pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED))
+             goto fail;
+-    if (pthread_create(thrd, &attr, u.f, arg))
++    start_args = (JSThreadStartArgs *)malloc(sizeof(*start_args));
++    if (!start_args)
++        goto fail;
++    start_args->start = start;
++    start_args->arg = arg;
++    if (pthread_create(thrd, &attr, js_thread_start, start_args)) {
++        free(start_args);
+         goto fail;
++    }
+     ret = 0;
+ fail:
+     pthread_attr_destroy(&attr);
