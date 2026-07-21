@@ -72,6 +72,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     patch = callPackage ./patch/package.nix { };
     sed = callPackage ./sed/package.nix { };
     tar = callPackage ./tar/package.nix { };
+    openssl = callPackage ./openssl/package.nix { };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.
