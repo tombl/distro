@@ -56,10 +56,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
     bzip2 = callPackage ./bzip2/package.nix { src = inputs.bzip2-src; };
     coreutils = callPackage ./coreutils/package.nix { src = inputs.coreutils-src; };
+    curl = callPackage ./curl/package.nix { src = inputs.curl-src; };
     diffutils = callPackage ./diffutils/package.nix { src = inputs.diffutils-src; };
+    dropbear = callPackage ./dropbear/package.nix { src = inputs.dropbear-src; };
     file = callPackage ./file/package.nix { src = inputs.file-src; };
     findutils = callPackage ./findutils/package.nix { src = inputs.findutils-src; };
     gawk = callPackage ./gawk/package.nix { src = inputs.gawk-src; };
+    git = callPackage ./git/package.nix { src = inputs.git-src; };
     grep = callPackage ./grep/package.nix { src = inputs.grep-src; };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
     less = callPackage ./less/package.nix { src = inputs.less-src; };

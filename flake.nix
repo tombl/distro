@@ -16,8 +16,16 @@
       url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
       flake = false;
     };
+    curl-src = {
+      url = "https://curl.se/download/curl-8.21.0.tar.xz";
+      flake = false;
+    };
     diffutils-src = {
       url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
+      flake = false;
+    };
+    dropbear-src = {
+      url = "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2";
       flake = false;
     };
     file-src = {
@@ -30,6 +38,10 @@
     };
     gawk-src = {
       url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
+      flake = false;
+    };
+    git-src = {
+      url = "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz";
       flake = false;
     };
     grep-src = {
