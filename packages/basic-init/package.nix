@@ -96,14 +96,13 @@ let
     };
   };
 
-  # setjmp/longjmp needs the Wasm SjLj lowering enabled at the call sites, so
-  # this test is compiled with -mllvm -wasm-enable-sjlj rather than the default
-  # flags. It exercises musl's __wasm_setjmp/__wasm_longjmp helpers end to end.
+  # This exercises musl's __wasm_setjmp/__wasm_longjmp helpers and proves the
+  # platform compiler flags lower ordinary consumer call sites.
   setjmpCheck = vm-test.vmTest {
     name = "basic-init-setjmp";
     initramfs = vm-test.mkInitramfs {
       name = "basic-init-setjmp";
-      init = "${buildInitWith "basic-init-setjmp" "tests/setjmp.c" "-mllvm -wasm-enable-sjlj"}/bin/init";
+      init = "${buildInit "basic-init-setjmp" "tests/setjmp.c"}/bin/init";
     };
   };
 
@@ -111,9 +110,7 @@ let
     name = "basic-init-sigsetjmp";
     initramfs = vm-test.mkInitramfs {
       name = "basic-init-sigsetjmp";
-      init = "${
-        buildInitWith "basic-init-sigsetjmp" "tests/sigsetjmp.c" "-mllvm -wasm-enable-sjlj"
-      }/bin/init";
+      init = "${buildInit "basic-init-sigsetjmp" "tests/sigsetjmp.c"}/bin/init";
     };
   };
 
@@ -121,9 +118,7 @@ let
     name = "basic-init-sigsetjmp-handler";
     initramfs = vm-test.mkInitramfs {
       name = "basic-init-sigsetjmp-handler";
-      init = "${
-        buildInitWith "basic-init-sigsetjmp-handler" "tests/sigsetjmp-handler.c" "-mllvm -wasm-enable-sjlj"
-      }/bin/init";
+      init = "${buildInit "basic-init-sigsetjmp-handler" "tests/sigsetjmp-handler.c"}/bin/init";
     };
   };
 
@@ -181,13 +176,14 @@ in
       malloc-failure = check "malloc-failure";
       malloc-thread = check "malloc-thread";
       memory-abi = memoryAbiCheck;
+      named-semaphore = check "named-semaphore";
       proc-self-mem = check "proc-self-mem";
       pty = check "pty";
       remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
       setjmp = setjmpCheck;
       signal-syscall-return = signalSyscallReturnCheck "plain" "";
-      signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ -mllvm -wasm-enable-sjlj";
+      signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ";
       signal-correctness = check "signal-correctness";
       sigsetjmp = sigsetjmpCheck;
       sigsetjmp-handler = sigsetjmpHandlerCheck;

@@ -25,6 +25,10 @@ rec {
   compilerFlags = [
     "-matomics"
     "-mbulk-memory"
+    # LLVM must lower setjmp/longjmp in every translation unit containing a
+    # call site; libc cannot add this transformation at link time.
+    "-mllvm"
+    "-wasm-enable-sjlj"
   ];
 
   # Flags for linking wasm executables the kernel can load. No --fatal-warnings

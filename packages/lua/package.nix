@@ -14,10 +14,6 @@ stdenv.mkDerivation (finalAttrs: {
   version = "5.4.8";
   inherit src;
 
-  # Lua's error propagation and coroutine yield unwind with _setjmp/_longjmp;
-  # on wasm those only work in code compiled with the SjLj lowering.
-  env.NIX_CFLAGS_COMPILE = "-mllvm -wasm-enable-sjlj";
-
   # Package outputs are overlaid at the guest root. Compile Lua's module search
   # paths for that runtime filesystem instead of its /usr/local default.
   postPatch = ''
