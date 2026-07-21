@@ -1,0 +1,46 @@
+wasm has no mmap.  libblkid uses anonymous mappings as heap buffers and
+mprotect only to catch accidental writes; regular allocations preserve the
+functional behavior and let the full probing library work on this target.
+
+--- a/libblkid/src/probe.c
++++ b/libblkid/src/probe.c
+@@ -569,7 +569,7 @@ static void remove_buffer(struct blkid_bufinfo *bf)
+ 
+ 	DBG(BUFFER, ul_debug(" remove buffer: [off=%"PRIu64", len=%"PRIu64"]",
+ 				bf->off, bf->len));
+-	munmap(bf->data, bf->len);
++	free(bf->data);
+ 	free(bf);
+ }
+ 
+@@ -596,9 +596,8 @@ static struct blkid_bufinfo *read_buffer(blkid_probe pr, uint64_t real_off, uint
+ 		return NULL;
+ 	}
+ 
+-	bf->data = mmap(NULL, len, PROT_READ | PROT_WRITE,
+-			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+-	if (bf->data == MAP_FAILED) {
++	bf->data = malloc(len);
++	if (!bf->data) {
+ 		free(bf);
+ 		errno = ENOMEM;
+ 		return NULL;
+@@ -624,9 +623,6 @@ static struct blkid_bufinfo *read_buffer(blkid_probe pr, uint64_t real_off, uint
+ 		return NULL;
+ 	}
+ 
+-	if (mprotect(bf->data, len, PROT_READ))
+-		DBG(LOWPROBE, ul_debug("\tmprotect failed: %m"));
+-
+ 	return bf;
+ }
+ 
+@@ -716,8 +712,6 @@ static int hide_buffer(blkid_probe pr, uint64_t off, uint64_t len)
+ 			DBG(BUFFER, ul_debug("\thiding: off=%"PRIu64" len=%"PRIu64,
+ 						off, len));
+-			mprotect(x->data, x->len, PROT_READ | PROT_WRITE);
+ 			memset(data, 0, len);
+-			mprotect(x->data, x->len, PROT_READ);
+ 			ct++;
+ 		}
+ 	}

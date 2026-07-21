@@ -1,0 +1,42 @@
+--- a/misc-utils/look.c	2026-07-20 09:07:28.142511493 +0800
++++ b/misc-utils/look.c	2026-07-20 09:08:42.573786694 +0800
+@@ -46,7 +46,6 @@
+  * the manual page.
+  */
+ 
+-#include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <errno.h>
+ #include <fcntl.h>
+@@ -59,6 +58,7 @@
+ 
+ #include "nls.h"
+ #include "xalloc.h"
++#include "all-io.h"
+ #include "pathnames.h"
+ #include "closestream.h"
+ 
+@@ -153,15 +153,14 @@
+ 
+ 	if ((fd = open(file, O_RDONLY, 0)) < 0 || fstat(fd, &sb))
+ 		err(EXIT_FAILURE, "%s", file);
+-	front = mmap(NULL, (size_t) sb.st_size, PROT_READ,
+-		     MAP_SHARED, fd, (off_t) 0);
+-	if
+-#ifdef MAP_FAILED
+-		(front == MAP_FAILED)
+-#else
+-		((void *)(front) <= (void *)0)
+-#endif
+-			err(EXIT_FAILURE, "%s", file);
++	/*
++	 * wasm has no mmap; read the whole file into a heap buffer instead.
++	 * look() only walks the [front, back) range, so a malloc'd copy is a
++	 * drop-in replacement for the old read-only mapping.
++	 */
++	front = xmalloc((size_t) sb.st_size);
++	if (read_all(fd, front, (size_t) sb.st_size) != (ssize_t) sb.st_size)
++		err(EXIT_FAILURE, "%s", file);
+ 	back = front + sb.st_size;
+ 	return look(front, back);
+ }

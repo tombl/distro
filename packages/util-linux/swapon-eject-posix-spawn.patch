@@ -1,0 +1,130 @@
+swapon,eject: use posix_spawn for helper execution
+
+Both call sites only fork in order to exec another util-linux command and wait
+for it.  posix_spawn preserves that behavior on the no-fork wasm target.
+
+--- a/sys-utils/swapon.c
++++ b/sys-utils/swapon.c
+@@ -20,6 +20,7 @@
+ #include <unistd.h>
+ #include <sys/types.h>
+ #include <sys/wait.h>
++#include <spawn.h>
+ #include <fcntl.h>
+ #include <stdint.h>
+ #include <ctype.h>
+@@ -76,7 +77,10 @@
+ # define SWAP_FLAG_PRIO_SHIFT	0
+ #endif
+ 
+-#if !defined(HAVE_SWAPON) && defined(SYS_swapon)
++#if defined(__wasm__)
++# include <sys/syscall.h>
++# define swapon(path, flags) syscall(SYS_swapon, path, flags)
++#elif !defined(HAVE_SWAPON) && defined(SYS_swapon)
+ # include <sys/syscall.h>
+ # define swapon(path, flags) syscall(SYS_swapon, path, flags)
+ #endif
+@@ -347,6 +351,35 @@ static int swap_reinitialize(struct swap_device *dev)
+ 
+ 	warnx(_("%s: reinitializing the swap."), dev->path);
+ 
++#ifdef __wasm__
++	cmd[idx++] = "mkswap";
++	if (dev->label) {
++		cmd[idx++] = "-L";
++		cmd[idx++] = dev->label;
++	}
++	if (dev->uuid) {
++		cmd[idx++] = "-U";
++		cmd[idx++] = dev->uuid;
++	}
++	cmd[idx++] = dev->path;
++	cmd[idx++] = NULL;
++
++	extern char **environ;
++	ret = posix_spawnp(&pid, cmd[0], NULL, NULL,
++			   (char *const *) cmd, environ);
++	if (ret != 0) {
++		errno = ret;
++		warn(_("posix_spawn failed"));
++		return -1;
++	}
++	do {
++		ret = waitpid(pid, &status, 0);
++	} while (ret == -1 && errno == EINTR);
++
++	if (ret < 0)
++		return -1;
++	return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
++#else
+ 	switch ((pid=fork())) {
+ 	case -1: /* fork error */
+ 		warn(_("fork failed"));
+@@ -383,6 +416,7 @@ static int swap_reinitialize(struct swap_device *dev)
+ 		break;
+ 	}
+ 	}
++#endif
+ 	return -1; /* error */
+ }
+ 
+--- a/sys-utils/eject.c
++++ b/sys-utils/eject.c
+@@ -32,6 +32,7 @@
+ #include <sys/stat.h>
+ #include <sys/ioctl.h>
+ #include <sys/wait.h>
++#include <spawn.h>
+ #include <sys/mtio.h>
+ #include <linux/cdrom.h>
+ #include <linux/fd.h>
+@@ -665,6 +666,26 @@ static void umount_one(const struct eject_control *ctl, const char *name)
+ 
+ 	verbose(ctl, _("%s: unmounting"), name);
+ 
++#ifdef __wasm__
++	char *const args_with_n[] = { "/bin/umount", (char *) name, "-n", NULL };
++	char *const args[] = { "/bin/umount", (char *) name, NULL };
++	char *const *argv = ctl->p_option ? args_with_n : args;
++	extern char **environ;
++	pid_t pid;
++	int rc;
++
++	rc = posix_spawn(&pid, argv[0], NULL, NULL, argv, environ);
++	if (rc != 0) {
++		errno = rc;
++		err(EXIT_FAILURE, _("unable to spawn"));
++	}
++	if (waitpid(pid, &status, 0) == -1 || WIFEXITED(status) == 0)
++		errx(EXIT_FAILURE,
++		     _("unmount of `%s' did not exit normally"), name);
++
++	if (WEXITSTATUS(status) != 0)
++		errx(EXIT_FAILURE, _("unmount of `%s' failed"), name);
++#else
+ 	switch (fork()) {
+ 	case 0: /* child */
+ 		if (drop_permissions() != 0)
+@@ -691,6 +712,7 @@ static void umount_one(const struct eject_control *ctl, const char *name)
+ 			errx(EXIT_FAILURE, _("unmount of `%s' failed"), name);
+ 		break;
+ 	}
++#endif
+ }
+ 
+ /* Open a device file. */
+--- a/sys-utils/swapoff.c
++++ b/sys-utils/swapoff.c
+@@ -29,7 +29,10 @@
+ #include "swapprober.h"
+ #include "swapon-common.h"
+ 
+-#if !defined(HAVE_SWAPOFF) && defined(SYS_swapoff)
++#if defined(__wasm__)
++# include <sys/syscall.h>
++# define swapoff(path) syscall(SYS_swapoff, path)
++#elif !defined(HAVE_SWAPOFF) && defined(SYS_swapoff)
+ # include <sys/syscall.h>
+ # define swapoff(path) syscall(SYS_swapoff, path)
+ #endif
