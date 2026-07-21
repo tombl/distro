@@ -1,0 +1,15 @@
+--- a/lib/sh/anonfile.c
++++ b/lib/sh/anonfile.c
+@@ -31,6 +31,12 @@
+ #endif
+ #include <filecntl.h>
+ 
++/* configure links memfd_create successfully, but generated config.h undefines
++   _GNU_SOURCE, which hides its musl prototype from <sys/mman.h>. */
++#if defined (HAVE_MEMFD_CREATE)
++extern int memfd_create (const char *, unsigned);
++#endif
++
+ #include <errno.h>
+ 
+ #include <shell.h>

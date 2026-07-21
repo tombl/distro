@@ -1,0 +1,110 @@
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -608,6 +608,49 @@
+ 
+ #define DESCRIBE_PID(pid) do { if (interactive) describe_pid (pid); } while (0)
+ 
++typedef struct
++{
++  COMMAND *command;
++  struct fd_bitmap *fds_to_close;
++  char *job_command;
++  int asynchronous;
++  int pipe_in;
++  int pipe_out;
++  int user_subshell;
++} EXECUTE_SUBSHELL_ARGS;
++
++static int
++execute_subshell_child (void *vargs)
++{
++  EXECUTE_SUBSHELL_ARGS *args;
++  int run_exit_trap;
++
++  args = (EXECUTE_SUBSHELL_ARGS *)vargs;
++
++#if defined (JOB_CONTROL)
++  FREE (args->job_command);
++#endif
++
++  /* Forced group subshells need the exit trap here; explicit () subshells
++     arrange it inside execute_in_subshell. */
++  run_exit_trap = args->user_subshell == 0 &&
++                  args->command->type == cm_group &&
++                  args->pipe_in == NO_PIPE && args->pipe_out == NO_PIPE &&
++                  args->asynchronous;
++  run_exit_trap += args->user_subshell == 0 &&
++                   args->command->type == cm_group &&
++                   (args->pipe_in != NO_PIPE || args->pipe_out != NO_PIPE) &&
++                   args->asynchronous == 0;
++
++  last_command_exit_value = execute_in_subshell (
++      args->command, args->asynchronous, args->pipe_in, args->pipe_out,
++      args->fds_to_close);
++  if (run_exit_trap)
++    subshell_exit (last_command_exit_value);
++  else
++    sh_exit (last_command_exit_value);
++}
++
+ /* Execute the command passed in COMMAND, perhaps doing it asynchronously.
+    COMMAND is exactly what read_command () places into GLOBAL_COMMAND.
+    ASYNCHRONOUS, if non-zero, says to do this command in the background.
+@@ -687,7 +730,7 @@
+     {
+       pid_t paren_pid;
+-      int s;
+       char *p;
++      EXECUTE_SUBSHELL_ARGS *child_args;
+ 
+       /* Fork a subshell, turn off the subshell bit, turn off job
+ 	 control and call execute_command () on the command again. */
+@@ -698,7 +741,17 @@
+ 	/* Otherwise we defer setting line_number */
+       tcmd = make_command_string (command);
+       fork_flags = asynchronous ? FORK_ASYNC : 0;
+-      paren_pid = make_child_fork (p = savestring (tcmd), fork_flags);
++      p = savestring (tcmd);
++      child_args = (EXECUTE_SUBSHELL_ARGS *)xmalloc (sizeof (*child_args));
++      child_args->command = command;
++      child_args->fds_to_close = fds_to_close;
++      child_args->job_command = p;
++      child_args->asynchronous = asynchronous;
++      child_args->pipe_in = pipe_in;
++      child_args->pipe_out = pipe_out;
++      child_args->user_subshell = user_subshell;
++      paren_pid = make_child (p, fork_flags, execute_subshell_child, child_args);
++      free (child_args);
+ 
+       if (user_subshell && signal_is_trapped (ERROR_TRAP) && 
+ 	  signal_in_progress (DEBUG_TRAP) == 0 && running_trap == 0)
+@@ -707,29 +760,6 @@
+ 	  the_printed_command_except_trap = savestring (the_printed_command);
+ 	}
+ 
+-      if (paren_pid == 0)
+-        {
+-#if defined (JOB_CONTROL)
+-	  FREE (p);		/* child doesn't use pointer */
+-#endif
+-	  /* We want to run the exit trap for forced {} subshells, and we
+-	     want to note this before execute_in_subshell modifies the
+-	     COMMAND struct.  Need to keep in mind that execute_in_subshell
+-	     runs the exit trap for () subshells itself. */
+-	  /* This handles { command; } & */
+-	  s = user_subshell == 0 && command->type == cm_group && pipe_in == NO_PIPE && pipe_out == NO_PIPE && asynchronous;
+-	  /* run exit trap for : | { ...; } and { ...; } | : */
+-	  /* run exit trap for : | ( ...; ) and ( ...; ) | : */
+-	  s += user_subshell == 0 && command->type == cm_group && (pipe_in != NO_PIPE || pipe_out != NO_PIPE) && asynchronous == 0;
+-
+-	  last_command_exit_value = execute_in_subshell (command, asynchronous, pipe_in, pipe_out, fds_to_close);
+-	  if (s)
+-	    subshell_exit (last_command_exit_value);
+-	  else
+-	    sh_exit (last_command_exit_value);
+-	  /* NOTREACHED */
+-        }
+-      else
+ 	{
+ 	  close_pipes (pipe_in, pipe_out);
+ 

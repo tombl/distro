@@ -50,6 +50,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     stdenvDebug = pkgs.stdenvAdapters.keepDebugInfo self.stdenvRelease;
 
     # userland:
+    bash = callPackage ./bash/package.nix { };
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
