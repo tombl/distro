@@ -1,0 +1,17 @@
+Every futex/functional test calls basename() from its usage()/main. glibc
+declares basename() in <string.h> under _GNU_SOURCE, but musl only provides the
+POSIX basename() in <libgen.h>, so the tests fail to compile against musl with
+an implicit-declaration error. Include <libgen.h> from the shared logging
+header, which every test already includes and which advertises itself as the
+"glibc independent" futex helper.
+
+--- a/tools/testing/selftests/futex/include/logging.h
++++ b/tools/testing/selftests/futex/include/logging.h
+@@ -17,6 +17,7 @@
+ #ifndef _LOGGING_H
+ #define _LOGGING_H
+
++#include <libgen.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include <unistd.h>
