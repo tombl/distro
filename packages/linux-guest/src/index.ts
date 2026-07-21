@@ -20,5 +20,16 @@ export {
   SeekMode,
   type WriteFileOptions,
 } from "./file.ts";
-export { type Guest, spawnGuest, type SpawnGuestOptions } from "./machine.ts";
+export { type Guest, type NetworkedGuest, spawnGuest, type SpawnGuestOptions } from "./machine.ts";
+export {
+  createNetwork,
+  type GuestNetwork,
+  type Network,
+  type NetworkAddress,
+  type NetworkOptions,
+  type TcpConnection,
+  type TcpConnectOptions,
+  type UdpConnection,
+  type UdpConnectOptions,
+} from "./network.ts";
 export { ChildProcess, type CommandStatus, type Signal } from "./process.ts";

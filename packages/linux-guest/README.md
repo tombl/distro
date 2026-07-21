@@ -1,6 +1,6 @@
 # `@tombl/linux-guest`
 
-`@tombl/linux-guest` provides a bootable Linux guest for JavaScript, with APIs for processes and files.
+`@tombl/linux-guest` provides a bootable Linux guest for JavaScript, with APIs for processes, files, and networking.
 
 ## Installation
 

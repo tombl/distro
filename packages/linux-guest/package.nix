@@ -5,10 +5,25 @@
   linux,
   node-workspace,
   runner,
+  stdenv,
   vm-test,
 }:
 
 let
+  network-test = stdenv.mkDerivation {
+    pname = "linux-guest-network-test";
+    version = "0.0.0";
+    dontUnpack = true;
+    buildPhase = ''
+      $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
+        -Wl,--fatal-warnings -o network-test ${./tests/network-test.c}
+    '';
+    installPhase = ''
+      mkdir -p $out/bin
+      cp network-test $out/bin/
+    '';
+  };
+
   lifecycle-initramfs = vm-test.mkInitramfs {
     name = "linux-guest-lifecycle";
     init = ./tests/lifecycle-init.sh;
@@ -21,6 +36,7 @@ let
     "initramfs.cpio" = "${image}/initramfs.cpio";
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
     "rootfs.squashfs" = "${image}/rootfs.squashfs";
+    "network-test" = "${network-test}/bin/network-test";
     "runner" = "${runner.package}/bin/wasm-linux-runner";
   };
 

@@ -131,6 +131,7 @@ let
       {
         smoke = check "smoke" ./smoke-test.sh;
         processes = check "processes" ./process-test.sh;
+        networking = check "networking" ./network-test.sh;
       };
   });
 in
