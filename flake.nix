@@ -69,6 +69,24 @@
         { wasmpkgs, ... }: lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
       );
 
+      checks = eachSystem (
+        {
+          pkgs,
+          wasmpkgs,
+          formatter,
+        }:
+        import ./checks.nix { inherit lib; } wasmpkgs
+        // {
+          formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
+            cp -r ${self} tree
+            chmod -R u+w tree
+            cd tree
+            treefmt --ci
+            touch $out
+          '';
+        }
+      );
+
       formatter = eachSystem ({ pkgs, ... }: import ./formatter.nix { inherit pkgs; });
 
       devShells = eachSystem (

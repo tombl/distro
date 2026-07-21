@@ -54,5 +54,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
+
+    # Early platform tests boot without the guest agent so a broken SDK cannot
+    # hide whether the kernel and libc reached userspace correctly.
+    vm-test = callPackage ./vm-test/package.nix { };
   }
 )
