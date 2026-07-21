@@ -67,5 +67,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     guest-agent = callPackage ./guest-agent/package.nix { };
     node-workspace = callPackage ./node-workspace.nix { };
     linux-guest = callPackage ./linux-guest { };
+    runner = callPackage ./runner { };
   }
 )

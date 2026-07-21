@@ -120,5 +120,17 @@
         }
       );
 
+      apps = eachSystem (
+        { pkgs, wasmpkgs, ... }:
+        {
+          runner = {
+            type = "app";
+            program = lib.getExe wasmpkgs.runner.package;
+          };
+
+          default = self.apps.${pkgs.stdenv.hostPlatform.system}.runner;
+        }
+      );
+
     };
 }

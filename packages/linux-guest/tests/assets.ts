@@ -28,3 +28,10 @@ export const assets = {
   initramfs: await readFile(join(directory, "initramfs.cpio")),
   rootfs: await readFile(join(directory, "rootfs.squashfs")),
 };
+
+export const lifecycle_assets = {
+  initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
+  initramfs_path: join(directory, "lifecycle-initramfs.cpio"),
+  rootfs_path: join(directory, "rootfs.squashfs"),
+  runner: join(directory, "runner"),
+};
