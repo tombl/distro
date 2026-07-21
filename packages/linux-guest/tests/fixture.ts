@@ -25,15 +25,18 @@ export function guest_test(
 ) {
   test(name, async (t) => {
     const network = createNetwork({
-      async connectTcp({ hostname, port }) {
-        const socket = createConnection({ host: hostname, port });
+      async connectTcp(session) {
+        const socket = createConnection({
+          host: session.target.hostname,
+          port: session.target.port,
+          signal: session.signal,
+        });
         await once(socket, "connect");
         const streams = Duplex.toWeb(socket);
-        return {
-          readable: streams.readable as ReadableStream<Uint8Array>,
-          writable: streams.writable as WritableStream<Uint8Array>,
-          close: () => socket.destroy(),
-        };
+        await Promise.all([
+          session.readable.pipeTo(streams.writable as WritableStream<Uint8Array>),
+          (streams.readable as ReadableStream<Uint8Array>).pipeTo(session.writable),
+        ]);
       },
       resolveDns: resolve4,
     });

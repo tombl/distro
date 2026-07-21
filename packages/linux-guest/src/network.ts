@@ -156,6 +156,8 @@ export interface TcpConnectOptions {
   hostname: string;
   port: number;
   transport?: "tcp";
+  /** Aborts the pending connection and any connection it establishes. */
+  signal?: AbortSignal;
 }
 
 export interface UdpConnectOptions {
@@ -165,10 +167,16 @@ export interface UdpConnectOptions {
   transport: "udp";
 }
 
-interface HostTcpConnection {
+/** One lazily established, supervised outbound guest TCP session. */
+export interface TcpSession {
+  /** The address selected by the guest connection. */
+  readonly target: { readonly hostname: string; readonly port: number };
+  /** Bytes received from the guest. The first read starts the TCP handshake. */
   readonly readable: ReadableStream<Uint8Array>;
+  /** Bytes sent to the guest. The first write or close starts the TCP handshake. */
   readonly writable: WritableStream<Uint8Array>;
-  close(): void;
+  /** Aborted when the guest or network tears down the flow. */
+  readonly signal: AbortSignal;
 }
 
 /**
@@ -177,17 +185,18 @@ interface HostTcpConnection {
  */
 export interface NetworkOptions {
   /**
-   * Opens a raw TCP connection on a guest's behalf whenever it connects
-   * outside the virtual subnet. `hostname` is a literal IPv4 address —
-   * `"127.0.0.1"` when the guest connects to the gateway — and the resolved
-   * value carries the connection as web streams: `{ readable, writable,
-   * close() }`.
+   * Handles one TCP session whenever a guest connects outside the virtual
+   * subnet. The callback starts at SYN receipt and lives for the whole
+   * connection. Its first stream read, write, or writable close starts the
+   * handshake; merely acquiring a reader or writer does not. Throwing before
+   * first I/O rejects the pending connection, while throwing afterwards resets
+   * it.
    *
    * In Node, implement it with `net.connect`. A browser has no raw TCP, so
    * there it bridges to whatever transport you control — a WebSocket proxy,
    * say.
    */
-  connectTcp: (options: { hostname: string; port: number }) => Promise<HostTcpConnection>;
+  connectTcp: (session: TcpSession) => void | PromiseLike<void>;
   /** Answers guest DNS A queries with the IPv4 addresses for `hostname`. */
   resolveDns: (hostname: string) => Promise<string[]>;
 }
@@ -385,8 +394,11 @@ interface TcpFlow {
   handshake?: PromiseWithResolvers<TcpConnection>;
   handshake_timeout?: ReturnType<typeof setTimeout>;
   readable?: ReadableStreamDefaultController<Uint8Array>;
-  outbound?: HostTcpConnection;
-  outbound_writer?: WritableStreamDefaultWriter<Uint8Array>;
+  activation?: Promise<void>;
+  activation_waiter?: PromiseWithResolvers<void>;
+  abort?: AbortController;
+  receive_demand?: boolean;
+  remove_external_abort?: () => void;
 }
 
 interface UdpFlow {
@@ -534,15 +546,15 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  * import { Duplex } from "node:stream";
  *
  * const network = createNetwork({
- *   async connectTcp({ hostname, port }) {
- *     const socket = createConnection({ host: hostname, port });
+ *   async connectTcp(session) {
+ *     const socket = createConnection({ host: session.target.hostname,
+ *       port: session.target.port, signal: session.signal });
  *     await once(socket, "connect");
  *     const streams = Duplex.toWeb(socket);
- *     return {
- *       readable: streams.readable as ReadableStream<Uint8Array>,
- *       writable: streams.writable as WritableStream<Uint8Array>,
- *       close: () => socket.destroy(),
- *     };
+ *     await Promise.all([
+ *       session.readable.pipeTo(streams.writable as WritableStream<Uint8Array>),
+ *       (streams.readable as ReadableStream<Uint8Array>).pipeTo(session.writable),
+ *     ]);
  *   },
  *   resolveDns: resolve4,
  * });
@@ -714,6 +726,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
 
   function tcp_receive_window(flow: TcpFlow) {
     if (!flow.readable) return TCP_RECEIVE_WINDOW;
+    if (flow.activation) return flow.receive_demand ? TCP_RECEIVE_WINDOW : 0;
     return Math.max(0, Math.min(TCP_RECEIVE_WINDOW, Math.floor(flow.readable.desiredSize ?? 0)));
   }
 
@@ -812,6 +825,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       waiter.reject(error ?? new Error("TCP connection closed"));
     }
     flow.window_waiters.length = 0;
+    flow.remove_external_abort?.();
+    flow.activation_waiter?.reject(error ?? new Error("TCP connection closed"));
+    flow.activation_waiter = undefined;
+    flow.abort?.abort(error ?? new Error("TCP connection closed"));
     if (error !== undefined) {
       try {
         flow.readable?.error(error);
@@ -825,11 +842,6 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       } catch {
         // The peer may already have closed the stream.
       }
-    }
-    try {
-      flow.outbound?.close();
-    } catch {
-      // Closing a connection is idempotent at this boundary.
     }
   }
 
@@ -847,19 +859,23 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
 
   function establish_tcp_flow(flow: TcpFlow) {
     flow.established = true;
+    flow.activation_waiter?.resolve();
+    flow.activation_waiter = undefined;
     if (flow.handshake_timeout !== undefined) {
       clearTimeout(flow.handshake_timeout);
       flow.handshake_timeout = undefined;
     }
   }
 
-  function host_tcp_connection(flow: TcpFlow): TcpConnection {
+  function host_tcp_connection(flow: TcpFlow, activate?: () => Promise<void>): TcpConnection {
     const readable = new ReadableStream<Uint8Array>(
       {
         start(controller) {
           flow.readable = controller;
         },
-        pull() {
+        async pull() {
+          flow.receive_demand = true;
+          await activate?.();
           update_tcp_window(flow);
         },
         cancel(reason) {
@@ -867,17 +883,19 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
         },
       },
       {
-        highWaterMark: TCP_RECEIVE_WINDOW,
+        highWaterMark: activate ? 0 : TCP_RECEIVE_WINDOW,
         size(chunk) {
           return chunk.byteLength;
         },
       },
     );
     const writable = new WritableStream<Uint8Array>({
-      write(chunk) {
+      async write(chunk) {
+        await activate?.();
         return send_tcp_data(flow, chunk);
       },
-      close() {
+      async close() {
+        await activate?.();
         return send_tcp_fin(flow);
       },
       abort(reason) {
@@ -895,27 +913,21 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     };
   }
 
-  async function pump_outbound(flow: TcpFlow) {
-    const reader = flow.outbound!.readable.getReader();
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        await send_tcp_data(flow, value);
-      }
-      await send_tcp_fin(flow);
-    } catch (error) {
-      abort_tcp_flow(flow, error);
-    } finally {
-      reader.releaseLock();
-    }
+  function reject_outbound_tcp(flow: TcpFlow, error: unknown) {
+    const rst = tcp_segment(
+      flow.peer_ip,
+      flow.guest.ip,
+      flow.peer_port,
+      flow.guest_port,
+      0,
+      flow.receive_sequence,
+      TcpFlag.RST | TcpFlag.ACK,
+    );
+    void send_ip(flow.guest.macAddress, flow.peer_ip, flow.guest.ip, IpProtocol.TCP, rst);
+    close_tcp_flow(flow, error);
   }
 
-  async function start_outbound_tcp(
-    guest: Attachment,
-    ip: ParsedIpPacket,
-    segment: ParsedTcpSegment,
-  ) {
+  function start_outbound_tcp(guest: Attachment, ip: ParsedIpPacket, segment: ParsedTcpSegment) {
     const key = tcp_key(ip.source, segment.source_port, ip.destination, segment.destination_port);
     if (tcp_flows.has(key)) return;
     const initial = random_sequence();
@@ -938,36 +950,54 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       peer_window: segment.window,
     };
     tcp_flows.set(key, flow);
+    const abort = new AbortController();
+    flow.abort = abort;
     expire_tcp_handshake(
       flow,
       `timed out connecting from ${guest.address}:${segment.source_port} to ${ipv4_string(ip.destination)}:${segment.destination_port}`,
     );
-    try {
-      flow.outbound = await connectTcp({
+    const activate = () => {
+      if (flow.activation) return flow.activation;
+      flow.activation = (async () => {
+        const waiter = Promise.withResolvers<void>();
+        // Teardown can win while SYN-ACK is still being emitted. Mark the
+        // waiter observed before that race; this task still awaits and reports
+        // its rejection below when emission succeeds.
+        void waiter.promise.catch(() => {});
+        flow.activation_waiter = waiter;
+        await send_tcp(flow, TcpFlag.SYN | TcpFlag.ACK);
+        flow.send_sequence = sequence_add(flow.send_sequence, 1);
+        await waiter.promise;
+      })();
+      return flow.activation;
+    };
+    const streams = host_tcp_connection(flow, activate);
+    const session: TcpSession = {
+      target: {
         hostname: ip.destination === GATEWAY_IP ? "127.0.0.1" : ipv4_string(ip.destination),
         port: segment.destination_port,
-      });
-      if (flow.closed) {
-        flow.outbound.close();
-        return;
-      }
-      flow.outbound_writer = flow.outbound.writable.getWriter();
-      await send_tcp(flow, TcpFlag.SYN | TcpFlag.ACK);
-      flow.send_sequence = sequence_add(flow.send_sequence, 1);
-    } catch (error) {
-      if (flow.closed) return;
-      const rst = tcp_segment(
-        ip.destination,
-        guest.ip,
-        segment.destination_port,
-        segment.source_port,
-        0,
-        sequence_add(segment.sequence, 1),
-        TcpFlag.RST | TcpFlag.ACK,
+      },
+      readable: streams.readable,
+      writable: streams.writable,
+      signal: abort.signal,
+    };
+    Promise.resolve()
+      .then(() => connectTcp(session))
+      .then(
+        () => {
+          if (flow.closed) return;
+          if (!flow.activation) {
+            reject_outbound_tcp(flow, new Error("TCP handler completed without using the session"));
+            return;
+          }
+          void send_tcp_fin(flow).catch((error) => abort_tcp_flow(flow, error));
+        },
+        (error) => {
+          if (flow.closed) return;
+          if (flow.activation) abort_tcp_flow(flow, error);
+          else reject_outbound_tcp(flow, error);
+        },
       );
-      await send_ip(guest.macAddress, ip.destination, guest.ip, IpProtocol.TCP, rst);
-      close_tcp_flow(flow, error);
-    }
   }
 
   async function process_tcp(flow: TcpFlow, segment: ParsedTcpSegment) {
@@ -997,7 +1027,6 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       }
       if (segment.flags & TcpFlag.ACK && segment.acknowledgement === flow.send_sequence) {
         establish_tcp_flow(flow);
-        void pump_outbound(flow);
       }
       return;
     }
@@ -1009,25 +1038,20 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       return;
     }
 
-    if (
-      !flow.outbound_writer &&
-      segment.payload.byteLength > 0 &&
-      segment.payload.byteLength > tcp_receive_window(flow)
-    ) {
+    if (segment.payload.byteLength > 0 && segment.payload.byteLength > tcp_receive_window(flow)) {
       await send_tcp(flow, TcpFlag.ACK);
       return;
     }
 
     if (segment.payload.byteLength > 0) {
-      if (flow.outbound_writer) await flow.outbound_writer.write(segment.payload.slice());
-      else flow.readable?.enqueue(segment.payload.slice());
+      flow.readable?.enqueue(segment.payload.slice());
+      flow.receive_demand = false;
       flow.receive_sequence = sequence_add(flow.receive_sequence, segment.payload.byteLength);
     }
     if (segment.flags & TcpFlag.FIN) {
       flow.receive_sequence = sequence_add(flow.receive_sequence, 1);
       flow.remote_ended = true;
-      if (flow.outbound_writer) await flow.outbound_writer.close();
-      else flow.readable?.close();
+      flow.readable?.close();
     }
     await send_tcp(flow, TcpFlag.ACK);
     if (flow.local_ended && flow.remote_ended && flow.ack_waiters.length === 0) {
@@ -1046,7 +1070,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     const flow = tcp_flows.get(key);
     if (!flow) {
       if (segment.flags & TcpFlag.SYN && !(segment.flags & TcpFlag.ACK)) {
-        void start_outbound_tcp(guest, ip, segment).catch(() => {});
+        start_outbound_tcp(guest, ip, segment);
       }
       return;
     }
@@ -1236,6 +1260,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   const gateway: EthernetPort = ethernet.addPort(receive_frame);
 
   function connect_tcp(options: TcpConnectOptions): Promise<TcpConnection> {
+    if (options.signal?.aborted) return Promise.reject(options.signal.reason);
     if (closed) return Promise.reject(new Error("network is closed"));
     if (!valid_port(options.port)) return Promise.reject(new TypeError("invalid TCP port"));
     let address: number;
@@ -1278,6 +1303,12 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     void send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.TCP, syn).catch((error) => {
       close_tcp_flow(flow, error);
     });
+    if (options.signal) {
+      const abort = () => abort_tcp_flow(flow, options.signal!.reason);
+      options.signal.addEventListener("abort", abort, { once: true });
+      flow.remove_external_abort = () => options.signal!.removeEventListener("abort", abort);
+      if (options.signal.aborted) abort();
+    }
     return handshake.promise;
   }
 
