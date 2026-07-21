@@ -54,6 +54,16 @@ guest_test("processes", async (t, fixture) => {
       }
     });
 
+    // httpd lives in /usr/sbin, so a bare name resolves only if the agent
+    // searches the full system path rather than musl's bare default; an
+    // unresolved name rejects the exec with ENOENT before it ever runs. Run
+    // it in the foreground so it stays alive to be signalled.
+    await t.test("resolves a bare sbin-resident command name", async () => {
+      const child = await guest.exec(["httpd", "-f", "-p", "127.0.0.1:18081", "-h", "/tmp"]);
+      await child.kill("SIGTERM");
+      assert.deepEqual(await child.status, { success: false, code: 0, signal: "SIGTERM" });
+    });
+
     await t.test("kills processes with signals", async () => {
       const signalled = await guest.exec(["sleep", "30"]);
       await signalled.kill("SIGTERM");

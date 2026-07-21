@@ -124,6 +124,20 @@ guest_test("filesystem", async (t, fixture) => {
     assert.deepEqual(await fs.readFile(`${directory}/large.bin`), large);
   });
 
+  // A string is not FileData; it must be rejected loudly rather than writing
+  // an empty file, and the target must not be created as a side effect.
+  await t.test("rejects a string passed to writeFile", async () => {
+    await assert.rejects(
+      // @ts-expect-error exercising the untyped-JS path that used to write 0 bytes
+      fs.writeFile(`${directory}/string.txt`, "not bytes"),
+      (error) => error instanceof TypeError,
+    );
+    await assert.rejects(
+      fs.stat(`${directory}/string.txt`),
+      (error) => error instanceof SystemError && error.code === "ENOENT",
+    );
+  });
+
   await t.test("reports missing files", async () => {
     await assert.rejects(
       fs.readFile(`${directory}/missing`),

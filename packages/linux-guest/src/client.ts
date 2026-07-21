@@ -44,8 +44,9 @@ export interface ExecOptions {
   cwd?: string;
   /**
    * Environment for the process, merged over the defaults of
-   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/workspace`, and
-   * `TMPDIR=/tmp`. Only the variables being changed need to be set.
+   * `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+   * `HOME=/workspace`, and `TMPDIR=/tmp`. Only the variables being changed
+   * need to be set.
    */
   env?: Readonly<Record<string, string>>;
   /**
@@ -182,9 +183,10 @@ export interface FileSystem {
  * Takes an argv array rather than a command string: the array is the argv
  * the program receives, exactly as `execve` would see it, with no shell in
  * between to quote, split, or expand. An argument containing spaces is one
- * element. The first element is looked up on the guest's `PATH`; if the
- * program does not exist, the promise rejects with a `SystemError` whose
- * code is `"ENOENT"`.
+ * element. The first element is resolved against the standard system search
+ * path (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`), so a
+ * bare name like `httpd` finds an sbin-resident tool; if the program does not
+ * exist, the promise rejects with a `SystemError` whose code is `"ENOENT"`.
  *
  * A guest runs a bounded number of processes at once — currently eight —
  * and further calls wait for a slot rather than failing.
@@ -228,6 +230,13 @@ const MAX_PROCESSES = 8;
 function byte_stream(data: FileData): ReadableStream<Uint8Array> {
   if (data instanceof ReadableStream) return data;
   if (data instanceof Blob) return data.stream();
+  // A string enqueues fine but has no byteLength, so write_all would skip it
+  // and leave a truncated file with no error: reject anything off the union.
+  if (!(data instanceof Uint8Array)) {
+    throw new TypeError(
+      "writeFile data must be a Uint8Array, Blob, or ReadableStream; use writeTextFile for strings",
+    );
+  }
   return new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(data);
@@ -320,6 +329,8 @@ class GuestClient {
   async writeFile(path: string, data: FileData, options: WriteFileOptions = {}) {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
+    // Validate before opening so a bad type does not truncate the file first.
+    const stream = byte_stream(data);
     let flags = O.WRONLY;
     if (options.create ?? true) flags |= O.CREAT;
     if (options.createNew) flags |= O.CREAT | O.EXCL;
@@ -327,7 +338,7 @@ class GuestClient {
     else flags |= O.TRUNC;
     await using fd = await openat(session, path, flags, options.mode ?? 0o666);
 
-    const reader = byte_stream(data).getReader();
+    const reader = stream.getReader();
     let remove_abort = () => {};
     try {
       if (options.signal) {
@@ -525,7 +536,7 @@ class GuestClient {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
     const environment = {
-      PATH: "/bin:/usr/bin:/sbin:/usr/sbin",
+      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       HOME: "/workspace",
       TMPDIR: "/tmp",
       ...options.env,
