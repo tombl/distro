@@ -10,17 +10,34 @@ async function collectProcess(child) {
   return { status, stdout, stderr };
 }
 
-globalThis.bootSmoke = async () => {
+// Boots a guest, runs the scenario, and always shuts the machine down.
+// Scenarios return plain JSON so specs assert on the result directly.
+async function withGuest(scenario) {
   const guest = await spawnGuest();
-  let result;
   try {
-    result = await collectProcess(await guest.exec(["uname", "-a"]));
+    return await scenario(guest);
   } finally {
     guest.machine.close();
     await guest.machine.closed;
   }
-  return { ...result, machineClosed: true };
-};
+}
+
+globalThis.bootSmoke = () =>
+  withGuest(async (guest) => {
+    const result = await collectProcess(await guest.exec(["uname", "-a"]));
+    return { ...result, machineClosed: true };
+  });
+
+globalThis.spawnStress = () =>
+  withGuest(async (guest) => {
+    // One in-guest shell spawning a vfork+exec pair per iteration at full
+    // burst rate, with no host round-trip pacing between iterations. This is
+    // the workload that exhausts WebKit's shared-memory address-space budget
+    // when spawns outpace its asynchronous reservation reclaim: paced
+    // spawning passes everywhere, bursts are what break.
+    const script = "i=0; while [ $i -lt 100 ]; do ls / >/dev/null || exit 1; i=$((i+1)); done";
+    return collectProcess(await guest.exec(["sh", "-c", script]));
+  });
 
 globalThis.schedulerHandoffStress = async () => {
   const response = await fetch("/scheduler-handoff.cpio");
