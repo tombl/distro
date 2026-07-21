@@ -1,0 +1,61 @@
+{
+  pkgs,
+  lib,
+  stdenv,
+  src,
+  zlib,
+  vm-test,
+  busybox,
+}:
+
+stdenv.mkDerivation (finalAttrs: {
+  pname = "file";
+  version = "5.48";
+  inherit src;
+
+  buildInputs = [ zlib ];
+
+  # Cross builds cannot run the freshly built target `file` to compile the
+  # magic database, so use a build-platform file of the same version. The
+  # pinned source and pkgs.file must stay in lockstep.
+  makeFlags = [
+    "FILE_COMPILE=${lib.getExe pkgs.file}"
+    # Package outputs are rootfs slices, so compile the guest path rather
+    # than the Nix build-time prefix into libmagic.
+    "pkgdatadir=/usr/share/misc"
+  ];
+
+  # Keep the compiled guest path above, but stage the database under $out so
+  # the slice overlays it at /usr/share/misc in the composed filesystem.
+  installFlags = [ "pkgdatadir=$(out)/usr/share/misc" ];
+
+  configureFlags = [
+    "--disable-shared"
+    "--enable-static"
+    "--disable-libseccomp"
+  ];
+
+  passthru.checks =
+    let
+      # Sample files of known types for the detection test.
+      fixtures = pkgs.runCommand "file-test-fixtures" { } ''
+        mkdir -p $out/fixtures
+        printf 'hello, this is plain ascii text\n' > $out/fixtures/hello.txt
+        printf 'hello gzip payload\n' | ${pkgs.gzip}/bin/gzip -c > $out/fixtures/hello.gz
+      '';
+    in
+    {
+      detect = vm-test.vmTest {
+        name = "file-detect";
+        initramfs = vm-test.mkInitramfs {
+          name = "file-detect";
+          init = ./detect-test.sh;
+          contents = [
+            finalAttrs.finalPackage
+            busybox
+            fixtures
+          ];
+        };
+      };
+    };
+})

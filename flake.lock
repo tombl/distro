@@ -16,6 +16,45 @@
         "type": "github"
       }
     },
+    "bzip2-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784477577,
+        "narHash": "sha256-Uvi4JZPPERK3gym4yoaeTEJwKXF5brBAEN7GgF+iF6g=",
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      }
+    },
+    "file-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780875963,
+        "narHash": "sha256-9OtdGy2HegeyiCVUuDo75A0REr+Z0ReR3jk2ORVAgp0=",
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      }
+    },
+    "jq-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1702495524,
+        "narHash": "sha256-Ti1rQ7Va0oTE4Z0ouYfQS+yMNX3nFQtHfVkIYBHg3O4=",
+        "type": "tarball",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
+      }
+    },
     "linux-src": {
       "flake": false,
       "locked": {
@@ -84,10 +123,55 @@
     "root": {
       "inputs": {
         "busybox-src": "busybox-src",
+        "bzip2-src": "bzip2-src",
+        "file-src": "file-src",
+        "jq-src": "jq-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
         "musl-src": "musl-src",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "xz-src": "xz-src",
+        "zlib-src": "zlib-src",
+        "zstd-src": "zstd-src"
+      }
+    },
+    "xz-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1737626362,
+        "narHash": "sha256-bJqZHrWqv1gankOKrnXakOVeVGgqPtw5Nn+kfTMKalQ=",
+        "type": "tarball",
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz"
+      }
+    },
+    "zlib-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1705948357,
+        "narHash": "sha256-acY8yFzIRYbrZ2CGODoxLnZuppsP6KZy19I9Yy77pfc=",
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+      }
+    },
+    "zstd-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1711058751,
+        "narHash": "sha256-qcd92hQqVBjMT3hyntjcgk29o9wGQsg5Hg7HE5C0UNc=",
+        "type": "tarball",
+        "url": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz"
       }
     }
   },

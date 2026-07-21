@@ -1,0 +1,21 @@
+Use the malloc dictionary loader on wasm.
+
+wasm musl has no mmap() family, so <sys/mman.h> declares neither mmap() nor
+munmap() and the POSIX dictionary-mmap path fails to compile. zstd already
+carries a malloc-and-read fallback (the #else branch); route wasm to it. The
+CLI only reaches the mmap loader when --mmap-dict is passed, which this
+platform cannot honour anyway.
+
+diff --git a/programs/fileio.c b/programs/fileio.c
+index e3012a7..d8d14a7 100644
+--- a/programs/fileio.c
++++ b/programs/fileio.c
+@@ -739,7 +739,7 @@ static size_t FIO_setDictBufferMalloc(FIO_Dict_t* dict, const char* fileName, FI
+     return (size_t)fileSize;
+ }
+ 
+-#if (PLATFORM_POSIX_VERSION > 0)
++#if (PLATFORM_POSIX_VERSION > 0) && !defined(__wasm__)
+ #include <sys/mman.h>
+ static void FIO_munmap(FIO_Dict_t* dict)
+ {
