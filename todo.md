@@ -49,6 +49,8 @@
   `/proc/self/fd` snapshot race.
 - Add a build-time store-path scanner for guest slices using
   `allowedReferences = [ ]`, with separate host and guest derivations.
+- Add a build-time store-path scanner for guest slices using
+  `allowedReferences = [ ]`, with separate host and guest derivations.
 - Fix the browser CPU-handoff race where a stale typed-array view can throw a
   `RangeError` after concurrent memory growth.
 - Add an explicit npm version-bump flow for release staging.

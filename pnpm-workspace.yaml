@@ -3,6 +3,7 @@ packages:
   - packages/linux-guest
   - packages/linux-guest/tests
   - packages/runner
+  - packages/site
 
 allowBuilds:
   esbuild: true
@@ -11,3 +12,6 @@ allowBuilds:
 # until the docs are ready to release against a published version.
 overrides:
   '@tombl/linux': link:./checkouts/linux/tools/wasm
+
+patchedDependencies:
+  '@jsr/deno__doc@0.202.0': patches/@jsr__deno__doc@0.202.0.patch

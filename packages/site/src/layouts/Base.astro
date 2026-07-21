@@ -1,0 +1,94 @@
+---
+import { Font } from "astro:assets";
+
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+const pageTitle = title ? `${title} — lowland` : "lowland";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <Font cssVariable="--font-sans" preload />
+    <Font cssVariable="--font-mono" />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Site">
+        <div class="masthead">
+          <p><a href="/">lowland</a><slot name="breadcrumb" /></p>
+          <ul class="links">
+            <li><a href="https://github.com/tombl/distro" target="_blank">github</a></li>
+          </ul>
+        </div>
+        <slot name="header" />
+      </nav>
+    </header>
+
+    <slot />
+  </body>
+</html>
+
+<style>
+  body {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding-block: 1rem;
+  }
+
+  nav {
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+
+  p > a {
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+  }
+
+  .links {
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+
+    a {
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 120ms;
+
+      &:hover {
+        color: var(--code-foreground);
+      }
+    }
+  }
+</style>

@@ -99,9 +99,23 @@
             program = lib.getExe wasmpkgs.runner.package;
           };
 
+          serve = {
+            type = "app";
+            program = lib.getExe (
+              pkgs.writeShellScriptBin "wasm-linux-serve" ''
+                ${lib.getExe pkgs.miniserve} ${wasmpkgs.site.package} --index index.html \
+                  --header Cache-Control:no-store,no-cache,must-revalidate,max-age=0 \
+                  --header Pragma:no-cache \
+                  --header Expires:0 \
+                  --header Cross-Origin-Opener-Policy:same-origin \
+                  --header Cross-Origin-Embedder-Policy:require-corp \
+                  --header Cross-Origin-Resource-Policy:cross-origin "$@"
+              ''
+            );
+          };
+
           default = self.apps.${pkgs.stdenv.hostPlatform.system}.runner;
         }
       );
-
     };
 }

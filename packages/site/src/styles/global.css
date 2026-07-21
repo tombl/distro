@@ -1,0 +1,223 @@
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  *:not(dialog, [popover]) {
+    margin: 0;
+  }
+
+  :root {
+    color-scheme: light dark;
+
+    /* GitHub Light Default / GitHub Dark Default. Syntax highlighting is
+       monochrome (weight and slant only, see CodeBlock), so code needs no
+       hue beyond the cursor and selection. */
+    --code-background: light-dark(#ffffff, #0d1117);
+    --code-foreground: light-dark(#24292f, #c9d1d9);
+    /* Strings: one step off the foreground, still gray. Comments sit a
+       further step down at --code-muted and stay italic. */
+    --code-string: light-dark(#57606a, #a5aeb8);
+    --code-muted: light-dark(#6e7781, #8b949e);
+    --code-cursor: light-dark(#0969da, #58a6ff);
+    --code-selection: light-dark(#0969da33, #58a6ff33);
+
+    /* GitHub / GitHub Dark from mbadolato/iTerm2-Color-Schemes. */
+    --terminal-foreground: light-dark(#3e3e3e, #8b949e);
+    --terminal-cursor: light-dark(#3f3f3f, #c9d1d9);
+    --terminal-selection-background: light-dark(#a9c1e2, #3b5070);
+    --terminal-selection-foreground: light-dark(#535353, #ffffff);
+    --terminal-black: light-dark(#3e3e3e, #000000);
+    --terminal-red: light-dark(#970b16, #f78166);
+    --terminal-green: light-dark(#07962a, #56d364);
+    --terminal-yellow: light-dark(#c5bb94, #e3b341);
+    --terminal-blue: light-dark(#003e8a, #6ca4f8);
+    --terminal-magenta: light-dark(#e94691, #db61a2);
+    --terminal-cyan: light-dark(#7cc4df, #2b7489);
+    --terminal-white: light-dark(#b2b2b2, #ffffff);
+    --terminal-bright-black: light-dark(#666666, #4d4d4d);
+    --terminal-bright-red: light-dark(#de0000, #f78166);
+    --terminal-bright-green: light-dark(#7ac895, #56d364);
+    --terminal-bright-yellow: light-dark(#d7b600, #e3b341);
+    --terminal-bright-blue: light-dark(#2e6cba, #6ca4f8);
+    --terminal-bright-magenta: light-dark(#f29592, #db61a2);
+    --terminal-bright-cyan: light-dark(#00c7cb, #2b7489);
+    --terminal-bright-white: light-dark(#ffffff, #ffffff);
+
+    /* Derived from the same Primer palette as the code colors above, so
+       chrome and content share one (cool-tinted) color system. */
+    --muted: var(--code-muted);
+    --hairline: light-dark(#d0d7de, #30363d);
+    --hairline-strong: light-dark(#8c959f, #6e7681);
+    --surface: light-dark(#f6f8fa, #161b22);
+    /* Body copy: between full foreground (kept for headings) and --muted. */
+    --prose: light-dark(#424a53, #b1bac4);
+    /* --font-sans and --font-mono are defined by astro:assets' <Font> in Base. */
+
+    /* Shared page columns: the header, docs layout, and homepage all size
+       from these, so cross-page alignment is structural rather than
+       coincidental. --page-width includes a 1rem gutter each side. */
+    --content-column: 67ch;
+    --side-column: 15rem;
+    --column-gap: 3rem;
+    --page-width: calc(var(--content-column) + 2 * (var(--side-column) + var(--column-gap) + 1rem));
+
+    color: var(--code-foreground);
+    background-color: var(--code-background);
+  }
+
+  /* While the hero terminal is fullscreen, freeze the page behind it. */
+  :root:has(.terminal.expanded) {
+    overflow: hidden;
+  }
+
+  ::selection {
+    background-color: var(--code-selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--code-cursor);
+    outline-offset: 2px;
+  }
+
+  main [id] {
+    scroll-margin-block-start: 1rem;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  body {
+    line-height: 1.5;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    overflow-wrap: break-word;
+    text-wrap: balance;
+  }
+
+  p {
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  img,
+  picture,
+  video,
+  svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  input,
+  button,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  pre {
+    overflow-x: auto;
+  }
+}
+
+@layer typography {
+  :root {
+    font-family: var(--font-sans);
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  /* Match the terminal and code blocks (15px): mono runs optically larger
+     than the prose face at the same nominal size. */
+  :not(pre) > code,
+  kbd,
+  samp {
+    font-size: 0.9375em;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  h1 {
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+    letter-spacing: -0.01em;
+  }
+
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-size: 1rem;
+  }
+
+  a {
+    color: inherit;
+    text-decoration-skip-ink: auto;
+  }
+
+  /* External links open in a new tab (enforced for markdown content by the
+     rehype plugin in astro.config), and the arrow marks them as such. */
+  a[target="_blank"]::after {
+    content: " ↗";
+    font-size: 0.6875em;
+  }
+
+  /* Prose rhythm for rendered content (element selectors only — anything
+     component-shaped belongs in that component's own <style>). */
+  main :where(p, ul, ol, dl, pre, figure, aside) {
+    margin-block-end: 1rem;
+  }
+
+  main :where(p, ul, ol, dl) {
+    color: var(--prose);
+  }
+
+  main :where(h1, h2, h3, h4, h5, h6) {
+    margin-block-end: 0.6em;
+  }
+
+  main h1 {
+    margin-block-start: 0.5em;
+  }
+
+  main :where(h3, h4, h5, h6) {
+    margin-block-start: 2em;
+  }
+
+  main h2 {
+    margin-block-start: 3.5rem;
+  }
+
+  main li + li {
+    margin-block-start: 0.25em;
+  }
+}

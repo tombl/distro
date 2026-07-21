@@ -1,0 +1,3 @@
+dist
+public/initramfs.cpio.gz
+public/rootfs.squashfs.gz

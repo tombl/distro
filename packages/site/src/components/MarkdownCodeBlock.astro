@@ -1,0 +1,30 @@
+---
+import CodeBlock from "./CodeBlock.astro";
+
+interface Props {
+  "data-language"?: string;
+  editable?: boolean;
+}
+
+const { "data-language": markdownLanguage, editable = false } = Astro.props;
+const slot = await Astro.slots.render("default");
+const fence = slot.match(/^<code(?: class="language-([^"]+)")?>([\s\S]*)<\/code>$/);
+
+if (!fence) throw new Error("MarkdownCodeBlock expected a single <code> child");
+
+// Slot text is HTML-escaped by Astro before it crosses the component boundary.
+// Token text is escaped again normally when CodeBlock renders it.
+const code = fence[2]
+  .replace(/&#x([0-9a-f]+);/gi, (_, value) =>
+    String.fromCodePoint(Number.parseInt(value, 16)))
+  .replace(/&#([0-9]+);/g, (_, value) =>
+    String.fromCodePoint(Number.parseInt(value, 10)))
+  .replaceAll("&lt;", "<")
+  .replaceAll("&gt;", ">")
+  .replaceAll("&quot;", "\"")
+  .replaceAll("&#39;", "'")
+  .replaceAll("&amp;", "&");
+const language = markdownLanguage ?? fence[1];
+---
+
+<CodeBlock {code} {language} {editable} />
