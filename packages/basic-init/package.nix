@@ -170,6 +170,7 @@ in
       malloc-thread = check "malloc-thread";
       memory-abi = memoryAbiCheck;
       proc-self-mem = check "proc-self-mem";
+      pty = check "pty";
       scheduler-handoff = schedulerHandoffCheck;
       setjmp = setjmpCheck;
       signal-syscall-return = signalSyscallReturnCheck "plain" "";

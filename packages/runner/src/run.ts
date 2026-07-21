@@ -104,6 +104,15 @@ if (args.console) {
     Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
   );
   devices.push(device);
+
+  if (process.stdout.isTTY) {
+    const resize = () => {
+      const { columns, rows } = process.stdout;
+      if (columns > 0 && rows > 0) device.resize(columns, rows);
+    };
+    resize();
+    process.stdout.on("resize", resize);
+  }
 }
 
 if (args.entropy) {
