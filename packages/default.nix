@@ -75,6 +75,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     openssl = callPackage ./openssl/package.nix { };
     python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };
+    curl = callPackage ./curl/package.nix { };
+    dropbear = callPackage ./dropbear/package.nix { };
+    git = callPackage ./git/package.nix { };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.
