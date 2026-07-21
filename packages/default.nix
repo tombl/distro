@@ -54,6 +54,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
+    bzip2 = callPackage ./bzip2/package.nix { src = inputs.bzip2-src; };
+    file = callPackage ./file/package.nix { src = inputs.file-src; };
+    jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
+    xz = callPackage ./xz/package.nix { src = inputs.xz-src; };
+    zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
+    zstd = callPackage ./zstd/package.nix { src = inputs.zstd-src; };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.

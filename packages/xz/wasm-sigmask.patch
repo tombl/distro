@@ -1,0 +1,20 @@
+Enable the single-threaded sigprocmask() path on wasm.
+
+Upstream omits mythread_sigmask() when __wasm__ is defined, assuming a WASI
+target with no POSIX signals, but signals.c still calls it unconditionally and
+fails to compile. This wasm32-unknown-linux-musl target has an ordinary musl
+with sigprocmask(), so take the single-threaded signal-mask path.
+
+diff --git a/src/common/mythread.h b/src/common/mythread.h
+index 10ea2d4..8787cc4 100644
+--- a/src/common/mythread.h
++++ b/src/common/mythread.h
+@@ -78,7 +78,7 @@ do { \
+ } while (0)
+ 
+ 
+-#if !(defined(_WIN32) && !defined(__CYGWIN__)) && !defined(__wasm__)
++#if !(defined(_WIN32) && !defined(__CYGWIN__))
+ // Use sigprocmask() to set the signal mask in single-threaded programs.
+ #include <signal.h>
+ 

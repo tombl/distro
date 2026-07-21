@@ -8,6 +8,18 @@
       url = "github:tombl/busybox";
       flake = false;
     };
+    bzip2-src = {
+      url = "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz";
+      flake = false;
+    };
+    file-src = {
+      url = "https://astron.com/pub/file/file-5.48.tar.gz";
+      flake = false;
+    };
+    jq-src = {
+      url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz";
+      flake = false;
+    };
     linux-src = {
       url = "github:tombl/linux/safari-memory";
       flake = false;
@@ -18,6 +30,18 @@
     };
     musl-src = {
       url = "github:tombl/musl/platform-core";
+      flake = false;
+    };
+    xz-src = {
+      url = "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz";
+      flake = false;
+    };
+    zlib-src = {
+      url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz";
+      flake = false;
+    };
+    zstd-src = {
+      url = "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz";
       flake = false;
     };
     # keep-sorted end
