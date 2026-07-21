@@ -1,0 +1,220 @@
+Make subprocess work on a fork-less platform (wasm) via os.posix_spawn().
+
+wasm32-unknown-linux-musl has no working fork(): musl exposes the symbol but
+the clone/fork syscall fails at runtime, so _posixsubprocess (fork_exec) is not
+built (py_cv_module__posixsubprocess=n/a). Upstream subprocess falls back to
+fork_exec for anything the posix_spawn() fast path does not cover (bare program
+names resolved via PATH, close_fds without addclosefrom_np, ...), which cannot
+work here. Route every child launch through os.posix_spawn() when fork_exec is
+unavailable: tolerate a missing _posixsubprocess at import and force
+_USE_POSIX_SPAWN on. Extend os.posix_spawn file actions with musl's addchdir_np
+extension, pass setsid/setpgroup attributes through, and emulate closefrom by
+enumerating /proc/self/fd in the parent and adding ordered close actions after
+the stdio dup actions. Resolve PATH by attempting each candidate with the same
+error precedence as os._execvpe(), including bytes executables. Options with no
+spawn equivalent (preexec_fn, pass_fds, uid/gid/groups, and umask) raise
+NotImplementedError rather than being silently ignored.
+
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -7048,6 +7048,9 @@ enum posix_spawn_file_actions_identifier {
+     POSIX_SPAWN_OPEN,
+     POSIX_SPAWN_CLOSE,
+     POSIX_SPAWN_DUP2
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++    ,POSIX_SPAWN_CHDIR
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+     ,POSIX_SPAWN_CLOSEFROM
+ #endif
+@@ -7292,6 +7295,29 @@ parse_file_actions(PyObject *file_actions,
+                 }
+                 break;
+             }
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++            case POSIX_SPAWN_CHDIR: {
++                PyObject *path;
++                if (!PyArg_ParseTuple(file_action, "OO&"
++                        ";A chdir file_action tuple must have 2 elements",
++                        &tag_obj, PyUnicode_FSConverter, &path))
++                {
++                    goto fail;
++                }
++                if (PyList_Append(temp_buffer, path)) {
++                    Py_DECREF(path);
++                    goto fail;
++                }
++                errno = posix_spawn_file_actions_addchdir_np(file_actionsp,
++                        PyBytes_AS_STRING(path));
++                Py_DECREF(path);
++                if (errno) {
++                    posix_error();
++                    goto fail;
++                }
++                break;
++            }
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+             case POSIX_SPAWN_CLOSEFROM: {
+                 int fd;
+@@ -17465,6 +17491,9 @@ posixmodule_exec(PyObject *m)
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_OPEN", POSIX_SPAWN_OPEN)) return -1;
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CLOSE", POSIX_SPAWN_CLOSE)) return -1;
+     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_DUP2", POSIX_SPAWN_DUP2)) return -1;
++#ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCHDIR_NP
++    if (PyModule_AddIntConstant(m, "POSIX_SPAWN_CHDIR", POSIX_SPAWN_CHDIR)) return -1;
++#endif
+ #ifdef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+     if (PyModule_AddIntMacro(m, POSIX_SPAWN_CLOSEFROM)) return -1;
+ #endif
+
+--- a/Lib/subprocess.py
++++ b/Lib/subprocess.py
+@@ -76,6 +76,9 @@
+ 
+ # some platforms do not support subprocesses
+ _can_fork_exec = sys.platform not in {"emscripten", "wasi", "ios", "tvos", "watchos"}
++# Becomes True below iff _posixsubprocess is importable. On fork-less platforms
++# (e.g. wasm) that module is not built and subprocess uses os.posix_spawn only.
++_HAVE_FORK_EXEC = False
+ 
+ if _mswindows:
+     import _winapi
+@@ -103,7 +106,12 @@
+                     "CREATE_DEFAULT_ERROR_MODE", "CREATE_BREAKAWAY_FROM_JOB"])
+ else:
+     if _can_fork_exec:
+-        from _posixsubprocess import fork_exec as _fork_exec
++        try:
++            from _posixsubprocess import fork_exec as _fork_exec
++            _HAVE_FORK_EXEC = True
++        except ImportError:
++            # No fork() on this platform (wasm): _posixsubprocess is absent.
++            _fork_exec = None
+         # used in methods that are called by __del__
+         class _del_safe:
+             waitpid = os.waitpid
+@@ -755,6 +763,11 @@
+ _USE_VFORK = True
+ _HAVE_POSIX_SPAWN_CLOSEFROM = hasattr(os, 'POSIX_SPAWN_CLOSEFROM')
+ 
++if _can_fork_exec and not _HAVE_FORK_EXEC:
++    # Without fork()/_posixsubprocess, os.posix_spawn() is the only launcher,
++    # so use it unconditionally regardless of the libc heuristics above.
++    _USE_POSIX_SPAWN = True
++
+ 
+ class Popen:
+     """ Execute a child program in a new process.
+@@ -1787,5 +1800,5 @@ class Popen:
+         def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
+-                         p2cread, p2cwrite,
++                         cwd, start_new_session, process_group, p2cread, p2cwrite,
+                          c2pread, c2pwrite,
+                          errread, errwrite):
+             """Execute program using os.posix_spawn()."""
+@@ -1799,5 +1812,12 @@ class Popen:
+                         sigset.append(signum)
+                 kwargs['setsigdef'] = sigset
+-
++
++            if start_new_session:
++                kwargs['setsid'] = True
++            if process_group != -1:
++                kwargs['setpgroup'] = process_group
++
+             file_actions = []
++            if cwd is not None:
++                file_actions.append((os.POSIX_SPAWN_CHDIR, cwd))
+             for fd in (p2cwrite, c2pread, errread):
+@@ -1811,8 +1831,23 @@ class Popen:
+                 if fd != -1:
+                     file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
+ 
+             if close_fds:
+-                file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
++                if _HAVE_POSIX_SPAWN_CLOSEFROM:
++                    file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
++                else:
++                    # musl has no closefrom action. Enumerate in the parent,
++                    # then close in ascending order after stdio duplication.
++                    # Ascending order also makes musl safely relocate its
++                    # internal error pipe if it reuses listdir's directory fd.
++                    try:
++                        open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
++                    except OSError as exc:
++                        raise NotImplementedError(
++                            "close_fds requires /proc/self/fd without "
++                            "POSIX_SPAWN_CLOSEFROM") from exc
++                    file_actions.extend(
++                        (os.POSIX_SPAWN_CLOSE, fd)
++                        for fd in open_fds if fd >= 3)
+ 
+             if file_actions:
+                 kwargs['file_actions'] = file_actions
+@@ -1858,6 +1893,55 @@ class Popen:
+ 
+             sys.audit("subprocess.Popen", executable, args, cwd, env)
+ 
++            if not _HAVE_FORK_EXEC:
++                # No fork(): _posixsubprocess is absent, so every child is
++                # launched with os.posix_spawn(). Reject every option musl's
++                # spawn attributes/file actions cannot actually honour.
++                if preexec_fn is not None:
++                    raise NotImplementedError(
++                        "preexec_fn is not supported without fork()")
++                if pass_fds:
++                    raise NotImplementedError(
++                        "pass_fds is not supported without fork()")
++                for option, value in (("group", gid),
++                                      ("extra_groups", gids),
++                                      ("user", uid)):
++                    if value is not None:
++                        raise NotImplementedError(
++                            f"{option} is not supported without fork()")
++                if umask >= 0:
++                    raise NotImplementedError(
++                        "umask is not supported without fork()")
++
++                if os.path.dirname(executable):
++                    executable_list = (executable,)
++                else:
++                    # Match os._execvpe(): executable candidates are bytes on
++                    # POSIX even when PATH entries from env are strings.
++                    encoded_executable = os.fsencode(executable)
++                    executable_list = tuple(
++                        os.path.join(os.fsencode(spawn_dir), encoded_executable)
++                        for spawn_dir in os.get_exec_path(env))
++
++                saved_exc = None
++                for spawn_executable in executable_list:
++                    try:
++                        self._posix_spawn(
++                            args, spawn_executable, env, restore_signals,
++                            close_fds, cwd, start_new_session, process_group,
++                            p2cread, p2cwrite, c2pread, c2pwrite,
++                            errread, errwrite)
++                        return
++                    except (FileNotFoundError, NotADirectoryError) as exc:
++                        last_exc = exc
++                    except OSError as exc:
++                        last_exc = exc
++                        if saved_exc is None:
++                            saved_exc = exc
++                if saved_exc is not None:
++                    raise saved_exc
++                raise last_exc
++
+             if (_USE_POSIX_SPAWN
+                     and os.path.dirname(executable)
+                     and preexec_fn is None
+@@ -1874,7 +1958,8 @@ class Popen:
+                     and uid is None
+                     and umask < 0):
+                 self._posix_spawn(args, executable, env, restore_signals, close_fds,
+-                                  p2cread, p2cwrite,
++                                  cwd, start_new_session, process_group,
++                                  p2cread, p2cwrite,
+                                   c2pread, c2pwrite,
+                                   errread, errwrite)
+                 return
