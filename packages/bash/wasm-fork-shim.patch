@@ -1,0 +1,12 @@
+--- a/jobs.h
++++ b/jobs.h
+@@ -221,7 +221,9 @@
+ #define FORK_PROCSUB	0x10		/* process substitution */
+
+ /* System calls. */
+-#if !defined (HAVE_UNISTD_H)
++/* wasm musl deliberately omits fork; declare the temporary fatal link shim
++   until all make_child continuations use callback clone. */
++#if !defined (HAVE_UNISTD_H) || defined (__wasm__)
+ extern pid_t fork (void), getpid (void), getpgrp (void);
+ #endif /* !HAVE_UNISTD_H */
