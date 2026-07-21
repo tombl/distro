@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>guest bridge test</title>
+<script type="importmap">
+  {
+    "imports": {
+      "@tombl/linux": "/node_modules/@tombl/linux/dist/index.js",
+      "@tombl/linux/bytes": "/node_modules/@tombl/linux/dist/bytes.js",
+      "@tombl/linux-guest": "/node_modules/@tombl/linux-guest/dist/index.js"
+    }
+  }
+</script>
+<p id="status">booting…</p>
+<pre id="log"></pre>
+<script type="module">
+  import {
+    consoleDevice,
+    createNetwork,
+    fetchNetwork,
+    guestFetch,
+    spawnGuest,
+  } from "@tombl/linux-guest";
+  import { serveGuest } from "/client.js";
+
+  const status = document.querySelector("#status");
+  const log = document.querySelector("#log");
+  const decoder = new TextDecoder();
+  const boot_console = consoleDevice(
+    new ReadableStream({ start: (controller) => controller.close() }),
+    new WritableStream({
+      write(chunk) {
+        log.textContent += decoder.decode(Uint8Array.from(chunk), { stream: true });
+      },
+    }),
+  );
+
+  async function bytes(path) {
+    const response = await fetch(path);
+    if (!response.ok) throw new Error(`failed to fetch ${path}: ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  // Boot eagerly, then serve: navigating a port origin never starts anything —
+  // like localhost, it shows what is listening or a connection-refused page.
+  // Cold tabs opened during boot wait at "Waiting for a VM…" and complete once
+  // serveGuest comes up. busybox httpd serves on 8080; wait for it to bind so
+  // the demo's first request doesn't race the server's startup.
+  (async () => {
+    const network = createNetwork(fetchNetwork());
+    const [initramfs, rootfs] = await Promise.all([
+      bytes("/initramfs.cpio"),
+      bytes("/rootfs.squashfs"),
+    ]);
+    const guest = await spawnGuest({
+      network,
+      assets: { initramfs, rootfs },
+      devices: [boot_console],
+    });
+    await guest.fs.mkdir("/tmp/www");
+    await guest.fs.writeTextFile("/tmp/www/index.html", "<h1>hello from the guest</h1>\n");
+    await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+    const httpd = guestFetch(guest.network, { port: 8080 });
+    for (;;) {
+      try {
+        await (await httpd(new Request("http://localhost/"))).arrayBuffer();
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    serveGuest({
+      hub: "http://hub.bridge.localhost:4180",
+      fetch: (port) => guestFetch(guest.network, { port }),
+    });
+    status.textContent = "serving — open any <port>.bridge.localhost:4180 (httpd is on 8080)";
+  })().catch((error) => {
+    status.textContent = String(error);
+    throw error;
+  });
+</script>

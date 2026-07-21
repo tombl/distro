@@ -1,0 +1,14 @@
+/_bridge/bridge.html
+  Cross-Origin-Resource-Policy: cross-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  # TODO(tom): lock embedding to the VM origin in production, e.g.
+  # Content-Security-Policy: frame-ancestors https://linux.example
+/_bridge/bridge.js
+  Cross-Origin-Resource-Policy: cross-origin
+  Cross-Origin-Embedder-Policy: require-corp
+/_bridge/provider.html
+  Cross-Origin-Resource-Policy: cross-origin
+  Cross-Origin-Embedder-Policy: require-corp
+/_bridge/requester.html
+  Cross-Origin-Resource-Policy: cross-origin
+  Cross-Origin-Embedder-Policy: require-corp

@@ -95,6 +95,27 @@ jobs:
           path: npm-packages/*.tgz
           if-no-files-found: error
 
+  deploy-bridge:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: 7d87194d9d4af2959fb81de343dd63d9
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          DEPLOY_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          # TODO(tom): create this Pages project
+          nix develop .#ci --command wrangler pages deploy packages/bridge-site/public \
+            --project-name=linux-bridge \
+            --branch="$DEPLOY_BRANCH"
+
   stage-npm:
     name: Stage packages on npm
     needs: build

@@ -15,6 +15,19 @@ importers:
         specifier: link:checkouts/linux/tools/wasm
         version: link:checkouts/linux/tools/wasm
 
+  packages/bridge-site:
+    dependencies:
+      '@tombl/linux':
+        specifier: link:../../checkouts/linux/tools/wasm
+        version: link:../../checkouts/linux/tools/wasm
+      '@tombl/linux-guest':
+        specifier: workspace:*
+        version: link:../linux-guest
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.61.1
+        version: 1.61.1
+
   packages/browser-tests:
     dependencies:
       '@tombl/linux':

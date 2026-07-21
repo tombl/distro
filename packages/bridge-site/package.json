@@ -1,0 +1,20 @@
+{
+  "name": "@tombl/bridge-site",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./client.js"
+  },
+  "scripts": {
+    "check": "playwright test --list",
+    "pretest": "bash scripts/prepare-assets.sh",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@tombl/linux": "0.0.0",
+    "@tombl/linux-guest": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

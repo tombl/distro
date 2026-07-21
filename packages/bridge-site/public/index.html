@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>bridge</title>
+<script src="/_bridge/error-page.js"></script>
+<script>
+  // The static fallback: served before any worker controls this origin and as
+  // the SPA catch-all. Absence of a worker is the normal install phase now, not
+  // an error — so parse our own port label, register the worker first-party, then
+  // hand off to the shared connecting page, which demands a VM through the
+  // rendezvous hub and reloads once one binds this origin.
+  const label = location.hostname.split(".")[0];
+  const valid = /^[1-9]\d*$/.test(label) && Number(label) <= 65535;
+
+  function render(code) {
+    document.open();
+    document.write(BridgeErrorPage.renderPage(code));
+    document.close();
+  }
+
+  if (!valid) {
+    // Not a guest port (a non-numeric label, or the reserved "hub"): terminal.
+    render("BRIDGE_BAD_PORT");
+  } else {
+    navigator.serviceWorker
+      .register("/_bridge_sw.js", { scope: "/" })
+      .then(() => navigator.serviceWorker.ready)
+      .then(() =>
+        navigator.serviceWorker.controller
+          ? undefined
+          : new Promise((resolve) =>
+              navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }),
+            ),
+      )
+      .then(() => render("BRIDGE_CONNECTING"));
+  }
+</script>
