@@ -29,6 +29,9 @@ export const assets = {
   rootfs: await readFile(join(directory, "rootfs.squashfs")),
 };
 
+/** A static guest executable that exercises the guest-side network stack. */
+export const network_test = await readFile(join(directory, "network-test"));
+
 export const lifecycle_assets = {
   initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
   initramfs_path: join(directory, "lifecycle-initramfs.cpio"),

@@ -7,6 +7,9 @@
 - Add framebuffer and input support with guest-visible integration tests; add
   DRM only when its userspace memory requirements are supportable.
 - Add outbound UDP to the networking layer.
+- Add TCP retransmission. The userspace bridge currently sends each data
+  segment once and fails its exact-ACK waiter after 30 seconds; the virtio-net
+  receive path tail-drops after 256 queued frames, so loss is possible.
 - Revisit x86 execution and guest Node.
 - Remove musl's unused generic `_start_c`; section GC currently hides its
   undefined reference to `main`.
