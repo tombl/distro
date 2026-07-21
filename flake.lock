@@ -193,6 +193,19 @@
         "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
       }
     },
+    "mbedtls-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784489454,
+        "narHash": "sha256-t1ZPeFA3ftKaEIaXQ7RXZEsiOAYK4KSSm55SFr9g17A=",
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      }
+    },
     "musl-src": {
       "flake": false,
       "locked": {
@@ -239,6 +252,19 @@
         "type": "github"
       }
     },
+    "openssl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781006065,
+        "narHash": "sha256-/xKRDxk7BhrzhcOzazbvkpEje2YejT+9U9QzqjQg1QA=",
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+      }
+    },
     "patch-src": {
       "flake": false,
       "locked": {
@@ -281,9 +307,11 @@
         "llvm-src": "llvm-src",
         "lua-src": "lua-src",
         "make-src": "make-src",
+        "mbedtls-src": "mbedtls-src",
         "musl-src": "musl-src",
         "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
+        "openssl-src": "openssl-src",
         "patch-src": "patch-src",
         "readline-src": "readline-src",
         "sed-src": "sed-src",

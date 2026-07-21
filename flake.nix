@@ -60,12 +60,20 @@
       url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz";
       flake = false;
     };
+    mbedtls-src = {
+      url = "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2";
+      flake = false;
+    };
     musl-src = {
       url = "github:tombl/musl/platform-core";
       flake = false;
     };
     ncurses-src = {
       url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
+      flake = false;
+    };
+    openssl-src = {
+      url = "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz";
       flake = false;
     };
     patch-src = {

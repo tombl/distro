@@ -65,7 +65,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     less = callPackage ./less/package.nix { src = inputs.less-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     make = callPackage ./make/package.nix { src = inputs.make-src; };
+    mbedtls = callPackage ./mbedtls/package.nix { src = inputs.mbedtls-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
+    openssl = callPackage ./openssl/package.nix { src = inputs.openssl-src; };
     patch = callPackage ./patch/package.nix { src = inputs.patch-src; };
     readline = callPackage ./readline/package.nix { src = inputs.readline-src; };
     sed = callPackage ./sed/package.nix { src = inputs.sed-src; };
