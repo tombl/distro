@@ -219,6 +219,19 @@
         "type": "github"
       }
     },
+    "ltp-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780056211,
+        "narHash": "sha256-dEakUKunQDJM3Fn4ft7PszCrAW5jzrTpqLyw1yCvT7U=",
+        "type": "tarball",
+        "url": "https://github.com/linux-test-project/ltp/releases/download/20260529/ltp-full-20260529.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/linux-test-project/ltp/releases/download/20260529/ltp-full-20260529.tar.xz"
+      }
+    },
     "lua-src": {
       "flake": false,
       "locked": {
@@ -387,6 +400,7 @@
         "less-src": "less-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
+        "ltp-src": "ltp-src",
         "lua-src": "lua-src",
         "make-src": "make-src",
         "mbedtls-src": "mbedtls-src",

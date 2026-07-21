@@ -13,3 +13,14 @@
 - Revisit x86 execution and guest Node.
 - Remove musl's unused generic `_start_c`; section GC currently hides its
   undefined reference to `main`.
+
+## Known-failing LTP kernel gaps
+
+Re-enable these tests as the corresponding kernel fixes land:
+
+- `getcwd01` (`TFAIL`)
+- `lseek11` (`TCONF`)
+- `brk01`
+- `clock_gettime01`
+- `getrandom01`
+- `nice05` (hangs the VM watchdog)

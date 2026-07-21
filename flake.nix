@@ -68,6 +68,10 @@
       url = "github:tombl/llvm-project/wasm-linux";
       flake = false;
     };
+    ltp-src = {
+      url = "https://github.com/linux-test-project/ltp/releases/download/20260529/ltp-full-20260529.tar.xz";
+      flake = false;
+    };
     lua-src = {
       url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz";
       flake = false;
