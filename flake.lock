@@ -55,6 +55,19 @@
         "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
       }
     },
+    "less-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1728253910,
+        "narHash": "sha256-U3En8L4CnqlVu9Kkh3PhOQIoUyzGDl5msotNKtPn1Dk=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      }
+    },
     "linux-src": {
       "flake": false,
       "locked": {
@@ -89,6 +102,19 @@
         "type": "github"
       }
     },
+    "lua-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1747861947,
+        "narHash": "sha256-6TMsVp2D3WtvnwyhvwodjQH3kvTXz1rSMWwiHazvKys=",
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      }
+    },
     "musl-src": {
       "flake": false,
       "locked": {
@@ -104,6 +130,19 @@
         "ref": "platform-core",
         "repo": "musl",
         "type": "github"
+      }
+    },
+    "ncurses-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767137046,
+        "narHash": "sha256-YpXsAx/jqbxBpTLljJBfLEyeG4vSY94K4HYHSqyXYyg=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
       }
     },
     "nixpkgs": {
@@ -122,19 +161,50 @@
         "type": "github"
       }
     },
+    "readline-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1751291999,
+        "narHash": "sha256-PhQxBHY8g6OaC7w2vHyGYVJVy7BtF6RjvH1EAF/Hza0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      }
+    },
     "root": {
       "inputs": {
         "busybox-src": "busybox-src",
         "bzip2-src": "bzip2-src",
         "file-src": "file-src",
         "jq-src": "jq-src",
+        "less-src": "less-src",
         "linux-src": "linux-src",
         "llvm-src": "llvm-src",
+        "lua-src": "lua-src",
         "musl-src": "musl-src",
+        "ncurses-src": "ncurses-src",
         "nixpkgs": "nixpkgs",
+        "readline-src": "readline-src",
+        "sqlite-src": "sqlite-src",
         "xz-src": "xz-src",
         "zlib-src": "zlib-src",
         "zstd-src": "zstd-src"
+      }
+    },
+    "sqlite-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1762301600,
+        "narHash": "sha256-IbgsC+KGI0uWM4PS+bKpLfbE7ciE1fpz9Jhj9+qEiVA=",
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
       }
     },
     "xz-src": {
