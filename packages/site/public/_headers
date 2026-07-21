@@ -1,0 +1,7 @@
+/*
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: cross-origin
+
+/*.md
+  Content-Type: text/markdown; charset=utf-8

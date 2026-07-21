@@ -65,8 +65,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     gawk = callPackage ./gawk/package.nix { src = inputs.gawk-src; };
     git = callPackage ./git/package.nix { src = inputs.git-src; };
     grep = callPackage ./grep/package.nix { src = inputs.grep-src; };
+    guest-agent = callPackage ./guest-agent/package.nix { };
     jq = callPackage ./jq/package.nix { src = inputs.jq-src; };
+    kselftests = callPackage ./kselftests/package.nix { src = inputs.linux-src; };
     less = callPackage ./less/package.nix { src = inputs.less-src; };
+    ltp = callPackage ./ltp/package.nix { src = inputs.ltp-src; };
     lua = callPackage ./lua/package.nix { src = inputs.lua-src; };
     make = callPackage ./make/package.nix { src = inputs.make-src; };
     ncurses = callPackage ./ncurses/package.nix { src = inputs.ncurses-src; };
@@ -84,21 +87,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     zlib = callPackage ./zlib/package.nix { src = inputs.zlib-src; };
     zstd = callPackage ./zstd/package.nix { src = inputs.zstd-src; };
 
-    # Early platform tests boot without the guest agent so a broken SDK cannot
-    # hide whether the kernel and libc reached userspace correctly.
-    vm-test = callPackage ./vm-test/package.nix { };
-
-    # Shared immutable filesystem construction. Product-specific images remain
-    # owned by their consumer packages.
+    # Shared image construction. Product-specific images live with and under
+    # the package that owns them: site.image, runner.image, linux-guest.image.
     image = callPackage ./image { };
 
-    # The private guest protocol and its JavaScript SDK ship together.
-    guest-agent = callPackage ./guest-agent/package.nix { };
-    kselftests = callPackage ./kselftests/package.nix { src = inputs.linux-src; };
-    ltp = callPackage ./ltp/package.nix { src = inputs.ltp-src; };
+    # host tools and tests:
+    browser-tests = callPackage ./browser-tests/package.nix { };
     node-workspace = callPackage ./node-workspace.nix { };
     linux-guest = callPackage ./linux-guest { };
     runner = callPackage ./runner { };
-    browser-tests = callPackage ./browser-tests/package.nix { };
+    site = callPackage ./site { };
+    vm-test = callPackage ./vm-test/package.nix { };
   }
 )
