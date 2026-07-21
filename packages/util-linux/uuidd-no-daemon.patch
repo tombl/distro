@@ -1,0 +1,19 @@
+wasm has no fork-backed daemon().  uuidd already has a foreground --no-fork
+mode that retains the actual service; make the unsupported daemonizing mode
+fail with a useful instruction.
+
+--- a/misc-utils/uuidd.c
++++ b/misc-utils/uuidd.c
+@@ -120,8 +120,12 @@ static void create_daemon(void)
+ {
+ 	uid_t euid;
+ 
++#ifdef __wasm__
++	errx(EXIT_FAILURE, _("daemon mode is unavailable; use --no-fork"));
++#else
+ 	if (daemon(0, 0))
+ 		err(EXIT_FAILURE, "daemon");
++#endif
+ 
+ 	euid = geteuid();
+ 	if (setreuid(euid, euid) < 0)

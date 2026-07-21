@@ -1,0 +1,67 @@
+Allow platform-specific exclusions to be selected independently.
+Upstream's build state for these programs is otherwise tied directly to the
+global default or to the scriptutils group.
+
+--- a/configure.ac
++++ b/configure.ac
+@@ -2161,7 +2161,11 @@ UL_REQUIRES_LINUX([choom])
+ AM_CONDITIONAL([BUILD_CHOOM], [test "x$build_choom" = xyes])
+ 
+-UL_BUILD_INIT([lsipc], [check])
++AC_ARG_ENABLE([lsipc],
++  AS_HELP_STRING([--disable-lsipc], [do not build lsipc]),
++  [], [UL_DEFAULT_ENABLE([lsipc], [check])]
++)
++UL_BUILD_INIT([lsipc])
+ UL_REQUIRES_LINUX([lsipc])
+ UL_REQUIRES_BUILD([lsipc], [libsmartcols])
+ AM_CONDITIONAL([BUILD_LSIPC], [test "x$build_lsipc" = xyes])
+ 
+@@ -2196,6 +2196,10 @@ UL_BUILD_INIT([setsid], [yes])
+ AM_CONDITIONAL([BUILD_SETSID], [test "x$build_setsid" = xyes])
+ 
+-UL_BUILD_INIT([readprofile], [check])
++AC_ARG_ENABLE([readprofile],
++  AS_HELP_STRING([--disable-readprofile], [do not build readprofile]),
++  [], [UL_DEFAULT_ENABLE([readprofile], [check])]
++)
++UL_BUILD_INIT([readprofile])
+ UL_REQUIRES_LINUX([readprofile])
+ AM_CONDITIONAL([BUILD_READPROFILE], [test "x$build_readprofile" = xyes])
+ 
+@@ -2226,6 +2226,10 @@ UL_REQUIRES_SYSCALL_CHECK([exch], [UL_CHECK_SYSCALL([renameat2])])
+ AM_CONDITIONAL([BUILD_EXCH], [test "x$build_exch" = xyes])
+ 
+-UL_BUILD_INIT([fincore], [check])
++AC_ARG_ENABLE([fincore],
++  AS_HELP_STRING([--disable-fincore], [do not build fincore]),
++  [], [UL_DEFAULT_ENABLE([fincore], [check])]
++)
++UL_BUILD_INIT([fincore])
+ UL_REQUIRES_LINUX([fincore])
+ UL_REQUIRES_BUILD([fincore], [libsmartcols])
+ AM_CONDITIONAL([BUILD_FINCORE], [test "x$build_fincore" = xyes])
+@@ -2249,6 +2253,10 @@ UL_REQUIRES_HAVE([blkpr], [linux_pr_h], [linux/pr.h header])
+ AM_CONDITIONAL([BUILD_BLKPR], [test "x$build_blkpr" = xyes])
+ 
+-UL_BUILD_INIT([ldattach], [check])
++AC_ARG_ENABLE([ldattach],
++  AS_HELP_STRING([--disable-ldattach], [do not build ldattach]),
++  [], [UL_DEFAULT_ENABLE([ldattach], [check])]
++)
++UL_BUILD_INIT([ldattach])
+ UL_REQUIRES_LINUX([ldattach])
+ AM_CONDITIONAL([BUILD_LDATTACH], [test "x$build_ldattach" = xyes])
+ 
+@@ -2277,6 +2281,9 @@ UL_BUILD_INIT([scriptreplay])
+ AM_CONDITIONAL([BUILD_SCRIPTREPLAY], [test "x$build_scriptreplay" = xyes])
+ 
+-UL_ENABLE_ALIAS([scriptlive], [scriptutils])
+-UL_BUILD_INIT([scriptlive])
++AC_ARG_ENABLE([scriptlive],
++  AS_HELP_STRING([--disable-scriptlive], [do not build scriptlive]),
++  [], [enable_scriptlive=$enable_scriptutils]
++)
++UL_BUILD_INIT([scriptlive], [], [scriptlive])
+ UL_REQUIRES_HAVE([scriptlive], [pty], [openpty function (libutil)])
+ AM_CONDITIONAL([BUILD_SCRIPTLIVE], [test "x$build_scriptlive" = xyes])
