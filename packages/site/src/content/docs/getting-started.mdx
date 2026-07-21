@@ -1,0 +1,177 @@
+---
+title: Run Linux in your browser
+description: Boot a Linux machine in a plain web page and control it from JavaScript.
+section: tutorials
+order: 1
+---
+
+import CodeBlock from "../../components/CodeBlock.astro";
+import ExecutableCodeBlock from "../../components/ExecutableCodeBlock.astro";
+import { guestVersion, linuxVersion } from "../../lib/versions";
+
+# Run Linux in your browser
+
+This tutorial builds a web page that boots a Linux machine and controls it
+from JavaScript. The kernel is a real Linux kernel compiled to WebAssembly,
+and everything runs inside the page. There is no server behind it.
+
+The examples on this page are editable and runnable. They share one machine,
+booted in your browser the first time you press run. Try it:
+
+<ExecutableCodeBlock
+  code={`const process = await guest.exec(["uname", "-a"]);
+console.log(await new Response(process.stdout).text());`}
+/>
+
+That output came from a program that just ran inside a Linux machine in this
+tab. The rest of the page makes you a page of your own that can do the same.
+You need a modern browser and any static file server that can send custom
+headers — no bundler, no build step. The library loads as a native ES module
+from a CDN.
+
+## Create the page
+
+Save this as `index.html`:
+
+<CodeBlock
+  language="html"
+  code={`<!doctype html>
+<title>linux</title>
+<script type="importmap">
+  {
+    "imports": {
+      "@tombl/linux": "https://unpkg.com/@tombl/linux@${linuxVersion}/dist/index.js",
+      "@tombl/linux/bytes": "https://unpkg.com/@tombl/linux@${linuxVersion}/dist/bytes.js",
+      "@tombl/linux-guest": "https://unpkg.com/@tombl/linux-guest@${guestVersion}/dist/index.js"
+    }
+  }
+</script>
+<script type="module">
+  import { spawnGuest } from "@tombl/linux-guest";
+
+  const guest = await spawnGuest();
+  const process = await guest.exec(["uname", "-a"]);
+  document.body.textContent = await new Response(process.stdout).text();
+</script>`}
+/>
+
+The import map lets the page use bare package names, the same specifiers you
+would use with a bundler, and points them at unpkg. `@tombl/linux-guest` is
+the machine API you will spend most of your time with. It pulls in
+`@tombl/linux`, which is the kernel itself. If your application already has a
+build tool, `npm install @tombl/linux @tombl/linux-guest` and the same
+imports work. Configure the same cross-origin isolation headers described
+below in the bundler's development and production servers.
+
+`spawnGuest()` boots the packaged kernel and root filesystem, and its promise
+resolves once the machine can run commands. You do not pass it anything until
+you want something non-default.
+
+## Serve the page
+
+Any static server works, with one requirement: the page must be served with
+two headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Together these make the page
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
+which the machine needs because its virtual CPUs share memory.[^why]
+
+[^why]:
+    After the Spectre and Meltdown vulnerabilities, browsers locked
+    shared-memory multithreading behind this opt-in. Each Linux thread is
+    a Web Worker and they all share the machine's memory, which is exactly
+    what the gate exists for. `require-corp` also means everything the page
+    embeds must opt in to being embedded; unpkg sends the right headers, so
+    the imports above work as-is.
+
+For example, `npx serve` picks up headers from a `serve.json` next to
+`index.html`:
+
+```json
+{
+  "headers": [
+    {
+      "source": "**",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}
+```
+
+Open the page. After a few seconds of boot it shows the kernel identifying
+itself, the same line the example at the top of this page printed.
+
+If nothing appears, evaluate `crossOriginIsolated` in the console. It must be
+`true`. If it is `false`, the headers did not reach the browser — check both
+names and values in the server config, and that the document response in the
+network panel actually carries them.[^coi]
+
+[^coi]:
+    On a host that cannot send headers, such as GitHub Pages,
+    [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) adds
+    them from a service worker. It works, but real headers are simpler and
+    take effect on the very first load, so prefer them when you can.
+
+## Run programs
+
+`guest.exec` takes an argv array. There is no shell in between, so nothing
+quotes, splits, or expands. The first element is looked up on the guest's
+`PATH`. When you want shell behaviour, run a shell and say so explicitly:
+
+<ExecutableCodeBlock
+  code={`const process = await guest.exec(["sh", "-c", "echo hello; date"]);
+console.log(await new Response(process.stdout).text());
+console.log("exit code:", (await process.status).code);`}
+/>
+
+A process hands you three things: `stdout` and `stderr` as web
+`ReadableStream`s, and `status`, a promise for its exit. `new Response(...)`
+is the shortest way to collect a whole stream, but for a long-running program
+you can read the stream incrementally instead of buffering it all.
+
+## Work with files
+
+The filesystem starts from the packaged root image. The system directories
+are read-only, and writable space is mounted at `/tmp` and `/workspace`, in
+memory and private to this machine. `guest.fs` reads and writes it directly
+from JavaScript, no exec required:
+
+<ExecutableCodeBlock
+  code={`await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\\n");
+
+const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
+console.log(await new Response(cat.stdout).text());`}
+/>
+
+Files written from the host are immediately visible to guest programs and the
+other way around, because there is only one filesystem. `guest.fs` also has
+`readTextFile`, `readDir`, `stat`, `mkdir`, and friends — the
+[reference](/reference/linux-guest/) lists them all.
+
+## Shut down
+
+```js
+guest.machine.close();
+```
+
+Closing terminates the machine's processes and releases its workers and
+memory. Keep the guest for as long as anything inside it should stay
+running. This block is not runnable because the examples on this page share
+their machine.
+
+## Where next
+
+You now have Linux as a library. The
+[`@tombl/linux-guest` reference](/reference/linux-guest/) covers the full
+process and filesystem API with runnable examples. How-to guides for the next
+steps — running under Node, wiring the console to xterm.js, persisting the
+filesystem, networking between guests and out to the internet, and building a
+custom root filesystem — are on the way.

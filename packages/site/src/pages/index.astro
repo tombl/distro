@@ -1,0 +1,496 @@
+---
+import CodeBlock from "../components/CodeBlock.astro";
+import Terminal from "../components/Terminal.astro";
+import Base from "../layouts/Base.astro";
+import { guestVersion } from "../lib/versions";
+
+const execExample = `const process = await guest.exec(["uname", "-a"]);
+console.log(await new Response(process.stdout).text());`;
+
+const filesExample = `await guest.fs.writeTextFile(
+  "/tmp/hello.txt",
+  "hello from JavaScript\\n",
+);
+
+const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
+console.log(await new Response(cat.stdout).text());`;
+
+const networkExample = `const peer = await spawnGuest({ network });
+
+const ping = await peer.exec(
+  ["ping", "-c", "1", guest.network.address],
+);
+console.log(await new Response(ping.stdout).text());`;
+
+const machineExample = `import {
+  blockDevice,
+  consoleDevice,
+  entropyDevice,
+  spawnMachine,
+} from "@tombl/linux";
+
+const machine = await spawnMachine({
+  cpus: navigator.hardwareConcurrency,
+  initcpio: initramfs,
+  devices: [
+    consoleDevice(input, output),
+    entropyDevice(),
+    blockDevice(disk),
+  ],
+});`;
+---
+
+<Base
+  description="a real Linux kernel and userspace ported to WebAssembly, running in your browser and controlled from JavaScript"
+>
+  <main>
+    <section class="hero">
+      <h1>Linux, running here.</h1>
+      <div class="copy">
+        <p>
+          This is a real Linux kernel and userspace, ported to <code>wasm32</code> and running in
+          this page. There is no emulated CPU, wasm is simply another architecture, with the
+          browser providing devices around it. The result is a whole Linux machine you can use
+          from JavaScript like any other object. Try the shell, every example below talks to this
+          same machine.
+        </p>
+
+        <div class="acquire">
+          <p class="install">
+            <code>npm install @tombl/linux-guest</code>
+            <button class="control" data-copy="npm install @tombl/linux-guest">copy</button>
+          </p>
+          <a class="control" href="/getting-started/">documentation</a>
+        </div>
+        <p class="version">currently v{guestVersion}</p>
+      </div>
+
+      <div class="panel">
+        <Terminal />
+        <p>
+          Try <button class="try" data-try="uname -a" disabled><code>uname -a</code></button>,{" "}
+          <button class="try" data-try="ls /bin" disabled><code>ls /bin</code></button>, or{" "}
+          <button class="try" data-try="sqlite3" disabled><code>sqlite3</code></button>.
+        </p>
+      </div>
+    </section>
+
+    <section data-demo>
+      <h2>Run processes</h2>
+      <div class="copy">
+        <p>
+          <code>guest.exec</code> runs a process in the machine at the top of the page, returning its
+          stdio as web streams. Edit the example and run it again, this is all executing in your
+          tab, there is no server behind the demo. <a href="/getting-started/">Guest API →</a>
+        </p>
+      </div>
+      <div class="panel">
+        <CodeBlock code={execExample} language="javascript" editable />
+        <div class="controls">
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Runs in your tab, against the machine above</span>
+        </div>
+        <pre class="output" data-output aria-live="polite" hidden></pre>
+      </div>
+    </section>
+
+    <section data-demo>
+      <h2>Read and write files</h2>
+      <div class="copy">
+        <p>
+          <code>guest.fs</code> and the terminal are two views of the same filesystem. Write a file
+          from JavaScript, then <code>cat /tmp/hello.txt</code> above and it is there. This is not a
+          new demo machine for each section, everything on the page composes around one guest.
+        </p>
+      </div>
+      <div class="panel">
+        <CodeBlock code={filesExample} language="javascript" editable />
+        <div class="controls">
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Then go look for the file in the terminal</span>
+        </div>
+        <pre class="output" data-output aria-live="polite" hidden></pre>
+      </div>
+    </section>
+
+    <section data-demo>
+      <h2>Network machines together</h2>
+      <div class="copy">
+        <p>
+          Guests attached to the same network exchange real Ethernet frames through an in-process
+          switch. This example boots a second kernel in your tab and pings the first, neither the
+          guest agent nor a server sits in the data path.
+        </p>
+      </div>
+      <div class="panel">
+        <CodeBlock code={networkExample} language="javascript" editable />
+        <div class="controls">
+          <button class="control" data-run disabled>Run</button>
+          <span class="hint">Boots a whole second machine, so give it a moment</span>
+        </div>
+        <pre class="output" data-output aria-live="polite" hidden></pre>
+      </div>
+    </section>
+
+    <section>
+      <h2>Drop down to the kernel</h2>
+      <div class="copy">
+        <p>
+          <code>@tombl/linux-guest</code> is the opinionated API for most consumers, it bundles a userspace and
+          guest agent so running a process or moving a file is one call. Most applications should
+          use that. If its opinions get in your way, <code>@tombl/linux</code> exposes the kernel
+          underneath, where you supply the devices, disk, and init yourself. both APIs are the same
+          machine at different levels. <a href="/getting-started/">architecture →</a>
+        </p>
+      </div>
+      <div class="panel">
+        <CodeBlock code={machineExample} language="javascript" />
+      </div>
+    </section>
+
+    <section class="limits">
+      <h2>Limitations</h2>
+      <div class="copy">
+        <h3>Requirements</h3>
+        <ul>
+          <li>Node 22 or a modern browser</li>
+          <li>Cross-origin isolation (COOP/COEP headers) in browsers</li>
+          <li>WebAssembly threads and <code>SharedArrayBuffer</code></li>
+          <li>
+            Web Workers, a Linux thread can require another worker and V8 context, so threads are
+            comparatively expensive
+          </li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Architectural limits</h3>
+        <ul>
+          <li>
+            WebAssembly requires structured control flow, so <code>fork()</code> cannot be implemented without hacks.
+            <code>clone()</code> works, so porting software to wasm does require some small patches.
+            The situation here could get better if the <a href="https://github.com/WebAssembly/stack-switching">WebAssembly stack-switching proposal</a> is implemented.
+          </li>
+          <li>
+            Signal delivery is cooperative. WebAssembly has no way to interrupt running code, so
+            signals and timers are only delivered when a process enters the kernel or the CPU goes
+            idle. A compute loop that never makes a syscall cannot be preempted, stopped, or
+            killed until it does.
+          </li>
+          <li>
+            There is no <code>mmap()</code> yet, this depends on the <a href="https://github.com/WebAssembly/memory-control">WebAssembly memory-control proposal</a>.
+            Apps must be rewritten to use file I/O instead, and memory can't be shared between processes.
+          </li>
+          <li>Linux threads are turned into Web Workers which come with a higher memory overhead,
+              so while we do have true multi-core parallelism, threads are more expensive than normal.
+              This could get better with the <a href="https://github.com/WebAssembly/shared-everything-threads">WebAssembly shared-everything-threads proposal</a>.
+          </li>
+        </ul>
+      </div>
+    </section>
+
+    <p class="invitation">
+      Linux running in a browser is a neat demo, but it is not really the point. what I care about
+      is making the machine cheap and programmable enough to put wherever the problem wants one,
+      e.g. behind an AI agent, in each IDE tab, or inside documentation that teaches with a real
+      shell. if a whole machine is just another value in your program, what becomes simpler? <a
+        href="/getting-started/">read the docs</a
+      >, or start by changing the examples above.
+    </p>
+  </main>
+
+  <footer>
+    <a href="/getting-started/">docs</a>
+    <a href="https://github.com/tombl/distro" target="_blank">github</a>
+    <a href="https://www.npmjs.com/package/@tombl/linux-guest" target="_blank">npm</a>
+  </footer>
+</Base>
+
+<script>
+  import { hero, spawnPeer, writeConsole } from "../lib/hero";
+
+  type Runnable = HTMLElement & { getCode?: () => string };
+  type AnyAsyncFn = (...args: unknown[]) => Promise<unknown>;
+  const AsyncFunction = Object.getPrototypeOf(async function () {})
+    .constructor as new (...args: string[]) => AnyAsyncFn;
+
+  function format(value: unknown) {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  for (const demo of document.querySelectorAll<HTMLElement>("[data-demo]")) {
+    const button = demo.querySelector<HTMLButtonElement>("[data-run]");
+    const output = demo.querySelector<HTMLElement>("[data-output]");
+    const block = demo.querySelector<Runnable>("[data-code-block]");
+    if (!button || !output || !block) continue;
+
+    const print = (text: string) => {
+      output.hidden = false;
+      output.textContent += text.replace(/\n$/, "") + "\n";
+    };
+
+    button.addEventListener("click", async () => {
+      const code = block.getCode?.() ?? block.textContent ?? "";
+      button.disabled = true;
+      output.textContent = "";
+      const consoleShim = {
+        log: (...args: unknown[]) => print(args.map(format).join(" ")),
+        error: (...args: unknown[]) => print(args.map(format).join(" ")),
+      };
+      try {
+        const { guest, network } = await hero;
+        const fn = new AsyncFunction("guest", "network", "spawnGuest", "console", code);
+        await fn(guest, network, spawnPeer, consoleShim);
+      } catch (error) {
+        print(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-try]")) {
+    button.addEventListener("click", () => {
+      writeConsole(`${button.dataset.try}\r`);
+      document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus();
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(button.dataset.copy ?? "");
+      button.textContent = "copied";
+      setTimeout(() => (button.textContent = "copy"), 1500);
+    });
+  }
+
+  hero.then(
+    () => {
+      for (const button of document.querySelectorAll<HTMLButtonElement>("[data-run], [data-try]")) {
+        button.disabled = false;
+      }
+    },
+    () => {
+      for (const hint of document.querySelectorAll(".hint")) {
+        hint.textContent = "the machine failed to boot, see the terminal above";
+      }
+    },
+  );
+</script>
+
+<style>
+  main {
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding: 1rem 1rem 4rem;
+
+    > section + section {
+      margin-block-start: 5rem;
+    }
+  }
+
+  /* Columnar layout at the same max-width as docs + sidebars: headings span
+     both columns on the left spine, prose sits in the left track, the
+     interactive panel in the right, stacked on mobile. Sections provide the
+     vertical rhythm, so their headings drop the prose margin. */
+  section > :is(h1, h2) {
+    margin-block-start: 0;
+  }
+
+  .hero .panel :global(.terminal) {
+    margin-block-start: 0;
+  }
+
+  @media (min-width: 48rem) {
+    section {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: var(--column-gap);
+      align-items: start;
+
+      > :is(h1, h2) {
+        grid-column: 1 / -1;
+      }
+
+      > .copy {
+        grid-column: 1;
+        min-width: 0;
+      }
+
+      > .panel {
+        grid-column: 2;
+        min-width: 0;
+      }
+
+      /* Prose paired with a bordered panel: pad past the panel's border and
+         padding so the first lines of both columns share a baseline. */
+      &:not(.limits) > .copy {
+        padding-block-start: calc(1rem + 1px);
+      }
+    }
+  }
+
+  .limits {
+    h3 {
+      font-size: 0.8125rem;
+      font-weight: inherit;
+      color: var(--muted);
+      margin-block-end: 0.5rem;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+  }
+
+  @media (min-width: 48rem) {
+    .limits :is(.copy, .panel) > h3 {
+      margin-block-start: 0;
+    }
+  }
+
+  .acquire {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0.5rem;
+    margin-block-end: 0.5rem;
+  }
+
+  .install {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0;
+    padding-inline: 0.75rem;
+    border: 1px solid var(--hairline);
+
+    code {
+      font-size: 0.9375rem;
+    }
+  }
+
+  .version {
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .control {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    padding-inline: 0.75rem;
+    border: 1px solid var(--hairline);
+    background: none;
+    color: var(--code-foreground);
+    font-size: 0.9375rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      border-color 120ms,
+      background-color 120ms;
+
+    &:hover:not(:disabled) {
+      background: var(--surface);
+    }
+
+    &:disabled {
+      color: var(--muted);
+      cursor: default;
+    }
+  }
+
+  /* Mono is for controls that type into the machine (copy, run); link
+     controls like the Documentation button are navigation, so they read in
+     the prose face. */
+  a.control {
+    font-family: inherit;
+  }
+
+  .install .control {
+    min-height: 1.75rem;
+    border: none;
+    padding-inline: 0.25rem;
+    color: var(--muted);
+
+    &:hover:not(:disabled) {
+      color: var(--code-foreground);
+      background: none;
+    }
+  }
+
+  .try {
+    padding: 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+
+    code {
+      border-block-end: 1px solid var(--hairline-strong);
+      transition: border-color 120ms;
+    }
+
+    &:hover:not(:disabled) code {
+      border-color: var(--code-foreground);
+    }
+
+    &:disabled {
+      cursor: default;
+    }
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-block-end: 1rem;
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .output {
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    white-space: pre-wrap;
+  }
+
+  .invitation {
+    margin-block: 5rem 2rem;
+    color: var(--muted);
+  }
+
+  footer {
+    display: flex;
+    gap: 1rem;
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding: 1rem;
+
+    a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.8125rem;
+      transition: color 120ms;
+
+      &:hover {
+        color: var(--code-foreground);
+      }
+    }
+  }
+</style>
