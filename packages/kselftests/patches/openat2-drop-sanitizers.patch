@@ -1,0 +1,21 @@
+openat2's Makefile hardcodes -fsanitize=address,undefined into CFLAGS. Those
+runtimes are not available for static wasm32-musl (no shared libs, no asan
+runtime), so linking fails. Drop them; the tests themselves need no sanitizer to
+exercise the openat2 syscall. The target also passes helpers.h to the compiler
+as a second input while requesting one output, which Clang rejects; helpers.c
+already includes the header, so only make the source a direct target dependency.
+The sanitizer part is distro-only; the input fix is upstreamable.
+
+--- a/tools/testing/selftests/openat2/Makefile
++++ b/tools/testing/selftests/openat2/Makefile
+@@ -1,8 +1,8 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+
+-CFLAGS += -Wall -O2 -g -fsanitize=address -fsanitize=undefined
++CFLAGS += -Wall -O2 -g
+ TEST_GEN_PROGS := openat2_test resolve_test rename_attack_test
+
+ include ../lib.mk
+ 
+-$(TEST_GEN_PROGS): helpers.c helpers.h
++$(TEST_GEN_PROGS): helpers.c

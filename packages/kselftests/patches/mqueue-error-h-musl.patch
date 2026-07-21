@@ -1,0 +1,33 @@
+mq_open_tests uses two glibc extensions musl lacks: <error.h>/error() and the
+DEFFILEMODE (0666) macro from <sys/stat.h>. Provide a minimal error() shim from
+<stdarg.h> matching glibc behaviour at the one call site (format, append the
+errno string, exit if status is nonzero) and define DEFFILEMODE when absent. Not
+upstreamable as-is (upstream targets glibc); an upstream fix would gate both on
+__GLIBC__.
+
+--- a/tools/testing/selftests/mqueue/mq_open_tests.c
++++ b/tools/testing/selftests/mqueue/mq_open_tests.c
+@@ -31,7 +31,22 @@
+ #include <sys/resource.h>
+ #include <sys/stat.h>
+ #include <mqueue.h>
+-#include <error.h>
++#include <stdarg.h>
++
++#ifndef DEFFILEMODE
++#define DEFFILEMODE 0666
++#endif
++
++static void error(int status, int errnum, const char *fmt, ...)
++{
++	va_list ap;
++	va_start(ap, fmt);
++	vfprintf(stderr, fmt, ap);
++	va_end(ap);
++	fprintf(stderr, ": %s\n", strerror(errnum));
++	if (status)
++		exit(status);
++}
+ 
+ #include "../kselftest.h"
+ 
