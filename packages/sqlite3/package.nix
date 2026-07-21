@@ -1,52 +1,63 @@
 {
-  fetch,
-  run,
-  lib,
-  config,
-  clang,
-  sysroot,
-  gnumake,
-  lld,
-  llvm,
-  clang-host,
+  pkgs,
+  stdenv,
+  src ? pkgs.fetchzip {
+    url = "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz";
+    hash = "sha256-IbgsC+KGI0uWM4PS+bKpLfbE7ciE1fpz9Jhj9+qEiVA=";
+  },
+  readline,
+  ncurses,
+  vm-test,
+  busybox,
 }:
 
 let
-  archiveVersion =
-    version:
-    let
-      fragments = lib.splitVersion version;
-      major = lib.head fragments;
-      minor = lib.concatMapStrings (lib.fixedWidthNumber 2) (lib.tail fragments);
-    in
-    major + minor + "00";
-in
-
-run
-  rec {
-    name = "sqlite3";
+  package = stdenv.mkDerivation (finalAttrs: {
+    pname = "sqlite3";
     version = "3.51.0";
+    inherit src;
 
-    src = fetch.tar {
-      url = "https://sqlite.org/2025/sqlite-autoconf-${archiveVersion version}.tar.gz";
-      hash = "sha256-QuJt/dlqouaxsb5ciLCIf5lZCT9lDWk8sC65w20UbKU=";
-    };
+    # sqlite's configure builds a code generator with the build compiler.
+    depsBuildBuild = [ pkgs.stdenv.cc ];
 
-    path = [
-      clang
-      gnumake
-      lld
-      llvm
+    buildInputs = [
+      readline
+      ncurses
     ];
-  }
-  ''
-    export CC_FOR_BUILD=${clang-host}/bin/clang
-    export CC=${clang}/bin/clang
-    export CFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} ${lib.optionalString config.debug "-g"} -matomics -mbulk-memory -DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0"
-    export LD=wasm-ld
-    export LDFLAGS="--target=wasm32-unknown-linux-musl --sysroot=${sysroot} -fuse-ld=lld"
-    export AR=llvm-ar
 
-    ./configure --host=wasm32-unknown-linux-musl --prefix=$out
-    make -j$NIX_BUILD_CORES install
-  ''
+    # readline gives the CLI shell line editing and pulls termcap from ncurses.
+    # Cross builds skip autosetup's readline auto-search, so the include and
+    # link flags are handed over explicitly (cflags must contain -I).
+    configureFlags = [
+      "--disable-shared"
+      "--enable-readline"
+      "--with-readline-cflags=-I${readline}/include"
+    ];
+
+    # The ldflags value contains spaces, so it goes through the array form that
+    # preserves it as a single argument rather than the space-joined string.
+    preConfigure = ''
+      configureFlagsArray+=(
+        "--with-readline-ldflags=-L${readline}/lib -lreadline -L${ncurses}/lib -lncursesw"
+      )
+    '';
+
+    env.NIX_CFLAGS_COMPILE = "-DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0";
+
+    passthru.checks = {
+      shell = vm-test.vmTest {
+        name = "sqlite3-shell";
+        initramfs = vm-test.mkInitramfs {
+          name = "sqlite3-shell";
+          init = ./sqlite3-test.sh;
+          contents = [
+            busybox
+            ncurses
+            finalAttrs.finalPackage
+          ];
+        };
+      };
+    };
+  });
+in
+package

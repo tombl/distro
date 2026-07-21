@@ -58,6 +58,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
     zstd = callPackage ./zstd/package.nix { };
+    less = callPackage ./less/package.nix { };
+    lua = callPackage ./lua/package.nix { };
+    ncurses = callPackage ./ncurses/package.nix { };
+    readline = callPackage ./readline/package.nix { };
+    sqlite3 = callPackage ./sqlite3/package.nix { };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.
