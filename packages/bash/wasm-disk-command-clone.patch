@@ -1,0 +1,306 @@
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -5833,6 +5833,124 @@
+ #  define NOTFOUND_HOOK "command_not_found_handle"
+ #endif
+ 
++typedef struct
++{
++  WORD_LIST *words;
++  REDIRECT *redirects;
++  char *command;
++  char *pathname;
++  char *job_command;
++  struct fd_bitmap *fds_to_close;
++  int pipe_in;
++  int pipe_out;
++  int async;
++  int cmdflags;
++} EXECUTE_DISK_ARGS;
++
++static int
++execute_notfound_hook (SHELL_VAR *hookf, WORD_LIST *hook_words)
++{
++  int jump;
++
++  /* The hook may call exit or otherwise throw to top_level.  Translate the
++     jump into the status this child callback will report instead of using
++     the inherited recovery buffer on the parent's abandoned stack. */
++  jump = setjmp_nosigs (top_level);
++  if (jump == EXITPROG || jump == EXITBLTIN || jump == ERREXIT)
++    return last_command_exit_value;
++  else if (jump)
++    return last_command_exit_value == EXECUTION_SUCCESS
++           ? EXECUTION_FAILURE : last_command_exit_value;
++
++  return execute_shell_function (hookf, hook_words);
++}
++
++static int
++execute_disk_command_child (void *vargs)
++{
++  EXECUTE_DISK_ARGS *args;
++  char **exec_args;
++  int old_interactive, restart;
++  SHELL_VAR *hookf;
++  WORD_LIST *hook_words;
++
++  args = (EXECUTE_DISK_ARGS *)vargs;
++
++  reset_terminating_signals ();
++  restore_original_signals ();
++  subshell_environment &= ~SUBSHELL_IGNTRAP;
++
++#if defined (JOB_CONTROL)
++  FREE (args->job_command);
++#endif
++
++  if (args->async)
++    {
++      if ((args->cmdflags & CMD_STDIN_REDIR) &&
++          args->pipe_in == NO_PIPE &&
++          stdin_redirects (args->redirects) == 0)
++        async_redirect_stdin ();
++      setup_async_signals ();
++    }
++
++  if (args->fds_to_close)
++    close_fd_bitmap (args->fds_to_close);
++  do_piping (args->pipe_in, args->pipe_out);
++
++  old_interactive = interactive;
++  if (args->async)
++    interactive = 0;
++  subshell_environment |= SUBSHELL_FORK;
++
++#if defined (PROCESS_SUBSTITUTION) && !defined (HAVE_DEV_FD)
++  clear_fifo_list ();
++#endif
++
++  if (args->redirects && do_redirections (args->redirects, RX_ACTIVE) != 0)
++    {
++#if defined (PROCESS_SUBSTITUTION)
++      unlink_all_fifos ();
++#endif
++      exit (EXECUTION_FAILURE);
++    }
++
++#if defined (PROCESS_SUBSTITUTION) && !defined (HAVE_DEV_FD)
++  unlink_all_fifos ();
++#endif
++
++  if (args->async)
++    interactive = old_interactive;
++
++  if (args->command == 0)
++    {
++      hookf = find_function (NOTFOUND_HOOK);
++      if (hookf == 0)
++        {
++          args->pathname = printable_filename (args->pathname, 0);
++          internal_error ("%s: %s", args->pathname, notfound_str);
++          exit (EX_NOTFOUND);
++        }
++
++      without_job_control ();
++#if defined (JOB_CONTROL)
++      set_sigchld_handler ();
++#endif
++      hook_words = make_word_list (make_word (NOTFOUND_HOOK), args->words);
++      exit (execute_notfound_hook (hookf, hook_words));
++    }
++
++  exec_args = strvec_from_word_list (args->words, 0, 0, (int *)NULL);
++
++  /* ENOEXEC makes shell_execve prepare a new Bash invocation and jump to
++     subshell_top_level.  Recreate that continuation on this clone stack;
++     the one installed by the original main() belongs to the parent stack. */
++  restart = setjmp_sigs (subshell_top_level);
++  if (restart)
++    restart_shell_from_clone ();
++
++  exit (shell_execve (args->command, exec_args, export_env));
++}
++
+ static int
+ execute_disk_command (WORD_LIST *words, REDIRECT *redirects, char *command_line,
+ 		      int pipe_in, int pipe_out, int async,
+@@ -5839,10 +5957,8 @@
+ 		      struct fd_bitmap *fds_to_close, int cmdflags)
+ {
+-  char *pathname, *command, **args, *p;
++  char *pathname, *command, *p;
+   int nofork, stdpath, result, fork_flags;
+-  pid_t pid;
+-  SHELL_VAR *hookf;
+-  WORD_LIST *wl;
++  EXECUTE_DISK_ARGS *child_args;
+ 
+   stdpath = (cmdflags & CMD_STDPATH);	/* use command -p path */
+   nofork = (cmdflags & CMD_NO_FORK);	/* Don't fork, just exec, if no pipes */
+@@ -5892,111 +6008,30 @@
+      of COMMAND, since we want the error messages to be redirected. */
+   /* If we can get away without forking and there are no pipes to deal with,
+      don't bother to fork, just directly exec the command. */
+-  if (nofork && pipe_in == NO_PIPE && pipe_out == NO_PIPE)
+-    pid = 0;
+-  else
+-    {
+-      fork_flags = async ? FORK_ASYNC : 0;
+-      pid = make_child_fork (p = savestring (command_line), fork_flags);
+-    }
+-
+-  if (pid == 0)
+-    {
+-      int old_interactive;
+-
+-      reset_terminating_signals ();	/* XXX */
+-      /* Cancel traps, in trap.c. */
+-      restore_original_signals ();
+-      subshell_environment &= ~SUBSHELL_IGNTRAP;
+-
+-#if defined (JOB_CONTROL)
+-      FREE (p);
+-#endif
+-
+-      /* restore_original_signals may have undone the work done
+-	 by make_child to ensure that SIGINT and SIGQUIT are ignored
+-	 in asynchronous children. */
+-      if (async)
+-	{
+-	  if ((cmdflags & CMD_STDIN_REDIR) &&
+-		pipe_in == NO_PIPE &&
+-		(stdin_redirects (redirects) == 0))
+-	    async_redirect_stdin ();
+-	  setup_async_signals ();
+-	}
+-
+-      /* This functionality is now provided by close-on-exec of the
+-	 file descriptors manipulated by redirection and piping.
+-	 Some file descriptors still need to be closed in all children
+-	 because of the way bash does pipes; fds_to_close is a
+-	 bitmap of all such file descriptors. */
+-      if (fds_to_close)
+-	close_fd_bitmap (fds_to_close);
+-
+-      do_piping (pipe_in, pipe_out);
+-
+-      old_interactive = interactive;
+-      if (async)
+-	interactive = 0;
+-
+-      subshell_environment |= SUBSHELL_FORK;	/* XXX - was just = */
+-
+-#if defined (PROCESS_SUBSTITUTION) && !defined (HAVE_DEV_FD)
+-      clear_fifo_list ();	/* XXX - we haven't created any FIFOs */
+-#endif
+-
+-      /* reset shell_pgrp to pipeline_pgrp here for word expansions performed
+-         by the redirections here? */
+-      if (redirects && (do_redirections (redirects, RX_ACTIVE) != 0))
+-	{
+-#if defined (PROCESS_SUBSTITUTION)
+-	  /* Try to remove named pipes that may have been created as the
+-	     result of redirections. */
+-	  unlink_all_fifos ();
+-#endif /* PROCESS_SUBSTITUTION */
+-	  exit (EXECUTION_FAILURE);
+-	}
+-
+-#if defined (PROCESS_SUBSTITUTION) && !defined (HAVE_DEV_FD)
+-      /* This should only contain FIFOs created as part of redirection
+-	 expansion. */
+-      unlink_all_fifos ();
+-#endif
+-
+-      if (async)
+-	interactive = old_interactive;
+-
+-      if (command == 0)
+-	{
+-	  hookf = find_function (NOTFOUND_HOOK);
+-	  if (hookf == 0)
+-	    {
+-	      /* Make sure filenames are displayed using printable characters */
+-	      pathname = printable_filename (pathname, 0);
+-	      internal_error ("%s: %s", pathname, notfound_str);
+-	      exit (EX_NOTFOUND);	/* Posix.2 says the exit status is 127 */
+-	    }
+-
+-	  /* We don't want to manage process groups for processes we start
+-	     from here, so we turn off job control and don't attempt to
+-	     manipulate the terminal's process group. */
+-	  without_job_control ();
+-
+-#if defined (JOB_CONTROL)
+-	  set_sigchld_handler ();
+-#endif
+-
+-	  wl = make_word_list (make_word (NOTFOUND_HOOK), words);
+-	  exit (execute_shell_function (hookf, wl));
+-	}
+-
+-      /* Execve expects the command name to be in args[0].  So we
+-	 leave it there, in the same format that the user used to
+-	 type it in. */
+-      args = strvec_from_word_list (words, 0, 0, (int *)NULL);
+-      exit (shell_execve (command, args, export_env));
+-    }
++  p = (char *)NULL;
++  child_args = (EXECUTE_DISK_ARGS *)xmalloc (sizeof (*child_args));
++  child_args->words = words;
++  child_args->redirects = redirects;
++  child_args->command = command;
++  child_args->pathname = pathname;
++  child_args->fds_to_close = fds_to_close;
++  child_args->pipe_in = pipe_in;
++  child_args->pipe_out = pipe_out;
++  child_args->async = async;
++  child_args->cmdflags = cmdflags;
++
++  if (nofork && pipe_in == NO_PIPE && pipe_out == NO_PIPE)
++    {
++      child_args->job_command = (char *)NULL;
++      return (execute_disk_command_child (child_args));
++    }
+   else
+     {
++      p = savestring (command_line);
++      child_args->job_command = p;
++      fork_flags = async ? FORK_ASYNC : 0;
++      make_child (p, fork_flags, execute_disk_command_child, child_args);
++      free (child_args);
++
+ parent_return:
+       QUIT;
+--- a/shell.h
++++ b/shell.h
+@@ -126,5 +126,7 @@
+ extern char **subshell_envp;
+ 
++extern void restart_shell_from_clone (void) __attribute__((__noreturn__));
++
+ /* variables managed using shopt */
+ extern int hup_on_exit;
+ extern int check_jobs_at_exit;
+--- a/shell.c
++++ b/shell.c
+@@ -835,6 +835,18 @@
+   exit_shell (last_command_exit_value);
+ }
+ 
++/* Continue shell_execve's ENOEXEC restart from a callback clone.  Calling
++   main here is bounded by the process boundary: any later disk command that
++   needs a child receives another fresh callback stack. */
++void
++restart_shell_from_clone (void)
++{
++  environ = subshell_envp;
++  sourced_env = 0;
++  main (subshell_argc, subshell_argv);
++  sh_exit (EXECUTION_FAILURE);
++}
++
+ static int
+ parse_long_options (char **argv, int arg_start, int arg_end)
+ {

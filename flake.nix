@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # keep-sorted start block=yes
+    bash-src = {
+      url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz";
+      flake = false;
+    };
     busybox-src = {
       url = "github:tombl/busybox";
       flake = false;
