@@ -1,41 +1,43 @@
 {
-  fetch,
-  run,
+  pkgs,
   lib,
-  config,
-
-  clang-no-compiler-rt,
-  gnumake,
-  lld,
-  llvm,
+  debug,
+  llvm-toolchain-unwrapped,
+  src,
 }:
 
-run
-  {
-    name = "musl";
-    src = fetch.github {
-      owner = "tombl";
-      repo = "musl";
-      rev = "314d4e81e26546ba063663437657095ad2c0351c";
-      hash = "sha256-gCylldyaICorupH1e1eXD6fW8ILYeFkokMlMPz4UV5E=";
-    };
-    path = [
-      clang-no-compiler-rt
-      gnumake
-      lld
-      llvm
-    ];
-    # TODO: split for size, only relevant for dynamic linking
-    # outputs = [ "out" "dev" ];
-  }
-  ''
+pkgs.stdenvNoCC.mkDerivation {
+  name = "musl";
+  inherit src;
+
+  nativeBuildInputs = [ llvm-toolchain-unwrapped ];
+
+  # TODO: split for size, only relevant for dynamic linking
+  # outputs = [ "out" "dev" ];
+  configurePhase = ''
+    runHook preConfigure
+
     cat >config.mak <<EOF
     ARCH=wasm32
     prefix=$out
     syslibdir=$out
-    CFLAGS=${lib.optionalString config.debug "-g"}
+    CFLAGS=${lib.optionalString debug "-g"}
     EOF
 
+    runHook postConfigure
+  '';
+
+  buildPhase = ''
+    runHook preBuild
+    make clean
+    make -j$NIX_BUILD_CORES
+    runHook postBuild
+  '';
+
+  installPhase = ''
+    runHook preInstall
     mkdir $out
     make -j$NIX_BUILD_CORES install-libs install-headers
-  ''
+    runHook postInstall
+  '';
+}

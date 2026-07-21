@@ -1,125 +1,313 @@
 {
   "nodes": {
-    "flake-compat": {
+    "bash-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1767039857,
-        "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
-        "owner": "NixOS",
-        "repo": "flake-compat",
-        "rev": "5edf11c44bc78a0d334f6334cdaf7d60d732daab",
-        "type": "github"
+        "lastModified": 1751292331,
+        "narHash": "sha256-yDRoQcHzXgMUcaxNq9WMezU6zwzZp4Z4T2oD2qyfHK4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
       },
       "original": {
-        "owner": "NixOS",
-        "repo": "flake-compat",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"
       }
     },
-    "flake-compat_2": {
+    "busybox-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1696426674,
-        "narHash": "sha256-kvjfFW7WAETZlt09AgDn1MrtKzP7t90Vf7vypd3OL1U=",
-        "owner": "edolstra",
-        "repo": "flake-compat",
-        "rev": "0f9255e01c2351cc7d116c072cb317785dd33b33",
+        "lastModified": 1784446997,
+        "narHash": "sha256-IwdmKbP2LPrw011n3DmsX75siuBlzc358Zk+IulwaVw=",
+        "owner": "tombl",
+        "repo": "busybox",
+        "rev": "4ad91c87e7efeff15628bea7240b6055b2737644",
         "type": "github"
       },
       "original": {
-        "owner": "edolstra",
-        "repo": "flake-compat",
+        "owner": "tombl",
+        "repo": "busybox",
         "type": "github"
       }
     },
-    "flake-parts": {
-      "inputs": {
-        "nixpkgs-lib": [
-          "nixpkgs"
-        ]
-      },
+    "bzip2-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1777988971,
-        "narHash": "sha256-qIoWPDs+0/8JecyYgE3gpKQxW/4bLW/gp45vow9ioCQ=",
-        "owner": "hercules-ci",
-        "repo": "flake-parts",
-        "rev": "0678d8986be1661af6bb555f3489f2fdfc31f6ff",
+        "lastModified": 1784477577,
+        "narHash": "sha256-Uvi4JZPPERK3gym4yoaeTEJwKXF5brBAEN7GgF+iF6g=",
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+      }
+    },
+    "coreutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1744197214,
+        "narHash": "sha256-TFDtvw5E4y9UPfMyOV+KiMnIeSum54fXSOIbT7qRsXA=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz"
+      }
+    },
+    "curl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782280409,
+        "narHash": "sha256-nrvbU5C6oeCMAecrEqYE3CNPyFVsTEqaqhhCoLe5fMo=",
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://curl.se/download/curl-8.21.0.tar.xz"
+      }
+    },
+    "diffutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1684659217,
+        "narHash": "sha256-R6LYAfi/lcZ+zK9SZJ5aUzYarq/VguvJbEZbWZmmnY0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz"
+      }
+    },
+    "dropbear-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783348200,
+        "narHash": "sha256-xXjKWj6tMW/Qlq4DttxKAqOwsER2QEeb1Qw3Gllu2QQ=",
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://matt.ucc.asn.au/dropbear/releases/dropbear-2026.92.tar.bz2"
+      }
+    },
+    "file-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780875963,
+        "narHash": "sha256-9OtdGy2HegeyiCVUuDo75A0REr+Z0ReR3jk2ORVAgp0=",
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://astron.com/pub/file/file-5.48.tar.gz"
+      }
+    },
+    "findutils-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1717259038,
+        "narHash": "sha256-VnE/TPw/fOD9I3aVmMfzZKdULcmEoljpAPjugMiq+p4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz"
+      }
+    },
+    "gawk-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1726598637,
+        "narHash": "sha256-dw4WPFQhuh+UXPKA48zlulFbuKbFc96eoNHHoiIDhL4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz"
+      }
+    },
+    "git-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1782750746,
+        "narHash": "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=",
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
+      }
+    },
+    "grep-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1683965831,
+        "narHash": "sha256-e4F99gC1JWZEYiUmc7mlSjYdMrbBDxBjwdT4Wv/9oF4=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz"
+      }
+    },
+    "jq-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1702495524,
+        "narHash": "sha256-Ti1rQ7Va0oTE4Z0ouYfQS+yMNX3nFQtHfVkIYBHg3O4=",
+        "type": "tarball",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"
+      }
+    },
+    "less-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1728253910,
+        "narHash": "sha256-U3En8L4CnqlVu9Kkh3PhOQIoUyzGDl5msotNKtPn1Dk=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/less/less-668.tar.gz"
+      }
+    },
+    "linux-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784636592,
+        "narHash": "sha256-fuuitTs7AcTpJOxC9qhsv16RJM6ANSkhSfTGWV/g4G4=",
+        "owner": "tombl",
+        "repo": "linux",
+        "rev": "5d66013352ed737d46165dd1f8ba26409ad553f3",
         "type": "github"
       },
       "original": {
-        "owner": "hercules-ci",
-        "repo": "flake-parts",
+        "owner": "tombl",
+        "ref": "wasm-auxv",
+        "repo": "linux",
         "type": "github"
       }
     },
-    "git-hooks": {
-      "inputs": {
-        "flake-compat": "flake-compat",
-        "gitignore": "gitignore",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
+    "llvm-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1776796298,
-        "narHash": "sha256-PcRvlWayisPSjd0UcRQbhG8Oqw78AcPE6x872cPRHN8=",
-        "owner": "cachix",
-        "repo": "git-hooks.nix",
-        "rev": "3cfd774b0a530725a077e17354fbdb87ea1c4aad",
+        "lastModified": 1784540141,
+        "narHash": "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=",
+        "owner": "tombl",
+        "repo": "llvm-project",
+        "rev": "9aaceb42fef4f924a00126e0d66140d01482921c",
         "type": "github"
       },
       "original": {
-        "owner": "cachix",
-        "repo": "git-hooks.nix",
+        "owner": "tombl",
+        "ref": "wasm-linux",
+        "repo": "llvm-project",
         "type": "github"
       }
     },
-    "gitignore": {
-      "inputs": {
-        "nixpkgs": [
-          "git-hooks",
-          "nixpkgs"
-        ]
-      },
+    "ltp-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1709087332,
-        "narHash": "sha256-HG2cCnktfHsKV0s4XW83gU3F57gaTljL9KNSuG6bnQs=",
-        "owner": "hercules-ci",
-        "repo": "gitignore.nix",
-        "rev": "637db329424fd7e46cf4185293b9cc8c88c95394",
+        "lastModified": 1780056211,
+        "narHash": "sha256-dEakUKunQDJM3Fn4ft7PszCrAW5jzrTpqLyw1yCvT7U=",
+        "type": "tarball",
+        "url": "https://github.com/linux-test-project/ltp/releases/download/20260529/ltp-full-20260529.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/linux-test-project/ltp/releases/download/20260529/ltp-full-20260529.tar.xz"
+      }
+    },
+    "lua-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1747861947,
+        "narHash": "sha256-6TMsVp2D3WtvnwyhvwodjQH3kvTXz1rSMWwiHazvKys=",
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+      }
+    },
+    "make-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1677437212,
+        "narHash": "sha256-+Cg7R8wougcWcFf6u5B3lVX6RRgMRYZ1CD+e21URP5A=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz"
+      }
+    },
+    "mbedtls-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784489454,
+        "narHash": "sha256-t1ZPeFA3ftKaEIaXQ7RXZEsiOAYK4KSSm55SFr9g17A=",
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2"
+      }
+    },
+    "musl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784532239,
+        "narHash": "sha256-dcFo6k4LUVZ9E5boDCULwq6OEYc6v38i+Fy0c6XJjts=",
+        "owner": "tombl",
+        "repo": "musl",
+        "rev": "9507f1347591b7209b42bfe9a3edb7f87f9b3e7b",
         "type": "github"
       },
       "original": {
-        "owner": "hercules-ci",
-        "repo": "gitignore.nix",
+        "owner": "tombl",
+        "ref": "wasm-setjmp",
+        "repo": "musl",
         "type": "github"
       }
     },
-    "make-shell": {
-      "inputs": {
-        "flake-compat": "flake-compat_2"
-      },
+    "ncurses-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1733933815,
-        "narHash": "sha256-9JjM7eT66W4NJAXpGUsdyAFXhBxFWR2Z9LZwUa7Hli0=",
-        "owner": "nicknovitski",
-        "repo": "make-shell",
-        "rev": "ffeceae9956df03571ea8e96ef77c2924f13a63c",
-        "type": "github"
+        "lastModified": 1767137046,
+        "narHash": "sha256-YpXsAx/jqbxBpTLljJBfLEyeG4vSY94K4HYHSqyXYyg=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
       },
       "original": {
-        "owner": "nicknovitski",
-        "repo": "make-shell",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz"
       }
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1777954456,
-        "narHash": "sha256-hGdgeU2Nk87RAuZyYjyDjFL6LK7dAZN5RE9+hrDTkDU=",
+        "lastModified": 1784497964,
+        "narHash": "sha256-vlHUuqAcbcH2RKmHbPiuQzbv1pnzzavXnI62RD0bqCU=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
+        "rev": "241313f4e8e508cb9b13278c2b0fa25b9ca27163",
         "type": "github"
       },
       "original": {
@@ -129,33 +317,213 @@
         "type": "github"
       }
     },
-    "root": {
-      "inputs": {
-        "flake-parts": "flake-parts",
-        "git-hooks": "git-hooks",
-        "make-shell": "make-shell",
-        "nixpkgs": "nixpkgs",
-        "treefmt-nix": "treefmt-nix"
-      }
-    },
-    "treefmt-nix": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
+    "openssl-src": {
+      "flake": false,
       "locked": {
-        "lastModified": 1775636079,
-        "narHash": "sha256-pc20NRoMdiar8oPQceQT47UUZMBTiMdUuWrYu2obUP0=",
-        "owner": "numtide",
-        "repo": "treefmt-nix",
-        "rev": "790751ff7fd3801feeaf96d7dc416a8d581265ba",
-        "type": "github"
+        "lastModified": 1781006065,
+        "narHash": "sha256-/xKRDxk7BhrzhcOzazbvkpEje2YejT+9U9QzqjQg1QA=",
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
       },
       "original": {
-        "owner": "numtide",
-        "repo": "treefmt-nix",
-        "type": "github"
+        "type": "tarball",
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+      }
+    },
+    "patch-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1517683560,
+        "narHash": "sha256-Ng14vbD6V0ixnoeOxERqCxIuY2JWMaCeHykoGHAHPvo=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz"
+      }
+    },
+    "python-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781094244,
+        "narHash": "sha256-v1lJgk5aS5tS19HH8k6cs5NlFpTDtmFOWSepvldlVm8=",
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.python.org/ftp/python/3.13.14/Python-3.13.14.tar.xz"
+      }
+    },
+    "quickjs-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780584979,
+        "narHash": "sha256-d52EFtBrOO6+DG93R+aWVUisX7SSk2eYLKhWWqX/lII=",
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/quickjs-ng/quickjs/archive/refs/tags/v0.15.1.tar.gz"
+      }
+    },
+    "readline-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1751291999,
+        "narHash": "sha256-PhQxBHY8g6OaC7w2vHyGYVJVy7BtF6RjvH1EAF/Hza0=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz"
+      }
+    },
+    "root": {
+      "inputs": {
+        "bash-src": "bash-src",
+        "busybox-src": "busybox-src",
+        "bzip2-src": "bzip2-src",
+        "coreutils-src": "coreutils-src",
+        "curl-src": "curl-src",
+        "diffutils-src": "diffutils-src",
+        "dropbear-src": "dropbear-src",
+        "file-src": "file-src",
+        "findutils-src": "findutils-src",
+        "gawk-src": "gawk-src",
+        "git-src": "git-src",
+        "grep-src": "grep-src",
+        "jq-src": "jq-src",
+        "less-src": "less-src",
+        "linux-src": "linux-src",
+        "llvm-src": "llvm-src",
+        "ltp-src": "ltp-src",
+        "lua-src": "lua-src",
+        "make-src": "make-src",
+        "mbedtls-src": "mbedtls-src",
+        "musl-src": "musl-src",
+        "ncurses-src": "ncurses-src",
+        "nixpkgs": "nixpkgs",
+        "openssl-src": "openssl-src",
+        "patch-src": "patch-src",
+        "python-src": "python-src",
+        "quickjs-src": "quickjs-src",
+        "readline-src": "readline-src",
+        "sed-src": "sed-src",
+        "sqlite-src": "sqlite-src",
+        "tar-src": "tar-src",
+        "util-linux-src": "util-linux-src",
+        "vim-src": "vim-src",
+        "xz-src": "xz-src",
+        "zlib-src": "zlib-src",
+        "zstd-src": "zstd-src"
+      }
+    },
+    "sed-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1667771502,
+        "narHash": "sha256-yQTI0WzgSOolziBUNU9ayhASUT2/xFi3jt1C2z1MFZw=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz"
+      }
+    },
+    "sqlite-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1762301600,
+        "narHash": "sha256-IbgsC+KGI0uWM4PS+bKpLfbE7ciE1fpz9Jhj9+qEiVA=",
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://sqlite.org/2025/sqlite-autoconf-3510000.tar.gz"
+      }
+    },
+    "tar-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1689663323,
+        "narHash": "sha256-HztPW54hxHySvdrzkpMHKyhayOsoLUfDMATshJ95rTI=",
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz"
+      }
+    },
+    "util-linux-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1781611619,
+        "narHash": "sha256-aQeFM9uPhJTbKX0cKAY5bTXwgDoFzuKwWhGkBZ/TvQQ=",
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz"
+      }
+    },
+    "vim-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1771008824,
+        "narHash": "sha256-4ZEbfpffPp6kqSQRp7NFioWGRdG+JsVf7unU0Hqn/Xk=",
+        "type": "tarball",
+        "url": "https://github.com/vim/vim/archive/refs/tags/v9.1.2148.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/vim/vim/archive/refs/tags/v9.1.2148.tar.gz"
+      }
+    },
+    "xz-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1737626362,
+        "narHash": "sha256-bJqZHrWqv1gankOKrnXakOVeVGgqPtw5Nn+kfTMKalQ=",
+        "type": "tarball",
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.6.4/xz-5.6.4.tar.gz"
+      }
+    },
+    "zlib-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1705948357,
+        "narHash": "sha256-acY8yFzIRYbrZ2CGODoxLnZuppsP6KZy19I9Yy77pfc=",
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+      }
+    },
+    "zstd-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1711058751,
+        "narHash": "sha256-qcd92hQqVBjMT3hyntjcgk29o9wGQsg5Hg7HE5C0UNc=",
+        "type": "tarball",
+        "url": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz"
       }
     }
   },

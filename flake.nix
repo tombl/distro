@@ -4,20 +4,21 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # keep-sorted start block=yes
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs-lib.follows = "nixpkgs";
+    busybox-src = {
+      url = "github:tombl/busybox";
+      flake = false;
     };
-    git-hooks = {
-      url = "github:cachix/git-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+    linux-src = {
+      url = "github:tombl/linux/wasm-auxv";
+      flake = false;
     };
-    make-shell = {
-      url = "github:nicknovitski/make-shell";
+    llvm-src = {
+      url = "github:tombl/llvm-project/wasm-linux";
+      flake = false;
     };
-    treefmt-nix = {
-      url = "github:numtide/treefmt-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
+    musl-src = {
+      url = "github:tombl/musl/wasm-setjmp";
+      flake = false;
     };
     # keep-sorted end
   };
@@ -30,49 +31,76 @@
   };
 
   outputs =
-    inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [
-        # keep-sorted start
-        ./flake/apps.nix
-        ./flake/format.nix
-        ./flake/git-hooks.nix
-        ./flake/shell.nix
-        # keep-sorted end
-      ];
+    { self, nixpkgs, ... }@inputs:
+    let
+      inherit (nixpkgs) lib;
+      eachSystem =
+        fn:
+        lib.genAttrs
+          [
+            "x86_64-linux"
+            "aarch64-linux"
+            "aarch64-darwin"
+          ]
+          (
+            system:
+            fn {
+              pkgs = import nixpkgs { inherit system; };
+              wasmpkgs = self.legacyPackages.${system};
+              formatter = self.formatter.${system};
+            }
+          );
+      isPackage =
+        _name: value:
+        lib.isDerivation value || (builtins.isAttrs value && lib.isDerivation (value.package or null));
+      packageFrom = _name: value: if lib.isDerivation value then value else value.package;
+    in
+    {
+      # The package scope is the product. It contains owner-oriented package
+      # sets and non-derivation helpers, hence legacyPackages rather than only
+      # the flat packages output.
+      legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs inputs; });
 
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
+      # legacyPackages preserves the owner-oriented package sets. The packages
+      # output projects each set's primary derivation back to the conventional
+      # flat flake interface, so `nix build .#site` remains the obvious command
+      # while `legacyPackages.${system}.site.image.rootfs` stays navigable.
+      packages = eachSystem (
+        { wasmpkgs, ... }: lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
+      );
 
-      perSystem =
+      formatter = eachSystem ({ pkgs, ... }: import ./formatter.nix { inherit pkgs; });
+
+      devShells = eachSystem (
         {
           pkgs,
-          system,
-          config,
-          lib,
-          ...
+          wasmpkgs,
+          formatter,
         }:
         {
-          # For better or for worse, nixpkgs has established the pattern of
-          # a legacyPackages attribute that does not contain legacy packages at all,
-          # but rather an attribute set that's just not the shape of the typical packages attribute.
-          # In our case, we have a handful of non-package attributes that we still want to expose under the pkgs object.
-          legacyPackages = import ./all-packages.nix {
-            inherit (inputs.nixpkgs) lib;
-            currentSystem = system;
-            hostpkgs = import ./host-packages.nix {
-              inherit pkgs;
-              wasmpkgs = config.legacyPackages;
-            };
+          default = pkgs.mkShellNoCC {
+            packages = [
+              formatter
+              wasmpkgs.llvm-toolchain
+              pkgs.cmake
+              pkgs.ninja
+              pkgs.nodejs
+              pkgs.pnpm_11
+            ];
+            env.sysroot = "${wasmpkgs.sysroot}";
           };
 
-          # and then expose a filtered version of that attribute set with just the actual packages.
-          packages = lib.filterAttrs (_name: value: value ? drvPath) config.legacyPackages;
-          checks = config.packages;
-        };
+          ci = pkgs.mkShellNoCC {
+            packages = [
+              pkgs.jq
+              pkgs.nix-eval-jobs
+              pkgs.nodejs
+              pkgs.pnpm_11
+              pkgs.wrangler
+            ];
+          };
+        }
+      );
+
     };
 }
