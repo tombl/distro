@@ -19,16 +19,16 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784636592,
-        "narHash": "sha256-fuuitTs7AcTpJOxC9qhsv16RJM6ANSkhSfTGWV/g4G4=",
+        "lastModified": 1784652658,
+        "narHash": "sha256-AACy1ZWxLSuxoSkgLG2MDKwB+RChO9/FlF3UyiLxM8I=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "5d66013352ed737d46165dd1f8ba26409ad553f3",
+        "rev": "f3de9756b9a1abecaa75e6d6a04dc236416470e0",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
-        "ref": "wasm-auxv",
+        "ref": "safari-memory",
         "repo": "linux",
         "type": "github"
       }
@@ -53,16 +53,16 @@
     "musl-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784532239,
-        "narHash": "sha256-dcFo6k4LUVZ9E5boDCULwq6OEYc6v38i+Fy0c6XJjts=",
+        "lastModified": 1784652324,
+        "narHash": "sha256-Zm6m64RJ9Bs4xOV4kgHm9xpOe5VJzX2UW8FSi9w+gVw=",
         "owner": "tombl",
         "repo": "musl",
-        "rev": "9507f1347591b7209b42bfe9a3edb7f87f9b3e7b",
+        "rev": "cfaaf57ee3bb456809d50fcfdedb1134910f1bf6",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
-        "ref": "wasm-setjmp",
+        "ref": "platform-core",
         "repo": "musl",
         "type": "github"
       }

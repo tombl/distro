@@ -9,7 +9,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/wasm-auxv";
+      url = "github:tombl/linux/safari-memory";
       flake = false;
     };
     llvm-src = {
@@ -17,7 +17,7 @@
       flake = false;
     };
     musl-src = {
-      url = "github:tombl/musl/wasm-setjmp";
+      url = "github:tombl/musl/platform-core";
       flake = false;
     };
     # keep-sorted end

@@ -3,6 +3,9 @@ on:
     branches:
       - main
   pull_request:
+  release:
+    types:
+      - published
 
 jobs:
   list:
@@ -26,7 +29,7 @@ jobs:
               | select(.isCached | not).attr
               | select(test("-shell$") | not)
             ]
-            | if length > 0 then . else ["pre-commit"] end
+            | if length > 0 then . else ["formatting"] end
           ')"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -50,9 +53,7 @@ jobs:
           eval "$(nix print-dev-env .#ci)"
           nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
 
-  deploy:
-    needs: build
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+  packages:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -61,12 +62,49 @@ jobs:
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: Build
+      - name: Build npm packages
         run: |
-          eval "$(nix print-dev-env .#ci)"
-          nix build .#packages.x86_64-linux.site --print-build-logs
-      - uses: cloudflare/wrangler-action@v3
+          nix build .#linux --out-link result-linux --print-build-logs
+          nix build .#linux-guest --out-link result-linux-guest --print-build-logs
+          mkdir npm-packages
+          cp -L result-linux/linux.tgz npm-packages/linux.tgz
+          cp -L result-linux-guest/linux-guest.tgz npm-packages/linux-guest.tgz
+      - uses: actions/upload-artifact@v4
         with:
-          apiToken: ${{secrets.CLOUDFLARE_API_TOKEN}}
-          accountId: 7d87194d9d4af2959fb81de343dd63d9
-          command: pages deploy result/ --project-name=linux
+          name: npm-packages
+          path: npm-packages/*.tgz
+          if-no-files-found: error
+
+  stage-npm:
+    name: Stage ${{ matrix.name }} on npm
+    needs:
+      - build
+      - packages
+    if: github.event_name == 'release' && github.repository == 'tombl/distro'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "@tombl/linux"
+            tarball: linux.tgz
+          - name: "@tombl/linux-guest"
+            tarball: linux-guest.tgz
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: npm-packages
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@latest
+      - name: Stage package
+        env:
+          NPM_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
+        run: npm stage publish "./npm-packages/${{ matrix.tarball }}" --access public --tag "$NPM_TAG"
