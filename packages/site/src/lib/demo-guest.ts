@@ -3,6 +3,8 @@
 // presses run, so pages that are only read never download the boot assets.
 import { entropyDevice, spawnGuest, type Guest } from "@tombl/linux-guest";
 
+const debug = new URLSearchParams(globalThis.location.search).has("debug");
+
 async function fetchBytes(path: string) {
   let response = await fetch(path);
   if (!response.ok) throw new Error(`failed to fetch ${path}: ${response.status}`);
@@ -25,6 +27,7 @@ async function boot(): Promise<Guest> {
 
   const guest = await spawnGuest({
     cpus: Math.min(navigator.hardwareConcurrency, 4),
+    debug,
     assets: { initramfs, rootfs },
     devices: [entropyDevice()],
   });

@@ -17,7 +17,7 @@ import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
 export interface SpawnGuestOptions extends Omit<
   SpawnMachineOptions,
-  "devices" | "initcpio" | "cmdline"
+  "devices" | "initcpio" | "cmdline" | "debug"
 > {
   /** Extra virtio devices to boot with — a console or entropy device from `@tombl/linux`, say. */
   devices?: readonly VirtioDevice[];
@@ -25,6 +25,8 @@ export interface SpawnGuestOptions extends Omit<
   network?: Network;
   /** Extra kernel command line arguments, appended to the defaults. */
   cmdline?: string;
+  /** Enables concise host lifecycle and memory diagnostics. Defaults to false. */
+  debug?: boolean;
   /** Boot from these assets instead of the ones bundled with the package. */
   assets?: GuestAssets;
 }
@@ -155,7 +157,14 @@ export function spawnGuest(
 ): Promise<NetworkedGuest>;
 export function spawnGuest(options?: SpawnGuestOptions): Promise<Guest>;
 export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest> {
-  const { devices = [], network, cmdline = "", assets, ...machine_options } = options;
+  const {
+    devices = [],
+    network,
+    cmdline = "",
+    debug = false,
+    assets,
+    ...machine_options
+  } = options;
   const { initramfs, rootfs } = assets ?? (await packaged_assets());
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
@@ -171,6 +180,7 @@ export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest
     machine = await spawnMachine({
       ...machine_options,
       cmdline,
+      debug,
       devices: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
       initcpio: initramfs,
     });

@@ -188,16 +188,16 @@
     "linux-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1784652658,
-        "narHash": "sha256-AACy1ZWxLSuxoSkgLG2MDKwB+RChO9/FlF3UyiLxM8I=",
+        "lastModified": 1784702124,
+        "narHash": "sha256-9RRrHBg9Fn7LlYFafQJnadcht90j3w8MR8Lq+2OLwUQ=",
         "owner": "tombl",
         "repo": "linux",
-        "rev": "f3de9756b9a1abecaa75e6d6a04dc236416470e0",
+        "rev": "4fdc7a01ace239a5b65886f8b556c1650d406a83",
         "type": "github"
       },
       "original": {
         "owner": "tombl",
-        "ref": "safari-memory",
+        "ref": "chromium-buffer-refresh",
         "repo": "linux",
         "type": "github"
       }

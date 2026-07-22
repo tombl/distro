@@ -11,7 +11,7 @@ import { once } from "node:events";
 import { createConnection } from "node:net";
 import { Duplex } from "node:stream";
 import { test, type TestContext } from "node:test";
-import { assets, network_test } from "./assets.ts";
+import { assets, network_test, user_trap } from "./assets.ts";
 import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
@@ -51,6 +51,8 @@ export function guest_test(
       consoles.push(guest.machine.bootConsole.pipeTo(console_output()));
       await guest.fs.writeFile("/workspace/network-test", network_test);
       await guest.fs.chmod("/workspace/network-test", 0o755);
+      await guest.fs.writeFile("/workspace/user-trap", user_trap);
+      await guest.fs.chmod("/workspace/user-trap", 0o755);
       return guest;
     }
 

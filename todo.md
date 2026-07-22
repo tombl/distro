@@ -38,3 +38,8 @@ Re-enable these tests as the corresponding kernel fixes land:
 - Add a build-time store-path scanner for guest slices via `allowedReferences = []` with a dev-output split (host vs guest derivation classification).
 - The browser CPU-handoff test races: the host throws RangeError building a typed-array view (likely stale buffer after concurrent memory growth); intermittent regardless of build load. Fix belongs in the linux host runtime.
 - npm release staging needs a version bump flow (deliberate, handled at release time).
+- Examples category: test like consumers consume - npm install the literal publish tars into esm/vite/nextjs example projects using standard ecosystem tooling including tests, insulated from nix, CI-wired
+- browser-tests firefox 'guest agent did not become ready' flake seen in CI 2026-07-22 - watch and root-cause if it recurs
+- Enable the machine debug flag inside CI browser checks so boot-readiness
+  flakes ("guest agent did not become ready") leave a progress trace instead
+  of an opaque timeout.

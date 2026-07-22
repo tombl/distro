@@ -61,7 +61,7 @@
       flake = false;
     };
     linux-src = {
-      url = "github:tombl/linux/safari-memory";
+      url = "github:tombl/linux/chromium-buffer-refresh";
       flake = false;
     };
     llvm-src = {

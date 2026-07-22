@@ -36,6 +36,10 @@ const args = parseArgs({
       type: "boolean",
       default: false,
     },
+    debug: {
+      type: "boolean",
+      default: false,
+    },
     console: {
       type: "boolean",
       default: true,
@@ -59,6 +63,7 @@ options:
   -c, --cmdline <string>  Command line arguments to pass to the kernel
   -i, --initcpio <string> Path to the initramfs to boot
   -j, --cpus <number>     Number of CPUs to use (default: number of CPUs on the machine)
+      --debug             Enable [linux] host diagnostics (also LINUX_DEBUG=1)
       --no-console        Don't attach a console device
       --no-entropy        Don't attach an entropy device
       --disk <string>     Path to a disk image to use (can be specified multiple times)
@@ -165,6 +170,7 @@ for (const disk of args.disk) {
 const machine = await spawnMachine({
   cmdline: args.cmdline,
   cpus: parseInt(args.cpus, 10),
+  debug: args.debug || process.env.LINUX_DEBUG === "1",
   devices,
   initcpio: await readFile(args.initcpio),
 });

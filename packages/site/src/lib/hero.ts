@@ -12,6 +12,8 @@ import {
   type SpawnGuestOptions,
 } from "@tombl/linux-guest";
 
+const debug = new URLSearchParams(globalThis.location.search).has("debug");
+
 export interface Hero {
   guest: NetworkedGuest;
   network: Network;
@@ -117,6 +119,7 @@ async function boot(): Promise<Hero> {
   bootPhase.resolve();
   const guest = await spawnGuest({
     cpus,
+    debug,
     network,
     assets,
     devices: [terminalConsole, entropyDevice()],
@@ -150,6 +153,7 @@ export async function spawnPeer(options: Partial<SpawnGuestOptions> = {}): Promi
     assets,
     devices: [entropyDevice()],
     ...options,
+    debug: debug || options.debug === true,
     network,
   });
   void peer.machine.bootConsole.pipeTo(new WritableStream()).catch(() => {});
