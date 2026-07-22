@@ -46,6 +46,11 @@ depending on image composition order.
 - `nix build .#<pkg>` builds one package; `nix flake check` builds every VM and
   formatting check.
 
+Use `scripts/check.sh [REGEX]` for the normal check loop. It selects checks by
+attribute-name regex, intent-adds untracked files so Nix sees them, and uses
+matching repositories under `checkouts/` as source overrides by default. Pass
+`-n N` to sample flaky checks or `--no-overrides` to test the locked sources.
+
 ## Formatting
 
 Run the repository formatter before sending changes:
