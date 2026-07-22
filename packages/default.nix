@@ -53,6 +53,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rust-toolchain = callPackage ./rust-toolchain/package.nix { };
 
     # userland:
+    apk-tools = callPackage ./apk-tools { };
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };

@@ -1,0 +1,184 @@
+diff --git a/src/apk_process.h b/src/apk_process.h
+index c1d9008..1a5a1db 100644
+--- a/src/apk_process.h
++++ b/src/apk_process.h
+@@ -33,6 +33,7 @@ struct apk_process {
+ 
+ int apk_process_init(struct apk_process *p, const char *argv0, const char *logpfx, struct apk_out *out, struct apk_istream *is);
+ pid_t apk_process_fork(struct apk_process *p);
++pid_t apk_process_clone(struct apk_process *p, int (*child_fn)(void *), void *child_arg);
+ int apk_process_spawn(struct apk_process *p, const char *path, char * const* argv, char * const* env);
+ int apk_process_run(struct apk_process *p);
+ int apk_process_cleanup(struct apk_process *p);
+diff --git a/src/database.c b/src/database.c
+index 95c3936..5d039db 100644
+--- a/src/database.c
++++ b/src/database.c
+@@ -1775,12 +1775,16 @@ static bool memfd_exec_check(void)
+ static bool unshare_check(void)
+ {
++#ifdef __wasm__
++	return false;
++#else
+ 	int status;
+ 
+ 	if (unshare(0) < 0) return false;
+ 	pid_t pid = fork();
+ 	if (pid == -1) return false;
+ 	if (pid == 0) _Exit(unshare(CLONE_NEWNS) < 0 ? 1 : 0);
+ 	while (waitpid(pid, &status, 0) < 0 && errno == EINTR);
+ 	return WIFEXITED(status) && WEXITSTATUS(status) == 0;
++#endif
+ }
+
+@@ -2449,6 +2449,29 @@ static void env_buf_add(struct env_buf *enb, const char *key, const char *val)
+ 	enb->pos += n + 1;
+ }
+ 
++struct script_child {
++	struct apk_database *db;
++	struct apk_ctx *ac;
++	const char *path;
++	char **argv;
++	char **envp;
++};
++
++static int run_script_child(void *arg)
++{
++	struct script_child *child = arg;
++
++	umask(0022);
++	if (fchdir(child->db->root_fd) != 0) script_panic("fchdir");
++	if (!(child->ac->flags & APK_NO_CHROOT)) {
++		if (child->db->need_unshare && unshare_mount_namespace(child->db) < 0) script_panic("unshare");
++		if (child->ac->root_set && chroot(".") != 0) script_panic("chroot");
++	}
++	execve(child->path, child->argv, child->envp);
++	script_panic("execve");
++	return 127;
++}
++
+ int apk_db_run_script(struct apk_database *db, const char *hook_type, const char *package_name, int fd, char **argv, const char *logpfx)
+ {
+ 	struct env_buf enb;
+@@ -2477,23 +2500,19 @@ int apk_db_run_script(struct apk_database *db, const char *hook_type, const char
+ 	if (package_name) env_buf_add(&enb, "APK_PACKAGE", package_name);
+ 	apk_string_array_add(&ac->script_environment, NULL);
+ 
+-	pid_t pid = apk_process_fork(&p);
++	struct script_child child = {
++		.db = db,
++		.ac = ac,
++		.path = path,
++		.argv = argv,
++		.envp = &ac->script_environment->item[0],
++	};
++	pid_t pid = apk_process_clone(&p, run_script_child, &child);
+ 	if (pid == -1) {
+ 		r = -errno;
+-		apk_err(out, "%s: fork: %s", argv0, apk_error_str(r));
++		apk_err(out, "%s: clone: %s", argv0, apk_error_str(r));
+ 		goto err;
+ 	}
+-	if (pid == 0) {
+-		umask(0022);
+-		if (fchdir(db->root_fd) != 0) script_panic("fchdir");
+-		if (!(ac->flags & APK_NO_CHROOT)) {
+-			if (db->need_unshare && unshare_mount_namespace(db) < 0) script_panic("unshare");
+-			if (ac->root_set && chroot(".") != 0) script_panic("chroot");
+-		}
+-		char **envp = &ac->script_environment->item[0];
+-		execve(path, argv, envp);
+-		script_panic("execve");
+-	}
+ 	r = apk_process_run(&p);
+ err:
+ 	apk_array_truncate(ac->script_environment, env_size_save);
+diff --git a/src/process.c b/src/process.c
+index d80060b..28ef23f 100644
+--- a/src/process.c
++++ b/src/process.c
+@@ -7,6 +7,9 @@
+ #include <poll.h>
+ #include <errno.h>
+ #include <fcntl.h>
++#include <sched.h>
++#include <signal.h>
++#include <stdlib.h>
+ #include <spawn.h>
+ #include <unistd.h>
+ #include <sys/wait.h>
+@@ -133,8 +136,11 @@ static int buf_process(struct buf *b, int fd, struct apk_out *out, const char *p
+ 	return 0;
+ }
+ 
++/* Retained for libapk compatibility. New child work should use the callback
++ * form below, which maps to wasm Linux's clone ABI. */
+ pid_t apk_process_fork(struct apk_process *p)
+ {
++#ifndef __wasm__
+ 	pid_t pid = fork();
+ 	if (pid < 0) return pid;
+ 	if (pid == 0) {
+@@ -153,5 +159,61 @@ pid_t apk_process_fork(struct apk_process *p)
+ 	close_fd(&p->pipe_stderr[1]);
+ 	return pid;
++#else
++	errno = ENOSYS;
++	return -1;
++#endif
++}
++
++struct apk_clone_child {
++	struct apk_process *process;
++	int (*fn)(void *);
++	void *arg;
++};
++
++static int apk_process_clone_child(void *arg)
++{
++	struct apk_clone_child *child = arg;
++	struct apk_process *p = child->process;
++
++	dup2(p->pipe_stdin[0], STDIN_FILENO);
++	dup2(p->pipe_stdout[1], STDOUT_FILENO);
++	dup2(p->pipe_stderr[1], STDERR_FILENO);
++	close_fd(&p->pipe_stdin[1]);
++	close_fd(&p->pipe_stdout[0]);
++	close_fd(&p->pipe_stderr[0]);
++	return child->fn(child->arg);
++}
++
++pid_t apk_process_clone(struct apk_process *p, int (*child_fn)(void *), void *child_arg)
++{
++	struct apk_clone_child child = {
++		.process = p,
++		.fn = child_fn,
++		.arg = child_arg,
++	};
++	pid_t pid;
++
++#ifdef __wasm__
++	enum { CHILD_STACK_SIZE = 64 * 1024 };
++	void *child_stack = malloc(CHILD_STACK_SIZE);
++	if (!child_stack) return -1;
++
++	pid = clone(apk_process_clone_child,
++		(char *) child_stack + CHILD_STACK_SIZE, SIGCHLD, &child);
++	int saved_errno = errno;
++	free(child_stack);
++	errno = saved_errno;
++#else
++	pid = fork();
++	if (pid == 0) _exit(apk_process_clone_child(&child));
++#endif
++	if (pid < 0) return pid;
++
++	p->pid = pid;
++	close_fd(&p->pipe_stdin[0]);
++	close_fd(&p->pipe_stdout[1]);
++	close_fd(&p->pipe_stderr[1]);
++	return pid;
+ }
+ 
+ int apk_process_spawn(struct apk_process *p, const char *path, char * const* argv, char * const* env)

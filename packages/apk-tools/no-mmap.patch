@@ -1,0 +1,35 @@
+diff --git a/src/io.c b/src/io.c
+index b40ccb4..abf44cb 100644
+--- a/src/io.c
++++ b/src/io.c
+@@ -11,7 +11,9 @@
+ #include <dirent.h>
+ #include <stdarg.h>
+ #include <stdint.h>
++#ifndef __wasm__
+ #include <sys/mman.h>
++#endif
+ #include <sys/stat.h>
+ #include <pwd.h>
+ #include <grp.h>
+@@ -484,6 +486,7 @@ err:
+ 	return ERR_PTR(apk_istream_close_error(from, r));
+ }
+ 
++#ifndef __wasm__
+ struct apk_mmap_istream {
+ 	struct apk_istream is;
+ 	int fd;
+@@ -543,6 +546,12 @@ static inline struct apk_istream *apk_mmap_istream_from_fd(int fd)
+ 	};
+ 	return &mis->is;
+ }
++#else
++static inline struct apk_istream *apk_mmap_istream_from_fd(int fd)
++{
++	return ERR_PTR(-ENOSYS);
++}
++#endif
+ 
+ struct apk_fd_istream {
+ 	struct apk_istream is;

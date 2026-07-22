@@ -9,10 +9,12 @@
   name,
   contents ? [ ],
   files ? { },
+  format ? "squashfs",
+  size ? "256M",
 }:
 
 mkRootfs {
-  inherit name;
+  inherit name format size;
   init = "${guest-agent}/bin/linux-guest-agent";
   contents = [ busybox ] ++ contents;
   files = {
