@@ -49,6 +49,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     stdenvDebug = pkgs.stdenvAdapters.keepDebugInfo self.stdenvRelease;
 
+    # A pinned nightly rustc with a from-source std for the wasm target.
+    rust-toolchain = callPackage ./rust-toolchain/package.nix { };
+
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
@@ -65,6 +68,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };
     readline = callPackage ./readline/package.nix { };
+    rust-smoke = callPackage ./rust-smoke/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };

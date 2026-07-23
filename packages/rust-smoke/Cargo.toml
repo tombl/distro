@@ -1,0 +1,12 @@
+[package]
+name = "rust-smoke"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+# Keep this equal to rust-toolchain's libc-src version: Cargo path overrides
+# are intentionally exact, so the smoke proves consumer crates use the fork.
+libc = "=0.2.186"
+
+[profile.release]
+panic = "abort"

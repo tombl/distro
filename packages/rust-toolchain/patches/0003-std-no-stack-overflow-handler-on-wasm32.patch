@@ -1,0 +1,29 @@
+--- a/library/std/src/sys/pal/unix/stack_overflow.rs
++++ b/library/std/src/sys/pal/unix/stack_overflow.rs
+@@ -26,7 +26,7 @@
+ }
+ 
+ #[cfg(all(
+-    not(miri),
++    not(any(miri, target_arch = "wasm32")),
+     any(
+         target_os = "linux",
+         target_os = "freebsd",
+@@ -44,7 +44,7 @@
+ // synchronization properties that we don't want to expose to user code,
+ // hence we disable it on miri.
+ #[cfg(all(
+-    not(miri),
++    not(any(miri, target_arch = "wasm32")),
+     any(
+         target_os = "linux",
+         target_os = "freebsd",
+@@ -635,7 +635,7 @@
+ // is shipped with the OS):
+ // <https://github.com/apple/swift/blob/swift-5.10-RELEASE/stdlib/public/runtime/CrashHandlerMacOS.cpp>
+ #[cfg(any(
+-    miri,
++    any(miri, target_arch = "wasm32"),
+     not(any(
+         target_os = "linux",
+         target_os = "freebsd",

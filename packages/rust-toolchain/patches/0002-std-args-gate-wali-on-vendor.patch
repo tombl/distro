@@ -1,0 +1,11 @@
+--- a/library/std/src/sys/args/mod.rs
++++ b/library/std/src/sys/args/mod.rs
+@@ -15,7 +15,7 @@
+ 
+ cfg_select! {
+     any(
+-        all(target_family = "unix", not(any(all(target_family = "wasm", target_os = "linux"), target_os = "espidf", target_os = "vita"))),
++        all(target_family = "unix", not(any(all(target_family = "wasm", target_os = "linux", target_vendor = "wali"), target_os = "espidf", target_os = "vita"))),
+         target_os = "hermit",
+     ) => {
+         mod unix;

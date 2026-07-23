@@ -1,0 +1,14 @@
+--- a/library/core/src/ffi/primitives.rs
++++ b/library/core/src/ffi/primitives.rs
+@@ -139,8 +139,9 @@
+     crate::cfg_select! {
+         any(
+             all(target_pointer_width = "64", not(windows)),
+-            // wasm32 Linux ABI uses 64-bit long
+-            all(target_arch = "wasm32", target_os = "linux")
++            // WALI's wasm32 Linux ABI uses 64-bit long; other wasm32-linux
++            // ports (tombl/linux) are ILP32
++            all(target_arch = "wasm32", target_os = "linux", target_vendor = "wali")
+         ) => {
+             pub(super) type c_long = i64;
+             pub(super) type c_ulong = u64;
