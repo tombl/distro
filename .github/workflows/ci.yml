@@ -8,56 +8,54 @@ on:
       - published
 
 jobs:
-  list:
+  eval:
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.list.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      any-jobs: ${{ steps.matrix.outputs.any-jobs }}
+      manifest-version: ${{ steps.matrix.outputs.manifest-version }}
     steps:
       - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
+      - uses: NixOS/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: List packages
-        id: list
-        run: |
-          eval "$(nix print-dev-env .#ci)"
-          matrix="$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '
-            [
-              .[]
-              | select(.isCached | not).attr
-              | select(test("-shell$") | not)
-            ]
-            | if length > 0 then . else ["formatting"] end
-          ')"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - uses: Mic92/hestia@main
+      - id: matrix
+        uses: Mic92/hestia/matrix@main
+        with:
+          nix-eval-jobs: "nix run nixpkgs#nix-eval-jobs --inputs-from . --"
 
   build:
-    needs: list
-    runs-on: ubuntu-24.04
+    needs: eval
+    if: needs.eval.outputs.any-jobs == 'true'
+    name: ${{ matrix.name }} (${{ matrix.system }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix:
-        pkg: ${{ fromJson(needs.list.outputs.matrix) }}
-    name: Build ${{ matrix.pkg }}
+      matrix: ${{ fromJSON(needs.eval.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
+      - uses: NixOS/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: Build
+      - uses: Mic92/hestia@main
+        with:
+          wait-manifest-version: ${{ needs.eval.outputs.manifest-version }}
+      - name: Prefetch drv closure
         run: |
-          eval "$(nix print-dev-env .#ci)"
-          nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
+          hashes=$(printf '%s\n' ${{ matrix.installables }} |
+            awk -F/ '{printf "%s%s", (NR > 1 ? "," : ""), substr($NF, 1, 32)}')
+          curl -fsS "http://$HESTIA_LISTEN/closure/$hashes" | nix-store --import
+      - run: nix build -L ${{ matrix.installables }}
 
   packages:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
+      - uses: NixOS/nix-installer-action@main
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
