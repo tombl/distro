@@ -5,6 +5,7 @@ import {
   type Network,
   type NetworkedGuest,
   spawnGuest,
+  type VirtioDevice,
 } from "../src/index.ts";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
@@ -16,7 +17,7 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(): Promise<NetworkedGuest>;
+  spawn(devices?: readonly VirtioDevice[]): Promise<NetworkedGuest>;
 }
 
 export function guest_test(
@@ -40,12 +41,16 @@ export function guest_test(
     const guests: NetworkedGuest[] = [];
     const consoles: Promise<void>[] = [];
 
-    async function spawn() {
+    async function spawn(extra_devices: readonly VirtioDevice[] = []) {
       const guest = await spawnGuest({
         cpus: 1,
         network,
         assets,
-        devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
+        devices: [
+          consoleDevice(closed_input(), console_output()),
+          entropyDevice(),
+          ...extra_devices,
+        ],
       });
       guests.push(guest);
       consoles.push(guest.machine.bootConsole.pipeTo(console_output()));

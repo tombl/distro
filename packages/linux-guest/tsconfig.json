@@ -16,6 +16,7 @@
       "webworker.asynciterable"
     ],
     "skipLibCheck": true,
+    "types": ["node"],
     "declaration": true,
     "rootDir": "./src",
     "outDir": "./dist",
