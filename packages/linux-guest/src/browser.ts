@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  type FS,
-  type FSAttributes,
-  type FSCreateContext,
-  type FSDirectoryEntry,
-  FSError,
-  type FSSetAttributes,
-  type FSTimestamp,
+  type VirtioFileSystem as FileSystemBackend,
+  type VirtioFileSystemAttributes,
+  type VirtioFileSystemCreateContext,
+  type VirtioFileSystemDirectoryEntry,
+  VirtioFileSystemError,
+  type VirtioFileSystemHandle,
+  type VirtioFileSystemNode,
+  type VirtioFileSystemSetAttributes,
+  type VirtioFileSystemTimestamp,
 } from "@tombl/linux";
 
 const FileType = {
@@ -24,13 +26,12 @@ interface Metadata {
   mode: number;
   uid: number;
   gid: number;
-  atime: FSTimestamp;
-  mtime: FSTimestamp;
-  mtimeOverride: boolean;
-  ctime: FSTimestamp;
+  atime: VirtioFileSystemTimestamp;
+  mtime: VirtioFileSystemTimestamp;
+  ctime: VirtioFileSystemTimestamp;
 }
 
-function now(): FSTimestamp {
+function now(): VirtioFileSystemTimestamp {
   const milliseconds = Date.now();
   return {
     seconds: BigInt(Math.floor(milliseconds / 1000)),
@@ -46,13 +47,13 @@ function valid_name(name: string) {
     name.includes("/") ||
     name.includes("\0")
   ) {
-    throw new FSError("EINVAL", "invalid path component");
+    throw new VirtioFileSystemError("EINVAL", "invalid path component");
   }
   return name;
 }
 
 function opfs_error(error: unknown): never {
-  if (error instanceof FSError) throw error;
+  if (error instanceof VirtioFileSystemError) throw error;
   const name = error instanceof DOMException ? error.name : "";
   const code =
     {
@@ -63,8 +64,8 @@ function opfs_error(error: unknown): never {
       QuotaExceededError: "ENOSPC",
       TypeMismatchError: "EINVAL",
     }[name] ?? "EIO";
-  throw new FSError(
-    code as ConstructorParameters<typeof FSError>[0],
+  throw new VirtioFileSystemError(
+    code as ConstructorParameters<typeof VirtioFileSystemError>[0],
     error instanceof Error ? error.message : String(error),
   );
 }
@@ -80,20 +81,15 @@ async function opfs_call<T>(operation: Promise<T>): Promise<T> {
 function checked_offset(value: bigint) {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 0) {
-    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new VirtioFileSystemError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return result;
 }
 
-class Node {
+class Node implements VirtioFileSystemNode {
   parts: string[];
   handle: FileSystemHandle;
   metadata: Metadata;
-  mutation = Promise.resolve();
-  // Browser handles identify a locator rather than an inode generation and may
-  // resolve a same-path recreation. Once removal is observed, permanently
-  // detach this generation so old guest handles fail instead of retargeting it.
-  attached = true;
 
   constructor(parts: string[], handle: FileSystemHandle, metadata: Metadata) {
     this.parts = parts;
@@ -102,7 +98,7 @@ class Node {
   }
 }
 
-class Handle {
+class Handle implements VirtioFileSystemHandle {
   readonly node: Node;
 
   constructor(node: Node) {
@@ -118,7 +114,6 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
     gid: 0,
     atime: timestamp,
     mtime: timestamp,
-    mtimeOverride: false,
     ctime: timestamp,
   };
 }
@@ -129,20 +124,9 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * The browser File System API exposes no Unix ownership, permissions, links,
  * or inode metadata. This adapter presents conventional synthetic values for
  * them and keeps chmod/chown/timestamp changes for the lifetime of this object.
- *
- * Rename copies to an empty destination and then removes the source because the
- * portable API has no atomic namespace rename. Failure can leave a partial new
- * destination, or both names if removing the source fails. Replacing an
- * existing destination is unsupported.
- *
- * Browser handles cannot keep an unlinked file alive like a POSIX descriptor.
- * When this adapter observes removal, existing descriptors become stale and
- * fail rather than targeting a new entry created at the same path. An external
- * remove-and-recreate with no observed missing state cannot be distinguished.
- * Writes and truncations through one adapter are serialized per node, but
- * other adapters or applications can still race its portable API operations.
+ * File writes use the broadly available asynchronous API.
  */
-export class BrowserFS implements FS<Node, Handle> {
+export class VirtioFileSystem implements FileSystemBackend {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
 
@@ -151,20 +135,17 @@ export class BrowserFS implements FS<Node, Handle> {
     this.#nodes.set("", this.root);
   }
 
-  #as_node(node: Node) {
+  #as_node(node: VirtioFileSystemNode) {
     if (!(node instanceof Node)) {
-      throw new FSError("EINVAL", "node belongs to another filesystem");
-    }
-    if (!node.attached) {
-      throw new FSError("ENOENT", "filesystem node is no longer attached");
+      throw new VirtioFileSystemError("EINVAL", "node belongs to another filesystem");
     }
     return node;
   }
 
-  #directory(node: Node) {
+  #directory(node: VirtioFileSystemNode) {
     const result = this.#as_node(node);
     if (result.handle.kind !== "directory") {
-      throw new FSError("ENOTDIR");
+      throw new VirtioFileSystemError("ENOTDIR");
     }
     return result.handle as FileSystemDirectoryHandle;
   }
@@ -179,36 +160,6 @@ export class BrowserFS implements FS<Node, Handle> {
       node.handle = handle;
     }
     return node;
-  }
-
-  #forget(parts: readonly string[]) {
-    const key = parts.join("/");
-    for (const [candidate, node] of this.#nodes) {
-      if (candidate === key || candidate.startsWith(`${key}/`)) {
-        node.attached = false;
-        this.#nodes.delete(candidate);
-      }
-    }
-  }
-
-  #open_handle(node: Node, handle: Handle) {
-    const current = this.#as_node(node);
-    if (!(handle instanceof Handle) || handle.node !== current) {
-      throw new FSError("EBADF");
-    }
-    return current;
-  }
-
-  async #mutate<T>(node: Node, operation: () => Promise<T>): Promise<T> {
-    const previous = node.mutation;
-    const completion = Promise.withResolvers<void>();
-    node.mutation = completion.promise;
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      completion.resolve();
-    }
   }
 
   async #child(
@@ -238,29 +189,23 @@ export class BrowserFS implements FS<Node, Handle> {
     }
   }
 
-  async lookup(parent: Node, name: string) {
+  async lookup(parent: VirtioFileSystemNode, name: string) {
     const parent_node = this.#as_node(parent);
-    const parts = [...parent_node.parts, valid_name(name)];
-    const handle = await this.#child(this.#directory(parent), name);
-    if (!handle) {
-      this.#forget(parts);
-      return undefined;
-    }
-    return this.#remember(parts, handle);
+    const handle = await this.#child(this.#directory(parent), valid_name(name));
+    if (!handle) return undefined;
+    return this.#remember([...parent_node.parts, name], handle);
   }
 
-  async getattr(node: Node): Promise<FSAttributes> {
+  async getattr(node: VirtioFileSystemNode): Promise<VirtioFileSystemAttributes> {
     const current = this.#as_node(node);
     let size = 0n;
     if (current.handle.kind === "file") {
       const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
       size = BigInt(file.size);
-      if (!current.metadata.mtimeOverride) {
-        current.metadata.mtime = {
-          seconds: BigInt(Math.floor(file.lastModified / 1000)),
-          nanoseconds: (file.lastModified % 1000) * 1_000_000,
-        };
-      }
+      current.metadata.mtime = {
+        seconds: BigInt(Math.floor(file.lastModified / 1000)),
+        nanoseconds: (file.lastModified % 1000) * 1_000_000,
+      };
     }
     return {
       mode: current.metadata.mode,
@@ -275,50 +220,43 @@ export class BrowserFS implements FS<Node, Handle> {
     };
   }
 
-  async setattr(node: Node, changes: FSSetAttributes) {
+  async setattr(node: VirtioFileSystemNode, changes: VirtioFileSystemSetAttributes) {
     const current = this.#as_node(node);
-    return await this.#mutate(current, async () => {
-      this.#as_node(current);
-      if (changes.size !== undefined) {
-        if (current.handle.kind !== "file") {
-          throw new FSError("EISDIR");
-        }
-        const writable = await opfs_call(
-          (current.handle as FileSystemFileHandle).createWritable({
-            keepExistingData: true,
-          }),
-        );
-        try {
-          await opfs_call(writable.truncate(checked_offset(changes.size)));
-        } finally {
-          await opfs_call(writable.close());
-        }
-        // Truncation changes the backing file, so its native timestamp becomes
-        // authoritative unless this setattr also supplies an explicit mtime.
-        current.metadata.mtimeOverride = false;
+    if (changes.size !== undefined) {
+      if (current.handle.kind !== "file") {
+        throw new VirtioFileSystemError("EISDIR");
       }
-      if (changes.mode !== undefined) {
-        current.metadata.mode = (current.metadata.mode & 0o170000) | (changes.mode & 0o7777);
+      const writable = await opfs_call(
+        (current.handle as FileSystemFileHandle).createWritable({
+          keepExistingData: true,
+        }),
+      );
+      try {
+        await opfs_call(writable.truncate(checked_offset(changes.size)));
+      } finally {
+        await opfs_call(writable.close());
       }
-      if (changes.uid !== undefined) current.metadata.uid = changes.uid;
-      if (changes.gid !== undefined) current.metadata.gid = changes.gid;
-      if (changes.atime !== undefined) {
-        current.metadata.atime = changes.atime === "now" ? now() : changes.atime;
-      }
-      if (changes.mtime !== undefined) {
-        current.metadata.mtime = changes.mtime === "now" ? now() : changes.mtime;
-        current.metadata.mtimeOverride = true;
-      }
-      if (changes.ctime !== undefined) current.metadata.ctime = changes.ctime;
-      else current.metadata.ctime = now();
-      return await this.getattr(current);
-    });
+    }
+    if (changes.mode !== undefined) {
+      current.metadata.mode = (current.metadata.mode & 0o170000) | (changes.mode & 0o7777);
+    }
+    if (changes.uid !== undefined) current.metadata.uid = changes.uid;
+    if (changes.gid !== undefined) current.metadata.gid = changes.gid;
+    if (changes.atime !== undefined) {
+      current.metadata.atime = changes.atime === "now" ? now() : changes.atime;
+    }
+    if (changes.mtime !== undefined) {
+      current.metadata.mtime = changes.mtime === "now" ? now() : changes.mtime;
+    }
+    if (changes.ctime !== undefined) current.metadata.ctime = changes.ctime;
+    else current.metadata.ctime = now();
+    return await this.getattr(current);
   }
 
-  async open(node: Node, flags: number) {
+  async open(node: VirtioFileSystemNode, flags: number) {
     const current = this.#as_node(node);
     if (current.handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new VirtioFileSystemError("EISDIR");
     }
     if (flags & OpenFlags.TRUNCATE) {
       await this.setattr(current, { size: 0n });
@@ -326,17 +264,22 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Handle(current);
   }
 
-  async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
+  async create(
+    parent: VirtioFileSystemNode,
+    name: string,
+    flags: number,
+    context: VirtioFileSystemCreateContext,
+  ) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     const directory = this.#directory(parent);
     const existing = await this.#child(directory, name);
     if (existing) {
       if (flags & OpenFlags.EXCLUSIVE) {
-        throw new FSError("EEXIST");
+        throw new VirtioFileSystemError("EEXIST");
       }
       if (existing.kind !== "file") {
-        throw new FSError("EISDIR");
+        throw new VirtioFileSystemError("EISDIR");
       }
     }
     const file = existing ?? (await opfs_call(directory.getFileHandle(name, { create: true })));
@@ -350,10 +293,15 @@ export class BrowserFS implements FS<Node, Handle> {
     return { node, handle: new Handle(node) };
   }
 
-  async read(node: Node, handle: Handle, offset: bigint, length: number) {
-    const current = this.#open_handle(node, handle);
+  async read(
+    node: VirtioFileSystemNode,
+    _handle: VirtioFileSystemHandle,
+    offset: bigint,
+    length: number,
+  ) {
+    const current = this.#as_node(node);
     if (current.handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new VirtioFileSystemError("EISDIR");
     }
     const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
     current.metadata.atime = now();
@@ -364,47 +312,45 @@ export class BrowserFS implements FS<Node, Handle> {
     );
   }
 
-  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
-    const current = this.#open_handle(node, handle);
-    return await this.#mutate(current, async () => {
-      this.#open_handle(node, handle);
-      if (current.handle.kind !== "file") {
-        throw new FSError("EISDIR");
-      }
-      const writable = await opfs_call(
-        (current.handle as FileSystemFileHandle).createWritable({
-          keepExistingData: true,
-        }),
-      );
-      try {
-        await opfs_call(writable.seek(checked_offset(offset)));
-        const copy = new Uint8Array(data.byteLength);
-        copy.set(data);
-        await opfs_call(writable.write(copy.buffer));
-      } finally {
-        await opfs_call(writable.close());
-      }
-      current.metadata.mtime = now();
-      current.metadata.mtimeOverride = false;
-      current.metadata.ctime = current.metadata.mtime;
-      return data.byteLength;
-    });
+  async write(
+    node: VirtioFileSystemNode,
+    _handle: VirtioFileSystemHandle,
+    offset: bigint,
+    data: Uint8Array,
+  ) {
+    const current = this.#as_node(node);
+    if (current.handle.kind !== "file") {
+      throw new VirtioFileSystemError("EISDIR");
+    }
+    const writable = await opfs_call(
+      (current.handle as FileSystemFileHandle).createWritable({
+        keepExistingData: true,
+      }),
+    );
+    try {
+      await opfs_call(writable.seek(checked_offset(offset)));
+      const copy = new Uint8Array(data.byteLength);
+      copy.set(data);
+      await opfs_call(writable.write(copy.buffer));
+    } finally {
+      await opfs_call(writable.close());
+    }
+    current.metadata.mtime = now();
+    current.metadata.ctime = current.metadata.mtime;
+    return data.byteLength;
   }
 
-  // OPFS commits each write when its writable closes, so a file is durable by
-  // the time `write` resolves; flush and fsync have nothing left to do.
-  async flush() {}
-
-  async fsync() {}
-
-  async opendir(node: Node) {
+  async opendir(node: VirtioFileSystemNode) {
     this.#directory(node);
     return new Handle(this.#as_node(node));
   }
 
-  async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
-    const current = this.#open_handle(node, handle);
-    const result: FSDirectoryEntry<Node>[] = [];
+  async readdir(
+    node: VirtioFileSystemNode,
+    _handle: VirtioFileSystemHandle,
+  ): Promise<VirtioFileSystemDirectoryEntry[]> {
+    const current = this.#as_node(node);
+    const result: VirtioFileSystemDirectoryEntry[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
       result.push({
         name,
@@ -414,11 +360,11 @@ export class BrowserFS implements FS<Node, Handle> {
     return result;
   }
 
-  async mkdir(parent: Node, name: string, context: FSCreateContext) {
+  async mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     if (await this.#child(this.#directory(parent), name)) {
-      throw new FSError("EEXIST");
+      throw new VirtioFileSystemError("EEXIST");
     }
     const handle = await opfs_call(
       this.#directory(parent).getDirectoryHandle(name, { create: true }),
@@ -430,40 +376,36 @@ export class BrowserFS implements FS<Node, Handle> {
     return node;
   }
 
-  async unlink(parent: Node, name: string) {
+  async unlink(parent: VirtioFileSystemNode, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
-    if (!child) throw new FSError("ENOENT");
+    if (!child) throw new VirtioFileSystemError("ENOENT");
     if (this.#as_node(child).handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new VirtioFileSystemError("EISDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
-    this.#forget([...this.#as_node(parent).parts, name]);
   }
 
-  async rmdir(parent: Node, name: string) {
+  async rmdir(parent: VirtioFileSystemNode, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
-    if (!child) throw new FSError("ENOENT");
+    if (!child) throw new VirtioFileSystemError("ENOENT");
     if (this.#as_node(child).handle.kind !== "directory") {
-      throw new FSError("ENOTDIR");
+      throw new VirtioFileSystemError("ENOTDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
-    this.#forget([...this.#as_node(parent).parts, name]);
   }
 
   async #copy(source: FileSystemHandle, destination: FileSystemDirectoryHandle, name: string) {
-    // Portable File System handles provide no atomic recursive rename or
-    // namespace transaction. Copy only into an absent destination and never
-    // delete unrelated destination data. A failed copy may still leave the
-    // partial destination created by this operation.
     if (source.kind === "file") {
       const input = await opfs_call((source as FileSystemFileHandle).getFile());
       const output = await opfs_call(destination.getFileHandle(name, { create: true }));
       const writable = await opfs_call(output.createWritable());
-      // pipeTo closes the destination after success and aborts it if reading
-      // the source fails, without materializing the complete file in memory.
-      await opfs_call(input.stream().pipeTo(writable));
+      try {
+        await opfs_call(writable.write(await input.arrayBuffer()));
+      } finally {
+        await opfs_call(writable.close());
+      }
       return output;
     }
     const output = await opfs_call(destination.getDirectoryHandle(name, { create: true }));
@@ -473,14 +415,19 @@ export class BrowserFS implements FS<Node, Handle> {
     return output;
   }
 
-  async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
+  async rename(
+    oldParent: VirtioFileSystemNode,
+    oldName: string,
+    newParent: VirtioFileSystemNode,
+    newName: string,
+  ) {
     oldName = valid_name(oldName);
     newName = valid_name(newName);
     const old_parent = this.#as_node(oldParent);
     const new_parent = this.#as_node(newParent);
     if (old_parent === new_parent && oldName === newName) return;
     const source = await this.lookup(old_parent, oldName);
-    if (!source) throw new FSError("ENOENT");
+    if (!source) throw new VirtioFileSystemError("ENOENT");
     const source_node = this.#as_node(source);
     const old_parts = [...old_parent.parts, oldName];
     const new_parts = [...new_parent.parts, newName];
@@ -488,41 +435,31 @@ export class BrowserFS implements FS<Node, Handle> {
       source_node.handle.kind === "directory" &&
       new_parts.slice(0, old_parts.length).join("/") === old_parts.join("/")
     ) {
-      throw new FSError("EINVAL", "cannot move a directory into itself");
+      throw new VirtioFileSystemError("EINVAL", "cannot move a directory into itself");
     }
 
     const existing = await this.lookup(new_parent, newName);
     if (existing) {
-      throw new FSError(
-        "EOPNOTSUPP",
-        "browser filesystems cannot atomically replace a rename destination",
-      );
+      const existing_node = this.#as_node(existing);
+      if (existing_node.handle.kind !== source_node.handle.kind) {
+        throw new VirtioFileSystemError(
+          source_node.handle.kind === "directory" ? "ENOTDIR" : "EISDIR",
+        );
+      }
+      await opfs_call(this.#directory(new_parent).removeEntry(newName));
+      for (const key of [...this.#nodes.keys()]) {
+        if (key === new_parts.join("/") || key.startsWith(`${new_parts.join("/")}/`)) {
+          this.#nodes.delete(key);
+        }
+      }
     }
 
-    const destination = this.#directory(new_parent);
-    const cleanup_destination = () =>
-      destination
-        .removeEntry(newName, {
-          recursive: source_node.handle.kind === "directory",
-        })
-        .catch(() => {});
-    let copied: FileSystemHandle;
-    try {
-      copied = await this.#copy(source_node.handle, destination, newName);
-    } catch (error) {
-      await cleanup_destination();
-      throw error;
-    }
-    try {
-      await opfs_call(
-        this.#directory(old_parent).removeEntry(oldName, {
-          recursive: source_node.handle.kind === "directory",
-        }),
-      );
-    } catch (error) {
-      await cleanup_destination();
-      throw error;
-    }
+    const copied = await this.#copy(source_node.handle, this.#directory(new_parent), newName);
+    await opfs_call(
+      this.#directory(old_parent).removeEntry(oldName, {
+        recursive: source_node.handle.kind === "directory",
+      }),
+    );
 
     const moved = [...this.#nodes].filter(
       ([key]) => key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`),
@@ -532,9 +469,9 @@ export class BrowserFS implements FS<Node, Handle> {
       const relative = node.parts.slice(old_parts.length);
       let handle: FileSystemHandle = copied;
       for (const component of relative) {
-        if (handle.kind !== "directory") throw new FSError("EIO");
+        if (handle.kind !== "directory") throw new VirtioFileSystemError("EIO");
         const child = await this.#child(handle as FileSystemDirectoryHandle, component);
-        if (!child) throw new FSError("EIO");
+        if (!child) throw new VirtioFileSystemError("EIO");
         handle = child;
       }
       node.handle = handle;

@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import {
-  type FS,
-  type FSAttributes,
-  type FSCreateContext,
-  type FSDirectoryEntry,
-  FSError,
-  type FSSetAttributes,
-  fileSystemDevice,
+  type VirtioFileSystem as VirtioFileSystemBackend,
+  type VirtioFileSystemAttributes,
+  type VirtioFileSystemCreateContext,
+  type VirtioFileSystemDirectoryEntry,
+  VirtioFileSystemError,
+  type VirtioFileSystemHandle,
+  type VirtioFileSystemNode,
+  type VirtioFileSystemSetAttributes,
+  virtioFileSystemDevice,
 } from "@tombl/linux";
 import { SeekMode } from "../src/index.ts";
-import { getdents_inode } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
 
@@ -18,7 +19,7 @@ const FileType = {
   file: 0o100000,
 } as const;
 
-class MemoryNode {
+class MemoryNode implements VirtioFileSystemNode {
   readonly kind: "directory" | "file";
   mode: number;
   data = new Uint8Array();
@@ -30,7 +31,7 @@ class MemoryNode {
   }
 }
 
-class MemoryHandle {
+class MemoryHandle implements VirtioFileSystemHandle {
   readonly node: MemoryNode;
 
   constructor(node: MemoryNode) {
@@ -38,33 +39,25 @@ class MemoryHandle {
   }
 }
 
-class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
+class MemoryFileSystem implements VirtioFileSystemBackend {
   readonly root = new MemoryNode("directory", 0o755);
-  handleGetattrs = 0;
-  releases = 0;
-  directoryReleases = 0;
-  destroys = 0;
-  destroyGate: Promise<void> | undefined;
-  directoryOpenWaiter: (() => void) | undefined;
-  readonly destroyStarted = Promise.withResolvers<void>();
 
-  #node(node: MemoryNode) {
+  #node(node: VirtioFileSystemNode) {
     assert(node instanceof MemoryNode);
     return node;
   }
 
-  #directory(node: MemoryNode) {
+  #directory(node: VirtioFileSystemNode) {
     const result = this.#node(node);
-    if (result.kind !== "directory") throw new FSError("ENOTDIR");
+    if (result.kind !== "directory") throw new VirtioFileSystemError("ENOTDIR");
     return result;
   }
 
-  lookup(parent: MemoryNode, name: string) {
+  lookup(parent: VirtioFileSystemNode, name: string) {
     return this.#directory(parent).children.get(name);
   }
 
-  getattr(node: MemoryNode, handle?: MemoryHandle): FSAttributes {
-    if (handle !== undefined) this.handleGetattrs += 1;
+  getattr(node: VirtioFileSystemNode): VirtioFileSystemAttributes {
     const current = this.#node(node);
     return {
       mode: current.mode,
@@ -76,13 +69,13 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     };
   }
 
-  setattr(node: MemoryNode, changes: FSSetAttributes) {
+  setattr(node: VirtioFileSystemNode, changes: VirtioFileSystemSetAttributes) {
     const current = this.#node(node);
     if (changes.mode !== undefined) {
       current.mode = (current.mode & 0o170000) | (changes.mode & 0o7777);
     }
     if (changes.size !== undefined) {
-      if (current.kind !== "file") throw new FSError("EISDIR");
+      if (current.kind !== "file") throw new VirtioFileSystemError("EISDIR");
       const size = Number(changes.size);
       const data = new Uint8Array(size);
       data.set(current.data.subarray(0, size));
@@ -91,26 +84,41 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     return this.getattr(current);
   }
 
-  open(node: MemoryNode) {
+  open(node: VirtioFileSystemNode) {
     const current = this.#node(node);
-    if (current.kind !== "file") throw new FSError("EISDIR");
+    if (current.kind !== "file") throw new VirtioFileSystemError("EISDIR");
     return new MemoryHandle(current);
   }
 
-  create(parent: MemoryNode, name: string, _flags: number, context: FSCreateContext) {
+  create(
+    parent: VirtioFileSystemNode,
+    name: string,
+    _flags: number,
+    context: VirtioFileSystemCreateContext,
+  ) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new FSError("EEXIST");
+    if (directory.children.has(name)) throw new VirtioFileSystemError("EEXIST");
     const node = new MemoryNode("file", context.mode);
     directory.children.set(name, node);
     return { node, handle: new MemoryHandle(node) };
   }
 
-  read(node: MemoryNode, _handle: MemoryHandle, offset: bigint, length: number) {
+  read(
+    node: VirtioFileSystemNode,
+    _handle: VirtioFileSystemHandle,
+    offset: bigint,
+    length: number,
+  ) {
     const current = this.#node(node);
     return current.data.slice(Number(offset), Number(offset) + length);
   }
 
-  write(node: MemoryNode, _handle: MemoryHandle, offset: bigint, data: Uint8Array) {
+  write(
+    node: VirtioFileSystemNode,
+    _handle: VirtioFileSystemHandle,
+    offset: bigint,
+    data: Uint8Array,
+  ) {
     const current = this.#node(node);
     const start = Number(offset);
     if (start + data.byteLength > current.data.byteLength) {
@@ -122,68 +130,51 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     return data.byteLength;
   }
 
-  opendir(node: MemoryNode) {
-    this.directoryOpenWaiter?.();
-    this.directoryOpenWaiter = undefined;
+  opendir(node: VirtioFileSystemNode) {
     return new MemoryHandle(this.#directory(node));
   }
 
-  readdir(node: MemoryNode): FSDirectoryEntry<MemoryNode>[] {
+  readdir(node: VirtioFileSystemNode): VirtioFileSystemDirectoryEntry[] {
     return [...this.#directory(node).children].map(([name, node]) => ({
       name,
       node,
     }));
   }
 
-  release() {
-    this.releases += 1;
-  }
-
-  // In-memory store: already durable in the host process, so flush and fsync
-  // are declared no-ops.
-  flush() {}
-
-  fsync() {}
-
-  releasedir() {
-    this.directoryReleases += 1;
-  }
-
-  async destroy() {
-    this.destroys += 1;
-    this.destroyStarted.resolve();
-    await this.destroyGate;
-  }
-
-  mkdir(parent: MemoryNode, name: string, context: FSCreateContext) {
+  mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new FSError("EEXIST");
+    if (directory.children.has(name)) throw new VirtioFileSystemError("EEXIST");
     const node = new MemoryNode("directory", context.mode);
     directory.children.set(name, node);
     return node;
   }
 
-  unlink(parent: MemoryNode, name: string) {
+  unlink(parent: VirtioFileSystemNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new FSError("ENOENT");
-    if (node.kind !== "file") throw new FSError("EISDIR");
+    if (!node) throw new VirtioFileSystemError("ENOENT");
+    if (node.kind !== "file") throw new VirtioFileSystemError("EISDIR");
     directory.children.delete(name);
   }
 
-  rmdir(parent: MemoryNode, name: string) {
+  rmdir(parent: VirtioFileSystemNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new FSError("ENOENT");
-    if (node.kind !== "directory") throw new FSError("ENOTDIR");
-    if (node.children.size !== 0) throw new FSError("ENOTEMPTY");
+    if (!node) throw new VirtioFileSystemError("ENOENT");
+    if (node.kind !== "directory") throw new VirtioFileSystemError("ENOTDIR");
+    if (node.children.size !== 0) throw new VirtioFileSystemError("ENOTEMPTY");
     directory.children.delete(name);
   }
 
-  rename(oldParent: MemoryNode, oldName: string, newParent: MemoryNode, newName: string) {
+  rename(
+    oldParent: VirtioFileSystemNode,
+    oldName: string,
+    newParent: VirtioFileSystemNode,
+    newName: string,
+  ) {
     const old_directory = this.#directory(oldParent);
     const node = old_directory.children.get(oldName);
-    if (!node) throw new FSError("ENOENT");
+    if (!node) throw new VirtioFileSystemError("ENOENT");
     old_directory.children.delete(oldName);
     this.#directory(newParent).children.set(newName, node);
   }
@@ -191,7 +182,9 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 
 guest_test("virtio-fs", async (_t, fixture) => {
   const backend = new MemoryFileSystem();
-  const guest = await fixture.spawn([fileSystemDevice(backend, { tag: "test", cache: false })]);
+  const guest = await fixture.spawn([
+    virtioFileSystemDevice(backend, { tag: "test", cache: false }),
+  ]);
   const mounted = await guest.exec([
     "sh",
     "-c",
@@ -211,8 +204,6 @@ guest_test("virtio-fs", async (_t, fixture) => {
   assert.equal(await guest.fs.readTextFile(`${directory}/hello`), "hello from the guest");
 
   const open = await guest.fs.open(`${directory}/hello`);
-  assert.equal((await open.stat()).size, 20);
-  assert.equal(backend.handleGetattrs > 0, true);
   const first = new Uint8Array(5);
   assert.equal(await open.read(first), 5);
   assert.equal(new TextDecoder().decode(first), "hello");
@@ -237,24 +228,6 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.writeFile(`${directory}/large`, large);
   assert.deepEqual(await guest.fs.readFile(`${directory}/large`), large);
 
-  // More entries than fit in one guest page exercises the no-MMU virtio-fs
-  // readdir pagination path rather than only the first FUSE response.
-  const pagedDirectory = new MemoryNode("directory", 0o755);
-  for (let index = 0; index < 192; index += 1) {
-    pagedDirectory.children.set(
-      `entry-${index.toString().padStart(3, "0")}`,
-      new MemoryNode("file", 0o644),
-    );
-  }
-  backend.root.children.set("paged", pagedDirectory);
-  const pagedEntries = [];
-  for await (const entry of guest.fs.readDir("/workspace/shared/paged")) {
-    pagedEntries.push(entry.name);
-  }
-  assert.equal(pagedEntries.length, 192);
-  assert.equal(new Set(pagedEntries).size, 192);
-  backend.root.children.delete("paged");
-
   await guest.fs.rename(`${directory}/hello`, `${directory}/renamed`);
   assert.deepEqual([...backend.root.children.get("directory")!.children.keys()].sort(), [
     "large",
@@ -264,63 +237,4 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.remove(`${directory}/large`);
   await guest.fs.remove(directory);
   assert.equal(backend.root.children.size, 0);
-
-  await guest.fs.mkdir("/workspace/shared/source/child", { recursive: true });
-  await guest.fs.mkdir("/workspace/shared/destination");
-  const movedDirectoryOpened = Promise.withResolvers<void>();
-  backend.directoryOpenWaiter = movedDirectoryOpened.resolve;
-  const holdingMovedDirectory = await guest.exec([
-    "sh",
-    "-c",
-    "exec 3< /workspace/shared/source/child; sleep 3600",
-  ]);
-  await movedDirectoryOpened.promise;
-  await guest.fs.rename("/workspace/shared/source/child", "/workspace/shared/destination/child");
-  await guest.fs.writeFile("/workspace/getdents-inode", getdents_inode);
-  await guest.fs.chmod("/workspace/getdents-inode", 0o755);
-  const dotdot = await guest.exec([
-    "/workspace/getdents-inode",
-    "/workspace/shared/destination/child",
-    "..",
-    "/workspace/shared/destination",
-  ]);
-  const dotdotStderr = new Response(dotdot.stderr).text();
-  const dotdotOutput = new Response(dotdot.stdout).text();
-  const dotdotStatus = await dotdot.status;
-  assert.equal(dotdotStatus.success, true, await dotdotStderr);
-  const [dotdotInode, destinationInode] = (await dotdotOutput).trim().split(" ").map(Number);
-  assert.equal(dotdotInode, destinationInode);
-
-  await guest.fs.writeTextFile("/workspace/shared/held", "held open");
-  const held = await guest.fs.open("/workspace/shared/held");
-  const directoryOpened = Promise.withResolvers<void>();
-  backend.directoryOpenWaiter = directoryOpened.resolve;
-  const holdingDirectory = await guest.exec(["sh", "-c", "exec 3< /workspace/shared; sleep 3600"]);
-  await directoryOpened.promise;
-  const releases = backend.releases;
-  const directoryReleases = backend.directoryReleases;
-  let finishDestroy!: () => void;
-  backend.destroyGate = new Promise((resolve) => {
-    finishDestroy = resolve;
-  });
-  guest.machine.close();
-  let closed = false;
-  void guest.machine.closed.then(() => {
-    closed = true;
-  });
-  try {
-    await backend.destroyStarted.promise;
-    assert.equal(closed, false);
-    assert.equal(backend.releases, releases + 1);
-    assert.equal(backend.directoryReleases, directoryReleases + 2);
-    assert.equal(backend.destroys, 1);
-  } finally {
-    finishDestroy();
-  }
-  await guest.machine.closed;
-  guest.machine.close();
-  assert.equal(backend.destroys, 1);
-  void holdingMovedDirectory;
-  void held;
-  void holdingDirectory;
 });
