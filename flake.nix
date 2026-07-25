@@ -84,6 +84,37 @@
             treefmt --ci
             touch $out
           '';
+
+          flake-inputs =
+            let
+              lock = builtins.fromJSON (builtins.readFile ./flake.lock);
+
+              # The root node is this flake itself, and is the only node with no source.
+              nodes = builtins.attrValues (removeAttrs lock.nodes [ lock.root ]);
+
+              # Relative path inputs resolve against their parent, so they can't be fetched
+              # standalone — and they already live inside a source we root anyway.
+              isFetchable =
+                node: node.locked.type or null != "path" || builtins.substring 0 1 node.locked.path == "/";
+
+              # Inputs are content-addressed on narHash, so nodes sharing one are the same
+              # store path. Keying on it drops the duplicates that `follows` leaves behind.
+              unique = builtins.listToAttrs (
+                map (node: {
+                  name = node.locked.narHash;
+                  value = node;
+                }) (builtins.filter isFetchable nodes)
+              );
+
+              # The same expression nix uses in its own call-flake.nix.
+              fetchNode = node: (fetchTree (removeAttrs node.locked [ "dir" ])).outPath;
+
+              sources = map fetchNode (builtins.attrValues unique);
+            in
+            # Interpolating the store paths makes them inputSrcs of this derivation, so
+            # nix's reference scanner roots every input in the output's closure.
+            pkgs.writeText "flake-inputs" (builtins.concatStringsSep "\n" sources);
+
         }
       );
 
@@ -108,15 +139,6 @@
             env.sysroot = "${wasmpkgs.sysroot}";
           };
 
-          ci = pkgs.mkShellNoCC {
-            packages = [
-              pkgs.jq
-              pkgs.nix-eval-jobs
-              pkgs.nodejs
-              pkgs.pnpm_11
-              pkgs.wrangler
-            ];
-          };
         }
       );
 
