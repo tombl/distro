@@ -9,7 +9,6 @@
 # exactly like a nixpkgs package.
 {
   pkgs,
-  inputs,
   debug ? false,
 }:
 
@@ -30,12 +29,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # explicit flags because they exist to produce the wasm stdenv below; they
     # must not consume it.
     llvm-toolchain-unwrapped = callPackage ./llvm-toolchain/unwrapped.nix {
-      src = inputs.llvm-src;
     };
-    llvm-runtimes = callPackage ./llvm-runtimes/package.nix { src = inputs.llvm-src; };
+    llvm-runtimes = callPackage ./llvm-runtimes/package.nix { };
     llvm-toolchain = callPackage ./llvm-toolchain/package.nix { };
-    linux = callPackage ./linux/package.nix { src = inputs.linux-src; };
-    musl = callPackage ./musl/package.nix { src = inputs.musl-src; };
+    linux = callPackage ./linux/package.nix { };
+    musl = callPackage ./musl/package.nix { };
     sysroot-base = callPackage ./sysroot-base/package.nix { };
     sysroot = callPackage ./sysroot/package.nix { };
 
@@ -53,7 +51,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
 
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };
-    busybox = callPackage ./busybox/package.nix { src = inputs.busybox-src; };
+    busybox = callPackage ./busybox/package.nix { };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
     # hide whether the kernel and libc reached userspace correctly.

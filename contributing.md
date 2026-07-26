@@ -58,11 +58,17 @@ This runs the same formatter set as the flake's formatting check.
 
 ## Working on dependencies
 
-Every source (linux, musl, busybox, llvm, sqlite) is a flake input, so point
-any of them at a local checkout with:
+Each source is pinned by the package that owns it. Override the package's `src`
+argument to point it at a local checkout:
 
 ```
-nix build .#musl --override-input musl-src ~/src/distro/checkouts/musl
+nix build --impure --expr '
+  let
+    distro = builtins.getFlake (toString ./.);
+    wasmpkgs = distro.legacyPackages.${builtins.currentSystem};
+  in
+  wasmpkgs.musl.override { src = /home/me/src/musl; }
+'
 ```
 
 For toolchain-sized dependencies where a clean rebuild is too slow, work inside

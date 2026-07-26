@@ -3,7 +3,12 @@
   pkgs,
   lib,
   platform,
-  src,
+  src ? pkgs.fetchFromGitHub {
+    owner = "tombl";
+    repo = "llvm-project";
+    rev = "9aaceb42fef4f924a00126e0d66140d01482921c";
+    hash = "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=";
+  },
   llvm-toolchain-unwrapped,
   sysroot-base,
 }:

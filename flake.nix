@@ -1,27 +1,7 @@
 {
   description = "Packages for Linux on WebAssembly";
 
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    # keep-sorted start block=yes
-    busybox-src = {
-      url = "github:tombl/busybox";
-      flake = false;
-    };
-    linux-src = {
-      url = "github:tombl/linux";
-      flake = false;
-    };
-    llvm-src = {
-      url = "github:tombl/llvm-project/wasm-linux";
-      flake = false;
-    };
-    musl-src = {
-      url = "github:tombl/musl";
-      flake = false;
-    };
-    # keep-sorted end
-  };
+  inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
 
   nixConfig = {
     extra-substituters = [ "https://linuxwasm.cachix.org" ];
@@ -31,7 +11,7 @@
   };
 
   outputs =
-    { self, nixpkgs, ... }@inputs:
+    { self, nixpkgs }:
     let
       inherit (nixpkgs) lib;
       eachSystem =
@@ -59,7 +39,7 @@
       # The package scope is the product. It contains owner-oriented package
       # sets and non-derivation helpers, hence legacyPackages rather than only
       # the flat packages output.
-      legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs inputs; });
+      legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs; });
 
       # legacyPackages preserves the owner-oriented package sets. The packages
       # output projects each set's primary derivation back to the conventional
@@ -84,37 +64,6 @@
             treefmt --ci
             touch $out
           '';
-
-          flake-inputs =
-            let
-              lock = builtins.fromJSON (builtins.readFile ./flake.lock);
-
-              # The root node is this flake itself, and is the only node with no source.
-              nodes = builtins.attrValues (removeAttrs lock.nodes [ lock.root ]);
-
-              # Relative path inputs resolve against their parent, so they can't be fetched
-              # standalone — and they already live inside a source we root anyway.
-              isFetchable =
-                node: node.locked.type or null != "path" || builtins.substring 0 1 node.locked.path == "/";
-
-              # Inputs are content-addressed on narHash, so nodes sharing one are the same
-              # store path. Keying on it drops the duplicates that `follows` leaves behind.
-              unique = builtins.listToAttrs (
-                map (node: {
-                  name = node.locked.narHash;
-                  value = node;
-                }) (builtins.filter isFetchable nodes)
-              );
-
-              # The same expression nix uses in its own call-flake.nix.
-              fetchNode = node: (fetchTree (removeAttrs node.locked [ "dir" ])).outPath;
-
-              sources = map fetchNode (builtins.attrValues unique);
-            in
-            # Interpolating the store paths makes them inputSrcs of this derivation, so
-            # nix's reference scanner roots every input in the output's closure.
-            pkgs.writeText "flake-inputs" (builtins.concatStringsSep "\n" sources);
-
         }
       );
 
