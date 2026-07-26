@@ -5,7 +5,12 @@
   debug,
   linux,
   platform,
-  src,
+  src ? pkgs.fetchFromGitHub {
+    owner = "tombl";
+    repo = "busybox";
+    rev = "4ad91c87e7efeff15628bea7240b6055b2737644";
+    hash = "sha256-IwdmKbP2LPrw011n3DmsX75siuBlzc358Zk+IulwaVw=";
+  },
   vm-test,
 }:
 

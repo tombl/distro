@@ -3,7 +3,12 @@
   lib,
   debug,
   llvm-toolchain-unwrapped,
-  src,
+  src ? pkgs.fetchFromGitHub {
+    owner = "tombl";
+    repo = "musl";
+    rev = "cfaaf57ee3bb456809d50fcfdedb1134910f1bf6";
+    hash = "sha256-Zm6m64RJ9Bs4xOV4kgHm9xpOe5VJzX2UW8FSi9w+gVw=";
+  },
 }:
 
 pkgs.stdenvNoCC.mkDerivation {

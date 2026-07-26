@@ -1,70 +1,5 @@
 {
   "nodes": {
-    "busybox-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1784446997,
-        "narHash": "sha256-IwdmKbP2LPrw011n3DmsX75siuBlzc358Zk+IulwaVw=",
-        "owner": "tombl",
-        "repo": "busybox",
-        "rev": "4ad91c87e7efeff15628bea7240b6055b2737644",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "repo": "busybox",
-        "type": "github"
-      }
-    },
-    "linux-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1784729724,
-        "narHash": "sha256-qqAwmfv7h8+6dfdBksun7wr+QQ+G/3lhg8CPW1Aq90c=",
-        "owner": "tombl",
-        "repo": "linux",
-        "rev": "cc1bf87e3e277d506aa7372dacab29d8455aac6b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "repo": "linux",
-        "type": "github"
-      }
-    },
-    "llvm-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1784540141,
-        "narHash": "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=",
-        "owner": "tombl",
-        "repo": "llvm-project",
-        "rev": "9aaceb42fef4f924a00126e0d66140d01482921c",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "ref": "wasm-linux",
-        "repo": "llvm-project",
-        "type": "github"
-      }
-    },
-    "musl-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1784652324,
-        "narHash": "sha256-Zm6m64RJ9Bs4xOV4kgHm9xpOe5VJzX2UW8FSi9w+gVw=",
-        "owner": "tombl",
-        "repo": "musl",
-        "rev": "cfaaf57ee3bb456809d50fcfdedb1134910f1bf6",
-        "type": "github"
-      },
-      "original": {
-        "owner": "tombl",
-        "repo": "musl",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784497964,
@@ -83,10 +18,6 @@
     },
     "root": {
       "inputs": {
-        "busybox-src": "busybox-src",
-        "linux-src": "linux-src",
-        "llvm-src": "llvm-src",
-        "musl-src": "musl-src",
         "nixpkgs": "nixpkgs"
       }
     }
