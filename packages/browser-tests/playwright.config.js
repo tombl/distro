@@ -5,13 +5,11 @@ export default defineConfig({
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? "./test-results",
   timeout: 180_000,
   workers: 1,
-  use: {
-    baseURL: "http://127.0.0.1:4173",
-  },
   webServer: {
     command: "node server.js",
-    port: 4173,
-    reuseExistingServer: false,
+    wait: {
+      stdout: /Listening on (?<playwright_test_base_url>http:\/\/127\.0\.0\.1:\d+)/,
+    },
   },
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },

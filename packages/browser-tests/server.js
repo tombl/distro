@@ -78,4 +78,6 @@ const server = createServer(async (request, response) => {
   createReadStream(path).pipe(response);
 });
 
-server.listen(4173, "127.0.0.1");
+server.listen(0, "127.0.0.1", () => {
+  console.log(`Listening on http://127.0.0.1:${server.address().port}`);
+});

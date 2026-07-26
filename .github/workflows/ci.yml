@@ -8,60 +8,80 @@ on:
       - published
 
 jobs:
-  list:
-    runs-on: ubuntu-24.04
-    outputs:
-      matrix: ${{ steps.list.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
-      - uses: cachix/cachix-action@v17
-        with:
-          name: linuxwasm
-          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: List packages
-        id: list
-        run: |
-          eval "$(nix print-dev-env .#ci)"
-          matrix="$(nix-eval-jobs --flake .#checks.x86_64-linux --check-cache-status | jq -sc '
-            [
-              .[]
-              | select(.isCached | not).attr
-              | select(test("-shell$") | not)
-            ]
-            | if length > 0 then . else ["formatting"] end
-          ')"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: list
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        pkg: ${{ fromJson(needs.list.outputs.matrix) }}
-    name: Build ${{ matrix.pkg }}
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
+      - uses: nixbuild/nix-quick-install-action@v35
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: Build
+      - name: Build checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          eval "$(nix print-dev-env .#ci)"
-          nix build '.#checks.x86_64-linux.${{ matrix.pkg }}^*' --print-build-logs
+          checks_file="$RUNNER_TEMP/checks.json"
+          nix eval --json '.#checks.x86_64-linux' --apply '
+            checks:
+            builtins.mapAttrs (
+              _: check:
+              {
+                drv = check.drvPath;
+                outputs = map (output: (builtins.getAttr output check).outPath) check.outputs;
+              }
+            ) checks
+          ' > "$checks_file"
 
-  packages:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: nixbuild/nix-quick-install-action@v34
-      - uses: cachix/cachix-action@v17
-        with:
-          name: linuxwasm
-          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+          status() {
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              --field state="$2" \
+              --field context="checks/$1" \
+              --field description="$3" \
+              --field target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              >/dev/null
+          }
+
+          mapfile -t checks < <(jq --raw-output 'keys[]' "$checks_file")
+          installables=()
+          for check in "${checks[@]}"; do
+            status "$check" pending "Build in progress"
+            drv=$(jq --raw-output --arg check "$check" '.[$check].drv' "$checks_file")
+            installables+=("$drv^*")
+          done
+
+          set +e
+          nix build \
+            --max-jobs auto \
+            --keep-going \
+            --no-link \
+            --print-build-logs \
+            "${installables[@]}"
+          build_status=$?
+          set -e
+
+          for check in "${checks[@]}"; do
+            mapfile -t outputs < <(
+              jq --raw-output --arg check "$check" '.[$check].outputs[]' "$checks_file"
+            )
+            state=success
+            description="Build passed"
+            for output in "${outputs[@]}"; do
+              if ! nix path-info "$output" >/dev/null 2>&1; then
+                state=failure
+                description="Build failed"
+                break
+              fi
+            done
+            status "$check" "$state" "$description"
+          done
+
+          exit "$build_status"
       - name: Build npm packages
         run: |
           nix build .#linux --out-link result-linux --print-build-logs
@@ -76,23 +96,13 @@ jobs:
           if-no-files-found: error
 
   stage-npm:
-    name: Stage ${{ matrix.name }} on npm
-    needs:
-      - build
-      - packages
+    name: Stage packages on npm
+    needs: build
     if: github.event_name == 'release' && github.repository == 'tombl/distro'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: "@tombl/linux"
-            tarball: linux.tgz
-          - name: "@tombl/linux-guest"
-            tarball: linux-guest.tgz
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -107,4 +117,6 @@ jobs:
       - name: Stage package
         env:
           NPM_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
-        run: npm stage publish "./npm-packages/${{ matrix.tarball }}" --access public --tag "$NPM_TAG"
+        run: |
+          npm stage publish ./npm-packages/linux.tgz --access public --tag "$NPM_TAG"
+          npm stage publish ./npm-packages/linux-guest.tgz --access public --tag "$NPM_TAG"
