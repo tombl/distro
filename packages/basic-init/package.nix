@@ -172,6 +172,7 @@ in
       credentials = check "credentials";
       cwd = check "cwd";
       eventfd-unix = check "eventfd-unix";
+      exec-args = check "exec-args";
       futex = check "futex";
       initcpio = initcpioCheck;
       kernel-memory-growth = kernelMemoryGrowthCheck;
