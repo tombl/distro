@@ -48,6 +48,17 @@ let
     cpus = 2;
   };
 
+  remoteMemoryInitramfs = vm-test.mkInitramfs {
+    name = "basic-init-remote-memory";
+    init = "${buildInit "basic-init-remote-memory" "tests/remote-memory.c"}/bin/init";
+  };
+
+  remoteMemoryCheck = vm-test.vmTest {
+    name = "basic-init-remote-memory";
+    initramfs = remoteMemoryInitramfs;
+    cpus = 2;
+  };
+
   moduleDefinedMemory =
     pkgs.runCommand "module-defined-memory.wasm"
       {
@@ -139,7 +150,7 @@ let
 in
 (buildInit "basic-init" "init.c").overrideAttrs {
   passthru = {
-    inherit schedulerHandoffInitramfs;
+    inherit remoteMemoryInitramfs schedulerHandoffInitramfs;
     checks = {
       auxv = check "auxv";
       boot = check "boot";
@@ -171,6 +182,7 @@ in
       memory-abi = memoryAbiCheck;
       proc-self-mem = check "proc-self-mem";
       pty = check "pty";
+      remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
       setjmp = setjmpCheck;
       signal-syscall-return = signalSyscallReturnCheck "plain" "";

@@ -6,8 +6,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "musl";
-    rev = "9b922b721dc6ff59d97bff02ac3e3517cbc7e929";
-    hash = "sha256-hauHjeEgvsADegjQRWXHI54XjHCUTsYtboFVdWQzV8U=";
+    rev = "32b163fb0cb7c54500f0f79274bb0f7685d92b78";
+    hash = "sha256-6ZW7S83mrI+JGj1uMgdpC124x68kCN+e3l80IXtuP+E=";
   },
 }:
 

@@ -58,6 +58,8 @@ const server = createServer(async (request, response) => {
         path = join(directory, relative.split("/").at(-1));
       } else if (relative === "scheduler-handoff.cpio") {
         path = await build("basic-init.schedulerHandoffInitramfs");
+      } else if (relative === "remote-vm.cpio") {
+        path = await build("basic-init.remoteMemoryInitramfs");
       }
     } catch (error) {
       console.error(`failed to build ${relative}:`, error.stderr ?? error);

@@ -42,3 +42,5 @@
 - Enable Python's `_multiprocessing` and `_posixshmem` after wasm musl and the
   kernel provide working POSIX named semaphores, with integration tests.
 - Document the subprocess `close_fds` fd-snapshot race.
+- Fix the browser CPU-handoff race where a stale typed-array view can throw a
+  `RangeError` after concurrent memory growth.

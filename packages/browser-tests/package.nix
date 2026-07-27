@@ -25,6 +25,7 @@ let
         cp ${./index.html} $out/index.html
         cp ${./playwright.config.js} $out/playwright.config.js
         cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
+        cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
         cp ${./server.js} $out/server.js
         cp -r ${./tests} $out/tests
         cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
