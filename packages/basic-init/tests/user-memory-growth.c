@@ -5,6 +5,9 @@
 
 enum {
 	page_size = 64 * 1024,
+	small_allocation_count = 256,
+	small_size = 1024,
+	split_size = 1024 * 1024,
 	second_size = 8 * 1024 * 1024,
 };
 
@@ -28,6 +31,9 @@ int main(void)
 	unsigned char *first;
 	size_t first_pages;
 	unsigned char *second;
+	size_t second_pages;
+	unsigned char *small[small_allocation_count];
+	unsigned char *split;
 
 	if (initial_pages != module_minimum_pages)
 		test_fail("exec did not start at the module memory minimum");
@@ -48,12 +54,61 @@ int main(void)
 	if (!second)
 		test_perror("second malloc");
 	memset(second, 0xa5, second_size);
-	if (__builtin_wasm_memory_size(0) <= first_pages)
+	second_pages = __builtin_wasm_memory_size(0);
+	if (second_pages <= first_pages)
 		test_fail("second malloc did not grow user memory");
 
 	check_bytes(first, first_size, 0x5a);
 	check_bytes(second, second_size, 0xa5);
 	free(second);
+
+	second = malloc(second_size);
+	if (!second)
+		test_perror("reused malloc");
+	memset(second, 0x3c, second_size);
+	if (__builtin_wasm_memory_size(0) != second_pages)
+		test_fail("malloc did not reuse freed map storage");
+	check_bytes(first, first_size, 0x5a);
+	check_bytes(second, second_size, 0x3c);
+	free(second);
+
+	second = calloc(1, second_size);
+	if (!second)
+		test_perror("reused calloc");
+	check_bytes(second, second_size, 0);
+	if (__builtin_wasm_memory_size(0) != second_pages)
+		test_fail("calloc did not reuse freed map storage");
+	free(second);
+
+	split = malloc(split_size);
+	if (!split)
+		test_perror("split malloc");
+	memset(split, 0x6d, split_size);
+	if (__builtin_wasm_memory_size(0) != second_pages)
+		test_fail("malloc did not split freed map storage");
+	free(split);
+
+	second = malloc(second_size);
+	if (!second)
+		test_perror("coalesced malloc");
+	if (__builtin_wasm_memory_size(0) != second_pages)
+		test_fail("malloc did not coalesce freed map storage");
+	memset(second, 0x7e, second_size);
+	free(second);
+
+	for (size_t i = 0; i < small_allocation_count; i++) {
+		small[i] = malloc(small_size);
+		if (!small[i])
+			test_perror("small malloc from dirty map storage");
+		memset(small[i], (unsigned char)i, small_size);
+	}
+	if (__builtin_wasm_memory_size(0) != second_pages)
+		test_fail("small mallocs did not reuse dirty map storage");
+	for (size_t i = 0; i < small_allocation_count; i++) {
+		check_bytes(small[i], small_size, (unsigned char)i);
+		free(small[i]);
+	}
+	check_bytes(first, first_size, 0x5a);
 	free(first);
 	test_pass();
 }
