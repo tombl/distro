@@ -58,6 +58,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     lua = callPackage ./lua/package.nix { };
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
+    openssl = callPackage ./openssl/package.nix { };
     readline = callPackage ./readline/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     xz = callPackage ./xz/package.nix { };
