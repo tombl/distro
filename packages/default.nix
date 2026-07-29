@@ -55,6 +55,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     bzip2 = callPackage ./bzip2/package.nix { };
     curl = callPackage ./curl/package.nix { };
     file = callPackage ./file/package.nix { };
+    git = callPackage ./git/package.nix { };
     jq = callPackage ./jq/package.nix { };
     lua = callPackage ./lua/package.nix { };
     make = callPackage ./make/package.nix { };
