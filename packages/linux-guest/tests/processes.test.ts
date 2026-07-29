@@ -73,6 +73,34 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
+    await t.test("isolates user module traps to the offending process", async () => {
+      const survivor = await guest.exec(["cat"]);
+      const survivor_output = collect(survivor.stdout);
+      const crashed = await guest.exec(["/workspace/user-trap"]);
+      assert.deepEqual(await crashed.status, {
+        success: false,
+        code: 0,
+        signal: 11,
+      });
+
+      const input = survivor.stdin.getWriter();
+      await input.write(new TextEncoder().encode("still running\n"));
+      await input.close();
+      assert.equal(new TextDecoder().decode(await survivor_output), "still running\n");
+      assert.deepEqual(await survivor.status, {
+        success: true,
+        code: 0,
+        signal: null,
+      });
+
+      const after = await guest.exec(["true"]);
+      assert.deepEqual(await after.status, {
+        success: true,
+        code: 0,
+        signal: null,
+      });
+    });
+
     await t.test("reports explicit exit statuses", async () => {
       const exited = await guest.exec(["sh", "-c", "exit 37"]);
       assert.deepEqual(await exited.status, {
