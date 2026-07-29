@@ -38,3 +38,4 @@
 ## Package follow-ups
 
 - Complete static `libmagic.pc` metadata for consumers.
+- Complete static `libjq.pc` metadata for consumers.
