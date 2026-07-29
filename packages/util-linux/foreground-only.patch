@@ -1,0 +1,74 @@
+Keep programs whose useful foreground operation does not require fork.
+
+--- a/sys-utils/ldattach.c
++++ b/sys-utils/ldattach.c
+@@ -484,8 +484,13 @@ int main(int argc, char **argv)
+ 		gsm0710_set_conf(tty_fd, gsm_mtu);
+ 
+ 	/* Go into background if not in debug mode. */
++#ifdef __wasm__
++	if (!debug)
++		errx(EXIT_FAILURE, _("daemon mode is unavailable; use --debug"));
++#else
+ 	if (!debug && daemon(0, 0) < 0)
+ 		err(EXIT_FAILURE, _("cannot daemonize"));
++#endif
+ 
+ 	/* Sleep to keep the line discipline active. */
+ 	pause();
+--- a/sys-utils/readprofile.c
++++ b/sys-utils/readprofile.c
+@@ -62,6 +62,9 @@ static FILE *myopen(char *name, pid_t *cpid)
+ 	*cpid = 0;
+ 
+ 	if (ul_endswith(name, ".gz")) {
++#ifdef __wasm__
++		errx(EXIT_FAILURE, _("compressed maps are unavailable; decompress the file first"));
++#else
+ 		int fd[2];
+ 		pid_t pid;
+ 		FILE *fp;
+@@ -92,6 +95,7 @@ static FILE *myopen(char *name, pid_t *cpid)
+ 		}
+ 		*cpid = pid;
+ 		return fp;
++#endif
+ 	}
+ 
+ 	return fopen(name, "r");
+--- a/text-utils/more.c
++++ b/text-utils/more.c
+@@ -1239,5 +1239,8 @@ static void __attribute__((__format__ (__printf__, 3, 4)))
+ execute(struct more_control *ctl, char *filename, const char *cmd, ...)
+ {
++#ifdef __wasm__
++	fputs(_("external commands are unavailable\n"), stderr);
++#else
+ 	pid_t id;
+ 	va_list argp;
+ 	char *arg;
+@@ -1292,6 +1295,7 @@ execute(struct more_control *ctl, char *filename, const char *cmd, ...)
+ 		}
+ 	} else
+ 		fputs(_("can't fork\n"), stderr);
++#endif
+ 	set_tty(ctl);
+ 	print_separator('-', 24);
+ 	output_prompt(ctl, filename);
+--- a/login-utils/sulogin.c
++++ b/login-utils/sulogin.c
+@@ -1182,7 +1182,13 @@ int main(int argc, char **argv)
+ 		if (con->flags & CON_EIO)
+ 			goto next;
+ 
+-		switch ((con->pid = fork())) {
++#ifdef __wasm__
++		/* The wasm guest has one console; service it in this process. */
++		con->pid = 0;
++#else
++		con->pid = fork();
++#endif
++		switch (con->pid) {
+ 		case 0:
+ 			mask_signal(SIGCHLD, SIG_DFL, NULL);
+ 			dup2(con->fd, STDERR_FILENO);

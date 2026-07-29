@@ -1,0 +1,93 @@
+--- a/sys-utils/setsid.c
++++ b/sys-utils/setsid.c
+@@ -23,6 +23,10 @@
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ 
++/* wasm has no fork(); the new-session child comes from posix_spawn. */
++#include <spawn.h>
++extern char **environ;
++
+ #include "c.h"
+ #include "nls.h"
+ #include "closestream.h"
+@@ -95,31 +99,52 @@
+ 		errtryhelp(EXIT_FAILURE);
+ 	}
+ 
+-	if (forcefork || getpgrp() == getpid()) {
+-		pid = fork();
+-		switch (pid) {
+-		case -1:
+-			err(EXIT_FAILURE, _("fork"));
+-		case 0:
+-			/* child */
+-			break;
+-		default:
+-			/* parent */
+-			if (!status)
+-				return EXIT_SUCCESS;
+-			if (wait(&status) != pid)
+-				err(EXIT_FAILURE, "wait");
+-			if (WIFEXITED(status))
+-				return WEXITSTATUS(status);
+-			err(status, _("child %d did not exit normally"), pid);
+-		}
+-	}
+-	if (setsid() < 0)
+-		/* cannot happen */
+-		err(EXIT_FAILURE, _("setsid failed"));
+-
+-	if (ctty && ioctl(STDIN_FILENO, TIOCSCTTY, 1))
+-		err(EXIT_FAILURE, _("failed to set the controlling terminal"));
+-	execvp(argv[optind], argv + optind);
+-	errexec(argv[optind]);
++	if (forcefork || getpgrp() == getpid()) {
++		posix_spawnattr_t attr;
++		int rc;
++
++		/*
++		 * The original code forks only for --fork or when setsid() would
++		 * otherwise fail because this process is a process-group leader.
++		 * Express just that fork path as POSIX_SPAWN_SETSID. The spawned
++		 * child is already exec'd when posix_spawnp returns. Preserve setsid's
++		 * normal --fork behavior by leaving it running unless --wait requested
++		 * its status.
++		 */
++		if (ctty)
++			/*
++			 * -c needs ioctl(TIOCSCTTY) in the child after setsid(), which
++			 * posix_spawn cannot express; there is no controlling terminal
++			 * on this platform in any case.
++			 */
++			errx(EXIT_FAILURE,
++			     _("--ctty is not supported on this platform"));
++
++		posix_spawnattr_init(&attr);
++		posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
++		/* posix_spawnp does the PATH search the old execvp() did. */
++		rc = posix_spawnp(&pid, argv[optind], NULL, &attr,
++				  argv + optind, environ);
++		posix_spawnattr_destroy(&attr);
++		if (rc != 0) {
++			errno = rc;
++			errexec(argv[optind]);
++		}
++
++		if (!status)
++			return EXIT_SUCCESS;
++		if (waitpid(pid, &status, 0) != pid)
++			err(EXIT_FAILURE, "waitpid");
++		if (WIFEXITED(status))
++			return WEXITSTATUS(status);
++		err(status, _("child %d did not exit normally"), pid);
++	}
++	if (setsid() < 0)
++		/* cannot happen */
++		err(EXIT_FAILURE, _("setsid failed"));
++
++	if (ctty && ioctl(STDIN_FILENO, TIOCSCTTY, 1))
++		err(EXIT_FAILURE, _("failed to set the controlling terminal"));
++	execvp(argv[optind], argv + optind);
++	errexec(argv[optind]);
+ }

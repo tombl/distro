@@ -1,0 +1,242 @@
+--- a/configure.ac
++++ b/configure.ac
+@@ -2269,12 +2269,18 @@
+   [], [UL_DEFAULT_ENABLE([scriptutils], [check])]
+ )
+ 
+-UL_ENABLE_ALIAS([script], [scriptutils])
++AC_ARG_ENABLE([script],
++  AS_HELP_STRING([--disable-script], [do not build script]),
++  [], [UL_DEFAULT_ENABLE([script], [check])]
++)
+ UL_BUILD_INIT([script])
+ UL_REQUIRES_HAVE([script], [pty], [openpty function (libutil)])
+ AM_CONDITIONAL([BUILD_SCRIPT], [test "x$build_script" = xyes])
+ 
+-UL_ENABLE_ALIAS([scriptreplay], [scriptutils])
++AC_ARG_ENABLE([scriptreplay],
++  AS_HELP_STRING([--disable-scriptreplay], [do not build scriptreplay]),
++  [], [UL_DEFAULT_ENABLE([scriptreplay], [check])]
++)
+ UL_BUILD_INIT([scriptreplay])
+ AM_CONDITIONAL([BUILD_SCRIPTREPLAY], [test "x$build_scriptreplay" = xyes])
+ 
+--- a/term-utils/script.c
++++ b/term-utils/script.c
+@@ -41,6 +41,7 @@
+ #include <sys/ioctl.h>
+ #include <sys/time.h>
+ #include <signal.h>
++#include <sched.h>
+ #include <errno.h>
+ #include <string.h>
+ #include <getopt.h>
+@@ -761,6 +762,39 @@
+ 		       "Program not started."), filename);
+ }
+ 
++struct script_child_args {
++	struct script_control *ctl;
++	const char *shell;
++};
++
++static int script_child(void *data)
++{
++	struct script_child_args *args = data;
++	struct script_control *ctl = args->ctl;
++	const char *shell = args->shell;
++	const char *shname;
++
++	ul_pty_init_slave(ctl->pty);
++	signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
++
++	shname = strrchr(shell, '/');
++	shname = shname ? shname + 1 : shell;
++
++	if (access(shell, X_OK) == 0) {
++		if (ctl->command)
++			execl(shell, shname, "-c", ctl->command, (char *) NULL);
++		else
++			execl(shell, shname, "-i", (char *) NULL);
++	} else {
++		if (ctl->command)
++			execlp(shname, shname, "-c", ctl->command, (char *) NULL);
++		else
++			execlp(shname, shname, "-i", (char *) NULL);
++	}
++
++	err(EXIT_FAILURE, "failed to execute %s", shell);
++}
++
+ int main(int argc, char **argv)
+ {
+ 	struct script_control ctl = {
+@@ -773,6 +807,9 @@
+ 	const char *timingfile = NULL, *shell = NULL;
+ 	char **cmd_argv = NULL;
+ 	int cmd_argc = 0;
++	const size_t child_stack_size = 64 * 1024;
++	char *child_stack;
++	struct script_child_args child_args;
+ 
+ 	enum { FORCE_OPTION = CHAR_MAX + 1 };
+ 
+@@ -1019,40 +1056,18 @@
+ 	 * We have terminal, do not use err() from now, use "goto done"
+ 	 */
+ 
+-	switch ((int) (ctl.child = fork())) {
+-	case -1: /* error */
++	child_args = (struct script_child_args) {
++		.ctl = &ctl,
++		.shell = shell,
++	};
++	child_stack = xmalloc(child_stack_size);
++	ctl.child = clone(script_child, child_stack + child_stack_size,
++			  SIGCHLD, &child_args);
++	free(child_stack);
++	if (ctl.child == -1) {
+ 		warn(_("cannot create child process"));
+ 		rc = -errno;
+ 		goto done;
+-
+-	case 0: /* child */
+-	{
+-		const char *shname;
+-
+-		ul_pty_init_slave(ctl.pty);
+-
+-		signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
+-
+-		shname = strrchr(shell, '/');
+-		shname = shname ? shname + 1 : shell;
+-
+-		if (access(shell, X_OK) == 0) {
+-			if (ctl.command)
+-				execl(shell, shname, "-c", ctl.command, (char *)NULL);
+-			else
+-				execl(shell, shname, "-i", (char *)NULL);
+-		} else {
+-			if (ctl.command)
+-				execlp(shname, shname, "-c", ctl.command, (char *)NULL);
+-			else
+-				execlp(shname, shname, "-i", (char *)NULL);
+-		}
+-
+-		err(EXIT_FAILURE, "failed to execute %s", shell);
+-		break;
+-	}
+-	default:
+-		break;
+ 	}
+ 
+ 	/* parent */
+--- a/term-utils/scriptlive.c
++++ b/term-utils/scriptlive.c
+@@ -23,6 +23,7 @@
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <termios.h>
++#include <sched.h>
+ #include <paths.h>
+ 
+ #include "c.h"
+@@ -156,6 +157,38 @@ static int mainloop_cb(void *data)
+ 	return process_next_step(ss);
+ }
+ 
++struct scriptlive_child_args {
++	struct scriptlive *ss;
++	const char *shell;
++	const char *command;
++};
++
++static int scriptlive_child(void *data)
++{
++	struct scriptlive_child_args *args = data;
++	const char *shname;
++
++	ul_pty_init_slave(args->ss->pty);
++	signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
++
++	shname = strrchr(args->shell, '/');
++	shname = shname ? shname + 1 : args->shell;
++
++	if (access(args->shell, X_OK) == 0) {
++		if (args->command)
++			execl(args->shell, shname, "-c", args->command, (char *) NULL);
++		else
++			execl(args->shell, shname, "-i", (char *) NULL);
++	} else {
++		if (args->command)
++			execlp(shname, shname, "-c", args->command, (char *) NULL);
++		else
++			execlp(shname, shname, "-i", (char *) NULL);
++	}
++
++	err(EXIT_FAILURE, "failed to execute %s", args->shell);
++}
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -170,6 +204,9 @@ main(int argc, char *argv[])
+ 	struct ul_pty_callbacks *cb;
+ 	struct scriptlive ss = { .pty = NULL };
+ 	pid_t child;
++	const size_t child_stack_size = 64 * 1024;
++	char *child_stack;
++	struct scriptlive_child_args child_args;
+ 
+ 	static const struct option longopts[] = {
+ 		{ "command",    required_argument,      0, 'c' },
+@@ -308,39 +345,18 @@ main(int argc, char *argv[])
+ 
+ 	fflush(stdout);			/* ??? */
+ 
+-	switch ((int) (child = fork())) {
+-	case -1: /* error */
++	child_args = (struct scriptlive_child_args) {
++		.ss = &ss,
++		.shell = shell,
++		.command = command,
++	};
++	child_stack = xmalloc(child_stack_size);
++	child = clone(scriptlive_child, child_stack + child_stack_size,
++		      SIGCHLD, &child_args);
++	free(child_stack);
++	if (child == -1) {
+ 		ul_pty_cleanup(ss.pty);
+ 		err(EXIT_FAILURE, _("cannot create child process"));
+-		break;
+-
+-	case 0: /* child */
+-	{
+-		const char *shname;
+-
+-		ul_pty_init_slave(ss.pty);
+-
+-		signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
+-
+-		shname = strrchr(shell, '/');
+-		shname = shname ? shname + 1 : shell;
+-
+-		if (access(shell, X_OK) == 0) {
+-			if (command)
+-				execl(shell, shname, "-c", command, (char *)NULL);
+-			else
+-				execl(shell, shname, "-i", (char *)NULL);
+-		} else {
+-			if (command)
+-				execlp(shname, shname, "-c", command, (char *)NULL);
+-			else
+-				execlp(shname, shname, "-i", (char *)NULL);
+-		}
+-		err(EXIT_FAILURE, "failed to execute %s", shell);
+-		break;
+-	}
+-	default:
+-		break;
+ 	}
+ 
+ 	/* parent */

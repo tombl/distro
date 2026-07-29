@@ -1,0 +1,84 @@
+libmount: keep direct operations when fork is unavailable
+
+The direct mount/umount syscalls and all of libmount's parsing and inspection
+APIs work on wasm.  Only external filesystem helpers, idmapped namespace
+creation, and the explicitly requested parallel context mode fundamentally
+need fork.  Report those individual operations as unsupported instead of
+discarding libmount and every program that uses it.
+
+--- a/libmount/src/context_mount.c
++++ b/libmount/src/context_mount.c
+@@ -378,6 +378,9 @@ static int exec_helper(struct libmnt_context *cxt)
+ 	assert(cxt->helper);
+ 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
+ 
++#ifdef __wasm__
++	return -ENOSYS;
++#else
+ 	DBG(CXT, ul_debugobj(cxt, "mount: executing helper %s", cxt->helper));
+ 
+ 	if (ns_tgt->fd != -1
+@@ -499,6 +502,7 @@ static int exec_helper(struct libmnt_context *cxt)
+ 
+ 	free(namespace);
+ 	return rc;
++#endif
+ }
+ 
+ /*
+--- a/libmount/src/context_umount.c
++++ b/libmount/src/context_umount.c
+@@ -683,6 +683,9 @@ static int exec_helper(struct libmnt_context *cxt)
+ 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
+ 	assert(cxt->helper_exec_status == 1);
+ 
++#ifdef __wasm__
++	return -ENOSYS;
++#else
+ 	if (mnt_context_is_fake(cxt)) {
+ 		DBG(CXT, ul_debugobj(cxt, "fake mode: does not execute helper"));
+ 		cxt->helper_exec_status = rc = 0;
+@@ -780,6 +783,7 @@ static int exec_helper(struct libmnt_context *cxt)
+ 
+ 	free(namespace);
+ 	return rc;
++#endif
+ }
+ 
+ /*
+--- a/libmount/src/hook_idmap.c
++++ b/libmount/src/hook_idmap.c
+@@ -194,4 +194,7 @@ static int get_userns_fd_from_idmap(struct list_head *idmap)
+ {
++#ifdef __wasm__
++	return -ENOSYS;
++#else
+ 	int fd_userns = -1;
+ 	ssize_t rc = -1;
+ 	char c = '1';
+@@ -258,6 +261,7 @@ err_close_sock:
+ 	close(sock_fds[1]);
+ 
+ 	return fd_userns;
++#endif
+ }
+ 
+ static int hook_prepare(
+--- a/libmount/src/context.c
++++ b/libmount/src/context.c
+@@ -3236,4 +3236,7 @@ int mnt_fork_context(struct libmnt_context *cxt)
+ {
++#ifdef __wasm__
++	return -ENOSYS;
++#else
+ 	int rc = 0;
+ 	pid_t pid;
+ 
+@@ -3266,6 +3269,7 @@ int mnt_fork_context(struct libmnt_context *cxt)
+ 	}
+ 
+ 	return rc;
++#endif
+ }
+ 
+ int mnt_context_wait_for_children(struct libmnt_context *cxt,
