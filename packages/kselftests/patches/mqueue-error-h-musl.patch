@@ -29,5 +29,5 @@ __GLIBC__.
 +		exit(status);
 +}
  
- #include "../kselftest.h"
+ #include "kselftest.h"
  

@@ -7,7 +7,7 @@ wasm port's intentionally smaller process and memory surface.
 
 --- a/tools/testing/selftests/pidfd/pidfd_test.c
 +++ b/tools/testing/selftests/pidfd/pidfd_test.c
-@@ -89,6 +89,13 @@ static int test_pidfd_send_signal_simple_success(void)
+@@ -141,6 +141,13 @@
  	return 0;
  }
  
@@ -21,7 +21,7 @@ wasm port's intentionally smaller process and memory surface.
  static int test_pidfd_send_signal_exited_fail(void)
  {
  	int pidfd, ret, saved_errno;
-@@ -103,14 +110,12 @@ static int test_pidfd_send_signal_exited_fail(void)
+@@ -155,14 +162,12 @@
  		return 0;
  	}
  
@@ -38,7 +38,7 @@ wasm port's intentionally smaller process and memory surface.
  	snprintf(buf, sizeof(buf), "/proc/%d", pid);
  
  	pidfd = open(buf, O_DIRECTORY | O_CLOEXEC);
-@@ -140,6 +145,7 @@ static int test_pidfd_send_signal_exited_fail(void)
+@@ -193,6 +198,7 @@
  	return 0;
  }
  
@@ -46,7 +46,7 @@ wasm port's intentionally smaller process and memory surface.
  /*
   * Maximum number of cycles we allow. This is equivalent to PID_MAX_DEFAULT.
   * If users set a higher limit or we have cycled PIDFD_MAX_DEFAULT number of
-@@ -346,6 +352,7 @@ static int test_pidfd_send_signal_recycled_pid_fail(void)
+@@ -399,6 +405,7 @@
  
  	return ret;
  }
@@ -54,7 +54,7 @@ wasm port's intentionally smaller process and memory surface.
  
  static int test_pidfd_send_signal_syscall_support(void)
  {
-@@ -477,6 +484,7 @@ static void test_pidfd_poll_exec(int use_waitpid)
+@@ -530,6 +537,7 @@
  		ksft_test_result_pass("%s test: Passed\n", test_name);
  }
  
@@ -62,7 +62,7 @@ wasm port's intentionally smaller process and memory surface.
  static void *test_pidfd_poll_leader_exit_thread(void *priv)
  {
  	ksft_print_msg("Child Thread: starting. pid %d tid %ld ; and sleeping\n",
-@@ -556,19 +564,28 @@ static void test_pidfd_poll_leader_exit(int use_waitpid)
+@@ -609,20 +617,29 @@
  	else
  		ksft_test_result_pass("%s test: Passed\n", test_name);
  }
@@ -90,5 +90,6 @@ wasm port's intentionally smaller process and memory surface.
  	test_pidfd_send_signal_recycled_pid_fail();
 +#endif
  
- 	return ksft_exit_pass();
+-	ksft_exit_pass();
++	ksft_exit_pass();
  }

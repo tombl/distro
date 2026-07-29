@@ -2,13 +2,8 @@
   pkgs,
   lib,
   stdenv,
-  src ? pkgs.fetchFromGitHub {
-    owner = "tombl";
-    repo = "linux";
-    rev = "cc1bf87e3e277d506aa7372dacab29d8455aac6b";
-    hash = "sha256-qqAwmfv7h8+6dfdBksun7wr+QQ+G/3lhg8CPW1Aq90c=";
-  },
   linux,
+  src ? linux.src,
   busybox,
   vm-test,
 }:

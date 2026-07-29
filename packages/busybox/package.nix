@@ -73,6 +73,9 @@ let
       config START_STOP_DAEMON y
       config SWAPOFF n
       config SWAPON n
+      # Linux 7.1 removed the CBQ qdisc UAPI which this BusyBox release's tc
+      # applet still requires. None of our guest networking uses that applet.
+      config TC n
       config TCPSVD y
       config TELNETD n
       config TIME y
