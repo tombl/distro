@@ -21,5 +21,15 @@ mount -t squashfs -o ro /dev/vda /newroot || fail "mounting squashfs rootfs fail
 [ -x /newroot/bin/busybox ] || fail "rootfs is missing busybox"
 /newroot/bin/busybox true || fail "executing a binary from the mounted rootfs failed"
 
+mount -t tmpfs tmpfs /newroot/tmp || fail "mounting writable tmp"
+mount --bind /dev /newroot/dev || fail "mounting dev in rootfs"
+# shellcheck disable=SC2016 # $VIMRUNTIME is Vim syntax, not a shell expansion.
+TERM=xterm /usr/sbin/chroot /newroot /bin/vim -es \
+  -c 'call writefile([$VIMRUNTIME], "/tmp/vimruntime")' \
+  -c 'qall!' </dev/null >/newroot/tmp/vim-startup 2>&1 ||
+  fail "vim normal startup failed: $(cat /newroot/tmp/vim-startup)"
+[ "$(cat /newroot/tmp/vimruntime)" = /usr/share/vim/vim91 ] ||
+  fail "vim reports the wrong runtime path: $(cat /newroot/tmp/vimruntime)"
+
 echo "::vm-test::pass"
 while :; do :; done
