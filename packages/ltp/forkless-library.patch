@@ -1,0 +1,440 @@
+# Port the tst_test (new API) library off fork()/vfork()/mmap for wasm32.
+#
+# wasm has no fork()/vfork() and no MAP_SHARED memory. This ports every
+# such use the curated syscall tests actually reach (dead uses compile
+# via the force-included packages/ltp/wasm-compat.h and are dropped by
+# wasm-ld's dead-code elimination):
+#   * tst_test.c fork_testrun(): the one supervised test child becomes a
+#     copy-clone (clone without CLONE_VM); its result-counter deltas and abort
+#     state -- no longer in a shared page -- are handed back over a pipe.
+#   * tst_test.c setup_ipc()/cleanup_ipc(): the MAP_SHARED results page
+#     becomes a private heap allocation; checkpoints/child-reinit, which
+#     need real shared memory, tst_brk(TCONF).
+#   * tst_test.c SAFE_FORK(): stubbed to tst_brk(TCONF); a test forking its
+#     own children cannot be expressed by a fresh-stack callback clone.
+#   * tst_tmpdir.c tst_rmdir(): drops the msync/munmap of the never-mapped
+#     checkpoint futex page.
+#   * tst_buffers.c: guarded buffers lose their mmap'd PROT_NONE guard page
+#     and become plain heap allocations (the canary check still runs).
+#   * tst_cmd.c: the command runner's vfork()+exec becomes a copy-clone.
+--- a/lib/tst_test.c	2026-05-29 20:03:24.000000000 +0800
++++ b/lib/tst_test.c	2026-07-20 21:30:33.496771756 +0800
+@@ -10,6 +10,8 @@
+ #include <stdio.h>
+ #include <stdarg.h>
+ #include <unistd.h>
++#include <sched.h>
++#include <fcntl.h>
+ #include <string.h>
+ #include <stdlib.h>
+ #include <errno.h>
+@@ -107,10 +108,10 @@
+ extern volatile void *tst_futexes;
+ extern unsigned int tst_max_futexes;
+ 
+-static int ipc_fd;
+-static char ipc_path[1064];
+-
+-static char shm_path[1024];
++/*
++ * The results page no longer lives in a shared-memory file (see setup_ipc);
++ * the ipc_fd/ipc_path/shm_path statics that named it are gone with it.
++ */
+ 
+ int TST_ERR;
+ int TST_PASS;
+@@ -123,66 +124,33 @@
+ {
+ 	size_t size = getpagesize();
+ 
+-	if (access("/dev/shm", F_OK) == 0) {
+-		snprintf(shm_path, sizeof(shm_path), "/dev/shm/ltp_%s_%d",
+-			 tcid, getpid());
+-	} else {
+-		char *tmpdir;
+-
+-		if (!tst_tmpdir_created())
+-			tst_tmpdir();
+-
+-		tmpdir = tst_get_tmpdir();
+-		snprintf(shm_path, sizeof(shm_path), "%s/ltp_%s_%d",
+-			 tmpdir, tcid, getpid());
+-		free(tmpdir);
+-	}
+-
+-	ipc_fd = open(shm_path, O_CREAT | O_EXCL | O_RDWR, 0600);
+-	if (ipc_fd < 0)
+-		tst_brk(TBROK | TERRNO, "open(%s)", shm_path);
+-	SAFE_CHMOD(shm_path, 0666);
+-
+-	SAFE_FTRUNCATE(ipc_fd, size);
+-
+-	ipc = SAFE_MMAP(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, ipc_fd, 0);
+-
+-	SAFE_CLOSE(ipc_fd);
++	/*
++	 * Upstream mmaps a MAP_SHARED file so the library process and the test
++	 * child see one results page. wasm has neither MAP_SHARED memory nor
++	 * shm, so back the page with an ordinary heap allocation: each process
++	 * gets its own copy (the copy-clone test child included) and
++	 * fork_testrun() folds the child's counters back over a pipe. The
++	 * checkpoint and child-reinit APIs genuinely need a shared page, so a
++	 * test that asks for either cannot run on this target.
++	 */
++	if (tst_test->needs_checkpoints || tst_test->child_needs_reinit)
++		tst_brk(TCONF, "checkpoints/child reinit need shared memory, absent on wasm");
+ 
+-	memset(ipc, 0, size);
++	ipc = calloc(1, size);
++	if (!ipc)
++		tst_brk(TBROK | TERRNO, "calloc(ipc region)");
+ 
+ 	ipc->magic = LTP_MAGIC;
+ 	context = &ipc->context;
+ 	results = &ipc->results;
+ 	context->lib_pid = getpid();
+-
+-	if (tst_test->needs_checkpoints) {
+-		tst_futexes = ipc->futexes;
+-		tst_max_futexes = (size - offsetof(struct ipc_region, futexes)) / sizeof(futex_t);
+-	}
+-
+-	/* Set environment variable for exec()'d children */
+-	if (tst_test->needs_checkpoints || tst_test->child_needs_reinit) {
+-		snprintf(ipc_path, sizeof(ipc_path), IPC_ENV_VAR "=%s", shm_path);
+-		putenv(ipc_path);
+-	} else {
+-		SAFE_UNLINK(shm_path);
+-	}
+ }
+ 
+ static void cleanup_ipc(void)
+ {
+-	size_t size = getpagesize();
+-
+-	if (ipc_fd > 0 && close(ipc_fd))
+-		tst_res(TWARN | TERRNO, "close(ipc_fd) failed");
+-
+-	if (shm_path[0] && !access(shm_path, F_OK) && unlink(shm_path))
+-		tst_res(TWARN | TERRNO, "unlink(%s) failed", shm_path);
+-
++	/* The results page is heap-backed now (see setup_ipc); just free it. */
+ 	if (ipc) {
+-		msync((void *)ipc, size, MS_SYNC);
+-		munmap((void *)ipc, size);
++		free(ipc);
+ 		ipc = NULL;
+ 		context = NULL;
+ 		results = NULL;
+@@ -570,21 +538,15 @@
+ 
+ pid_t safe_fork(const char *filename, unsigned int lineno)
+ {
+-	pid_t pid;
+-
+-	if (!tst_test->forks_child)
+-		tst_brk(TBROK, "test.forks_child must be set!");
+-
+-	tst_flush();
+-
+-	pid = fork();
+-	if (pid < 0)
+-		tst_brk_(filename, lineno, TBROK | TERRNO, "fork() failed");
+-
+-	if (!pid)
+-		atexit(tst_free_all);
+-
+-	return pid;
++	/*
++	 * wasm has no fork(). fork_testrun() ports the library's own one
++	 * supervised child to a copy-clone, but a test calling SAFE_FORK()
++	 * expects to keep running in the parent and get pid==0 in a child that
++	 * shares its control flow, which copy-clone (a fresh-stack callback)
++	 * cannot express. Such tests are unsupported on this target.
++	 */
++	tst_brk_(filename, lineno, TCONF, "SAFE_FORK() is unsupported on wasm (no fork)");
++	return -1;
+ }
+ 
+ /* too fast creating namespaces => retrying */
+@@ -1894,9 +1856,80 @@
+ 	heartbeat();
+ }
+ 
++/*
++ * tst_clone.h poisons the bare clone() identifier to steer tests toward
++ * SAFE_CLONE/clone3. fork_testrun() deliberately wants musl's fork-like
++ * callback clone (no CLONE_VM, a copied-memory child on a fresh stack), so
++ * take the real declaration back for the rest of this file.
++ */
++#undef clone
++
++/*
++ * wasm has no fork(). fork_testrun() supervises the test in a child that must
++ * be a memory copy of the parent (the test reads setup state and bumps result
++ * counters), so it uses musl's callback clone without CLONE_VM:
++ * clone(fn, stack, SIGCHLD, arg) yields a child with a private COPY of the
++ * parent's memory running fn on a fresh stack -- fork-like, but valid only
++ * from a single-threaded parent, which the library is at this point.
++ *
++ * The results page is no longer shared (see setup_ipc), so the child bumps
++ * counters in its own copy. The child zeroes its private counters before the
++ * run, then writes those deltas and its abort state back over a pipe just
++ * before exiting; the parent folds them in after waitpid. A child killed by
++ * the timeout writes nothing; the normal wait-status handling counts that
++ * broken exactly once.
++ */
++static int result_pipe[2] = { -1, -1 };
++static int child_result_fd = -1;
++
++struct child_response {
++	struct results results;
++	int32_t abort_flag;
++};
++
++static void flush_child_results(void)
++{
++	struct child_response response;
++
++	if (child_result_fd < 0 || !results)
++		return;
++
++	response.results = *results;
++	response.abort_flag = tst_atomic_load(&context->abort_flag);
++
++	/* Best effort; a short/absent write leaves the parent to see broken. */
++	if (write(child_result_fd, &response, sizeof(response)) < 0)
++		return;
++}
++
++static int testrun_child(void *arg LTP_ATTRIBUTE_UNUSED)
++{
++	SAFE_CLOSE(result_pipe[0]);
++	child_result_fd = result_pipe[1];
++	atexit(flush_child_results);
++	/* The pipe carries per-run deltas, not the parent's inherited totals. */
++	memset(results, 0, sizeof(*results));
++	tst_atomic_store(0, &context->abort_flag);
++
++	tst_disable_oom_protection(0);
++	SAFE_SIGNAL(SIGALRM, SIG_DFL);
++	SAFE_SIGNAL(SIGUSR1, SIG_DFL);
++	SAFE_SIGNAL(SIGTERM, SIG_DFL);
++	SAFE_SIGNAL(SIGINT, SIG_DFL);
++	SAFE_SETPGID(0, 0);
++	testrun();
++
++	return 0;
++}
++
+ static void fork_testrun(void)
+ {
+ 	int status;
++	const size_t child_stack_size = 256 * 1024;
++	char *child_stack;
++	struct child_response response;
++	ssize_t rd;
++	int write_fd;
+ 
+ 	SAFE_SIGNAL(SIGINT, sigint_handler);
+ 	SAFE_SIGNAL(SIGTERM, sigint_handler);
+@@ -1905,25 +1937,45 @@
+ 
+ 	show_failure_hints = 1;
+ 
+-	test_pid = fork();
++	SAFE_PIPE(result_pipe);
++	/*
++	 * Tests routinely use or close low-numbered descriptors. Move the
++	 * private result channel out of their way before cloning the child;
++	 * CLOEXEC also prevents a test command from keeping the pipe alive.
++	 */
++	write_fd = result_pipe[1];
++	result_pipe[1] = SAFE_FCNTL(write_fd, F_DUPFD_CLOEXEC, 128);
++	SAFE_CLOSE(write_fd);
++
++	child_stack = SAFE_MALLOC(child_stack_size);
++	test_pid = clone(testrun_child, child_stack + child_stack_size,
++			 SIGCHLD, NULL);
++	free(child_stack); /* the child got its own copy at clone time */
+ 	if (test_pid < 0)
+-		tst_brk(TBROK | TERRNO, "fork()");
++		tst_brk(TBROK | TERRNO, "clone()");
+ 
+-	if (!test_pid) {
+-		tst_disable_oom_protection(0);
+-		SAFE_SIGNAL(SIGALRM, SIG_DFL);
+-		SAFE_SIGNAL(SIGUSR1, SIG_DFL);
+-		SAFE_SIGNAL(SIGTERM, SIG_DFL);
+-		SAFE_SIGNAL(SIGINT, SIG_DFL);
+-		SAFE_SETPGID(0, 0);
+-		testrun();
+-	}
++	SAFE_CLOSE(result_pipe[1]); /* parent keeps only the read end */
+ 
+ 	SAFE_WAITPID(test_pid, &status, 0);
+ 	alarm(0);
+ 	SAFE_SIGNAL(SIGTERM, SIG_DFL);
+ 	SAFE_SIGNAL(SIGINT, SIG_DFL);
+ 
++	rd = read(result_pipe[0], &response, sizeof(response));
++	SAFE_CLOSE(result_pipe[0]);
++	if (rd == sizeof(response)) {
++		results->passed += response.results.passed;
++		results->skipped += response.results.skipped;
++		results->failed += response.results.failed;
++		results->warnings += response.results.warnings;
++		results->broken += response.results.broken;
++		if (response.abort_flag)
++			tst_atomic_store(1, &context->abort_flag);
++	} else if (WIFEXITED(status) && !WEXITSTATUS(status)) {
++		/* Abnormal status is counted below by its single tst_brk(). */
++		results->broken++;
++	}
++
+ 	if (tst_test->taint_check && tst_taint_check()) {
+ 		tst_res(TFAIL, "Kernel is now tainted");
+ 		return;
+--- a/lib/tst_tmpdir.c	2026-05-29 20:03:24.000000000 +0800
++++ b/lib/tst_tmpdir.c	2026-07-20 21:19:33.125667169 +0800
+@@ -324,13 +324,10 @@
+ 	}
+ 
+ 	/*
+-	 * Unmap the backend file.
+-	 * This is needed to overcome the NFS "silly rename" feature.
++	 * Upstream munmaps the checkpoint futex page here (it was an mmap of the
++	 * backend file). On wasm that page is never mapped -- checkpoints are out
++	 * of scope, see setup_ipc() -- so there is nothing to msync/munmap.
+ 	 */
+-	if (tst_futexes) {
+-		msync((void *)tst_futexes, getpagesize(), MS_SYNC);
+-		munmap((void *)tst_futexes, getpagesize());
+-	}
+ 
+ 	/*
+ 	 * Attempt to remove the "TESTDIR" directory, using rmobj().
+--- a/lib/tst_buffers.c	2026-05-29 20:03:24.000000000 +0800
++++ b/lib/tst_buffers.c	2026-07-20 21:36:58.338086420 +0800
+@@ -58,10 +58,12 @@
+ 		print_msg = 0;
+ 	}
+ 
+-	ret = SAFE_MMAP(NULL, page_size * pages, PROT_READ | PROT_WRITE,
+-			MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+-
+-	mprotect(ret + (pages-1) * page_size, page_size, PROT_NONE);
++	/*
++	 * wasm has no mmap: allocate a plain heap buffer instead of an mmap'd
++	 * region capped by a PROT_NONE guard page. The canary below still
++	 * catches in-buffer overruns; only the hard guard-page trap is lost.
++	 */
++	ret = SAFE_MALLOC(page_size * pages);
+ 
+ 	map->addr = ret;
+ 	map->size = pages * page_size;
+@@ -159,7 +161,7 @@
+ 		struct map *j = i;
+ 
+ 		check_canary(i);
+-		SAFE_MUNMAP(i->addr, i->size);
++		free(i->addr); /* heap buffer now, see tst_alloc() */
+ 		i = i->next;
+ 		free(j);
+ 	}
+--- a/lib/tst_cmd.c	2026-05-29 20:03:24.000000000 +0800
++++ b/lib/tst_cmd.c	2026-07-20 21:38:30.283747117 +0800
+@@ -27,6 +27,7 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <signal.h>
++#include <sched.h>
+ #include <stdbool.h>
+ #include "test.h"
+ #include "tst_cmd.h"
+@@ -35,6 +36,40 @@
+ #define OPEN_MODE	(S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+ #define OPEN_FLAGS	(O_WRONLY | O_APPEND | O_CREAT)
+ 
++/*
++ * wasm has no vfork(). Run the command in a copy-clone child instead: musl's
++ * callback clone without CLONE_VM gives a child with a private copy of the
++ * parent's memory on a fresh stack (fork-like, single-threaded parent only),
++ * which is all this redirect-and-exec helper needs.
++ */
++/* musl gates clone() behind _GNU_SOURCE, which this old-API unit does not set;
++ * declare the callback form we use (clone itself is defined in libc). */
++int clone(int (*)(void *), void *, int, void *, ...);
++
++struct tst_cmd_child_args {
++	const char *const *argv;
++	int stdout_fd;
++	int stderr_fd;
++};
++
++static int tst_cmd_child(void *arg)
++{
++	struct tst_cmd_child_args *a = arg;
++
++	if (a->stdout_fd != -1) {
++		close(STDOUT_FILENO);
++		dup2(a->stdout_fd, STDOUT_FILENO);
++	}
++
++	if (a->stderr_fd != -1) {
++		close(STDERR_FILENO);
++		dup2(a->stderr_fd, STDERR_FILENO);
++	}
++
++	execvp(a->argv[0], (char *const *)a->argv);
++	_exit(254);
++}
++
+ int tst_cmd_fds_(void (cleanup_fn)(void),
+ 		const char *const argv[],
+ 		int stdout_fd,
+@@ -69,26 +104,28 @@
+ 			return 255;
+ 	}
+ 
+-	pid_t pid = vfork();
+-	if (pid == -1) {
+-		tst_brkm(TBROK | TERRNO, cleanup_fn, "vfork failed at %s:%d",
++	struct tst_cmd_child_args child_args = {
++		.argv = argv,
++		.stdout_fd = stdout_fd,
++		.stderr_fd = stderr_fd,
++	};
++	const size_t child_stack_size = 64 * 1024;
++	char *child_stack = malloc(child_stack_size);
++	pid_t pid;
++
++	if (!child_stack) {
++		tst_brkm(TBROK | TERRNO, cleanup_fn, "malloc failed at %s:%d",
+ 			__FILE__, __LINE__);
+ 		return -1;
+ 	}
+-	if (!pid) {
+-		/* redirecting stdout and stderr if needed */
+-		if (stdout_fd != -1) {
+-			close(STDOUT_FILENO);
+-			dup2(stdout_fd, STDOUT_FILENO);
+-		}
+-
+-		if (stderr_fd != -1) {
+-			close(STDERR_FILENO);
+-			dup2(stderr_fd, STDERR_FILENO);
+-		}
+ 
+-		execvp(argv[0], (char *const *)argv);
+-		_exit(254);
++	pid = clone(tst_cmd_child, child_stack + child_stack_size,
++		SIGCHLD, &child_args);
++	free(child_stack); /* the child got its own copy at clone time */
++	if (pid == -1) {
++		tst_brkm(TBROK | TERRNO, cleanup_fn, "clone failed at %s:%d",
++			__FILE__, __LINE__);
++		return -1;
+ 	}
+ 
+ 	int ret = -1;

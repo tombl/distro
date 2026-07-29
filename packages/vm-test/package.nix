@@ -10,7 +10,6 @@
 let
   runnerBase = pkgs.runCommand "vm-test-runner" { } ''
     mkdir $out
-    cp ${./limit-output.awk} $out/limit-output.awk
     cp ${./protocol.js} $out/protocol.js
     cp ${./run-test.js} $out/run-test.js
   '';
@@ -22,31 +21,10 @@ let
           nativeBuildInputs = [ pkgs.nodejs ];
         }
         ''
-          cp ${./limit-output.awk} limit-output.awk
           cp ${./protocol.js} protocol.js
           cp ${./protocol-test.js} protocol-test.js
 
           node --test protocol-test.js
-          for line in $(seq 1 200); do
-            if [ "$line" -eq 120 ]; then
-              echo "vm test guest failure: Traceback (most recent call last):"
-            elif [ "$line" -eq 121 ]; then
-              echo "  File \"test.py\", line 7, in <module>"
-            elif [ "$line" -eq 122 ]; then
-              echo "ValueError: expected failure"
-            elif [ "$line" -eq 123 ]; then
-              echo "::vm-test::fail"
-            elif [ "$line" -eq 124 ]; then
-              echo "vm test failed: guest reported failure"
-            else
-              echo "line $line"
-            fi
-          done | awk -f limit-output.awk > output
-          grep -F "[vm test output truncated: 70 lines omitted]" output
-          grep -F "vm test guest failure: Traceback (most recent call last):" output
-          grep -F '  File "test.py", line 7, in <module>' output
-          grep -F "ValueError: expected failure" output
-          grep -F "vm test failed: guest reported failure" output
           mkdir $out
         '';
   };
@@ -84,8 +62,8 @@ let
           ${linux}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
-          2>&1 | awk -f ${runner}/limit-output.awk
-        status=''${PIPESTATUS[0]}
+          2>&1
+        status=$?
         set -e
         if [ "$status" -eq 124 ]; then
           echo "vm test failed: watchdog expired after 300 seconds" >&2
