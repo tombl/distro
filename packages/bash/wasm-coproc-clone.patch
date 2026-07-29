@@ -1,0 +1,112 @@
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -2503,10 +2503,59 @@
+   free (namevar);
+ }
+ 
++/* The coprocess continuation cannot retain execute_coproc's parent stack;
++   bash_clone enters it on a fresh child stack using only this heap object. */
++typedef struct
++{
++  COMMAND *command;
++  struct fd_bitmap *fds_to_close;
++  char *job_command;
++  int rpipe[2];
++  int wpipe[2];
++  sigset_t old_sigmask;
++#if !MULTIPLE_COPROCS
++  int oldrfd;
++  int oldwfd;
++#endif
++} EXECUTE_COPROC_ARGS;
++
++static int
++execute_coproc_child (void *vargs)
++{
++  EXECUTE_COPROC_ARGS *args;
++  int estat;
++
++  args = (EXECUTE_COPROC_ARGS *)vargs;
++
++  close (args->rpipe[0]);
++  close (args->wpipe[1]);
++
++#if !MULTIPLE_COPROCS
++  /* execute_in_subshell cannot close these after sh_coproc was reset. */
++  if (args->oldrfd != -1)
++    close (args->oldrfd);
++  if (args->oldwfd != -1)
++    close (args->oldwfd);
++#endif
++
++#if defined (JOB_CONTROL)
++  FREE (args->job_command);
++#endif
++
++  sigprocmask (SIG_SETMASK, &args->old_sigmask, (sigset_t *)NULL);
++  estat = execute_in_subshell (args->command, 1, args->wpipe[0],
++                               args->rpipe[1], args->fds_to_close);
++
++  fflush (stdout);
++  fflush (stderr);
++  exit (estat);
++}
++
+ static int
+ execute_coproc (COMMAND *command, int pipe_in, int pipe_out, struct fd_bitmap *fds_to_close)
+ {
+-  int rpipe[2], wpipe[2], estat, invert;
++  EXECUTE_COPROC_ARGS *child_args;
++  int rpipe[2], wpipe[2], invert;
+   pid_t coproc_pid;
+   Coproc *cp;
+   char *tcmd, *p, *name;
+@@ -2552,34 +2601,23 @@
+ 
+   BLOCK_SIGNAL (SIGCHLD, set, oset);
+ 
+-  coproc_pid = make_child_fork (p = savestring (tcmd), FORK_ASYNC);
+-
+-  if (coproc_pid == 0)
+-    {
+-      close (rpipe[0]);
+-      close (wpipe[1]);
+-
++  p = savestring (tcmd);
++  child_args = (EXECUTE_COPROC_ARGS *)xmalloc (sizeof (*child_args));
++  child_args->command = command;
++  child_args->fds_to_close = fds_to_close;
++  child_args->job_command = p;
++  child_args->rpipe[0] = rpipe[0];
++  child_args->rpipe[1] = rpipe[1];
++  child_args->wpipe[0] = wpipe[0];
++  child_args->wpipe[1] = wpipe[1];
++  child_args->old_sigmask = oset;
+ #if !MULTIPLE_COPROCS
+-      /* Do this here instead of letting execute_in_subshell call
+-	 coproc_closeall since we've already overwritten sh_coproc */
+-      if (oldrfd != -1)
+-	close (oldrfd);
+-      if (oldwfd != -1)
+-	close (oldwfd);
++  child_args->oldrfd = oldrfd;
++  child_args->oldwfd = oldwfd;
+ #endif
+ 
+-#if defined (JOB_CONTROL)
+-      FREE (p);
+-#endif
+-
+-      UNBLOCK_SIGNAL (oset);
+-      estat = execute_in_subshell (command, 1, wpipe[0], rpipe[1], fds_to_close);
+-
+-      fflush (stdout);
+-      fflush (stderr);
+-
+-      exit (estat);
+-    }
++  coproc_pid = make_child (p, FORK_ASYNC, execute_coproc_child, child_args);
++  free (child_args);
+ 
+   close (rpipe[1]);
+   close (wpipe[0]);
