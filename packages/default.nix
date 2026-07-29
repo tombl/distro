@@ -56,6 +56,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     file = callPackage ./file/package.nix { };
     jq = callPackage ./jq/package.nix { };
     lua = callPackage ./lua/package.nix { };
+    make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
     readline = callPackage ./readline/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
