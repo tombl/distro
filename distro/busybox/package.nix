@@ -14,8 +14,7 @@
   vm-test,
 }:
 
-let
-  package = stdenv.mkDerivation (finalAttrs: {
+stdenv.mkDerivation (finalAttrs: {
     pname = "busybox";
     version = "1.37.0";
     inherit src;
@@ -139,6 +138,4 @@ let
         processes = check "processes" ./process-test.sh;
         networking = check "networking" ./network-test.sh;
       };
-  });
-in
-package
+  })
