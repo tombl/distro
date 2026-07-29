@@ -1,0 +1,577 @@
+Consolidated wasm process support: posix_spawn commands and clone-based PTYs.
+
+diff --git a/src/cli-session.c b/src/cli-session.c
+index df7e811..3cbd942 100644
+--- a/src/cli-session.c
++++ b/src/cli-session.c
+@@ -279,19 +279,10 @@ static void cli_sessionloop() {
+ #endif
+ 
+ 			if (cli_opts.backgrounded) {
+-				int devnull;
+-				/* keeping stdin open steals input from the terminal and
+-				   is confusing, though stdout/stderr could be useful. */
+-				devnull = open(DROPBEAR_PATH_DEVNULL, O_RDONLY);
+-				if (devnull < 0) {
+-					dropbear_exit("Opening /dev/null: %d %s",
+-							errno, strerror(errno));
+-				}
+-				dup2(devnull, STDIN_FILENO);
+-				if (daemon(0, 1) < 0) {
+-					dropbear_exit("Backgrounding failed: %d %s", 
+-							errno, strerror(errno));
+-				}
++				/* daemon()/fork() do not exist on wasm (no fork()), so the
++				 * post-auth "-f" backgrounding cannot be supported. Fail
++				 * loudly rather than link against a missing symbol. */
++				dropbear_exit("Backgrounding (-f) is not supported on this platform");
+ 			}
+ 			
+ #if DROPBEAR_CLI_NETCAT
+diff --git a/src/dbutil.c b/src/dbutil.c
+index 8626f20..c70f242 100644
+--- a/src/dbutil.c
++++ b/src/dbutil.c
+@@ -62,6 +62,8 @@
+ #endif
+ 
+ #include "includes.h"
++/* wasm has no fork(); spawn_command() creates children with posix_spawn(). */
++#include <spawn.h>
+ #include "dbutil.h"
+ #include "buffer.h"
+ #include "session.h"
+@@ -266,17 +268,40 @@ int connect_unix(const char* path) {
+ }
+ #endif
+ 
+-/* Sets up a pipe for a, returning three non-blocking file descriptors
+- * and the pid. exec_fn is the function that will actually execute the child process,
+- * it will be run after the child has fork()ed, and is passed exec_data.
+- * If ret_errfd == NULL then stderr will not be captured.
+- * ret_pid can be passed as  NULL to discard the pid. */
+-int spawn_command(void(*exec_fn)(const void *user_data), const void *exec_data,
++/* Spawn argv0/argv with its stdin/stdout/stderr wired to pipes, returning
++ * three non-blocking file descriptors and the pid.
++ *
++ * WebAssembly Linux (wasm32-unknown-linux-musl) has no fork(): the symbol does
++ * not exist, so the fork()+exec() this used to do cannot link. Children are
++ * created with posix_spawn() (clone+execve) instead. posix_spawn runs no code
++ * of ours in the child, so the redirection the fork child performed between
++ * fork() and exec() is expressed as posix_spawn file actions, and the caller
++ * passes the fully-resolved argv0/argv/envp rather than an exec_fn callback.
++ *
++ * The callers that used to do arbitrary pre-exec work in the child
++ * (svr-chansession's execchild: clear/set the environment, chdir, drop
++ * privileges) now do it in the parent before calling here; this is safe because
++ * on this platform dropbear serves a single connection in inetd mode (-i) and
++ * exits, so mutating the parent's environment/cwd has no later effect. The
++ * client ProxyCommand caller is compiled out (DROPBEAR_CLI_PROXYCMD=0).
++ *
++ * closefds_max mirrors run_command()'s "close fds 3..maxfd so the child does not
++ * inherit the ssh socket": posix_spawn cannot close a range, so those fds are
++ * marked close-on-exec in the parent instead (the dup2 file actions clear
++ * O_CLOEXEC on the resulting 0/1/2). If ret_errfd == NULL then stderr will not
++ * be captured. ret_pid can be passed as NULL to discard the pid. */
++int spawn_command(const char *argv0, char *const argv[], char *const envp[],
++		unsigned int closefds_max,
+ 		int *ret_writefd, int *ret_readfd, int *ret_errfd, pid_t *ret_pid) {
+ 	int infds[2];
+ 	int outfds[2];
+ 	int errfds[2];
+ 	pid_t pid;
++	posix_spawn_file_actions_t fa;
++	posix_spawnattr_t attr;
++	sigset_t defsigs;
++	unsigned int i;
++	int rc;
+ 
+ 	const int FDIN = 0;
+ 	const int FDOUT = 1;
+@@ -298,71 +323,76 @@ int spawn_command(void(*exec_fn)(const void *user_data), const void *exec_data,
+ 		return DROPBEAR_FAILURE;
+ 	}
+ 
+-#if DROPBEAR_VFORK
+-	pid = vfork();
+-#else
+-	pid = fork();
+-#endif
++	/* Don't leak dropbear's other fds (the connection socket, the signal
++	 * self-pipe) into the executed command. run_command() close()d 3..maxfd
++	 * in the fork child; posix_spawn cannot, so set close-on-exec here. */
++	for (i = 3; i <= closefds_max; i++) {
++		int fl = fcntl(i, F_GETFD);
++		if (fl >= 0) {
++			(void)fcntl(i, F_SETFD, fl | FD_CLOEXEC);
++		}
++	}
+ 
+-	if (pid < 0) {
++	posix_spawn_file_actions_init(&fa);
++	posix_spawn_file_actions_adddup2(&fa, infds[FDIN], STDIN_FILENO);
++	posix_spawn_file_actions_adddup2(&fa, outfds[FDOUT], STDOUT_FILENO);
++	if (ret_errfd) {
++		posix_spawn_file_actions_adddup2(&fa, errfds[FDOUT], STDERR_FILENO);
++	}
++	/* close the pipe ends in the child once they've been dup2'd into place */
++	posix_spawn_file_actions_addclose(&fa, infds[FDIN]);
++	posix_spawn_file_actions_addclose(&fa, infds[FDOUT]);
++	posix_spawn_file_actions_addclose(&fa, outfds[FDIN]);
++	posix_spawn_file_actions_addclose(&fa, outfds[FDOUT]);
++	if (ret_errfd) {
++		posix_spawn_file_actions_addclose(&fa, errfds[FDIN]);
++		posix_spawn_file_actions_addclose(&fa, errfds[FDOUT]);
++	}
++
++	/* Reset SIGCHLD and SIGPIPE to their defaults in the child, matching the
++	 * signal(SIG_DFL) calls the fork child and run_command() made. */
++	posix_spawnattr_init(&attr);
++	sigemptyset(&defsigs);
++	sigaddset(&defsigs, SIGCHLD);
++	sigaddset(&defsigs, SIGPIPE);
++	posix_spawnattr_setsigdefault(&attr, &defsigs);
++	posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGDEF);
++
++	rc = posix_spawn(&pid, argv0, &fa, &attr, argv, envp);
++
++	posix_spawn_file_actions_destroy(&fa);
++	posix_spawnattr_destroy(&attr);
++
++	if (rc != 0) {
++		errno = rc;
++		close(infds[FDIN]); close(infds[FDOUT]);
++		close(outfds[FDIN]); close(outfds[FDOUT]);
++		if (ret_errfd) { close(errfds[FDIN]); close(errfds[FDOUT]); }
+ 		return DROPBEAR_FAILURE;
+ 	}
+ 
+-	if (!pid) {
+-		/* child */
++	/* parent */
++	close(infds[FDIN]);
++	close(outfds[FDOUT]);
+ 
+-		TRACE(("back to normal sigchld"))
+-		/* Revert to normal sigchld handling */
+-		if (signal(SIGCHLD, SIG_DFL) == SIG_ERR) {
+-			dropbear_exit("signal() error");
+-		}
++	setnonblocking(outfds[FDIN]);
++	setnonblocking(infds[FDOUT]);
+ 
+-		/* redirect stdin/stdout */
+-
+-		if ((dup2(infds[FDIN], STDIN_FILENO) < 0) ||
+-			(dup2(outfds[FDOUT], STDOUT_FILENO) < 0) ||
+-			(ret_errfd && dup2(errfds[FDOUT], STDERR_FILENO) < 0)) {
+-			TRACE(("leave noptycommand: error redirecting FDs"))
+-			dropbear_exit("Child dup2() failure");
+-		}
+-
+-		close(infds[FDOUT]);
+-		close(infds[FDIN]);
+-		close(outfds[FDIN]);
+-		close(outfds[FDOUT]);
+-		if (ret_errfd)
+-		{
+-			close(errfds[FDIN]);
+-			close(errfds[FDOUT]);
+-		}
+-
+-		exec_fn(exec_data);
+-		/* not reached */
+-		return DROPBEAR_FAILURE;
+-	} else {
+-		/* parent */
+-		close(infds[FDIN]);
+-		close(outfds[FDOUT]);
+-
+-		setnonblocking(outfds[FDIN]);
+-		setnonblocking(infds[FDOUT]);
+-
+-		if (ret_errfd) {
+-			close(errfds[FDOUT]);
+-			setnonblocking(errfds[FDIN]);
+-		}
+-
+-		if (ret_pid) {
+-			*ret_pid = pid;
+-		}
+-
+-		*ret_writefd = infds[FDOUT];
+-		*ret_readfd = outfds[FDIN];
+-		if (ret_errfd) {
+-			*ret_errfd = errfds[FDIN];
+-		}
+-		return DROPBEAR_SUCCESS;
++	if (ret_errfd) {
++		close(errfds[FDOUT]);
++		setnonblocking(errfds[FDIN]);
+ 	}
++
++	if (ret_pid) {
++		*ret_pid = pid;
++	}
++
++	*ret_writefd = infds[FDOUT];
++	*ret_readfd = outfds[FDIN];
++	if (ret_errfd) {
++		*ret_errfd = errfds[FDIN];
++	}
++	return DROPBEAR_SUCCESS;
+ }
+ 
+ /* Runs a command with "sh -c". Will close FDs (except stdin/stdout/stderr) and
+diff --git a/src/dbutil.h b/src/dbutil.h
+index 14d7df6..27d633f 100644
+--- a/src/dbutil.h
++++ b/src/dbutil.h
+@@ -60,7 +60,8 @@ extern int debug_trace;
+ 
+ char * stripcontrol(const char * text);
+ 
+-int spawn_command(void(*exec_fn)(const void *user_data), const void *exec_data,
++int spawn_command(const char *argv0, char *const argv[], char *const envp[],
++		unsigned int closefds_max,
+ 		int *writefd, int *readfd, int *errfd, pid_t *pid);
+ void run_shell_command(const char* cmd, unsigned int maxfd, char* usershell);
+ void run_command(const char* argv0, char** args, unsigned int maxfd);
+diff --git a/src/svr-chansession.c b/src/svr-chansession.c
+index a2ea1fc..96450c2 100644
+--- a/src/svr-chansession.c
++++ b/src/svr-chansession.c
+@@ -23,6 +23,7 @@
+  * SOFTWARE. */
+ 
+ #include "includes.h"
++#include <sched.h>
+ #include "packet.h"
+ #include "buffer.h"
+ #include "session.h"
+@@ -47,7 +48,8 @@ static int sessionsignal(const struct ChanSess *chansess);
+ static int noptycommand(struct Channel *channel, struct ChanSess *chansess);
+ static int ptycommand(struct Channel *channel, struct ChanSess *chansess);
+ static int sessionwinchange(const struct ChanSess *chansess);
+-static void execchild(const void *user_data_chansess);
++static void prepare_child_environ(const struct ChanSess *chansess);
++static int pty_child(void *user_data);
+ static void addchildpid(struct ChanSess *chansess, pid_t pid);
+ static void sesssigchild_handler(int val);
+ static void closechansess(const struct Channel *channel);
+@@ -770,12 +772,46 @@ static int sessioncommand(struct Channel *channel, struct ChanSess *chansess,
+  * Returns DROPBEAR_SUCCESS or DROPBEAR_FAILURE */
+ static int noptycommand(struct Channel *channel, struct ChanSess *chansess) {
+ 	int ret;
++	char *usershell = NULL;
++	char *baseshell = NULL;
++	char *login_argv0 = NULL;
++	char *argv[4];
+ 
+ 	TRACE(("enter noptycommand"))
+-	ret = spawn_command(execchild, chansess, 
++
++	/* wasm has no fork(). The environment/cwd/privilege setup that execchild()
++	 * used to perform in the fork child is done here in the parent instead (see
++	 * prepare_child_environ), then the shell is started with posix_spawn via
++	 * spawn_command. This is safe because dropbear runs one connection in inetd
++	 * mode (-i) and exits, so mutating the parent's environment and cwd has no
++	 * later effect. The exec'd command runs in its own address space, so the
++	 * fork-child's defensive hostkey/prng wipe is unnecessary here. */
++	prepare_child_environ(chansess);
++
++	usershell = m_strdup(get_user_shell());
++	baseshell = basename(usershell);
++	if (chansess->cmd != NULL) {
++		/* "sh -c command" */
++		argv[0] = baseshell;
++		argv[1] = "-c";
++		argv[2] = chansess->cmd;
++		argv[3] = NULL;
++	} else {
++		/* a login shell should be "-bash" for "/bin/bash" etc */
++		int len = strlen(baseshell) + 2; /* 2 for "-" and '\0' */
++		login_argv0 = (char*)m_malloc(len);
++		snprintf(login_argv0, len, "-%s", baseshell);
++		argv[0] = login_argv0;
++		argv[1] = NULL;
++	}
++
++	ret = spawn_command(usershell, argv, environ, ses.maxfd,
+ 			&channel->writefd, &channel->readfd, &channel->errfd,
+ 			&chansess->pid);
+ 
++	m_free(login_argv0);
++	m_free(usershell);
++
+ 	if (ret == DROPBEAR_FAILURE) {
+ 		return ret;
+ 	}
+@@ -807,134 +843,105 @@ static int noptycommand(struct Channel *channel, struct ChanSess *chansess) {
+ 	return DROPBEAR_SUCCESS;
+ }
+ 
+-/* Execute a command or shell within a pty environment, and set up
+- * redirection as appropriate.
++/* Execute a command or shell within a pty environment.
+  * Returns DROPBEAR_SUCCESS or DROPBEAR_FAILURE */
+ static int ptycommand(struct Channel *channel, struct ChanSess *chansess) {
+-
++	const size_t stack_size = 64 * 1024;
++	char *stack;
+ 	pid_t pid;
+-	struct logininfo *li = NULL;
++
++	TRACE(("enter ptycommand"))
++
++	if (chansess->master == -1 || chansess->tty == NULL) {
++		dropbear_log(LOG_WARNING, "No pty was allocated, couldn't execute");
++		return DROPBEAR_FAILURE;
++	}
++
++	/* The callback child gets an ordinary, non-CLONE_VM process image, so it
++	 * can perform the session and controlling-terminal setup that posix_spawn
++	 * cannot express, then exec the shell. */
++	prepare_child_environ(chansess);
++	stack = m_malloc(stack_size);
++	pid = clone(pty_child, stack + stack_size, SIGCHLD, chansess);
++	m_free(stack);
++	if (pid < 0)
++		return DROPBEAR_FAILURE;
++
++	chansess->pid = pid;
++	addchildpid(chansess, pid);
++
++	close(chansess->slave);
++	channel->writefd = chansess->master;
++	channel->readfd = chansess->master;
++	ses.maxfd = MAX(ses.maxfd, chansess->master);
++	channel->bidir_fd = 0;
++	setnonblocking(chansess->master);
++
++	TRACE(("leave ptycommand"))
++	return DROPBEAR_SUCCESS;
++}
++
++/* Run in a callback-clone child on its fresh stack. TIOCSCTTY after setsid()
++ * makes the inherited slave the controlling terminal before stdio is attached
++ * and the shell replaces the child. */
++static int pty_child(void *user_data) {
++	struct ChanSess *chansess = user_data;
++	char *usershell;
++	int slave = chansess->slave;
+ #if DO_MOTD
+-	buffer * motdbuf = NULL;
++	buffer *motdbuf = NULL;
+ 	int len;
+ 	struct stat sb;
+ 	char *hushpath = NULL;
+ #endif
+ 
+-	TRACE(("enter ptycommand"))
++	if (signal(SIGCHLD, SIG_DFL) == SIG_ERR)
++		return 120;
++	close(chansess->master);
++	if (setsid() < 0)
++		return 121;
+ 
+-	/* we need to have a pty allocated */
+-	if (chansess->master == -1 || chansess->tty == NULL) {
+-		dropbear_log(LOG_WARNING, "No pty was allocated, couldn't execute");
+-		return DROPBEAR_FAILURE;
+-	}
+-	
+-#if DROPBEAR_VFORK
+-	pid = vfork();
+-#else
+-	pid = fork();
+-#endif
+-	if (pid < 0)
+-		return DROPBEAR_FAILURE;
+-
+-	if (pid == 0) {
+-		/* child */
+-		
+-		TRACE(("back to normal sigchld"))
+-		/* Revert to normal sigchld handling */
+-		if (signal(SIGCHLD, SIG_DFL) == SIG_ERR) {
+-			dropbear_exit("signal() error");
+-		}
+-		
+-		/* redirect stdin/stdout/stderr */
+-		close(chansess->master);
+-
+-		pty_make_controlling_tty(&chansess->slave, chansess->tty);
+-		
+-		if ((dup2(chansess->slave, STDIN_FILENO) < 0) ||
+-			(dup2(chansess->slave, STDOUT_FILENO) < 0)) {
+-			TRACE(("leave ptycommand: error redirecting filedesc"))
+-			return DROPBEAR_FAILURE;
+-			}
+-
+-		/* write the utmp/wtmp login record - must be after changing the
+-		 * terminal used for stdout with the dup2 above, otherwise
+-		 * the wtmp login will not be recorded */
+-		li = chansess_login_alloc(chansess);
+-
+-		svr_raise_gid_utmp();
+-		login_login(li);
+-		svr_restore_gid();
+-
+-		login_free_entry(li);
+-
+-		/* Can now dup2 stderr. Messages from login_login() have gone
+-		to the parent stderr */
+-		if (dup2(chansess->slave, STDERR_FILENO) < 0) {
+-			TRACE(("leave ptycommand: error redirecting filedesc"))
+-			return DROPBEAR_FAILURE;
+-		}
+-
+-		close(chansess->slave);
++	if (ioctl(slave, TIOCSCTTY, 0) < 0)
++		return 123;
++	if (dup2(slave, STDIN_FILENO) < 0
++			|| dup2(slave, STDOUT_FILENO) < 0
++			|| dup2(slave, STDERR_FILENO) < 0)
++		return 124;
++	if (slave > STDERR_FILENO)
++		close(slave);
+ 
+ #if DO_MOTD
+-		if (svr_opts.domotd && !chansess->cmd) {
+-			/* don't show the motd if ~/.hushlogin exists */
++	if (svr_opts.domotd && !chansess->cmd) {
++		/* don't show the motd if ~/.hushlogin exists */
++		len = strlen(ses.authstate.pw_dir) + 12;
++		hushpath = m_malloc(len);
++		snprintf(hushpath, len, "%s/.hushlogin", ses.authstate.pw_dir);
+ 
+-			/* 12 == strlen("/.hushlogin\0") */
+-			len = strlen(ses.authstate.pw_dir) + 12; 
+-
+-			hushpath = m_malloc(len);
+-			snprintf(hushpath, len, "%s/.hushlogin", ses.authstate.pw_dir);
+-
+-			if (stat(hushpath, &sb) < 0) {
+-				char *expand_path = NULL;
+-				/* more than a screenful is stupid IMHO */
+-				motdbuf = buf_new(MOTD_MAXSIZE);
+-				expand_path = expand_homedir_path(MOTD_FILENAME);
+-				if (buf_readfile(motdbuf, expand_path) == DROPBEAR_SUCCESS) {
+-					/* incase it is full size, add LF at last position */
+-					if (motdbuf->len == motdbuf->size) motdbuf->data[motdbuf->len - 1]=10;
+-					buf_setpos(motdbuf, 0);
+-					while (motdbuf->pos != motdbuf->len) {
+-						len = motdbuf->len - motdbuf->pos;
+-						len = write(STDOUT_FILENO, 
+-								buf_getptr(motdbuf, len), len);
+-						buf_incrpos(motdbuf, len);
+-					}
++		if (stat(hushpath, &sb) < 0) {
++			char *expand_path = NULL;
++			motdbuf = buf_new(MOTD_MAXSIZE);
++			expand_path = expand_homedir_path(MOTD_FILENAME);
++			if (buf_readfile(motdbuf, expand_path) == DROPBEAR_SUCCESS) {
++				if (motdbuf->len == motdbuf->size)
++					motdbuf->data[motdbuf->len - 1] = 10;
++				buf_setpos(motdbuf, 0);
++				while (motdbuf->pos != motdbuf->len) {
++					len = motdbuf->len - motdbuf->pos;
++					len = write(STDOUT_FILENO,
++							buf_getptr(motdbuf, len), len);
++					buf_incrpos(motdbuf, len);
+ 				}
+-				m_free(expand_path);
+-				buf_free(motdbuf);
+-
+ 			}
+-			m_free(hushpath);
++			m_free(expand_path);
++			buf_free(motdbuf);
+ 		}
++		m_free(hushpath);
++	}
+ #endif /* DO_MOTD */
+ 
+-		execchild(chansess);
+-		/* not reached */
+-
+-	} else {
+-		/* parent */
+-		TRACE(("continue ptycommand: parent"))
+-		chansess->pid = pid;
+-
+-		/* add a child pid */
+-		addchildpid(chansess, pid);
+-
+-		close(chansess->slave);
+-		channel->writefd = chansess->master;
+-		channel->readfd = chansess->master;
+-		/* don't need to set stderr here */
+-		ses.maxfd = MAX(ses.maxfd, chansess->master);
+-		channel->bidir_fd = 0;
+-
+-		setnonblocking(chansess->master);
+-
+-	}
+-
+-	TRACE(("leave ptycommand"))
+-	return DROPBEAR_SUCCESS;
++	usershell = m_strdup(get_user_shell());
++	run_shell_command(chansess->cmd, ses.maxfd, usershell);
++	return errno == ENOENT ? 127 : 126;
+ }
+ 
+ /* Add the pid of a child to the list for exit-handling */
+@@ -960,28 +967,22 @@ static void addchildpid(struct ChanSess *chansess, pid_t pid) {
+ 
+ }
+ 
+-/* Clean up, drop to user privileges, set up the environment and execute
+- * the command/shell. This function does not return. */
+-static void execchild(const void *user_data) {
+-	const struct ChanSess *chansess = user_data;
+-	char *usershell = NULL;
++/* Drop to user privileges, set up the environment and cwd for the command or
++ * shell that is about to be started.
++ *
++ * On a forking build this ran in the child between fork() and exec(). wasm has
++ * no fork(), so on this platform it runs in the (single-connection, inetd)
++ * parent immediately before spawn_command posix_spawns the shell; the parent
++ * exits after the connection, so the mutations here have no later effect. The
++ * fork-child's defensive hostkey/prng wipe is deliberately dropped: the exec'd
++ * command runs in a separate address space and cannot read dropbear's memory. */
++static void prepare_child_environ(const struct ChanSess *chansess) {
+ 	char *cp = NULL;
+ 	char *envcp = getenv("LANG");
+ 	if (envcp != NULL) {
+ 		cp = m_strdup(envcp);
+ 	}
+ 
+-	/* with uClinux we'll have vfork()ed, so don't want to overwrite the
+-	 * hostkey. can't think of a workaround to clear it */
+-#if !DROPBEAR_VFORK
+-	/* wipe the hostkey */
+-	sign_key_free(svr_opts.hostkey);
+-	svr_opts.hostkey = NULL;
+-
+-	/* overwrite the prng state */
+-	seedrandom();
+-#endif
+-
+ 	/* clear environment if -e was not set */
+ 	/* if we're debugging using valgrind etc, we need to keep the LD_PRELOAD
+ 	 * etc. This is hazardous, so should only be used for debugging. */
+@@ -1060,12 +1061,6 @@ static void execchild(const void *user_data) {
+ 	/* set up agent env variable */
+ 	svr_agentset(chansess);
+ #endif
+-
+-	usershell = m_strdup(get_user_shell());
+-	run_shell_command(chansess->cmd, ses.maxfd, usershell);
+-
+-	/* only reached on error */
+-	dropbear_exit("Child failed");
+ }
+ 
+ /* Set up the general chansession environment, in particular child-exit
