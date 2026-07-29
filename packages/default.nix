@@ -53,6 +53,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
+    curl = callPackage ./curl/package.nix { };
     file = callPackage ./file/package.nix { };
     jq = callPackage ./jq/package.nix { };
     lua = callPackage ./lua/package.nix { };
