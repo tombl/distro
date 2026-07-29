@@ -2,24 +2,36 @@
   apk,
   apk-tools,
   basic-init,
+  bash,
   busybox,
   bzip2,
+  coreutils,
   curl,
+  diffutils,
   dropbear,
   file,
+  findutils,
+  gawk,
   git,
   guest-agent,
+  grep,
   jq,
   kselftests,
+  less,
   ltp,
   lua,
   make,
   ncurses,
   openssl,
+  patch,
   python,
   quickjs,
   readline,
+  sed,
   sqlite3,
+  tar,
+  util-linux,
+  vim,
   xz,
   zlib,
   zstd,
@@ -34,24 +46,36 @@ apk.mkRepository {
     inherit
       apk-tools
       basic-init
+      bash
       busybox
       bzip2
+      coreutils
       curl
+      diffutils
       dropbear
       file
+      findutils
+      gawk
       git
       guest-agent
+      grep
       jq
       kselftests
+      less
       ltp
       lua
       make
       ncurses
       openssl
+      patch
       python
       quickjs
       readline
+      sed
       sqlite3
+      tar
+      util-linux
+      vim
       xz
       zlib
       zstd

@@ -1,20 +1,34 @@
 {
   apk,
   basic-init,
+  bash,
   busybox,
+  bzip2,
+  coreutils,
   curl,
+  diffutils,
   dropbear,
   file,
+  findutils,
+  gawk,
   git,
+  grep,
   jq,
+  less,
   lua,
   make,
   image,
   openssl,
+  patch,
   python,
   quickjs,
   repository,
+  sed,
   sqlite3,
+  tar,
+  util-linux,
+  vim,
+  xz,
   vm-test,
   zstd,
 }:
@@ -28,18 +42,32 @@ let
       packages = [
         basic-init
         busybox
-        zstd
+        bash
+        coreutils
+        findutils
+        diffutils
+        patch
+        tar
+        sed
+        grep
+        gawk
+        make
+        less
         file
         jq
         lua
-        make
-        openssl
         quickjs
         python
         sqlite3
+        xz
+        zstd
+        bzip2
+        openssl
         curl
         git
         dropbear
+        vim
+        util-linux
       ];
       files."/init" = {
         source = ../../runner/rootfs-init.sh;
