@@ -57,6 +57,43 @@ globalThis.remoteMemoryMetadata = () =>
     { cpus: 1 },
   );
 
+let lifecycleGuest;
+
+globalThis.startRemoteMemoryLifecycle = async () => {
+  if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
+  lifecycleGuest = await spawnGuest({ cpus: 1 });
+};
+
+globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
+  if (!lifecycleGuest) throw new Error("remote-memory lifecycle guest is not running");
+  const script = [
+    "i=0",
+    `while [ $i -lt ${iterations} ]; do`,
+    `  MARKER=remote-vm-lifecycle-${batch}-$i sleep 30 &`,
+    "  pid=$!",
+    "  cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
+    "  environ=$(tr '\\000' '\\n' < /proc/$pid/environ | grep '^MARKER=')",
+    "  auxv_size=$(wc -c < /proc/$pid/auxv)",
+    "  kill $pid",
+    "  wait $pid 2>/dev/null || true",
+    '  [ "$cmdline" = "sleep 30 " ] || exit 10',
+    `  [ "$environ" = "MARKER=remote-vm-lifecycle-${batch}-$i" ] || exit 11`,
+    '  [ "$auxv_size" -gt 0 ] || exit 12',
+    "  i=$((i+1))",
+    "done",
+    "printf 'batch=%s processes=%s\\n' \"" + batch + '" "$i"',
+  ].join("\n");
+  return collectProcess(await lifecycleGuest.exec(["sh", "-c", script]));
+};
+
+globalThis.closeRemoteMemoryLifecycle = async () => {
+  if (!lifecycleGuest) return;
+  const guest = lifecycleGuest;
+  lifecycleGuest = undefined;
+  guest.machine.close();
+  await guest.machine.closed;
+};
+
 async function runInitramfs(path, cpus) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
