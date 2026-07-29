@@ -1,7 +1,19 @@
 {
   basic-init,
   busybox,
+  curl,
+  dropbear,
+  file,
+  git,
+  jq,
+  lua,
+  make,
   image,
+  openssl,
+  python,
+  quickjs,
+  sqlite3,
+  zstd,
   vm-test,
 }:
 
@@ -11,6 +23,18 @@ let
     init = ./rootfs-init.sh;
     contents = [
       busybox
+      zstd
+      file
+      jq
+      lua
+      make
+      openssl
+      quickjs
+      python
+      sqlite3
+      curl
+      git
+      dropbear
     ];
     files."/bin/basic-init" = "${basic-init}/bin/init";
   };

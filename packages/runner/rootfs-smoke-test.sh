@@ -19,6 +19,7 @@ mount -t squashfs -o ro /dev/vda /newroot || fail "mounting squashfs rootfs fail
 [ -x /newroot/init ] || fail "rootfs is missing init"
 [ -x /newroot/bin/basic-init ] || fail "rootfs is missing basic-init"
 [ -x /newroot/bin/busybox ] || fail "rootfs is missing busybox"
+/newroot/bin/busybox true || fail "executing a binary from the mounted rootfs failed"
 
 echo "::vm-test::pass"
 while :; do :; done
