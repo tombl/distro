@@ -1,0 +1,44 @@
+libblkid's device-mapper and LVM topology probes have legacy subprocess
+fallbacks for systems whose sysfs does not expose topology.  wasm has no fork;
+retain the normal sysfs path and report no result from these two fallbacks.
+
+--- a/libblkid/src/topology/dm.c
++++ b/libblkid/src/topology/dm.c
+@@ -34,5 +34,9 @@ static int probe_dm_tp(blkid_probe pr,
+ 		const struct blkid_idmag *mag __attribute__((__unused__)))
+ {
++#ifdef __wasm__
++	(void) pr;
++	return 1;
++#else
+ 	const char * const paths[] = {
+ 		"/usr/local/sbin/dmsetup",
+ 		"/usr/sbin/dmsetup",
+@@ -133,6 +137,7 @@ nothing:
+ 	else if (dmpipe[0] != -1)
+ 		close(dmpipe[0]);
+ 	return 1;
++#endif
+ }
+ 
+ const struct blkid_idinfo dm_tp_idinfo =
+--- a/libblkid/src/topology/lvm.c
++++ b/libblkid/src/topology/lvm.c
+@@ -37,5 +37,9 @@ static int probe_lvm_tp(blkid_probe pr,
+ 		const struct blkid_idmag *mag __attribute__((__unused__)))
+ {
++#ifdef __wasm__
++	(void) pr;
++	return 1;
++#else
+ 	const char * const paths[] = {
+ 		"/usr/local/sbin/lvdisplay",
+ 		"/usr/sbin/lvdisplay",
+@@ -139,6 +143,7 @@ nothing:
+ 	if (lvpipe[1] != -1)
+ 		close(lvpipe[1]);
+ 	return 1;
++#endif
+ }
+ 
+ const struct blkid_idinfo lvm_tp_idinfo =

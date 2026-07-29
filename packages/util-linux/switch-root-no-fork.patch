@@ -1,0 +1,35 @@
+WebAssembly has no fork.  Removing the old initramfs synchronously preserves
+switch_root's operation; the native implementation merely uses a child so the
+new init can be started while that cleanup proceeds.
+
+--- a/sys-utils/switch_root.c
++++ b/sys-utils/switch_root.c
+@@ -191,6 +191,20 @@ static int switchroot(const char *newroot)
+ 		goto fail;
+ 	}
+ 
++#ifdef __wasm__
++	{
++		struct statfs stfs;
++
++		if (fstatfs(cfd, &stfs) == 0 &&
++		    (F_TYPE_EQUAL(stfs.f_type, STATFS_RAMFS_MAGIC) ||
++		     F_TYPE_EQUAL(stfs.f_type, STATFS_TMPFS_MAGIC)))
++			recursiveRemove(cfd);
++		else
++			warn(_("old root filesystem is not an initramfs"));
++		close(cfd);
++		return 0;
++	}
++#else
+ 	switch (fork()) {
+ 	case 0: /* child */
+ 	{
+@@ -216,6 +228,7 @@ static int switchroot(const char *newroot)
+ 		close(cfd);
+ 		return 0;
+ 	}
++#endif
+ 
+ fail:
+ 	if (cfd >= 0)

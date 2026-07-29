@@ -1,0 +1,58 @@
+wasm has no fork.  A pager only needs a pipe connected to a freshly executed
+shell, which maps directly to posix_spawn file actions.
+
+--- a/lib/pager.c
++++ b/lib/pager.c
+@@ -15,6 +15,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <err.h>
++#include <spawn.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <sys/wait.h>
+@@ -61,27 +62,33 @@ static int start_command(struct child_process *cmd)
+ {
+ 	int fdin[2];
++	int err;
++	posix_spawn_file_actions_t actions;
+ 
+ 	if (pipe(fdin) < 0)
+ 		return -1;
+ 	cmd->in = fdin[1];
+ 
+ 	fflush(NULL);
+-	cmd->pid = fork();
+-	if (!cmd->pid) {
+-		dup2(fdin[0], STDIN_FILENO);
+-		close_pair(fdin);
+-
+-		pager_preexec();
+-		execvp(cmd->argv[0], (char *const*) cmd->argv);
+-		errexec(cmd->argv[0]);
+-	}
+-
+-	if (cmd->pid < 0) {
++	pager_preexec();
++	err = posix_spawn_file_actions_init(&actions);
++	if (!err)
++		err = posix_spawn_file_actions_adddup2(&actions, fdin[0],
++						      STDIN_FILENO);
++	if (!err)
++		err = posix_spawn_file_actions_addclose(&actions, fdin[0]);
++	if (!err)
++		err = posix_spawn_file_actions_addclose(&actions, fdin[1]);
++	if (!err)
++		err = posix_spawnp(&cmd->pid, cmd->argv[0], &actions, NULL,
++				   (char *const *) cmd->argv, environ);
++	posix_spawn_file_actions_destroy(&actions);
++	if (err) {
++		errno = err;
+ 		cmd->pid = 0;
+ 		close_pair(fdin);
+ 		return -1;
+ 	}
+ 
+ 	close(fdin[0]);
+ 	return 0;
+ }

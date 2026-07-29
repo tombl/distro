@@ -80,6 +80,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     sed = callPackage ./sed/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     tar = callPackage ./tar/package.nix { };
+    util-linux = callPackage ./util-linux/package.nix { };
+    vim = callPackage ./vim/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
     zstd = callPackage ./zstd/package.nix { };
