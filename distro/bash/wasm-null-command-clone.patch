@@ -1,0 +1,116 @@
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -4264,13 +4264,56 @@
+     VUNSETATTR (var, att_exported);
+ }
+ 
++/* Forced null-command children also enter on a fresh clone stack. */
++typedef struct
++{
++  REDIRECT *redirects;
++  int pipe_in;
++  int pipe_out;
++  int async;
++} EXECUTE_NULL_COMMAND_ARGS;
++
++static int
++execute_null_command_child (void *vargs)
++{
++  EXECUTE_NULL_COMMAND_ARGS *args;
++  int code;
++
++  args = (EXECUTE_NULL_COMMAND_ARGS *)vargs;
++
++  restore_original_signals ();
++  do_piping (args->pipe_in, args->pipe_out);
++
++#if defined (COPROCESS_SUPPORT)
++  coproc_closeall ();
++#endif
++
++  interactive = 0;
++
++  subshell_environment = 0;
++  if (args->async)
++    subshell_environment |= SUBSHELL_ASYNC;
++  if (args->pipe_in != NO_PIPE || args->pipe_out != NO_PIPE)
++    subshell_environment |= SUBSHELL_PIPE;
++
++  code = setjmp_nosigs (top_level);
++  if (code)
++    exit (EXECUTION_FAILURE);
++
++  if (do_redirections (args->redirects, RX_ACTIVE) == 0)
++    exit (EXECUTION_SUCCESS);
++  else
++    exit (EXECUTION_FAILURE);
++}
++
+ /* Execute a null command.  Fork a subshell if the command uses pipes or is
+    to be run asynchronously.  This handles all the side effects that are
+    supposed to take place. */
+ static int
+ execute_null_command (REDIRECT *redirects, int pipe_in, int pipe_out, int async)
+ {
+-  int r, code;
++  EXECUTE_NULL_COMMAND_ARGS *child_args;
++  int r;
+   int forcefork, fork_flags;
+   REDIRECT *rd;
+ 
+@@ -4286,43 +4329,21 @@
+       /* We have a null command, but we really want a subshell to take
+ 	 care of it.  Just fork, do piping and redirections, and exit. */
+       fork_flags = async ? FORK_ASYNC : 0;
+-      if (make_child_fork ((char *)NULL, fork_flags) == 0)
+-	{
+-	  /* Cancel traps, in trap.c. */
+-	  restore_original_signals ();		/* XXX */
+-
+-	  do_piping (pipe_in, pipe_out);
+-
+-#if defined (COPROCESS_SUPPORT)
+-	  coproc_closeall ();
+-#endif
+-
+-	  interactive = 0;			/* XXX */
++      child_args = (EXECUTE_NULL_COMMAND_ARGS *)xmalloc (sizeof (*child_args));
++      child_args->redirects = redirects;
++      child_args->pipe_in = pipe_in;
++      child_args->pipe_out = pipe_out;
++      child_args->async = async;
++      make_child ((char *)NULL, fork_flags, execute_null_command_child,
++		  child_args);
++      free (child_args);
+ 
+-	  subshell_environment = 0;
+-	  if (async)
+-	    subshell_environment |= SUBSHELL_ASYNC;
+-	  if (pipe_in != NO_PIPE || pipe_out != NO_PIPE)
+-	    subshell_environment |= SUBSHELL_PIPE;
+-
+-	  code = setjmp_nosigs (top_level);
+-	  if (code)
+-	    exit (EXECUTION_FAILURE);
+-
+-	  if (do_redirections (redirects, RX_ACTIVE) == 0)
+-	    exit (EXECUTION_SUCCESS);
+-	  else
+-	    exit (EXECUTION_FAILURE);
+-	}
+-      else
+-	{
+-	  close_pipes (pipe_in, pipe_out);
++      close_pipes (pipe_in, pipe_out);
+ #if defined (PROCESS_SUBSTITUTION) && defined (HAVE_DEV_FD)
+-	  if (pipe_out == NO_PIPE)
+-	    unlink_fifo_list ();
++      if (pipe_out == NO_PIPE)
++	unlink_fifo_list ();
+ #endif
+-	  return (EXECUTION_SUCCESS);
+-	}
++      return (EXECUTION_SUCCESS);
+     }
+   else
+     {

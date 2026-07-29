@@ -68,6 +68,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     apk-tools = callPackage ./apk-tools/package.nix {
       src = self.apk-tools-src;
     };
+    bash = callPackage ./bash/package.nix { };
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
