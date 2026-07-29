@@ -32,6 +32,9 @@ export const assets = {
 /** A static guest executable that exercises the guest-side network stack. */
 export const network_test = await readFile(join(directory, "network-test"));
 
+/** A static guest executable whose entrypoint executes Wasm `unreachable`. */
+export const user_trap = await readFile(join(directory, "user-trap"));
+
 export const lifecycle_assets = {
   initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
   initramfs_path: join(directory, "lifecycle-initramfs.cpio"),

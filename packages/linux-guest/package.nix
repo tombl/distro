@@ -10,19 +10,23 @@
 }:
 
 let
-  network-test = stdenv.mkDerivation {
-    pname = "linux-guest-network-test";
-    version = "0.0.0";
-    dontUnpack = true;
-    buildPhase = ''
-      $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
-        -Wl,--fatal-warnings -o network-test ${./tests/network-test.c}
-    '';
-    installPhase = ''
-      mkdir -p $out/bin
-      cp network-test $out/bin/
-    '';
-  };
+  test-program =
+    name: source:
+    stdenv.mkDerivation {
+      pname = "linux-guest-${name}";
+      version = "0.0.0";
+      dontUnpack = true;
+      buildPhase = ''
+        $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
+          -Wl,--fatal-warnings -o ${name} ${source}
+      '';
+      installPhase = ''
+        mkdir -p $out/bin
+        cp ${name} $out/bin/
+      '';
+    };
+  network-test = test-program "network-test" ./tests/network-test.c;
+  user-trap = test-program "user-trap" ./tests/user-trap.c;
 
   lifecycle-initramfs = vm-test.mkInitramfs {
     name = "linux-guest-lifecycle";
@@ -37,6 +41,7 @@ let
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
     "rootfs.squashfs" = "${image}/rootfs.squashfs";
     "network-test" = "${network-test}/bin/network-test";
+    "user-trap" = "${user-trap}/bin/user-trap";
     "runner" = "${runner.package}/bin/wasm-linux-runner";
   };
 
