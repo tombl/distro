@@ -1,0 +1,245 @@
+--- a/builtin.c	2026-07-20 01:04:50.965382878 +0800
++++ b/builtin.c	2026-07-20 01:07:02.509333409 +0800
+@@ -26,6 +26,10 @@
+ 
+ 
+ #include "awk.h"
++
++/* wasm has no fork(); children come from posix_spawn (clone+execve). */
++#include <spawn.h>
++extern char **environ;
+ #if defined(HAVE_FCNTL_H)
+ #include <fcntl.h>
+ #endif
+@@ -3309,18 +3313,29 @@
+ #else /* ! (defined(VMS) || defined(__MINGW32__)) */
+ 	pid_t childpid;
+ 	int status;
++	posix_spawnattr_t attr;
++	sigset_t sigpipe;
++	char *argv[] = { (char *) "sh", (char *) "-c", (char *) command, NULL };
++	int rc;
+ 
+-	if ((childpid = fork()) == 0) {
+-		// child
+-		set_sigpipe_to_default();
+-		execl("/bin/sh", "sh", "-c", command, NULL);
+-		_exit(errno == ENOENT ? 127 : 126);
+-	} else {
+-		// parent
+-		status = wait_any(childpid);
+-
+-		return status;
++	/*
++	 * wasm has no fork(); spawn "/bin/sh -c command" with posix_spawn and
++	 * reset SIGPIPE to its default in the child, as set_sigpipe_to_default()
++	 * did on the fork path.
++	 */
++	posix_spawnattr_init(& attr);
++	sigemptyset(& sigpipe);
++	sigaddset(& sigpipe, SIGPIPE);
++	posix_spawnattr_setsigdefault(& attr, & sigpipe);
++	posix_spawnattr_setflags(& attr, POSIX_SPAWN_SETSIGDEF);
++	rc = posix_spawn(& childpid, "/bin/sh", NULL, & attr, argv, environ);
++	posix_spawnattr_destroy(& attr);
++	if (rc != 0) {
++		errno = rc;
++		return -1;
+ 	}
++	status = wait_any(childpid);
++	return status;
+ #endif /* defined(VMS) || defined(__MINGW32__) */
+ }
+ 
+--- a/io.c	2026-07-20 01:04:50.963571019 +0800
++++ b/io.c	2026-07-20 01:07:02.509223205 +0800
+@@ -26,6 +26,10 @@
+ 
+ #include "awk.h"
+ 
++/* wasm has no fork(); children come from posix_spawn (clone+execve). */
++#include <spawn.h>
++extern char **environ;
++
+ #ifdef HAVE_SYS_PARAM_H
+ #undef RE_DUP_MAX	/* avoid spurious conflict w/regex.h */
+ #include <sys/param.h>
+@@ -2027,6 +2031,54 @@
+ }
+ 
+ 
++
++/*
++ * spawn_shell_command --- run "/bin/sh -c command" through posix_spawn.
++ *
++ * WebAssembly Linux has no fork(); children are created by posix_spawn
++ * (clone + execve).  The fd redirections the old fork children performed
++ * between fork() and exec() are expressed as posix_spawn file actions by the
++ * callers.  SIGPIPE is reset to its default disposition in the child, matching
++ * the set_sigpipe_to_default() calls the fork paths used.
++ */
++static pid_t
++spawn_shell_command(const char *command, posix_spawn_file_actions_t *file_actions)
++{
++	pid_t pid;
++	posix_spawnattr_t attr;
++	sigset_t sigpipe;
++	char *argv[] = { (char *) "sh", (char *) "-c", (char *) command, NULL };
++	int rc;
++
++	posix_spawnattr_init(& attr);
++	sigemptyset(& sigpipe);
++	sigaddset(& sigpipe, SIGPIPE);
++	posix_spawnattr_setsigdefault(& attr, & sigpipe);
++	posix_spawnattr_setflags(& attr, POSIX_SPAWN_SETSIGDEF);
++	rc = posix_spawn(& pid, "/bin/sh", file_actions, & attr, argv, environ);
++	posix_spawnattr_destroy(& attr);
++	if (rc != 0) {
++		errno = rc;
++		return -1;
++	}
++	return pid;
++}
++
++/*
++ * no_fork --- stand-in for fork() on the pseudo-tty coprocess path.
++ *
++ * The pty coprocess setup needs setsid()/ioctl(TIOCSCTTY) in the child, which
++ * posix_spawn cannot express.  wasm has no /dev/ptmx, so that path is never
++ * taken at run time; this keeps it compiling and makes it fail cleanly (the
++ * caller then falls back to an ordinary pipe coprocess).
++ */
++static pid_t
++no_fork(void)
++{
++	errno = ENOSYS;
++	return -1;
++}
++
+ /* fork_and_open_slave_pty --- handle forking the child and slave pty setup */
+ 
+ /*
+@@ -2051,7 +2103,7 @@
+ 	 * in order to make the slave become the controlling terminal.
+ 	 */
+ 
+-	switch (*pid = fork()) {
++	switch (*pid = no_fork()) {
+ 	case 0:
+ 		/* Child process */
+ 		setsid();
+@@ -2108,7 +2160,7 @@
+ 	push_pty_line_disciplines(slave);
+ 	set_slave_pty_attributes(slave);
+ 
+-	switch (*pid = fork()) {
++	switch (*pid = no_fork()) {
+ 	case 0:
+ 		/* Child process */
+ 		setsid();
+@@ -2451,33 +2503,27 @@
+ 	}
+ 
+ #else /* NOT __MINGW32__ */
+-	if ((pid = fork()) < 0) {
++	{
++		posix_spawn_file_actions_t fa;
++
++		posix_spawn_file_actions_init(& fa);
++		posix_spawn_file_actions_adddup2(& fa, ctop[1], 1);
++		posix_spawn_file_actions_adddup2(& fa, ptoc[0], 0);
++		posix_spawn_file_actions_addclose(& fa, ptoc[0]);
++		posix_spawn_file_actions_addclose(& fa, ptoc[1]);
++		posix_spawn_file_actions_addclose(& fa, ctop[0]);
++		posix_spawn_file_actions_addclose(& fa, ctop[1]);
++		pid = spawn_shell_command(str, & fa);
++		posix_spawn_file_actions_destroy(& fa);
++	}
++
++	if (pid < 0) {
+ 		save_errno = errno;
+ 		close(ptoc[0]); close(ptoc[1]);
+ 		close(ctop[0]); close(ctop[1]);
+ 		errno = save_errno;
+ 		return false;
+ 	}
+-
+-	if (pid == 0) {	/* child */
+-		if (close(1) == -1)
+-			fatal(_("close of stdout in child failed: %s"),
+-				strerror(errno));
+-		if (dup(ctop[1]) != 1)
+-			fatal(_("moving pipe to stdout in child failed (dup: %s)"), strerror(errno));
+-		if (close(0) == -1)
+-			fatal(_("close of stdin in child failed: %s"),
+-				strerror(errno));
+-		if (dup(ptoc[0]) != 0)
+-			fatal(_("moving pipe to stdin in child failed (dup: %s)"), strerror(errno));
+-		if (   close(ptoc[0]) == -1 || close(ptoc[1]) == -1
+-		    || close(ctop[0]) == -1 || close(ctop[1]) == -1)
+-			fatal(_("close of pipe failed: %s"), strerror(errno));
+-		/* stderr does NOT get dup'ed onto child's stdout */
+-		set_sigpipe_to_default();
+-		execl("/bin/sh", "sh", "-c", str, NULL);
+-		_exit(errno == ENOENT ? 127 : 126);
+-	}
+ #endif /* NOT __MINGW32__ */
+ 
+ 	/* parent */
+@@ -2697,17 +2743,15 @@
+ 	close(save_stdout);
+ 
+ #else /* NOT __MINGW32__ */
+-	if ((pid = fork()) == 0) {
+-		if (close(1) == -1)
+-			fatal(_("close of stdout in child failed: %s"),
+-				strerror(errno));
+-		if (dup(p[1]) != 1)
+-			fatal(_("moving pipe to stdout in child failed (dup: %s)"), strerror(errno));
+-		if (close(p[0]) == -1 || close(p[1]) == -1)
+-			fatal(_("close of pipe failed: %s"), strerror(errno));
+-		set_sigpipe_to_default();
+-		execl("/bin/sh", "sh", "-c", cmd, NULL);
+-		_exit(errno == ENOENT ? 127 : 126);
++	{
++		posix_spawn_file_actions_t fa;
++
++		posix_spawn_file_actions_init(& fa);
++		posix_spawn_file_actions_adddup2(& fa, p[1], 1);
++		posix_spawn_file_actions_addclose(& fa, p[0]);
++		posix_spawn_file_actions_addclose(& fa, p[1]);
++		pid = spawn_shell_command(cmd, & fa);
++		posix_spawn_file_actions_destroy(& fa);
+ 	}
+ #endif /* NOT __MINGW32__ */
+ 
+@@ -4627,18 +4671,17 @@
+ 		memset(open_pipes, 0, sizeof(write_pipe) * count);
+ 	}
+ 
+-	childpid = fork();
+-	if (childpid == 0) {
+-		// in the child
+-		(void) close(pipefds[1]);	// close write end in the child
+-		(void) close(0);
+-		if (dup(pipefds[0]) != 0)
+-			fatal(_("gawk_popen_write: failed to move pipe fd to standard input"));
+-		(void) close(pipefds[0]);
+-		set_sigpipe_to_default();
+-		execl("/bin/sh", "sh", "-c", cmd, NULL);
+-		_exit(errno == ENOENT ? 127 : 126);
+-	} else if (childpid < 0) {
++	{
++		posix_spawn_file_actions_t fa;
++
++		posix_spawn_file_actions_init(& fa);
++		posix_spawn_file_actions_adddup2(& fa, pipefds[0], 0);
++		posix_spawn_file_actions_addclose(& fa, pipefds[0]);
++		posix_spawn_file_actions_addclose(& fa, pipefds[1]);
++		childpid = spawn_shell_command(cmd, & fa);
++		posix_spawn_file_actions_destroy(& fa);
++	}
++	if (childpid < 0) {
+ 		(void) close(pipefds[0]);
+ 		(void) close(pipefds[1]);
+ 		return NULL;

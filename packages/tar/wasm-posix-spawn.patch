@@ -1,0 +1,851 @@
+--- a/lib/rtapelib.c
++++ b/lib/rtapelib.c
+@@ -55,6 +55,10 @@
+ 
+ #include <signal.h>
+ 
++/* wasm has no fork(); the remote shell is spawned with posix_spawn. */
++#include <spawn.h>
++extern char **environ;
++
+ #if HAVE_NETDB_H
+ # include <netdb.h>
+ #endif
+@@ -510,51 +514,53 @@
+ 	return -1;
+       }
+ 
+-    status = fork ();
+-    if (status == -1)
+-      {
+-	int e = errno;
+-	close (from_remote[remote_pipe_number][PREAD]);
+-	close (from_remote[remote_pipe_number][PWRITE]);
+-	close (to_remote[remote_pipe_number][PREAD]);
+-	close (to_remote[remote_pipe_number][PWRITE]);
+-	free (file_name_copy);
+-	errno = e;
+-	return -1;
+-      }
+-
+-    if (status == 0)
+-      {
+-	/* Child.  */
+-
+-	if (dup2 (to_remote[remote_pipe_number][PREAD], STDIN_FILENO) < 0
+-	    || (to_remote[remote_pipe_number][PREAD] != STDIN_FILENO
+-		&& close (to_remote[remote_pipe_number][PREAD]) != 0)
+-	    || (to_remote[remote_pipe_number][PWRITE] != STDIN_FILENO
+-		&& close (to_remote[remote_pipe_number][PWRITE]) != 0)
+-	    || dup2 (from_remote[remote_pipe_number][PWRITE], STDOUT_FILENO) < 0
+-	    || close (from_remote[remote_pipe_number][PREAD]) != 0
+-	    || close (from_remote[remote_pipe_number][PWRITE]) != 0)
+-	  error (EXIT_ON_EXEC_ERROR, errno,
+-		 _("Cannot redirect files for remote shell"));
+-
+-	char const *reseterr = sys_reset_uid_gid ();
+-	if (reseterr)
+-	  error (EXIT_ON_EXEC_ERROR, errno,
+-		 _("Cannot reset uid and gid: %s"), reseterr);
+-
+-	if (remote_user)
+-	  execl (remote_shell, remote_shell_basename, remote_host,
+-		 "-l", remote_user, rmt_command, (char *) 0);
+-	else
+-	  execl (remote_shell, remote_shell_basename, remote_host,
+-		 rmt_command, (char *) 0);
+-
+-	/* Bad problems if we get here.  */
++    /*
++     * wasm has no fork(); spawn the remote shell with posix_spawn
++     * (clone+execve).  The child's dup2/close plumbing becomes posix_spawn
++     * file actions.  sys_reset_uid_gid() cannot run in a posix_spawn child and
++     * is dropped: wasm is single-user, so there is no privilege to shed.  (This
++     * remote-tape path needs an rsh binary that does not exist on this
++     * platform; the conversion keeps it compiling and failing cleanly.)
++     */
++    {
++      posix_spawn_file_actions_t fa;
++      char *argv[6];
++      int ai = 0;
++      int rc;
++
++      argv[ai++] = (char *) remote_shell_basename;
++      argv[ai++] = (char *) remote_host;
++      if (remote_user)
++	{
++	  argv[ai++] = (char *) "-l";
++	  argv[ai++] = (char *) remote_user;
++	}
++      argv[ai++] = (char *) rmt_command;
++      argv[ai] = NULL;
+ 
+-	/* In a previous version, _exit was used here instead of exit.  */
+-	error (EXIT_ON_EXEC_ERROR, errno, _("Cannot execute remote shell"));
+-      }
++      posix_spawn_file_actions_init (&fa);
++      posix_spawn_file_actions_adddup2 (&fa, to_remote[remote_pipe_number][PREAD],
++					STDIN_FILENO);
++      posix_spawn_file_actions_addclose (&fa, to_remote[remote_pipe_number][PREAD]);
++      posix_spawn_file_actions_addclose (&fa, to_remote[remote_pipe_number][PWRITE]);
++      posix_spawn_file_actions_adddup2 (&fa, from_remote[remote_pipe_number][PWRITE],
++					STDOUT_FILENO);
++      posix_spawn_file_actions_addclose (&fa, from_remote[remote_pipe_number][PREAD]);
++      posix_spawn_file_actions_addclose (&fa, from_remote[remote_pipe_number][PWRITE]);
++
++      rc = posix_spawn (&status, remote_shell, &fa, NULL, argv, environ);
++      posix_spawn_file_actions_destroy (&fa);
++      if (rc != 0)
++	{
++	  close (from_remote[remote_pipe_number][PREAD]);
++	  close (from_remote[remote_pipe_number][PWRITE]);
++	  close (to_remote[remote_pipe_number][PREAD]);
++	  close (to_remote[remote_pipe_number][PWRITE]);
++	  free (file_name_copy);
++	  errno = rc;
++	  return -1;
++	}
++    }
+ 
+     /* Parent.  */
+ 
+--- a/src/system.c
++++ b/src/system.c
+@@ -24,6 +24,10 @@
+ #include <signal.h>
+ #include <wordsplit.h>
+ 
++/* wasm has no fork(); children come from posix_spawn (clone+execve). */
++#include <spawn.h>
++extern char **environ;
++
+ static _Noreturn void
+ xexec (const char *cmd)
+ {
+@@ -38,6 +42,48 @@
+   exec_fatal (cmd);
+ }
+ 
++/*
++ * WebAssembly Linux has no fork().  Children are created with posix_spawn
++ * (clone + execve); the fd plumbing the old fork children performed between
++ * fork() and exec() is expressed as posix_spawn file actions by the callers,
++ * and SIGPIPE is reset to its default disposition in the child, as the
++ * compressor fork path did (and as is correct for a process on a pipe).
++ *
++ * spawn_argv() runs PATH via posix_spawnp; spawn_shell_command() is the
++ * posix_spawn analogue of xexec(), running "/bin/sh -c CMD".  Both return the
++ * child pid, or -1 with errno set.
++ */
++static pid_t
++spawn_argv (const char *path, char *const argv[],
++	    posix_spawn_file_actions_t *fa)
++{
++  pid_t pid;
++  posix_spawnattr_t attr;
++  sigset_t sigpipe;
++  int rc;
++
++  posix_spawnattr_init (&attr);
++  sigemptyset (&sigpipe);
++  sigaddset (&sigpipe, SIGPIPE);
++  posix_spawnattr_setsigdefault (&attr, &sigpipe);
++  posix_spawnattr_setflags (&attr, POSIX_SPAWN_SETSIGDEF);
++  rc = posix_spawnp (&pid, path, fa, &attr, argv, environ);
++  posix_spawnattr_destroy (&attr);
++  if (rc != 0)
++    {
++      errno = rc;
++      return -1;
++    }
++  return pid;
++}
++
++static pid_t
++spawn_shell_command (const char *cmd, posix_spawn_file_actions_t *fa)
++{
++  char *argv[] = { (char *) "/bin/sh", (char *) "-c", (char *) cmd, NULL };
++  return spawn_argv ("/bin/sh", argv, fa);
++}
++
+ /* True if the archive is seekable via ioctl and MTIOCTOP,
+    or if it is not known whether it is seekable.
+    False if it is known to be not seekable.  */
+@@ -230,25 +276,20 @@
+ {
+   pid_t child;
+   const char *shell = getenv ("SHELL");
++  int wait_status;
++  char *argv[] = { (char *) "-sh", (char *) "-i", NULL };
+   if (! shell)
+     shell = "/bin/sh";
+-  child = xfork ();
+-  if (child == 0)
+-    {
+-      priv_set_restore_linkdir ();
+-      execlp (shell, "-sh", "-i", NULL);
+-      exec_fatal (shell);
+-    }
+-  else
+-    {
+-      int wait_status;
+-      while (waitpid (child, &wait_status, 0) == -1)
+-	if (errno != EINTR)
+-	  {
+-	    waitpid_error (shell);
+-	    break;
+-	  }
+-    }
++  /* wasm: posix_spawn instead of fork()+execlp(). */
++  child = spawn_argv (shell, argv, NULL);
++  if (child < 0)
++    exec_fatal (shell);
++  while (waitpid (child, &wait_status, 0) == -1)
++    if (errno != EINTR)
++      {
++	waitpid_error (shell);
++	break;
++      }
+ }
+ 
+ bool
+@@ -299,200 +340,80 @@
+ #define	PREAD 0			/* read file descriptor from pipe() */
+ #define	PWRITE 1		/* write file descriptor from pipe() */
+ 
+-/* Work around GCC bug 109839.  */
+-#if 13 <= __GNUC__
+-# pragma GCC diagnostic ignored "-Wanalyzer-fd-leak"
+-#endif
+-
+-/* Duplicate file descriptor FROM into becoming INTO.
+-   INTO is closed first and has to be the next available slot.  */
+-static void
+-xdup2 (int from, int into)
+-{
+-  if (from != into)
+-    {
+-      if (dup2 (from, into) < 0)
+-	{
+-	  int e = errno;
+-	  FATAL_ERROR ((0, e, _("Cannot dup2")));
+-	}
+-      xclose (from);
+-    }
+-}
+-
+-/* Propagate any failure of the grandchild back to the parent.  */
+-static _Noreturn void
+-wait_for_grandchild (pid_t pid)
+-{
+-  int wait_status;
+-  int exit_code = 0;
+-
+-  while (waitpid (pid, &wait_status, 0) == -1)
+-    if (errno != EINTR)
+-      {
+-	waitpid_error (use_compress_program_option);
+-	break;
+-      }
+-
+-  if (WIFSIGNALED (wait_status))
+-    raise (WTERMSIG (wait_status));
+-  else if (WEXITSTATUS (wait_status) != 0)
+-    exit_code = WEXITSTATUS (wait_status);
++/* Set ARCHIVE for writing, then compressing an archive.
+ 
+-  exit (exit_code);
+-}
+-
+-/* Set ARCHIVE for writing, then compressing an archive.  */
++   wasm has no fork().  The old code forked a child tar that either exec'd the
++   compressor directly (regular-file archive) or, for a pipe / non-regular /
++   remote archive, ran a reblocking loop between a compressor grandchild and the
++   archive.  That reblocking child is fork-for-concurrency, not fork-for-exec,
++   and cannot be posix_spawn'd; only the direct case is supported here.  Open the
++   archive in the parent and spawn the compressor with its stdin on the pipe from
++   tar and its stdout on the archive.  */
+ pid_t
+ sys_child_open_for_compress (void)
+ {
+   int parent_pipe[2];
+-  int child_pipe[2];
+-  pid_t grandchild_pid;
+   pid_t child_pid;
++  int arc_fd;
++  posix_spawn_file_actions_t fa;
+ 
+   signal (SIGPIPE, SIG_IGN);
+   xpipe (parent_pipe);
+-  child_pid = xfork ();
+-
+-  if (child_pid > 0)
+-    {
+-      /* The parent tar is still here!  Just clean up.  */
+-
+-      archive = parent_pipe[PWRITE];
+-      xclose (parent_pipe[PREAD]);
+-      return child_pid;
+-    }
+-
+-  /* The new born child tar is here!  */
+ 
+-  set_program_name (_("tar (child)"));
+-  signal (SIGPIPE, SIG_DFL);
++  if (_remdev (archive_name_array[0])
++      || !is_regular_file (archive_name_array[0]))
++    FATAL_ERROR ((0, 0,
++		  _("compressing to a pipe, device, or remote archive"
++		    " is not supported on this platform")));
+ 
+-  xdup2 (parent_pipe[PREAD], STDIN_FILENO);
+-  xclose (parent_pipe[PWRITE]);
++  if (backup_option)
++    maybe_backup_file (archive_name_array[0], 1);
+ 
+-  /* Check if we need a grandchild tar.  This happens only if either:
+-     a) the file is to be accessed by rmt: compressor doesn't know how;
+-     b) the file is not a plain file.  */
+-
+-  if (!_remdev (archive_name_array[0])
+-      && is_regular_file (archive_name_array[0]))
+-    {
+-      if (backup_option)
+-	maybe_backup_file (archive_name_array[0], 1);
+-
+-      /* We don't need a grandchild tar.  Open the archive and launch the
+-	 compressor.  */
+-      if (strcmp (archive_name_array[0], "-"))
+-	{
+-	  archive = creat (archive_name_array[0], MODE_RW);
+-	  if (archive < 0)
+-	    {
+-	      int saved_errno = errno;
+-
+-	      if (backup_option)
+-		undo_last_backup ();
+-	      errno = saved_errno;
+-	      open_fatal (archive_name_array[0]);
+-	    }
+-	  xdup2 (archive, STDOUT_FILENO);
+-	}
+-      priv_set_restore_linkdir ();
+-      xexec (use_compress_program_option);
+-    }
+-
+-  /* We do need a grandchild tar.  */
+-
+-  xpipe (child_pipe);
+-  grandchild_pid = xfork ();
+-
+-  if (grandchild_pid == 0)
++  if (strcmp (archive_name_array[0], "-"))
+     {
+-      /* The newborn grandchild tar is here!  Launch the compressor.  */
+-
+-      set_program_name (_("tar (grandchild)"));
+-
+-      xdup2 (child_pipe[PWRITE], STDOUT_FILENO);
+-      xclose (child_pipe[PREAD]);
+-      priv_set_restore_linkdir ();
+-      xexec (use_compress_program_option);
+-    }
+-
+-  /* The child tar is still here!  */
+-
+-  /* Prepare for reblocking the data from the compressor into the archive.  */
+-
+-  xdup2 (child_pipe[PREAD], STDIN_FILENO);
+-  xclose (child_pipe[PWRITE]);
+-
+-  if (strcmp (archive_name_array[0], "-") == 0)
+-    archive = STDOUT_FILENO;
+-  else
+-    {
+-      archive = rmtcreat (archive_name_array[0], MODE_RW, rsh_command_option);
+-      if (archive < 0)
+-	open_fatal (archive_name_array[0]);
+-    }
+-
+-  /* Let's read out of the stdin pipe and write an archive.  */
+-
+-  while (1)
+-    {
+-      size_t status = 0;
+-      char *cursor;
+-      size_t length;
+-
+-      /* Assemble a record.  */
+-
+-      for (length = 0, cursor = record_start->buffer;
+-	   length < record_size;
+-	   length += status, cursor += status)
+-	{
+-	  size_t size = record_size - length;
+-
+-	  status = safe_read (STDIN_FILENO, cursor, size);
+-	  if (status == SAFE_READ_ERROR)
+-	    read_fatal (use_compress_program_option);
+-	  if (status == 0)
+-	    break;
+-	}
+-
+-      /* Copy the record.  */
+-
+-      if (status == 0)
++      arc_fd = creat (archive_name_array[0], MODE_RW);
++      if (arc_fd < 0)
+ 	{
+-	  /* We hit the end of the file.  Write last record at
+-	     full length, as the only role of the grandchild is
+-	     doing proper reblocking.  */
+-
+-	  if (length > 0)
+-	    {
+-	      memset (record_start->buffer + length, 0, record_size - length);
+-	      status = sys_write_archive_buffer ();
+-	      if (status != record_size)
+-		archive_write_error (status);
+-	    }
++	  int saved_errno = errno;
+ 
+-	  /* There is nothing else to read, break out.  */
+-	  break;
++	  if (backup_option)
++	    undo_last_backup ();
++	  errno = saved_errno;
++	  open_fatal (archive_name_array[0]);
+ 	}
+-
+-      status = sys_write_archive_buffer ();
+-      if (status != record_size)
+-	archive_write_error (status);
+     }
++  else
++    arc_fd = STDOUT_FILENO;
+ 
+-  wait_for_grandchild (grandchild_pid);
++  posix_spawn_file_actions_init (&fa);
++  posix_spawn_file_actions_adddup2 (&fa, parent_pipe[PREAD], STDIN_FILENO);
++  if (arc_fd != STDOUT_FILENO)
++    posix_spawn_file_actions_adddup2 (&fa, arc_fd, STDOUT_FILENO);
++  posix_spawn_file_actions_addclose (&fa, parent_pipe[PWRITE]);
++  child_pid = spawn_shell_command (use_compress_program_option, &fa);
++  posix_spawn_file_actions_destroy (&fa);
++  if (child_pid < 0)
++    exec_fatal (use_compress_program_option);
++
++  if (arc_fd != STDOUT_FILENO)
++    xclose (arc_fd);
++  archive = parent_pipe[PWRITE];
++  xclose (parent_pipe[PREAD]);
++  return child_pid;
+ }
+ 
+-static void
+-run_decompress_program (void)
++/* Spawn the first decompression program posix_spawnp accepts, with the given
++   file actions, and return its pid.  Mirrors the old run_decompress_program()
++   fallback loop, except musl's posix_spawnp reports a failed exec through its
++   return value instead of the child falling through to the next execvp().  */
++static pid_t
++spawn_decompress_program (posix_spawn_file_actions_t *fa)
+ {
+   int i;
+   const char *p, *prog = NULL;
+   struct wordsplit ws;
+   int wsflags = (WRDSF_DEFFLAGS | WRDSF_ENV | WRDSF_DOOFFS) & ~WRDSF_NOVAR;
++  pid_t pid = -1;
+ 
+   ws.ws_env = (const char **) environ;
+   ws.ws_offs = 1;
+@@ -514,131 +435,54 @@
+ 	      sizeof(ws.ws_wordv[0])*ws.ws_wordc);
+       ws.ws_wordv[ws.ws_wordc] = (char *) "-d";
+       prog = p;
+-      execvp (ws.ws_wordv[0], ws.ws_wordv);
++      pid = spawn_argv (ws.ws_wordv[0], ws.ws_wordv, fa);
+       ws.ws_wordv[ws.ws_wordc] = NULL;
++      if (pid >= 0)
++	break;
+     }
+   if (!prog)
+     FATAL_ERROR ((0, 0, _("unable to run decompression program")));
+-  exec_fatal (prog);
++  if (pid < 0)
++    exec_fatal (prog);
++  return pid;
+ }
+ 
+-/* Set ARCHIVE for uncompressing, then reading an archive.  */
++/* Set ARCHIVE for uncompressing, then reading an archive.  Like the compress
++   path, only a regular-file archive is supported on wasm: the reblocking child
++   the old code forked for stdin / non-regular / remote archives needs a
++   fork()ed tar process and is unavailable.  */
+ pid_t
+ sys_child_open_for_uncompress (void)
+ {
+   int parent_pipe[2];
+-  int child_pipe[2];
+-  pid_t grandchild_pid;
+   pid_t child_pid;
++  int arc_fd;
++  posix_spawn_file_actions_t fa;
+ 
+   xpipe (parent_pipe);
+-  child_pid = xfork ();
+ 
+-  if (child_pid > 0)
+-    {
+-      /* The parent tar is still here!  Just clean up.  */
+-
+-      archive = parent_pipe[PREAD];
+-      xclose (parent_pipe[PWRITE]);
+-      return child_pid;
+-    }
++  if (strcmp (archive_name_array[0], "-") == 0
++      || _remdev (archive_name_array[0])
++      || !is_regular_file (archive_name_array[0]))
++    FATAL_ERROR ((0, 0,
++		  _("decompressing from a pipe, device, or remote archive"
++		    " is not supported on this platform")));
+ 
+-  /* The newborn child tar is here!  */
+-
+-  set_program_name (_("tar (child)"));
+-  signal (SIGPIPE, SIG_DFL);
+-
+-  xdup2 (parent_pipe[PWRITE], STDOUT_FILENO);
+-  xclose (parent_pipe[PREAD]);
+-
+-  /* Check if we need a grandchild tar.  This happens only if either:
+-     a) we're reading stdin: to force unblocking;
+-     b) the file is to be accessed by rmt: compressor doesn't know how;
+-     c) the file is not a plain file.  */
+-
+-  if (strcmp (archive_name_array[0], "-") != 0
+-      && !_remdev (archive_name_array[0])
+-      && is_regular_file (archive_name_array[0]))
+-    {
+-      /* We don't need a grandchild tar.  Open the archive and launch the
+-	 uncompressor.  */
+-
+-      archive = open (archive_name_array[0], O_RDONLY | O_BINARY, MODE_RW);
+-      if (archive < 0)
+-	open_fatal (archive_name_array[0]);
+-      xdup2 (archive, STDIN_FILENO);
+-      priv_set_restore_linkdir ();
+-      run_decompress_program ();
+-    }
+-
+-  /* We do need a grandchild tar.  */
+-
+-  xpipe (child_pipe);
+-  grandchild_pid = xfork ();
+-
+-  if (grandchild_pid == 0)
+-    {
+-      /* The newborn grandchild tar is here!  Launch the uncompressor.  */
+-
+-      set_program_name (_("tar (grandchild)"));
+-
+-      xdup2 (child_pipe[PREAD], STDIN_FILENO);
+-      xclose (child_pipe[PWRITE]);
+-      priv_set_restore_linkdir ();
+-      run_decompress_program ();
+-    }
+-
+-  /* The child tar is still here!  */
+-
+-  /* Prepare for unblocking the data from the archive into the
+-     uncompressor.  */
+-
+-  xdup2 (child_pipe[PWRITE], STDOUT_FILENO);
+-  xclose (child_pipe[PREAD]);
+-
+-  if (strcmp (archive_name_array[0], "-") == 0)
+-    archive = STDIN_FILENO;
+-  else
+-    archive = rmtopen (archive_name_array[0], O_RDONLY | O_BINARY,
+-		       MODE_RW, rsh_command_option);
+-  if (archive < 0)
++  arc_fd = open (archive_name_array[0], O_RDONLY | O_BINARY, MODE_RW);
++  if (arc_fd < 0)
+     open_fatal (archive_name_array[0]);
+ 
+-  /* Let's read the archive and pipe it into stdout.  */
+-
+-  while (1)
+-    {
+-      char *cursor;
+-      size_t maximum;
+-      size_t count;
+-      size_t status;
+-
+-      clear_read_error_count ();
++  posix_spawn_file_actions_init (&fa);
++  posix_spawn_file_actions_adddup2 (&fa, arc_fd, STDIN_FILENO);
++  posix_spawn_file_actions_adddup2 (&fa, parent_pipe[PWRITE], STDOUT_FILENO);
++  posix_spawn_file_actions_addclose (&fa, parent_pipe[PREAD]);
++  child_pid = spawn_decompress_program (&fa);
++  posix_spawn_file_actions_destroy (&fa);
+ 
+-    error_loop:
+-      status = rmtread (archive, record_start->buffer, record_size);
+-      if (status == SAFE_READ_ERROR)
+-	{
+-	  archive_read_error ();
+-	  goto error_loop;
+-	}
+-      if (status == 0)
+-	break;
+-      cursor = record_start->buffer;
+-      maximum = status;
+-      while (maximum)
+-	{
+-	  count = maximum < BLOCKSIZE ? maximum : BLOCKSIZE;
+-	  if (full_write (STDOUT_FILENO, cursor, count) != count)
+-	    write_error (use_compress_program_option);
+-	  cursor += count;
+-	  maximum -= count;
+-	}
+-    }
+-
+-  xclose (STDOUT_FILENO);
+-
+-  wait_for_grandchild (grandchild_pid);
++  xclose (arc_fd);
++  archive = parent_pipe[PREAD];
++  xclose (parent_pipe[PWRITE]);
++  return child_pid;
+ }
+ 
+ 
+@@ -748,25 +592,25 @@
+ sys_exec_command (char *file_name, int typechar, struct tar_stat_info *st)
+ {
+   int p[2];
++  posix_spawn_file_actions_t fa;
+ 
+   xpipe (p);
+   pipe_handler = signal (SIGPIPE, SIG_IGN);
+-  global_pid = xfork ();
+-
+-  if (global_pid != 0)
+-    {
+-      xclose (p[PREAD]);
+-      return p[PWRITE];
+-    }
+-
+-  /* Child */
+-  xdup2 (p[PREAD], STDIN_FILENO);
+-  xclose (p[PWRITE]);
+ 
++  /* wasm: posix_spawn cannot run stat_to_env() between fork and exec, so set
++     the child's TAR_* environment here in the parent before spawning.  */
+   stat_to_env (file_name, typechar, st);
+ 
+-  priv_set_restore_linkdir ();
+-  xexec (to_command_option);
++  posix_spawn_file_actions_init (&fa);
++  posix_spawn_file_actions_adddup2 (&fa, p[PREAD], STDIN_FILENO);
++  posix_spawn_file_actions_addclose (&fa, p[PWRITE]);
++  global_pid = spawn_shell_command (to_command_option, &fa);
++  posix_spawn_file_actions_destroy (&fa);
++  if (global_pid < 0)
++    exec_fatal (to_command_option);
++
++  xclose (p[PREAD]);
++  return p[PWRITE];
+ }
+ 
+ void
+@@ -811,54 +655,19 @@
+   char uintbuf[UINTMAX_STRSIZE_BOUND];
+   int p[2];
+   static void (*saved_handler) (int sig);
++  posix_spawn_file_actions_t fa;
++  int rc;
++  int status;
++  char *buf = NULL;
++  size_t size = 0;
++  FILE *fp;
+ 
+   xpipe (p);
+   saved_handler = signal (SIGPIPE, SIG_IGN);
+ 
+-  pid = xfork ();
+-
+-  if (pid != 0)
+-    {
+-      /* Master */
+-
+-      int rc;
+-      int status;
+-      char *buf = NULL;
+-      size_t size = 0;
+-      FILE *fp;
+-
+-      xclose (p[PWRITE]);
+-      fp = fdopen (p[PREAD], "r");
+-      rc = getline (&buf, &size, fp);
+-      fclose (fp);
+-
+-      if (rc > 0 && buf[rc-1] == '\n')
+-	buf[--rc] = 0;
+-
+-      while (waitpid (pid, &status, 0) == -1)
+-	if (errno != EINTR)
+-	  {
+-	    signal (SIGPIPE, saved_handler);
+-	    waitpid_error (info_script_option);
+-	    return -1;
+-	  }
+-
+-      signal (SIGPIPE, saved_handler);
+-
+-      if (WIFEXITED (status))
+-	{
+-	  if (WEXITSTATUS (status) == 0 && rc > 0)
+-	    *archive_name = buf;
+-	  else
+-	    free (buf);
+-	  return WEXITSTATUS (status);
+-	}
+-
+-      free (buf);
+-      return -1;
+-    }
+-
+-  /* Child */
++  /* wasm: set the child's environment here in the parent before spawning.  The
++     script writes its answer to the pipe fd published as TAR_FD (= p[PWRITE]),
++     which stays open across the exec.  */
+   setenv ("TAR_VERSION", PACKAGE_VERSION, 1);
+   setenv ("TAR_ARCHIVE", *archive_name, 1);
+   setenv ("TAR_VOLUME", STRINGIFY_BIGINT (volume_number, uintbuf), 1);
+@@ -870,10 +679,43 @@
+ 				 archive_format : current_format), 1);
+   setenv ("TAR_FD", STRINGIFY_BIGINT (p[PWRITE], uintbuf), 1);
+ 
+-  xclose (p[PREAD]);
++  posix_spawn_file_actions_init (&fa);
++  posix_spawn_file_actions_addclose (&fa, p[PREAD]);
++  pid = spawn_shell_command (info_script_option, &fa);
++  posix_spawn_file_actions_destroy (&fa);
++  if (pid < 0)
++    exec_fatal (info_script_option);
++
++  /* Master */
++  xclose (p[PWRITE]);
++  fp = fdopen (p[PREAD], "r");
++  rc = getline (&buf, &size, fp);
++  fclose (fp);
++
++  if (rc > 0 && buf[rc-1] == '\n')
++    buf[--rc] = 0;
++
++  while (waitpid (pid, &status, 0) == -1)
++    if (errno != EINTR)
++      {
++	signal (SIGPIPE, saved_handler);
++	waitpid_error (info_script_option);
++	return -1;
++      }
++
++  signal (SIGPIPE, saved_handler);
+ 
+-  priv_set_restore_linkdir ();
+-  xexec (info_script_option);
++  if (WIFEXITED (status))
++    {
++      if (WEXITSTATUS (status) == 0 && rc > 0)
++	*archive_name = buf;
++      else
++	free (buf);
++      return WEXITSTATUS (status);
++    }
++
++  free (buf);
++  return -1;
+ }
+ 
+ void
+@@ -883,26 +725,9 @@
+ {
+   pid_t pid;
+   char uintbuf[UINTMAX_STRSIZE_BOUND];
++  int status;
+ 
+-  pid = xfork ();
+-
+-  if (pid != 0)
+-    {
+-      /* Master */
+-
+-      int status;
+-
+-      while (waitpid (pid, &status, 0) == -1)
+-	if (errno != EINTR)
+-	  {
+-	    waitpid_error (script_name);
+-	    break;
+-	  }
+-
+-      return;
+-    }
+-
+-  /* Child */
++  /* wasm: set the child's environment here in the parent before spawning.  */
+   setenv ("TAR_VERSION", PACKAGE_VERSION, 1);
+   setenv ("TAR_ARCHIVE", archive_name, 1);
+   setenv ("TAR_CHECKPOINT", STRINGIFY_BIGINT (checkpoint_number, uintbuf), 1);
+@@ -912,8 +737,17 @@
+   setenv ("TAR_FORMAT",
+ 	  archive_format_string (current_format == DEFAULT_FORMAT ?
+ 				 archive_format : current_format), 1);
+-  priv_set_restore_linkdir ();
+-  xexec (script_name);
++
++  pid = spawn_shell_command (script_name, NULL);
++  if (pid < 0)
++    exec_fatal (script_name);
++
++  while (waitpid (pid, &status, 0) == -1)
++    if (errno != EINTR)
++      {
++	waitpid_error (script_name);
++	break;
++      }
+ }
+ 
+ #endif /* not MSDOS */
+--- a/src/common.h
++++ b/src/common.h
+@@ -741,7 +741,6 @@
+ _Noreturn void write_fatal (char const *name);
+ _Noreturn void write_fatal_details (char const *name, ssize_t status, size_t size);
+ 
+-pid_t xfork (void);
+ void xpipe (int fd[2]);
+ 
+ void *page_aligned_alloc (void **ptr, size_t size);
+--- a/src/misc.c
++++ b/src/misc.c
+@@ -1191,16 +1191,6 @@
+     diagfn (name);
+ }
+ 
+-/* Fork, aborting if unsuccessful.  */
+-pid_t
+-xfork (void)
+-{
+-  pid_t p = fork ();
+-  if (p == (pid_t) -1)
+-    call_arg_fatal ("fork", _("child process"));
+-  return p;
+-}
+-
+ /* Create a pipe, aborting if unsuccessful.  */
+ void
+ xpipe (int fd[2])
