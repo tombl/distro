@@ -59,6 +59,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
     openssl = callPackage ./openssl/package.nix { };
+    python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };
     readline = callPackage ./readline/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };

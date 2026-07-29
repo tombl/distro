@@ -39,3 +39,6 @@
 
 - Complete static `libmagic.pc` metadata for consumers.
 - Complete static `libjq.pc` metadata for consumers.
+- Enable Python's `_multiprocessing` and `_posixshmem` after wasm musl and the
+  kernel provide working POSIX named semaphores, with integration tests.
+- Document the subprocess `close_fds` fd-snapshot race.
