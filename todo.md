@@ -34,3 +34,7 @@
 - Track wasm guest-process teardown retaining host emulator memory. Repeated
   guest process spawns cause host RSS to grow cumulatively instead of returning
   to a steady state; this is a platform lifecycle constraint, not a Bash defect.
+
+## Package follow-ups
+
+- Complete static `libmagic.pc` metadata for consumers.
