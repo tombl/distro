@@ -53,6 +53,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
+    xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
 
     # Early platform tests boot without the guest agent so a broken SDK cannot
