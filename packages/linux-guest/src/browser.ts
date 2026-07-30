@@ -162,6 +162,21 @@ export class VirtioFileSystem implements FileSystemBackend {
     return node;
   }
 
+  #forget(parts: readonly string[]) {
+    const key = parts.join("/");
+    for (const candidate of this.#nodes.keys()) {
+      if (candidate === key || candidate.startsWith(`${key}/`)) this.#nodes.delete(candidate);
+    }
+  }
+
+  #open_handle(node: VirtioFileSystemNode, handle: VirtioFileSystemHandle) {
+    const current = this.#as_node(node);
+    if (!(handle instanceof Handle) || handle.node !== current) {
+      throw new VirtioFileSystemError("EBADF");
+    }
+    return current;
+  }
+
   async #child(
     parent: FileSystemDirectoryHandle,
     name: string,
@@ -295,11 +310,11 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   async read(
     node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
+    handle: VirtioFileSystemHandle,
     offset: bigint,
     length: number,
   ) {
-    const current = this.#as_node(node);
+    const current = this.#open_handle(node, handle);
     if (current.handle.kind !== "file") {
       throw new VirtioFileSystemError("EISDIR");
     }
@@ -314,11 +329,11 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   async write(
     node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
+    handle: VirtioFileSystemHandle,
     offset: bigint,
     data: Uint8Array,
   ) {
-    const current = this.#as_node(node);
+    const current = this.#open_handle(node, handle);
     if (current.handle.kind !== "file") {
       throw new VirtioFileSystemError("EISDIR");
     }
@@ -347,9 +362,9 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   async readdir(
     node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
+    handle: VirtioFileSystemHandle,
   ): Promise<VirtioFileSystemDirectoryEntry[]> {
-    const current = this.#as_node(node);
+    const current = this.#open_handle(node, handle);
     const result: VirtioFileSystemDirectoryEntry[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
       result.push({
@@ -384,6 +399,7 @@ export class VirtioFileSystem implements FileSystemBackend {
       throw new VirtioFileSystemError("EISDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
+    this.#forget([...this.#as_node(parent).parts, name]);
   }
 
   async rmdir(parent: VirtioFileSystemNode, name: string) {
@@ -394,6 +410,7 @@ export class VirtioFileSystem implements FileSystemBackend {
       throw new VirtioFileSystemError("ENOTDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
+    this.#forget([...this.#as_node(parent).parts, name]);
   }
 
   async #copy(source: FileSystemHandle, destination: FileSystemDirectoryHandle, name: string) {

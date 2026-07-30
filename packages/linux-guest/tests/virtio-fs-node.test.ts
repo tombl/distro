@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
@@ -54,6 +64,66 @@ test("node virtio-fs adapter exposes a final symlink without following it", asyn
   assert(escaped);
   assert.equal((await filesystem.getattr(escaped)).mode & constants.S_IFMT, constants.S_IFLNK);
   assert.equal(await filesystem.readlink!(escaped), path.join(outside, "secret"));
+});
+
+test("node virtio-fs adapter never follows a final symlink for metadata operations", async () => {
+  const target = path.join(outside, "metadata-target");
+  const link = path.join(shared, "metadata-escape");
+  await writeFile(target, "outside", { mode: 0o640 });
+  await symlink(target, link);
+  const before = await stat(target);
+  const filesystem = new VirtioFileSystem(shared);
+  const escaped = await filesystem.lookup(filesystem.root, "metadata-escape");
+  assert(escaped);
+
+  await assert.rejects(
+    filesystem.setattr!(escaped, { mode: 0o600 }),
+    (error) => error instanceof VirtioFileSystemError && error.errno === 95,
+  );
+  await filesystem.setattr!(escaped, {
+    atime: { seconds: 1n },
+    mtime: { seconds: 1n },
+  });
+  await assert.rejects(
+    filesystem.access!(escaped, constants.R_OK),
+    (error) => error instanceof VirtioFileSystemError && error.errno === 40,
+  );
+
+  const after = await stat(target);
+  assert.equal(after.mode, before.mode);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal((await lstat(link)).mtimeMs, 1000);
+});
+
+test("node virtio-fs adapter keeps open files distinct across unlink and recreate", async () => {
+  const filesystem = new VirtioFileSystem(shared);
+  const old = await filesystem.create!(filesystem.root, "recreated", constants.O_RDWR, {
+    mode: constants.S_IFREG | 0o600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  await filesystem.write!(old.node, old.handle, 0n, new TextEncoder().encode("old"));
+  await filesystem.unlink!(filesystem.root, "recreated");
+  const replacement = await filesystem.create!(filesystem.root, "recreated", constants.O_RDWR, {
+    mode: constants.S_IFREG | 0o600,
+    uid: process.getuid!(),
+    gid: process.getgid!(),
+  });
+  await filesystem.write!(
+    replacement.node,
+    replacement.handle,
+    0n,
+    new TextEncoder().encode("new"),
+  );
+
+  assert.equal((await filesystem.getattr(old.node, old.handle)).size, 3n);
+  assert.equal(
+    new TextDecoder().decode(await filesystem.read!(old.node, old.handle, 0n, 3)),
+    "old",
+  );
+  assert.equal(await readFile(path.join(shared, "recreated"), "utf8"), "new");
+  await filesystem.release!(old.node, old.handle);
+  await filesystem.release!(replacement.node, replacement.handle);
 });
 
 test("node virtio-fs adapter creates symbolic links", async () => {

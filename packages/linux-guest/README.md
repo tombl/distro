@@ -95,11 +95,12 @@ the lifetime of the adapter, while file and directory contents persist in the
 underlying storage. The portable API has no atomic rename operation, so renames
 use a copy-and-remove fallback.
 
-Devices cache names and attributes for one second and use the guest page cache
-by default. Use `cache: false` for interchange directories which other
-applications modify; it disables metadata/name caching and uses direct I/O.
-Writes to an open file become visible without cache revalidation, though
-replacing a path does not retarget an already-open file descriptor.
+Devices cache names and attributes for one second and use the guest page cache.
+Use `cache: false` for interchange directories which other applications modify;
+it disables metadata/name caching. Data is revalidated when a file is reopened,
+but writes made outside the guest are not guaranteed to become visible through
+an already-open file descriptor. Replacing a path does not retarget an open file
+descriptor.
 
 ## Documentation
 

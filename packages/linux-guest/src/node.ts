@@ -15,8 +15,9 @@ import { constants, type BigIntStats } from "node:fs";
 import {
   access,
   chmod,
-  chown,
+  lchown,
   lstat,
+  lutimes,
   mkdir,
   open,
   type FileHandle,
@@ -28,7 +29,6 @@ import {
   statfs,
   symlink,
   unlink,
-  utimes,
 } from "node:fs/promises";
 import path from "node:path";
 
@@ -195,18 +195,32 @@ export class VirtioFileSystem implements FileSystemBackend {
     return await node_call(lstat(await this.#validated_path(this.#parts(node)), { bigint: true }));
   }
 
+  #forget(parts: readonly string[]) {
+    const key = parts.join("/");
+    for (const candidate of this.#nodes.keys()) {
+      if (candidate === key || candidate.startsWith(`${key}/`)) this.#nodes.delete(candidate);
+    }
+  }
+
   async lookup(parent: VirtioFileSystemNode, name: string) {
     const parts = [...this.#parts(parent), valid_name(name)];
+    const node = this.#node(parts);
     try {
-      await this.#stats(this.#node(parts));
-      return this.#node(parts);
+      await this.#stats(node);
+      return node;
     } catch (error) {
-      if (error instanceof VirtioFileSystemError && error.errno === 2) return undefined;
+      if (error instanceof VirtioFileSystemError && error.errno === 2) {
+        this.#forget(parts);
+        return undefined;
+      }
       throw error;
     }
   }
 
-  async getattr(node: VirtioFileSystemNode) {
+  async getattr(node: VirtioFileSystemNode, handle?: VirtioFileSystemHandle) {
+    if (handle instanceof Handle && handle.file) {
+      return attributes(await node_call(handle.file.stat({ bigint: true })));
+    }
     return attributes(await this.#stats(node));
   }
 
@@ -235,14 +249,19 @@ export class VirtioFileSystem implements FileSystemBackend {
     try {
       if (changes.mode !== undefined) {
         if (file) await file.chmod(changes.mode & 0o7777);
-        else await chmod(target, changes.mode & 0o7777);
+        else {
+          if ((await this.#stats(node)).isSymbolicLink()) {
+            throw new VirtioFileSystemError("EOPNOTSUPP", "cannot change a symbolic link's mode");
+          }
+          await chmod(target, changes.mode & 0o7777);
+        }
       }
       if (changes.uid !== undefined || changes.gid !== undefined) {
         const current = await this.#stats(node);
         const uid = changes.uid ?? Number(current.uid);
         const gid = changes.gid ?? Number(current.gid);
         if (file) await file.chown(uid, gid);
-        else await chown(target, uid, gid);
+        else await lchown(target, uid, gid);
       }
       if (changes.size !== undefined) {
         const size = checked_offset(changes.size);
@@ -264,13 +283,12 @@ export class VirtioFileSystem implements FileSystemBackend {
           if (value === "now") return now;
           return new Date(Number(value.seconds * 1000n) + (value.nanoseconds ?? 0) / 1_000_000);
         };
-        await utimes(
-          target,
-          to_date(changes.atime, current.atimeNs),
-          to_date(changes.mtime, current.mtimeNs),
-        );
+        const atime = to_date(changes.atime, current.atimeNs);
+        const mtime = to_date(changes.mtime, current.mtimeNs);
+        if (file) await file.utimes(atime, mtime);
+        else await lutimes(target, atime, mtime);
       }
-      return await this.getattr(node);
+      return await this.getattr(node, handle);
     } catch (error) {
       filesystem_error(error);
     }
@@ -383,12 +401,14 @@ export class VirtioFileSystem implements FileSystemBackend {
     const parts = [...this.#parts(parent), valid_name(name)];
     await this.#stats(this.#node(parts));
     await node_call(unlink(await this.#validated_path(parts)));
+    this.#forget(parts);
   }
 
   async rmdir(parent: VirtioFileSystemNode, name: string) {
     const parts = [...this.#parts(parent), valid_name(name)];
     await this.#stats(this.#node(parts));
     await node_call(rmdir(await this.#validated_path(parts)));
+    this.#forget(parts);
   }
 
   async rename(
@@ -399,11 +419,13 @@ export class VirtioFileSystem implements FileSystemBackend {
   ) {
     const old_parts = [...this.#parts(oldParent), valid_name(oldName)];
     const new_parts = [...this.#parts(newParent), valid_name(newName)];
+    if (old_parts.join("/") === new_parts.join("/")) return;
     const source = await this.#validated_path(old_parts);
     await this.#stats(this.#node(old_parts));
     const destination = await this.#validated_path(new_parts);
     await node_call(rename(source, destination));
 
+    this.#forget(new_parts);
     for (const [key, node] of [...this.#nodes]) {
       if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
         this.#nodes.delete(key);
@@ -414,13 +436,14 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async access(node: VirtioFileSystemNode, mask: number) {
+    if ((await this.#stats(node)).isSymbolicLink()) {
+      throw new VirtioFileSystemError("ELOOP");
+    }
     await node_call(access(await this.#validated_path(this.#parts(node)), mask));
   }
 
-  async statfs(node: VirtioFileSystemNode): Promise<VirtioFileSystemStat> {
-    const stats = await node_call(
-      statfs(await this.#validated_path(this.#parts(node)), { bigint: true }),
-    );
+  async statfs(_node: VirtioFileSystemNode): Promise<VirtioFileSystemStat> {
+    const stats = await node_call(statfs(await this.#root_path, { bigint: true }));
     return {
       blocks: stats.blocks,
       blocksFree: stats.bfree,
