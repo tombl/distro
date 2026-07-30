@@ -135,11 +135,13 @@ class Handle implements VirtioFileSystemHandle {
 /**
  * A virtio-fs backend rooted at a host `node:fs` directory.
  *
- * Symbolic links are returned without being followed; the guest kernel resolves
- * their targets inside the guest namespace. A host process with write access
- * can still race an operation by replacing an ancestor between validation and
- * the underlying syscall; fully closing that gap requires an openat2-style
- * native API which Node does not expose.
+ * Symbolic links are returned without following their final targets; the guest
+ * kernel resolves them inside the guest namespace. Path and symlink escapes are
+ * rejected when the host directory is stable.
+ *
+ * Use an application-owned directory. This is not a sandbox against another
+ * host process concurrently restructuring the shared tree: standard Node APIs
+ * cannot resolve every operation beneath a trusted directory descriptor.
  */
 export class VirtioFileSystem implements FileSystemBackend {
   readonly root: Node;
@@ -180,6 +182,10 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async #validated_path(parts: readonly string[]) {
+    // This proves containment only for the namespace observed now. The later
+    // Node pathname syscall resolves ancestors again, so this cannot be a
+    // security boundary against concurrent host mutation. Closing that race
+    // requires descriptor-relative/openat2 operations Node does not expose.
     const root = await this.#root_path;
     const result = await this.#path(parts);
     const parent = parts.length === 0 ? result : path.dirname(result);

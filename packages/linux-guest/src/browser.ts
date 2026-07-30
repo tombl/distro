@@ -90,6 +90,9 @@ class Node implements VirtioFileSystemNode {
   parts: string[];
   handle: FileSystemHandle;
   metadata: Metadata;
+  // Browser handles identify a locator rather than an inode generation and may
+  // resolve a same-path recreation. Once removal is observed, permanently
+  // detach this generation so old guest handles fail instead of retargeting it.
   attached = true;
 
   constructor(parts: string[], handle: FileSystemHandle, metadata: Metadata) {
@@ -125,7 +128,16 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * The browser File System API exposes no Unix ownership, permissions, links,
  * or inode metadata. This adapter presents conventional synthetic values for
  * them and keeps chmod/chown/timestamp changes for the lifetime of this object.
- * File writes use the broadly available asynchronous API.
+ *
+ * Rename copies to an empty destination and then removes the source because the
+ * portable API has no atomic namespace rename. Failure can leave a partial new
+ * destination, or both names if removing the source fails. Replacing an
+ * existing destination is unsupported.
+ *
+ * Browser handles cannot keep an unlinked file alive like a POSIX descriptor.
+ * When this adapter observes removal, existing descriptors become stale and
+ * fail rather than targeting a new entry created at the same path. An external
+ * remove-and-recreate with no observed missing state cannot be distinguished.
  */
 export class VirtioFileSystem implements FileSystemBackend {
   readonly root: Node;
@@ -213,9 +225,13 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   async lookup(parent: VirtioFileSystemNode, name: string) {
     const parent_node = this.#as_node(parent);
-    const handle = await this.#child(this.#directory(parent), valid_name(name));
-    if (!handle) return undefined;
-    return this.#remember([...parent_node.parts, name], handle);
+    const parts = [...parent_node.parts, valid_name(name)];
+    const handle = await this.#child(this.#directory(parent), name);
+    if (!handle) {
+      this.#forget(parts);
+      return undefined;
+    }
+    return this.#remember(parts, handle);
   }
 
   async getattr(node: VirtioFileSystemNode): Promise<VirtioFileSystemAttributes> {
@@ -421,6 +437,10 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async #copy(source: FileSystemHandle, destination: FileSystemDirectoryHandle, name: string) {
+    // Portable File System handles provide no atomic recursive rename or
+    // namespace transaction. Copy only into an absent destination and never
+    // delete unrelated destination data. A failed copy may still leave the
+    // partial destination created by this operation.
     if (source.kind === "file") {
       const input = await opfs_call((source as FileSystemFileHandle).getFile());
       const output = await opfs_call(destination.getFileHandle(name, { create: true }));
@@ -464,14 +484,10 @@ export class VirtioFileSystem implements FileSystemBackend {
 
     const existing = await this.lookup(new_parent, newName);
     if (existing) {
-      const existing_node = this.#as_node(existing);
-      if (existing_node.handle.kind !== source_node.handle.kind) {
-        throw new VirtioFileSystemError(
-          source_node.handle.kind === "directory" ? "ENOTDIR" : "EISDIR",
-        );
-      }
-      await opfs_call(this.#directory(new_parent).removeEntry(newName));
-      this.#forget(new_parts);
+      throw new VirtioFileSystemError(
+        "EOPNOTSUPP",
+        "browser filesystems cannot atomically replace a rename destination",
+      );
     }
 
     const copied = await this.#copy(source_node.handle, this.#directory(new_parent), newName);
