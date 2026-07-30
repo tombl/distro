@@ -11,6 +11,7 @@ import {
   virtioFileSystemDevice,
 } from "@tombl/linux";
 import { SeekMode } from "../src/index.ts";
+import { getdents_inode } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
 
@@ -42,6 +43,12 @@ class MemoryHandle implements VirtioFileSystemHandle {
 class MemoryFileSystem implements VirtioFileSystemBackend {
   readonly root = new MemoryNode("directory", 0o755);
   handleGetattrs = 0;
+  releases = 0;
+  directoryReleases = 0;
+  destroys = 0;
+  destroyGate: Promise<void> | undefined;
+  directoryOpenWaiter: (() => void) | undefined;
+  readonly destroyStarted = Promise.withResolvers<void>();
 
   #node(node: VirtioFileSystemNode) {
     assert(node instanceof MemoryNode);
@@ -133,6 +140,8 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
   }
 
   opendir(node: VirtioFileSystemNode) {
+    this.directoryOpenWaiter?.();
+    this.directoryOpenWaiter = undefined;
     return new MemoryHandle(this.#directory(node));
   }
 
@@ -141,6 +150,20 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
       name,
       node,
     }));
+  }
+
+  release() {
+    this.releases += 1;
+  }
+
+  releasedir() {
+    this.directoryReleases += 1;
+  }
+
+  async destroy() {
+    this.destroys += 1;
+    this.destroyStarted.resolve();
+    await this.destroyGate;
   }
 
   mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
@@ -241,4 +264,63 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.remove(`${directory}/large`);
   await guest.fs.remove(directory);
   assert.equal(backend.root.children.size, 0);
+
+  await guest.fs.mkdir("/workspace/shared/source/child", { recursive: true });
+  await guest.fs.mkdir("/workspace/shared/destination");
+  const movedDirectoryOpened = Promise.withResolvers<void>();
+  backend.directoryOpenWaiter = movedDirectoryOpened.resolve;
+  const holdingMovedDirectory = await guest.exec([
+    "sh",
+    "-c",
+    "exec 3< /workspace/shared/source/child; sleep 3600",
+  ]);
+  await movedDirectoryOpened.promise;
+  await guest.fs.rename("/workspace/shared/source/child", "/workspace/shared/destination/child");
+  await guest.fs.writeFile("/workspace/getdents-inode", getdents_inode);
+  await guest.fs.chmod("/workspace/getdents-inode", 0o755);
+  const dotdot = await guest.exec([
+    "/workspace/getdents-inode",
+    "/workspace/shared/destination/child",
+    "..",
+    "/workspace/shared/destination",
+  ]);
+  const dotdotStderr = new Response(dotdot.stderr).text();
+  const dotdotOutput = new Response(dotdot.stdout).text();
+  const dotdotStatus = await dotdot.status;
+  assert.equal(dotdotStatus.success, true, await dotdotStderr);
+  const [dotdotInode, destinationInode] = (await dotdotOutput).trim().split(" ").map(Number);
+  assert.equal(dotdotInode, destinationInode);
+
+  await guest.fs.writeTextFile("/workspace/shared/held", "held open");
+  const held = await guest.fs.open("/workspace/shared/held");
+  const directoryOpened = Promise.withResolvers<void>();
+  backend.directoryOpenWaiter = directoryOpened.resolve;
+  const holdingDirectory = await guest.exec(["sh", "-c", "exec 3< /workspace/shared; sleep 3600"]);
+  await directoryOpened.promise;
+  const releases = backend.releases;
+  const directoryReleases = backend.directoryReleases;
+  let finishDestroy!: () => void;
+  backend.destroyGate = new Promise((resolve) => {
+    finishDestroy = resolve;
+  });
+  guest.machine.close();
+  let closed = false;
+  void guest.machine.closed.then(() => {
+    closed = true;
+  });
+  try {
+    await backend.destroyStarted.promise;
+    assert.equal(closed, false);
+    assert.equal(backend.releases, releases + 1);
+    assert.equal(backend.directoryReleases, directoryReleases + 2);
+    assert.equal(backend.destroys, 1);
+  } finally {
+    finishDestroy();
+  }
+  await guest.machine.closed;
+  guest.machine.close();
+  assert.equal(backend.destroys, 1);
+  void holdingMovedDirectory;
+  void held;
+  void holdingDirectory;
 });
