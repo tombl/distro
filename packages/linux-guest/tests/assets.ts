@@ -35,6 +35,9 @@ export const network_test = await readFile(join(directory, "network-test"));
 /** A static guest executable whose entrypoint executes Wasm `unreachable`. */
 export const user_trap = await readFile(join(directory, "user-trap"));
 
+/** A static guest executable that compares raw getdents64 and held-directory inode numbers. */
+export const getdents_inode = await readFile(join(directory, "getdents-inode"));
+
 export const lifecycle_assets = {
   initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
   initramfs_path: join(directory, "lifecycle-initramfs.cpio"),

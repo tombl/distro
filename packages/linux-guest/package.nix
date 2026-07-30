@@ -27,6 +27,7 @@ let
     };
   network-test = test-program "network-test" ./tests/network-test.c;
   user-trap = test-program "user-trap" ./tests/user-trap.c;
+  getdents-inode = test-program "getdents-inode" ./tests/getdents-inode.c;
 
   lifecycle-initramfs = vm-test.mkInitramfs {
     name = "linux-guest-lifecycle";
@@ -42,6 +43,7 @@ let
     "rootfs.squashfs" = "${image}/rootfs.squashfs";
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
+    "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
     "runner" = "${runner.package}/bin/wasm-linux-runner";
   };
 
