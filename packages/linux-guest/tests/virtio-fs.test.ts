@@ -41,6 +41,7 @@ class MemoryHandle implements VirtioFileSystemHandle {
 
 class MemoryFileSystem implements VirtioFileSystemBackend {
   readonly root = new MemoryNode("directory", 0o755);
+  handleGetattrs = 0;
 
   #node(node: VirtioFileSystemNode) {
     assert(node instanceof MemoryNode);
@@ -57,7 +58,8 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
     return this.#directory(parent).children.get(name);
   }
 
-  getattr(node: VirtioFileSystemNode): VirtioFileSystemAttributes {
+  getattr(node: VirtioFileSystemNode, handle?: VirtioFileSystemHandle): VirtioFileSystemAttributes {
+    if (handle !== undefined) this.handleGetattrs += 1;
     const current = this.#node(node);
     return {
       mode: current.mode,
@@ -204,6 +206,8 @@ guest_test("virtio-fs", async (_t, fixture) => {
   assert.equal(await guest.fs.readTextFile(`${directory}/hello`), "hello from the guest");
 
   const open = await guest.fs.open(`${directory}/hello`);
+  assert.equal((await open.stat()).size, 20);
+  assert.equal(backend.handleGetattrs > 0, true);
   const first = new Uint8Array(5);
   assert.equal(await open.read(first), 5);
   assert.equal(new TextDecoder().decode(first), "hello");

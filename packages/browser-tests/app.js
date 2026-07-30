@@ -13,8 +13,8 @@ async function collectProcess(child) {
 
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
-async function withGuest(scenario) {
-  const guest = await spawnGuest();
+async function withGuest(scenario, options) {
+  const guest = await spawnGuest(options);
   try {
     return await scenario(guest);
   } finally {
@@ -40,9 +40,64 @@ globalThis.spawnStress = () =>
     return collectProcess(await guest.exec(["sh", "-c", script]));
   });
 
-globalThis.schedulerHandoffStress = async () => {
-  const response = await fetch("/scheduler-handoff.cpio");
-  if (!response.ok) throw new Error(`failed to load scheduler test: ${response.status}`);
+globalThis.remoteMemoryMetadata = () =>
+  withGuest(
+    async (guest) => {
+      const script = [
+        "MARKER=remote-vm-environ sleep 30 &",
+        "pid=$!",
+        "cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
+        "environ=$(tr '\\000' '\\n' < /proc/$pid/environ)",
+        "auxv_size=$(wc -c < /proc/$pid/auxv)",
+        "kill $pid",
+        "wait $pid 2>/dev/null || true",
+        'printf \'cmdline=%s\\nenviron=%s\\nauxv=%s\\n\' "$cmdline" "$(printf \'%s\\n\' "$environ" | grep \'^MARKER=\')" "$auxv_size"',
+      ].join("\n");
+      return collectProcess(await guest.exec(["sh", "-c", script]));
+    },
+    { cpus: 1 },
+  );
+
+let lifecycleGuest;
+
+globalThis.startRemoteMemoryLifecycle = async () => {
+  if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
+  lifecycleGuest = await spawnGuest({ cpus: 1 });
+};
+
+globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
+  if (!lifecycleGuest) throw new Error("remote-memory lifecycle guest is not running");
+  const script = [
+    "i=0",
+    `while [ $i -lt ${iterations} ]; do`,
+    `  MARKER=remote-vm-lifecycle-${batch}-$i sleep 30 &`,
+    "  pid=$!",
+    "  cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
+    "  environ=$(tr '\\000' '\\n' < /proc/$pid/environ | grep '^MARKER=')",
+    "  auxv_size=$(wc -c < /proc/$pid/auxv)",
+    "  kill $pid",
+    "  wait $pid 2>/dev/null || true",
+    '  [ "$cmdline" = "sleep 30 " ] || exit 10',
+    `  [ "$environ" = "MARKER=remote-vm-lifecycle-${batch}-$i" ] || exit 11`,
+    '  [ "$auxv_size" -gt 0 ] || exit 12',
+    "  i=$((i+1))",
+    "done",
+    "printf 'batch=%s processes=%s\\n' \"" + batch + '" "$i"',
+  ].join("\n");
+  return collectProcess(await lifecycleGuest.exec(["sh", "-c", script]));
+};
+
+globalThis.closeRemoteMemoryLifecycle = async () => {
+  if (!lifecycleGuest) return;
+  const guest = lifecycleGuest;
+  lifecycleGuest = undefined;
+  guest.machine.close();
+  await guest.machine.closed;
+};
+
+async function runInitramfs(path, cpus) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
   const initcpio = new Uint8Array(await response.arrayBuffer());
 
   let resolve;
@@ -73,7 +128,7 @@ globalThis.schedulerHandoffStress = async () => {
   });
 
   const machine = await spawnMachine({
-    cpus: 2,
+    cpus,
     devices: [consoleDevice(input, outputStream())],
     initcpio,
   });
@@ -89,7 +144,11 @@ globalThis.schedulerHandoffStress = async () => {
     machine.close();
     await machine.closed.catch(() => {});
   }
-};
+}
+
+globalThis.schedulerHandoffStress = () => runInitramfs("/scheduler-handoff.cpio", 2);
+
+globalThis.remoteMemoryProtocol = () => runInitramfs("/remote-vm.cpio", 2);
 
 globalThis.opfsVirtioFileSystem = async () => {
   const storage = await navigator.storage.getDirectory();
@@ -133,11 +192,29 @@ globalThis.opfsVirtioFileSystem = async () => {
   const nestedHandle = await reopened.open(nestedNode, 0);
   const nestedPersisted = await reopened.read(nestedNode, nestedHandle, 0n, 5);
   const stat = await filesystem.getattr(created.node);
+
+  const old = await filesystem.create(filesystem.root, "identity", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(old.node, old.handle, 0n, new TextEncoder().encode("old"));
+  await filesystem.unlink(filesystem.root, "identity");
+  const replacement = await filesystem.create(filesystem.root, "identity", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(replacement.node, replacement.handle, 0n, new TextEncoder().encode("new"));
+  await filesystem.write(old.node, old.handle, 0n, new TextEncoder().encode("OLD")).catch(() => {});
+  const replacementData = await filesystem.read(replacement.node, replacement.handle, 0n, 3);
+  await filesystem.unlink(filesystem.root, "identity");
   return {
     entries,
     mode: stat.mode & 0o777,
     nestedPersisted: new TextDecoder().decode(nestedPersisted),
     output: new TextDecoder().decode(output),
     persisted: new TextDecoder().decode(persisted),
+    replacement: new TextDecoder().decode(replacementData),
   };
 };
