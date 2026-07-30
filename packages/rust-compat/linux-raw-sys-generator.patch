@@ -1,0 +1,77 @@
+--- a/gen/src/main.rs
++++ b/gen/src/main.rs
+@@ -23,7 +23,9 @@
+     assert!(cmd.is_none());
+     assert!(args.next().is_none());
+
+-    git_init();
++    // The packaging derivation supplies the exact custom Linux checkout as
++    // gen/linux. Do not replace it with the generator's upstream Linux pin.
++    assert!(Path::new("linux").is_dir());
+
+     let out = tempfile::TempDir::with_prefix("linux-raw-sys").unwrap();
+     let out_dir = out.path();
+@@ -84,18 +86,9 @@
+
+     let linux_version = LINUX_VERSION;
+-    // Checkout a specific version of Linux.
+-    git_checkout(linux_version);
+-
+-    let mut linux_archs = fs::read_dir(&format!("linux/arch"))
+-        .unwrap()
+-        .map(|entry| entry.unwrap())
+-        .collect::<Vec<_>>();
+-    // Sort archs list as filesystem iteration order is non-deterministic
+-    linux_archs.sort_by_key(|entry| entry.file_name());
+-    for linux_arch_entry in linux_archs {
+-        if !linux_arch_entry.file_type().unwrap().is_dir() {
+-            continue;
+-        }
+-        let linux_arch = linux_arch_entry.file_name().to_str().unwrap().to_owned();
++    // Generate just the custom Linux architecture. The output is copied into
++    // otherwise-unmodified release sources by the packaging derivation.
++    let linux_archs = ["wasm"];
++    for linux_arch in linux_archs {
++        let linux_arch = linux_arch.to_owned();
+
+         let rust_arches = rust_arches(&linux_arch);
+@@ -139,6 +132,21 @@
+             for mod_entry in modules {
+                 let header_name = mod_entry.path();
+                 let mod_name = header_name.file_stem().unwrap().to_str().unwrap();
++                if !matches!(
++                    mod_name,
++                    "errno"
++                        | "general"
++                        | "if_ether"
++                        | "io_uring"
++                        | "ioctl"
++                        | "net"
++                        | "netlink"
++                        | "prctl"
++                        | "system"
++                        | "xdp"
++                ) {
++                    continue;
++                }
+                 let mod_rs = format!("{}/{}.rs", src_arch, mod_name);
+
+                 writeln!(src_lib_rs, "#[cfg(feature = \"{}\")]", mod_name).unwrap();
+@@ -294,4 +301,5 @@
+         "s390" => &["s390x"],
+         "sparc" => &["sparc", "sparc64"],
++        "wasm" => &["wasm32"],
+         "x86" => &["x86", "x86_64", "x32"],
+         "alpha" | "cris" | "h8300" | "microblaze" | "mn10300" | "score" | "blackfin"
+@@ -389,6 +397,11 @@
+         format!("mipsisa32r6-unknown-linux-gnu")
+     } else if rust_arch == "mips64r6" {
+         format!("mipsisa64r6-unknown-linux-gnuabi64")
++    } else if rust_arch == "wasm32" {
++        // LLVM does not recognize Rust's custom target triple. Header
++        // selection comes from the installed Linux UAPI tree; this target
++        // supplies wasm32's C data model to bindgen.
++        format!("wasm32-unknown-unknown")
+     } else {
+         format!("{}-unknown-linux", rust_arch)
+     }

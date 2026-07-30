@@ -1,0 +1,17 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 84365df..dc56875 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,11 @@
+         clippy::transmute_ptr_to_ptr, // Used in the stats code
+ )]
+
+-#[cfg(all(feature = "rayon", target_arch = "wasm32"))]
++#[cfg(all(
++    feature = "rayon",
++    target_arch = "wasm32",
++    not(target_os = "linux")
++))]
+ compile_error!("Rayon cannot be used when targeting wasi32. Try disabling default features.");
+
+ use {

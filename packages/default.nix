@@ -51,6 +51,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
 
     # A pinned nightly rustc with a from-source std for the wasm target.
     rust-toolchain = callPackage ./rust-toolchain/package.nix { };
+    rust-compat = callPackage ./rust-compat/package.nix { };
+    rust-cli-matrix = callPackage ./rust-cli-matrix/package.nix { };
 
     # userland:
     basic-init = callPackage ./basic-init/package.nix { };

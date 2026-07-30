@@ -1,0 +1,34 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index af74b8b..dc3bfd0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -95,6 +95,6 @@ mod term;
+ mod unix_term;
+ mod utils;
+-#[cfg(target_arch = "wasm32")]
++#[cfg(all(target_arch = "wasm32", not(unix)))]
+ mod wasm_term;
+ #[cfg(windows)]
+ mod windows_term;
+diff --git a/src/term.rs b/src/term.rs
+index e4a4818..e6a64fe 100644
+--- a/src/term.rs
++++ b/src/term.rs
+@@ -112,7 +112,7 @@ impl TermTarget {
+         {
+             TermFamily::UnixTerm
+         }
+-        #[cfg(target_arch = "wasm32")]
++        #[cfg(all(target_arch = "wasm32", not(unix)))]
+         {
+             TermFamily::Dummy
+         }
+@@ -626,7 +626,7 @@ impl<'a> Read for &'a Term {
+
+ #[cfg(unix)]
+ pub use crate::unix_term::*;
+-#[cfg(target_arch = "wasm32")]
++#[cfg(all(target_arch = "wasm32", not(unix)))]
+ pub use crate::wasm_term::*;
+ #[cfg(windows)]
+ pub use crate::windows_term::*;

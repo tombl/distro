@@ -1,0 +1,82 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 9893122..a92dd72 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -121,8 +121,8 @@ version = "^0.59.0"
+ [dependencies.gix-traverse]
+ version = "^0.59.0"
+ optional = true
+
+-[dependencies.memmap2]
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux")))'.dependencies.memmap2]
+ version = "0.9.10"
+
+ [dependencies.parking_lot]
+diff --git a/src/lib.rs b/src/lib.rs
+index cb42cc9..2f55433 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -20,8 +20,12 @@ use gix_error::{Exn, Message};
+
+ use std::{borrow::Cow, ops::Deref, path::Path};
+
+-/// The default memory-backed storage for pack data and index files.
++/// The default storage for pack data and index files.
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+ pub use memmap2::Mmap as MMap;
++/// The default storage for pack data and index files.
++#[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++pub type MMap = Vec<u8>;
+
+ /// A byte-oriented backing store for pack data and indices.
+ pub trait FileData: Deref<Target = [u8]> {}
+@@ -57,7 +61,8 @@ pub mod verify;
+
+ mod mmap {
+     use std::path::Path;
+
++    #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+     pub fn read_only(path: &Path) -> std::io::Result<memmap2::Mmap> {
+         let file = std::fs::File::open(path)?;
+         // SAFETY: we have to take the risk of somebody changing the file underneath. Git never writes into the same file.
+@@ -69,6 +74,16 @@ mod mmap {
+             memmap2::MmapOptions::new().map_copy_read_only(&file)
+         }
+     }
++
++    #[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++    pub fn read_only(path: &Path) -> std::io::Result<Vec<u8>> {
++        use std::io::Read;
++
++        let mut file = std::fs::File::open(path)?;
++        let mut data = Vec::new();
++        file.read_to_end(&mut data)?;
++        Ok(data)
++    }
+ }
+
+ /// Return a display-friendly name for pack- or index-related progress messages.
+diff --git a/src/bundle/write/mod.rs b/src/bundle/write/mod.rs
+index 4484d61..fd550ba 100644
+--- a/src/bundle/write/mod.rs
++++ b/src/bundle/write/mod.rs
+@@ -361,16 +361,16 @@ impl Bundle {
+     }
+ }
+
+-fn resolve_entry(range: data::EntryRange, mapped_file: &memmap2::Mmap) -> Option<&[u8]> {
++fn resolve_entry(range: data::EntryRange, mapped_file: &crate::MMap) -> Option<&[u8]> {
+     mapped_file.get(range.start as usize..range.end as usize)
+ }
+
+ #[allow(clippy::type_complexity)] // cannot typedef impl Fn
+ fn new_pack_file_resolver(
+     data_file: SharedTempFile,
+ ) -> io::Result<(
+-    impl Fn(data::EntryRange, &memmap2::Mmap) -> Option<&[u8]> + Send + Clone,
+-    memmap2::Mmap,
++    impl Fn(data::EntryRange, &crate::MMap) -> Option<&[u8]> + Send + Clone,
++    crate::MMap,
+ )> {
+     let mut guard = data_file.lock();
+     guard.flush()?;

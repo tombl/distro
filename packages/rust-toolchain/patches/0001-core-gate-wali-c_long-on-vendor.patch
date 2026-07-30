@@ -7,7 +7,7 @@
 -            // wasm32 Linux ABI uses 64-bit long
 -            all(target_arch = "wasm32", target_os = "linux")
 +            // WALI's wasm32 Linux ABI uses 64-bit long; other wasm32-linux
-+            // ports (tombl/linux) are ILP32
++            // ports (including ours) are ILP32
 +            all(target_arch = "wasm32", target_os = "linux", target_vendor = "wali")
          ) => {
              pub(super) type c_long = i64;

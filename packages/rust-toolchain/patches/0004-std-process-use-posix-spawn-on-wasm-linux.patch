@@ -1,0 +1,39 @@
+--- a/library/std/src/sys/process/unix/unix.rs
++++ b/library/std/src/sys/process/unix/unix.rs
+@@ -74,6 +74,14 @@
+             return Ok((ret, ours));
+         }
+
++        // This target has a callback-based clone ABI for creating threads, but
++        // it cannot implement fork: a clone callback cannot resume this Rust
++        // stack in the child, and sharing a private linear memory is unsafe in
++        // a multithreaded parent. Keep ordinary commands on posix_spawn and
++        // report options which require the fork/exec fallback explicitly.
++        #[cfg(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown"))]
++        return Err(Self::ERR_WASM_LINUX_NO_FORK);
++
+         #[cfg(target_os = "linux")]
+         let (input, output) = sys::net::Socket::new_pair(libc::AF_UNIX, libc::SOCK_SEQPACKET)?;
+
+@@ -180,9 +188,21 @@
+         return Err(Self::ERR_APPLE_TV_WATCH_NO_FORK_EXEC);
+     }
+
++    #[cfg(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown"))]
++    const ERR_WASM_LINUX_NO_FORK: Error = io::const_error!(
++        ErrorKind::Unsupported,
++        "this command requires fork, which is not supported on wasm32-unknown-linux-musl",
++    );
++
++    #[cfg(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown"))]
++    unsafe fn do_fork(&mut self) -> Result<pid_t, io::Error> {
++        Err(Self::ERR_WASM_LINUX_NO_FORK)
++    }
++
+     // Attempts to fork the process. If successful, returns Ok((0, -1))
+     // in the child, and Ok((child_pid, -1)) in the parent.
+     #[cfg(not(any(
++        all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown"),
+         target_os = "watchos",
+         target_os = "tvos",
+         target_os = "nto",
