@@ -12,10 +12,13 @@ test("adapts OPFS to the virtio filesystem contract", async ({ page }) => {
     .toBe("function");
   expect(await page.evaluate(() => globalThis.opfsVirtioFileSystem())).toEqual({
     entries: ["moved-directory", "renamed"],
+    externalMissing: true,
+    externalReplacement: "new",
     mode: 0o640,
     nestedPersisted: "after",
     output: "persistent",
     persisted: "persistent",
+    renameDestination: "destination",
     replacement: "new",
   });
 });

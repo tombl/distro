@@ -209,12 +209,76 @@ globalThis.opfsVirtioFileSystem = async () => {
   await filesystem.write(old.node, old.handle, 0n, new TextEncoder().encode("OLD")).catch(() => {});
   const replacementData = await filesystem.read(replacement.node, replacement.handle, 0n, 3);
   await filesystem.unlink(filesystem.root, "identity");
+
+  const externalOld = await filesystem.create(
+    filesystem.root,
+    "external-identity",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await directory.removeEntry("external-identity");
+  const missing = await filesystem.lookup(filesystem.root, "external-identity");
+  const externalFile = await directory.getFileHandle("external-identity", { create: true });
+  const externalWritable = await externalFile.createWritable();
+  await externalWritable.write("new");
+  await externalWritable.close();
+  await filesystem
+    .write(externalOld.node, externalOld.handle, 0n, new TextEncoder().encode("OLD"))
+    .catch(() => {});
+  const externalReplacement = await filesystem.lookup(filesystem.root, "external-identity");
+  const externalReplacementHandle = await filesystem.open(externalReplacement, 0);
+  const externalReplacementData = await filesystem.read(
+    externalReplacement,
+    externalReplacementHandle,
+    0n,
+    3,
+  );
+  await filesystem.unlink(filesystem.root, "external-identity");
+
+  const renameSource = await filesystem.create(
+    filesystem.root,
+    "rename-source",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await filesystem.write(
+    renameSource.node,
+    renameSource.handle,
+    0n,
+    new TextEncoder().encode("source"),
+  );
+  const renameDestination = await filesystem.create(
+    filesystem.root,
+    "rename-destination",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await filesystem.write(
+    renameDestination.node,
+    renameDestination.handle,
+    0n,
+    new TextEncoder().encode("destination"),
+  );
+  await filesystem
+    .rename(filesystem.root, "rename-source", filesystem.root, "rename-destination")
+    .catch(() => {});
+  const renameDestinationData = await filesystem.read(
+    renameDestination.node,
+    renameDestination.handle,
+    0n,
+    11,
+  );
+  await filesystem.unlink(filesystem.root, "rename-source");
+  await filesystem.unlink(filesystem.root, "rename-destination");
   return {
     entries,
+    externalMissing: missing === undefined,
+    externalReplacement: new TextDecoder().decode(externalReplacementData),
     mode: stat.mode & 0o777,
     nestedPersisted: new TextDecoder().decode(nestedPersisted),
     output: new TextDecoder().decode(output),
     persisted: new TextDecoder().decode(persisted),
+    renameDestination: new TextDecoder().decode(renameDestinationData),
     replacement: new TextDecoder().decode(replacementData),
   };
 };

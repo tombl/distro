@@ -51,9 +51,10 @@ if (!(await mount.status).success) throw new Error("mount failed");
 
 The Node adapter exposes symbolic links without following their final targets
 on the host; the guest kernel resolves their targets inside the guest. It
-validates every host path beneath the configured root. Node does not expose an
-`openat2`-style API, so a separate host process which can mutate that root could
-still race path validation.
+validates every host path beneath the configured root. Use an application-owned
+or trusted directory: the Node adapter is not a sandbox against another host
+process concurrently restructuring that directory, because Node does not expose
+the descriptor-relative APIs needed to close that race.
 
 In a browser, the adapter accepts any writable `FileSystemDirectoryHandle`.
 Use OPFS for storage private to the site:
@@ -93,15 +94,21 @@ That API has no Unix modes, owners, links, or inode metadata, so the adapter
 synthesizes conventional values; changes to that synthetic metadata last for
 the lifetime of the adapter, while file and directory contents persist in the
 underlying storage. The portable API has no atomic rename operation, so renames
-use a copy-and-remove fallback. A failed rename can leave a partial destination,
-and replacing an existing destination is not failure-atomic.
+copy to an empty destination and then remove the source. Renaming over an
+existing destination is unsupported and leaves it untouched. Failure can leave
+a partial newly-created destination, or both names if removing the source fails.
 
-Devices cache names and attributes for one second and use the guest page cache.
-Use `cache: false` for interchange directories which other applications modify;
-it disables metadata/name caching. Data is revalidated when a file is reopened,
-but writes made outside the guest are not guaranteed to become visible through
-an already-open file descriptor. Replacing a path does not retarget an open file
-descriptor.
+Browser handles also cannot keep an unlinked file alive like a Unix file
+descriptor. When the adapter sees a path disappear, old guest descriptors for
+that entry become stale and fail instead of targeting a replacement. The
+portable API cannot detect an external remove-and-recreate if it never observes
+the path missing.
+
+Devices cache names and attributes for one second and use the guest data page
+cache. Use `cache: false` for interchange directories which other applications
+modify; it sets metadata and name validity to zero, but it is not direct I/O and
+does not disable the data page cache. Host writes are therefore not guaranteed
+to become visible through an already-open guest descriptor.
 
 ## Documentation
 
