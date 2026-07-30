@@ -90,6 +90,7 @@ class Node implements VirtioFileSystemNode {
   parts: string[];
   handle: FileSystemHandle;
   metadata: Metadata;
+  attached = true;
 
   constructor(parts: string[], handle: FileSystemHandle, metadata: Metadata) {
     this.parts = parts;
@@ -139,6 +140,9 @@ export class VirtioFileSystem implements FileSystemBackend {
     if (!(node instanceof Node)) {
       throw new VirtioFileSystemError("EINVAL", "node belongs to another filesystem");
     }
+    if (!node.attached) {
+      throw new VirtioFileSystemError("ENOENT", "filesystem node is no longer attached");
+    }
     return node;
   }
 
@@ -164,8 +168,11 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   #forget(parts: readonly string[]) {
     const key = parts.join("/");
-    for (const candidate of this.#nodes.keys()) {
-      if (candidate === key || candidate.startsWith(`${key}/`)) this.#nodes.delete(candidate);
+    for (const [candidate, node] of this.#nodes) {
+      if (candidate === key || candidate.startsWith(`${key}/`)) {
+        node.attached = false;
+        this.#nodes.delete(candidate);
+      }
     }
   }
 
@@ -464,11 +471,7 @@ export class VirtioFileSystem implements FileSystemBackend {
         );
       }
       await opfs_call(this.#directory(new_parent).removeEntry(newName));
-      for (const key of [...this.#nodes.keys()]) {
-        if (key === new_parts.join("/") || key.startsWith(`${new_parts.join("/")}/`)) {
-          this.#nodes.delete(key);
-        }
-      }
+      this.#forget(new_parts);
     }
 
     const copied = await this.#copy(source_node.handle, this.#directory(new_parent), newName);

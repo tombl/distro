@@ -93,7 +93,8 @@ That API has no Unix modes, owners, links, or inode metadata, so the adapter
 synthesizes conventional values; changes to that synthetic metadata last for
 the lifetime of the adapter, while file and directory contents persist in the
 underlying storage. The portable API has no atomic rename operation, so renames
-use a copy-and-remove fallback.
+use a copy-and-remove fallback. A failed rename can leave a partial destination,
+and replacing an existing destination is not failure-atomic.
 
 Devices cache names and attributes for one second and use the guest page cache.
 Use `cache: false` for interchange directories which other applications modify;
