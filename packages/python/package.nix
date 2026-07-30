@@ -102,14 +102,13 @@ let
       "py_cv_module_mmap=n/a" # no <sys/mman.h>
       "py_cv_module__ctypes=n/a" # no libffi by platform policy
 
-      # POSIX named semaphores need sem_open(), which musl does not provide on
-      # wasm (only sem_unlink/sem_getvalue/sem_timedwait link). _multiprocessing
-      # can't synchronise without them, and its module also references
-      # _PyMp_sem_unlink unconditionally while semaphore.c only defines it under
-      # HAVE_SEM_OPEN, so leaving it enabled fails to link. It could not work
-      # without fork() anyway.
-      "py_cv_module__multiprocessing=n/a"
-      "py_cv_module__posixshmem=n/a" # only consumed by _multiprocessing here
+      # Cross compilation cannot run CPython's sem_open and sem_getvalue
+      # probes. The kernel/musl VM regression establishes both behaviors.
+      "ac_cv_posix_semaphores_enabled=yes"
+      "ac_cv_broken_sem_getvalue=no"
+      # POSIX shared memory remains unusable without mmap; it is independent
+      # of the now-working named semaphore backend.
+      "py_cv_module__posixshmem=n/a"
     ];
 
     # readline links against ncurses' termcap. With no pkg-config, configure's

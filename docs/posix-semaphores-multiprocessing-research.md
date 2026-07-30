@@ -9,6 +9,19 @@ Python multiprocessing enablement in section 6 (phases 1 and 4) is the
 remaining open work; the sections below are the original research and
 recommendation as written before the implementation round.
 
+**Status update (2026-07-30):** `_multiprocessing` is now built and its SemLock
+is tested across an exec'd interpreter. The non-mmap-backed public
+`multiprocessing` synchronization wrappers are also tested within one
+interpreter. Full process, Queue, and pool support remains blocked independently
+of named semaphores: `multiprocessing.util.spawnv_passfds()` still requires the
+disabled `_posixsubprocess.fork_exec()`, and spawn-context semaphore cleanup
+still imports the mmap-dependent `_posixshmem`. `_posixshmem`, Barrier,
+sharedctypes, `Value`/`Array`, and shared memory therefore remain disabled or
+unsupported. Blocked named waits are cancellation points, but wasm retains a
+platform-wide cancellation limitation: cancellation racing a syscall that has
+just completed may win before libc returns, so a successfully acquired token
+can be discarded.
+
 Research basis:
 
 - distro base: `08b42dfea2761bd66e962d7b85e8201904c2bbbd`

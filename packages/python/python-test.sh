@@ -322,6 +322,99 @@ if hasattr(os, "fork"):
 else:
     assert not hasattr(os, "forkpty")  # sanity: the whole fork family is absent
 
+# The kernel-backed sem_open family enables CPython's _multiprocessing SemLock.
+# Prove the extension against a fresh exec'd interpreter rather than only
+# checking that it imports: the child reopens the parent's name and wakes it.
+import _multiprocessing
+assert _multiprocessing.flags["HAVE_SEM_OPEN"] == 1
+assert hasattr(_multiprocessing, "sem_unlink")
+
+semlock_name = f"/python-semlock-{os.getpid()}"
+semlock = _multiprocessing.SemLock(1, 0, 3, semlock_name, False)
+semlock_child = (
+    "import _multiprocessing, sys; "
+    "s = _multiprocessing.SemLock._rebuild(0, 1, 3, sys.argv[1]); "
+    "s.release()"
+)
+try:
+    child = subprocess.Popen([sys.executable, "-c", semlock_child, semlock_name])
+    assert semlock.acquire(timeout=2), "exec'd child did not post named semaphore"
+    assert semlock._get_value() == 0
+    assert child.wait(timeout=2) == 0
+finally:
+    _multiprocessing.sem_unlink(semlock_name)
+
+# The public synchronization wrappers do not require mmap or fork when used by
+# threads in one interpreter. Exercise every non-mmap-backed primitive,
+# including timed waits, sem_getvalue-backed bounds, and condition handoff.
+import multiprocessing as mp
+import threading
+import time
+
+sem = mp.Semaphore(0)
+wakes = []
+
+def wait_for_sem():
+    wakes.append(sem.acquire(timeout=2))
+
+waiter = threading.Thread(target=wait_for_sem)
+waiter.start()
+time.sleep(0.02)
+assert wakes == []
+sem.release()
+waiter.join(2)
+assert not waiter.is_alive()
+assert wakes == [True]
+assert sem.get_value() == 0
+
+bounded = mp.BoundedSemaphore(1)
+assert bounded.acquire(False)
+bounded.release()
+try:
+    bounded.release()
+except ValueError:
+    pass
+else:
+    raise AssertionError("BoundedSemaphore allowed an overflowing release")
+
+lock = mp.Lock()
+assert lock.acquire(False)
+assert not lock.acquire(False)
+lock.release()
+
+rlock = mp.RLock()
+with rlock:
+    with rlock:
+        pass
+
+condition = mp.Condition()
+condition_ready = threading.Event()
+condition_state = {"released": False, "observed": False}
+
+def wait_for_condition():
+    with condition:
+        condition_ready.set()
+        condition_state["observed"] = condition.wait_for(
+            lambda: condition_state["released"], timeout=2
+        )
+
+waiter = threading.Thread(target=wait_for_condition)
+waiter.start()
+assert condition_ready.wait(2)
+with condition:
+    condition_state["released"] = True
+    condition.notify()
+waiter.join(2)
+assert not waiter.is_alive()
+assert condition_state["observed"]
+
+event = mp.Event()
+assert not event.wait(0.01)
+event.set()
+assert event.is_set() and event.wait(0.1)
+event.clear()
+assert not event.is_set()
+
 print("PYOK")
 PYEOF
 

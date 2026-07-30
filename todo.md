@@ -36,13 +36,18 @@
 - Track wasm guest-process teardown retaining host emulator memory. Repeated
   guest process spawns cause host RSS to grow cumulatively instead of returning
   to a steady state; this is a platform lifecycle constraint, not a Bash defect.
+- Make wasm cancellation distinguish a completed cancellation-point syscall
+  from one still blocked, so cancellation cannot discard side effects such as
+  an acquired semaphore token.
 
 ## Package follow-ups
 
 - Complete static `libmagic.pc` metadata for consumers.
 - Complete static `libjq.pc` metadata for consumers.
-- Enable Python's `_multiprocessing` and `_posixshmem` after wasm musl and the
-  kernel provide working POSIX named semaphores, with integration tests.
+- Port Python's `multiprocessing.util.spawnv_passfds()` from
+  `_posixsubprocess.fork_exec()` to fd-preserving `posix_spawn()`, then expose
+  only the spawn context and validate Process, Queue, Pool, and
+  ProcessPoolExecutor. Keep `_posixshmem` disabled until mmap exists.
 - Document the subprocess `close_fds` fd-snapshot race.
 - Add a build-time store-path scanner for guest slices using
   `allowedReferences = [ ]`, with separate host and guest derivations.
