@@ -42,10 +42,10 @@ let
       openssl # _ssl + _hashlib (static libssl.a/libcrypto.a)
     ];
 
-    # subprocess must launch children on a platform with no working fork().
-    # _posixsubprocess (fork_exec) is disabled below; this patch makes
-    # subprocess route every launch through os.posix_spawn() instead.
-    patches = [ ./subprocess-posix-spawn.patch ];
+    # Launch subprocess and multiprocessing children on a platform with no
+    # fork(). _posixsubprocess is disabled below; os.posix_spawn() is the
+    # honest common primitive for both callers.
+    patches = [ ./process-posix-spawn.patch ];
 
     # configure runs a host interpreter (build python of the same minor) for
     # its freeze steps and never executes the wasm binary it produces.

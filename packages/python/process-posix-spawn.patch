@@ -1,8 +1,8 @@
-Make subprocess work on a fork-less platform (wasm) via os.posix_spawn().
+Run processes on a fork-less platform (wasm) via os.posix_spawn().
 
-wasm32-unknown-linux-musl has no working fork(): musl exposes the symbol but
-the clone/fork syscall fails at runtime, so _posixsubprocess (fork_exec) is not
-built (py_cv_module__posixsubprocess=n/a). Upstream subprocess falls back to
+wasm32-unknown-linux-musl has no fork(): musl omits the symbol because wasm
+cannot implement its return-twice contract, so _posixsubprocess (fork_exec) is
+not built (py_cv_module__posixsubprocess=n/a). Upstream subprocess falls back to
 fork_exec for anything the posix_spawn() fast path does not cover (bare program
 names resolved via PATH, close_fds without addclosefrom_np, ...), which cannot
 work here. Route every child launch through os.posix_spawn() when fork_exec is
@@ -12,8 +12,15 @@ extension, pass setsid/setpgroup attributes through, and emulate closefrom by
 enumerating /proc/self/fd in the parent and adding ordered close actions after
 the stdio dup actions. Resolve PATH by attempting each candidate with the same
 error precedence as os._execvpe(), including bytes executables. Options with no
-spawn equivalent (preexec_fn, pass_fds, uid/gid/groups, and umask) raise
+spawn equivalent (preexec_fn, uid/gid/groups, and umask) raise
 NotImplementedError rather than being silently ignored.
+
+The multiprocessing spawn context also calls _posixsubprocess directly to
+preserve its control-pipe descriptors. Fall back to os.posix_spawn there too:
+dup2(fd, fd) clears FD_CLOEXEC for the descriptors the child needs, and ordered
+close actions remove everything else. Advertise only the real spawn context
+when os.fork is absent, and let the semaphore resource tracker work without the
+mmap-dependent _posixshmem module.
 
 --- a/Modules/posixmodule.c
 +++ b/Modules/posixmodule.c
@@ -106,10 +113,11 @@ NotImplementedError rather than being silently ignored.
  
  class Popen:
      """ Execute a child program in a new process.
-@@ -1787,5 +1800,5 @@ class Popen:
+@@ -1787,5 +1800,6 @@ class Popen:
          def _posix_spawn(self, args, executable, env, restore_signals, close_fds,
 -                         p2cread, p2cwrite,
-+                         cwd, start_new_session, process_group, p2cread, p2cwrite,
++                         pass_fds, cwd, start_new_session, process_group,
++                         p2cread, p2cwrite,
                           c2pread, c2pwrite,
                           errread, errwrite):
              """Execute program using os.posix_spawn()."""
@@ -127,13 +135,16 @@ NotImplementedError rather than being silently ignored.
 +            if cwd is not None:
 +                file_actions.append((os.POSIX_SPAWN_CHDIR, cwd))
              for fd in (p2cwrite, c2pread, errread):
-@@ -1811,8 +1831,23 @@ class Popen:
+@@ -1811,8 +1831,27 @@ class Popen:
                  if fd != -1:
                      file_actions.append((os.POSIX_SPAWN_DUP2, fd, fd2))
++            file_actions.extend(
++                (os.POSIX_SPAWN_DUP2, fd, fd) for fd in pass_fds
++            )
  
              if close_fds:
 -                file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
-+                if _HAVE_POSIX_SPAWN_CLOSEFROM:
++                if _HAVE_POSIX_SPAWN_CLOSEFROM and not pass_fds:
 +                    file_actions.append((os.POSIX_SPAWN_CLOSEFROM, 3))
 +                else:
 +                    # musl has no closefrom action. Enumerate in the parent,
@@ -148,11 +159,12 @@ NotImplementedError rather than being silently ignored.
 +                            "POSIX_SPAWN_CLOSEFROM") from exc
 +                    file_actions.extend(
 +                        (os.POSIX_SPAWN_CLOSE, fd)
-+                        for fd in open_fds if fd >= 3)
++                        for fd in open_fds
++                        if fd >= 3 and fd not in pass_fds)
  
              if file_actions:
                  kwargs['file_actions'] = file_actions
-@@ -1858,6 +1893,55 @@ class Popen:
+@@ -1858,6 +1897,53 @@ class Popen:
  
              sys.audit("subprocess.Popen", executable, args, cwd, env)
  
@@ -163,9 +175,6 @@ NotImplementedError rather than being silently ignored.
 +                if preexec_fn is not None:
 +                    raise NotImplementedError(
 +                        "preexec_fn is not supported without fork()")
-+                if pass_fds:
-+                    raise NotImplementedError(
-+                        "pass_fds is not supported without fork()")
 +                for option, value in (("group", gid),
 +                                      ("extra_groups", gids),
 +                                      ("user", uid)):
@@ -191,7 +200,8 @@ NotImplementedError rather than being silently ignored.
 +                    try:
 +                        self._posix_spawn(
 +                            args, spawn_executable, env, restore_signals,
-+                            close_fds, cwd, start_new_session, process_group,
++                            close_fds, pass_fds, cwd, start_new_session,
++                            process_group,
 +                            p2cread, p2cwrite, c2pread, c2pwrite,
 +                            errread, errwrite)
 +                        return
@@ -208,13 +218,112 @@ NotImplementedError rather than being silently ignored.
              if (_USE_POSIX_SPAWN
                      and os.path.dirname(executable)
                      and preexec_fn is None
-@@ -1874,7 +1958,8 @@ class Popen:
+@@ -1874,7 +1959,9 @@ class Popen:
                      and uid is None
                      and umask < 0):
                  self._posix_spawn(args, executable, env, restore_signals, close_fds,
 -                                  p2cread, p2cwrite,
-+                                  cwd, start_new_session, process_group,
++                                  pass_fds, cwd, start_new_session,
++                                  process_group,
 +                                  p2cread, p2cwrite,
                                    c2pread, c2pwrite,
                                    errread, errwrite)
                  return
+
+--- a/Lib/multiprocessing/util.py
++++ b/Lib/multiprocessing/util.py
+@@ -516,10 +516,29 @@ def _flush_std_streams():
+ #
+ 
+ def spawnv_passfds(path, args, passfds):
+-    import _posixsubprocess
+-    import subprocess
+     passfds = tuple(sorted(map(int, passfds)))
++    try:
++        import _posixsubprocess
++    except ImportError:
++        # POSIX_SPAWN_DUP2 with equal descriptors clears FD_CLOEXEC.
++        file_actions = [
++            (os.POSIX_SPAWN_DUP2, fd, fd) for fd in passfds
++        ]
++        try:
++            open_fds = sorted(map(int, os.listdir('/proc/self/fd')))
++        except OSError as exc:
++            raise NotImplementedError(
++                "spawnv_passfds requires /proc/self/fd without fork()"
++            ) from exc
++        keep = set(passfds)
++        file_actions.extend(
++            (os.POSIX_SPAWN_CLOSE, fd)
++            for fd in open_fds if fd >= 3 and fd not in keep
++        )
++        return os.posix_spawn(path, args, os.environ,
++                              file_actions=file_actions)
++    import subprocess
+     errpipe_read, errpipe_write = os.pipe()
+     try:
+         return _posixsubprocess.fork_exec(
+ 
+--- a/Lib/multiprocessing/context.py
++++ b/Lib/multiprocessing/context.py
+@@ -265,7 +265,7 @@ class DefaultContext(BaseContext):
+ 
+     def get_all_start_methods(self):
+         """Returns a list of the supported start methods, default first."""
+-        if sys.platform == 'win32':
++        if sys.platform == 'win32' or not hasattr(os, 'fork'):
+             return ['spawn']
+         else:
+             methods = ['spawn', 'fork'] if sys.platform == 'darwin' else ['fork', 'spawn']
+@@ -321,15 +321,19 @@ if sys.platform != 'win32':
+             if not reduction.HAVE_SEND_HANDLE:
+                 raise ValueError('forkserver start method not available')
+ 
+     _concrete_contexts = {
+-        'fork': ForkContext(),
+         'spawn': SpawnContext(),
+-        'forkserver': ForkServerContext(),
+     }
+-    if sys.platform == 'darwin':
++    if hasattr(os, 'fork'):
++        _concrete_contexts.update({
++            'fork': ForkContext(),
++            'forkserver': ForkServerContext(),
++        })
++    if sys.platform == 'darwin' or not hasattr(os, 'fork'):
+         # bpo-33725: running arbitrary code after fork() is no longer reliable
+-        # on macOS since macOS 10.14 (Mojave). Use spawn by default instead.
++        # on macOS since macOS 10.14 (Mojave). Platforms without fork must
++        # likewise use spawn.
+         _default_context = DefaultContext(_concrete_contexts['spawn'])
+     else:
+         _default_context = DefaultContext(_concrete_contexts['fork'])
+ 
+--- a/Lib/multiprocessing/resource_tracker.py
++++ b/Lib/multiprocessing/resource_tracker.py
+@@ -44,7 +44,10 @@ _CLEANUP_FUNCS = {
+ 
+ if os.name == 'posix':
+     import _multiprocessing
+-    import _posixshmem
++    try:
++        import _posixshmem
++    except ImportError:
++        _posixshmem = None
+ 
+     # Use sem_unlink() to clean up named semaphores.
+     #
+@@ -55,9 +58,10 @@ if os.name == 'posix':
+         _CLEANUP_FUNCS.update({
+             'semaphore': _multiprocessing.sem_unlink,
+         })
+-    _CLEANUP_FUNCS.update({
+-        'shared_memory': _posixshmem.shm_unlink,
+-    })
++    if _posixshmem is not None:
++        _CLEANUP_FUNCS.update({
++            'shared_memory': _posixshmem.shm_unlink,
++        })
+ 
+ 
+ class ReentrantCallError(RuntimeError):

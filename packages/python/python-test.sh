@@ -291,10 +291,30 @@ try:
 finally:
     os.close(leak_fd)
 
+# pass_fds clears FD_CLOEXEC for exactly the requested descriptors. This is the
+# same posix_spawn file action used by multiprocessing's control pipes.
+pass_read, pass_write = os.pipe()
+try:
+    os.write(pass_write, b"passed")
+    r = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, sys; print(os.read(int(sys.argv[1]), 6).decode())",
+            str(pass_read),
+        ],
+        pass_fds=(pass_read,),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0 and r.stdout.strip() == "passed", r
+finally:
+    os.close(pass_read)
+    os.close(pass_write)
+
 # Options with no musl posix_spawn equivalent must fail explicitly.
 unsupported = (
     ("preexec_fn", {"preexec_fn": lambda: None}),
-    ("pass_fds", {"pass_fds": (1,)}),
     ("group", {"group": 0}),
     ("extra_groups", {"extra_groups": []}),
     ("user", {"user": 0}),
@@ -418,10 +438,190 @@ assert not event.is_set()
 print("PYOK")
 PYEOF
 
+cat >/tmp/multiprocessing-test.py <<'PYEOF'
+import concurrent.futures
+import fcntl
+import multiprocessing as mp
+import os
+import sys
+
+
+def lock_child(lock, result, leaked_path):
+    with lock:
+        leaked = False
+        for name in os.listdir("/proc/self/fd"):
+            try:
+                leaked |= os.readlink(f"/proc/self/fd/{name}") == leaked_path
+            except FileNotFoundError:
+                pass
+        result.send((os.getpid(), os.getppid(), leaked))
+        result.close()
+
+
+def queue_child(queue):
+    queue.put((os.getpid(), "queue"))
+
+
+def square(value):
+    return value * value
+
+
+def manager_child(shared):
+    shared["pid"] = os.getpid()
+
+
+def nested_leaf(result):
+    result.send(os.getpid())
+    result.close()
+
+
+def nested_child(result):
+    recv, send = mp.Pipe(duplex=False)
+    child = mp.Process(target=nested_leaf, args=(send,))
+    child.start()
+    send.close()
+    grandchild_pid = recv.recv()
+    child.join(5)
+    result.send((os.getpid(), grandchild_pid, child.exitcode))
+    result.close()
+
+
+def noop():
+    pass
+
+
+if __name__ == "__main__":
+    assert mp.get_all_start_methods() == ["spawn"]
+    assert mp.get_start_method() == "spawn"
+    for unsupported in ("fork", "forkserver"):
+        try:
+            mp.get_context(unsupported)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"advertised unsupported {unsupported} context")
+
+    # A real Process gets a distinct PID and blocks on a named Lock rebuilt in
+    # the fresh interpreter. Only multiprocessing's control fds may survive.
+    leaked_path = "/tmp/multiprocessing-unpassed-fd"
+    base_fd = os.open(leaked_path, os.O_CREAT | os.O_RDWR, 0o600)
+    leak_fd = fcntl.fcntl(base_fd, fcntl.F_DUPFD, 50)
+    os.close(base_fd)
+    os.set_inheritable(leak_fd, True)
+    recv, send = mp.Pipe(duplex=False)
+    lock = mp.Lock()
+    lock.acquire()
+    child = mp.Process(
+        target=lock_child,
+        args=(lock, send, leaked_path),
+    )
+    try:
+        child.start()
+        send.close()
+        assert not recv.poll(0.05), "spawned child bypassed the shared lock"
+        lock.release()
+        child_pid, child_parent_pid, leaked = recv.recv()
+        child.join(5)
+        assert child.exitcode == 0, child.exitcode
+        assert child_pid != os.getpid()
+        assert child_parent_pid == os.getpid()
+        assert not leaked, "unpassed inheritable fd leaked into spawned child"
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join()
+        if lock.acquire(False):
+            lock.release()
+        recv.close()
+        os.close(leak_fd)
+
+    # Queue, Pool, and ProcessPoolExecutor all depend on the same spawn fd
+    # handoff plus cross-process SemLock reconstruction.
+    queue = mp.Queue()
+    child = mp.Process(target=queue_child, args=(queue,))
+    child.start()
+    queue_pid, payload = queue.get(timeout=5)
+    child.join(5)
+    assert child.exitcode == 0 and queue_pid != os.getpid() and payload == "queue"
+    queue.close()
+    queue.join_thread()
+
+    simple_queue = mp.SimpleQueue()
+    child = mp.Process(target=queue_child, args=(simple_queue,))
+    child.start()
+    child.join(5)
+    assert child.exitcode == 0
+    simple_pid, payload = simple_queue.get()
+    assert simple_pid != os.getpid() and payload == "queue"
+    simple_queue.close()
+
+    joinable_queue = mp.JoinableQueue()
+    child = mp.Process(target=queue_child, args=(joinable_queue,))
+    child.start()
+    joinable_pid, payload = joinable_queue.get(timeout=5)
+    joinable_queue.task_done()
+    joinable_queue.join()
+    child.join(5)
+    assert child.exitcode == 0
+    assert joinable_pid != os.getpid() and payload == "queue"
+    joinable_queue.close()
+    joinable_queue.join_thread()
+
+    with mp.Pool(2) as pool:
+        assert pool.map_async(square, range(6)).get(5) == [0, 1, 4, 9, 16, 25]
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(square, value) for value in range(6)]
+        assert [future.result(5) for future in futures] == [0, 1, 4, 9, 16, 25]
+
+    with mp.Manager() as manager:
+        shared = manager.dict()
+        child = mp.Process(target=manager_child, args=(shared,))
+        child.start()
+        child.join(5)
+        assert child.exitcode == 0 and shared["pid"] != os.getpid()
+
+    # Spawn remains composable from inside a spawned interpreter and reuses the
+    # resource tracker descriptor across both generations.
+    recv, send = mp.Pipe(duplex=False)
+    child = mp.Process(target=nested_child, args=(send,))
+    child.start()
+    send.close()
+    child_pid, grandchild_pid, grandchild_exitcode = recv.recv()
+    child.join(5)
+    assert child.exitcode == 0 and grandchild_exitcode == 0
+    assert len({os.getpid(), child_pid, grandchild_pid}) == 3
+    recv.close()
+
+    # musl reports exec failure synchronously from posix_spawn: start raises
+    # instead of returning a doomed child or leaving a zombie behind.
+    mp.set_executable("/python-does-not-exist")
+    child = mp.Process(target=noop)
+    try:
+        child.start()
+    except FileNotFoundError:
+        pass
+    else:
+        child.kill()
+        child.join()
+        raise AssertionError("missing multiprocessing executable did not fail")
+    finally:
+        mp.set_executable(sys.executable)
+
+    print("MPOK")
+PYEOF
+
 python3 /tmp/test.py >/tmp/out 2>/tmp/err ||
   fail "python test failed [progress: $(tr '\n' '|' </tmp/progress)] out=$(tr '\n' '|' </tmp/out) err=$(tr '\n' '|' </tmp/err)"
 grep -qx PYOK /tmp/out ||
   fail "python test did not reach PYOK [progress: $(tr '\n' '|' </tmp/progress)] out=$(tr '\n' '|' </tmp/out) err=$(tr '\n' '|' </tmp/err)"
+
+python3 /tmp/multiprocessing-test.py >/tmp/mpout 2>/tmp/mperr ||
+  fail "multiprocessing test failed out=$(tr '\n' '|' </tmp/mpout) err=$(tr '\n' '|' </tmp/mperr)"
+grep -qx MPOK /tmp/mpout ||
+  fail "multiprocessing test did not reach MPOK out=$(tr '\n' '|' </tmp/mpout) err=$(tr '\n' '|' </tmp/mperr)"
+test ! -s /tmp/mperr ||
+  fail "multiprocessing test emitted stderr: $(tr '\n' '|' </tmp/mperr)"
 
 echo "::vm-test::pass"
 while :; do :; done

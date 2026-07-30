@@ -44,11 +44,9 @@
 
 - Complete static `libmagic.pc` metadata for consumers.
 - Complete static `libjq.pc` metadata for consumers.
-- Port Python's `multiprocessing.util.spawnv_passfds()` from
-  `_posixsubprocess.fork_exec()` to fd-preserving `posix_spawn()`, then expose
-  only the spawn context and validate Process, Queue, Pool, and
-  ProcessPoolExecutor. Keep `_posixshmem` disabled until mmap exists.
-- Document the subprocess `close_fds` fd-snapshot race.
+- Add a libc spawn file action that atomically closes all descriptors except an
+  explicit keep set, eliminating Python's subprocess/multiprocessing
+  `/proc/self/fd` snapshot race.
 - Add a build-time store-path scanner for guest slices using
   `allowedReferences = [ ]`, with separate host and guest derivations.
 - Fix the browser CPU-handoff race where a stale typed-array view can throw a

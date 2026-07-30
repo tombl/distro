@@ -4,23 +4,27 @@ Date: 2026-07-20
 
 **Status update (2026-07-20, later same day):** the kernel-backed named
 semaphore recommended in section 2 has landed (`platform: kernel-backed
-POSIX named semaphores`), including the musl `sem_open` dispatch. The
-Python multiprocessing enablement in section 6 (phases 1 and 4) is the
-remaining open work; the sections below are the original research and
+POSIX named semaphores`), including the musl `sem_open` dispatch. At that
+point, the Python multiprocessing enablement in section 6 (phases 1 and 4) was
+the remaining open work; the sections below are the original research and
 recommendation as written before the implementation round.
 
-**Status update (2026-07-30):** `_multiprocessing` is now built and its SemLock
-is tested across an exec'd interpreter. The non-mmap-backed public
-`multiprocessing` synchronization wrappers are also tested within one
-interpreter. Full process, Queue, and pool support remains blocked independently
-of named semaphores: `multiprocessing.util.spawnv_passfds()` still requires the
-disabled `_posixsubprocess.fork_exec()`, and spawn-context semaphore cleanup
-still imports the mmap-dependent `_posixshmem`. `_posixshmem`, Barrier,
-sharedctypes, `Value`/`Array`, and shared memory therefore remain disabled or
-unsupported. Blocked named waits are cancellation points, but wasm retains a
-platform-wide cancellation limitation: cancellation racing a syscall that has
-just completed may win before libc returns, so a successfully acquired token
-can be discarded.
+**Status update (2026-07-30):** phases 1-4's supported subset is now enabled.
+`_multiprocessing` and its SemLock work across fresh interpreters, and
+`multiprocessing` truthfully advertises spawn as its only start method. Process,
+Pipe, Lock, Queue variants, Pool, Manager, nested spawning, and
+`ProcessPoolExecutor` run as distinct processes through `os.posix_spawn()`;
+`_posixsubprocess` remains absent because its `fork_exec` contract cannot be
+implemented on wasm. Semaphore cleanup no longer requires the mmap-dependent
+`_posixshmem` module. Fork and forkserver remain impossible, while
+`_posixshmem`, Barrier, sharedctypes, `Value`/`Array`, and shared memory remain
+disabled or unsupported because named semaphores do not provide shared user
+memory. As with subprocess, closing unpassed inheritable descriptors takes a
+`/proc/self/fd` snapshot and therefore retains a narrow concurrent-fd-creation
+race until libc exposes a suitable atomic spawn file action. Blocked named
+waits are cancellation points, but wasm also retains a platform-wide
+cancellation limitation: cancellation racing a syscall that has just completed
+may win before libc returns, so a successfully acquired token can be discarded.
 
 Research basis:
 
