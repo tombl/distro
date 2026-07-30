@@ -59,6 +59,15 @@ let
     cpus = 2;
   };
 
+  namedSemaphoreCheck = vm-test.vmTest {
+    name = "basic-init-named-semaphore";
+    initramfs = vm-test.mkInitramfs {
+      name = "basic-init-named-semaphore";
+      init = "${buildInit "basic-init-named-semaphore" "tests/named-semaphore.c"}/bin/init";
+    };
+    cpus = 2;
+  };
+
   moduleDefinedMemory =
     pkgs.runCommand "module-defined-memory.wasm"
       {
@@ -176,7 +185,7 @@ in
       malloc-failure = check "malloc-failure";
       malloc-thread = check "malloc-thread";
       memory-abi = memoryAbiCheck;
-      named-semaphore = check "named-semaphore";
+      named-semaphore = namedSemaphoreCheck;
       proc-self-mem = check "proc-self-mem";
       pty = check "pty";
       remote-memory = remoteMemoryCheck;

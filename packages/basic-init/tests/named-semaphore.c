@@ -10,6 +10,7 @@
 #include <spawn.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -18,6 +19,8 @@
 extern char **environ;
 
 static volatile sig_atomic_t signal_count;
+static volatile sig_atomic_t signal_post_result;
+static sem_t *signal_sem;
 
 typedef void (*handler_t)(int);
 static void dummy0(int signal) { (void)signal; }
@@ -29,8 +32,13 @@ static handler_t volatile handler_slots[5];
 
 static void signal_handler(int signal)
 {
+	int saved_errno = errno;
+
 	(void)signal;
 	signal_count++;
+	if (signal_sem)
+		signal_post_result = sem_post(signal_sem);
+	errno = saved_errno;
 }
 
 static int write_all(int fd, const void *buffer, size_t length)
@@ -233,6 +241,63 @@ static int child_replace(const char *name)
 	return sem_close(sem) == -1 ? 82 : 0;
 }
 
+static int child_stress(const char *name, const char *path, int start_fd,
+			int iterations)
+{
+	sem_t *sem = sem_open(name, 0);
+	uint32_t value;
+	char start;
+	int fd;
+
+	if (sem == SEM_FAILED)
+		return 90;
+	fd = open(path, O_RDWR);
+	if (fd == -1 || read_all(start_fd, &start, 1) == -1)
+		return 91;
+	for (int i = 0; i < iterations; i++) {
+		if (sem_wait(sem) == -1 || lseek(fd, 0, SEEK_SET) != 0 ||
+		    read_all(fd, &value, sizeof(value)) == -1)
+			return 92;
+		value++;
+		if (!(i % 5))
+			sleep_ms(1);
+		if (lseek(fd, 0, SEEK_SET) != 0 ||
+		    write_all(fd, &value, sizeof(value)) == -1 ||
+		    sem_post(sem) == -1)
+			return 93;
+	}
+	if (close(fd) == -1 || sem_close(sem) == -1)
+		return 94;
+	return 0;
+}
+
+static int child_post(const char *name, int count)
+{
+	sem_t *sem = sem_open(name, 0);
+
+	if (sem == SEM_FAILED)
+		return 100;
+	for (int i = 0; i < count; i++)
+		if (sem_post(sem) == -1)
+			return 101;
+	return sem_close(sem) == -1 ? 102 : 0;
+}
+
+static int child_group_permissions(const char *name)
+{
+	sem_t *sem;
+
+	if (setresgid(0, 0, 0) == -1 || setresuid(1000, 1000, 1000) == -1)
+		return 110;
+	sem = sem_open(name, 0);
+	if (sem == SEM_FAILED || sem_close(sem) == -1)
+		return 111;
+	errno = 0;
+	if (sem_unlink(name) != -1 || errno != EACCES)
+		return 112;
+	return 0;
+}
+
 static int child_main(int argc, char **argv)
 {
 	if (argc == 5 && !strcmp(argv[1], "mutex"))
@@ -252,6 +317,13 @@ static int child_main(int argc, char **argv)
 		return child_permissions(argv[2]);
 	if (argc == 3 && !strcmp(argv[1], "replace"))
 		return child_replace(argv[2]);
+	if (argc == 6 && !strcmp(argv[1], "stress"))
+		return child_stress(argv[2], argv[3], atoi(argv[4]),
+				    atoi(argv[5]));
+	if (argc == 4 && !strcmp(argv[1], "post"))
+		return child_post(argv[2], atoi(argv[3]));
+	if (argc == 3 && !strcmp(argv[1], "group-permissions"))
+		return child_group_permissions(argv[2]);
 	return 99;
 }
 
@@ -267,13 +339,14 @@ static void *thread_waiter(void *unused)
 	return NULL;
 }
 
-static void test_unnamed_thread_semaphore(void)
+static void run_unnamed_thread_semaphore(int pshared)
 {
 	pthread_t thread;
 	void *result;
 
-	if (sem_init(&thread_sem, 0, 0) == -1)
-		test_perror("sem_init pshared=0");
+	thread_woke = 0;
+	if (sem_init(&thread_sem, pshared, 0) == -1)
+		test_perror("sem_init thread semaphore");
 	if (pthread_create(&thread, NULL, thread_waiter, NULL) != 0)
 		test_fail("pthread_create unnamed semaphore waiter");
 	sleep_ms(20);
@@ -283,6 +356,173 @@ static void test_unnamed_thread_semaphore(void)
 		test_fail("unnamed semaphore cross-thread wake");
 	if (sem_destroy(&thread_sem) == -1)
 		test_perror("sem_destroy");
+}
+
+static void test_unnamed_thread_semaphores(void)
+{
+	run_unnamed_thread_semaphore(0);
+	run_unnamed_thread_semaphore(1);
+}
+
+struct cancel_waiter_args {
+	sem_t *sem;
+	int ready_fd;
+};
+
+struct cancel_disabled_waiter_args {
+	sem_t *sem;
+	int ready_fd;
+	int acquired_fd;
+};
+
+static void *cancel_waiter(void *opaque)
+{
+	struct cancel_waiter_args *args = opaque;
+	char ready = 'R';
+
+	if (write_all(args->ready_fd, &ready, 1) == -1)
+		return (void *)1;
+	return sem_wait(args->sem) == -1 ? (void *)2 : NULL;
+}
+
+static void *cancel_disabled_waiter(void *opaque)
+{
+	struct cancel_disabled_waiter_args *args = opaque;
+	char byte = 'R';
+
+	if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) != 0)
+		return (void *)1;
+	if (write_all(args->ready_fd, &byte, 1) == -1)
+		return (void *)2;
+	if (sem_wait(args->sem) == -1)
+		return (void *)3;
+	byte = 'A';
+	if (write_all(args->acquired_fd, &byte, 1) == -1)
+		return (void *)4;
+	if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL) != 0)
+		return (void *)5;
+	pthread_testcancel();
+	return (void *)6;
+}
+
+static void test_named_wait_cancellation(void)
+{
+	const char *name = "/wasm-sem-cancel";
+	struct cancel_waiter_args args;
+	struct cancel_disabled_waiter_args disabled_args;
+	pthread_t thread;
+	void *result;
+	sem_t *sem;
+	int ready_pipe[2];
+	int acquired_pipe[2];
+	char byte;
+
+	sem_unlink(name);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 0);
+	if (sem == SEM_FAILED || pipe(ready_pipe) == -1)
+		test_perror("prepare named semaphore cancellation");
+	args.sem = sem;
+	args.ready_fd = ready_pipe[1];
+	if (pthread_create(&thread, NULL, cancel_waiter, &args) != 0 ||
+	    read_all(ready_pipe[0], &byte, 1) == -1 || byte != 'R')
+		test_fail("start named semaphore cancellation waiter");
+	sleep_ms(20);
+	if (pthread_cancel(thread) != 0 || pthread_join(thread, &result) != 0 ||
+	    result != PTHREAD_CANCELED)
+		test_fail("blocked named semaphore wait was not cancellable");
+	if (sem_post(sem) == -1 || sem_trywait(sem) == -1)
+		test_fail("cancelled named waiter retained a handoff");
+	close(ready_pipe[0]);
+	close(ready_pipe[1]);
+
+	if (pipe(ready_pipe) == -1 || pipe(acquired_pipe) == -1)
+		test_perror("prepare cancellation-disabled named waiter");
+	disabled_args.sem = sem;
+	disabled_args.ready_fd = ready_pipe[1];
+	disabled_args.acquired_fd = acquired_pipe[1];
+	if (pthread_create(&thread, NULL, cancel_disabled_waiter,
+			   &disabled_args) != 0 ||
+	    read_all(ready_pipe[0], &byte, 1) == -1 || byte != 'R')
+		test_fail("start cancellation-disabled named waiter");
+	if (pthread_cancel(thread) != 0)
+		test_fail("cancel cancellation-disabled named waiter");
+	sleep_ms(20);
+	if (sem_post(sem) == -1 ||
+	    read_all(acquired_pipe[0], &byte, 1) == -1 || byte != 'A' ||
+	    pthread_join(thread, &result) != 0 || result != PTHREAD_CANCELED)
+		test_fail("disabled cancellation did not defer across named wait");
+	errno = 0;
+	if (sem_trywait(sem) != -1 || errno != EAGAIN)
+		test_fail("cancellation-disabled waiter did not consume its handoff");
+	close(ready_pipe[0]);
+	close(ready_pipe[1]);
+	close(acquired_pipe[0]);
+	close(acquired_pipe[1]);
+	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
+		test_perror("cleanup named semaphore cancellation");
+}
+
+struct concurrent_open_args {
+	const char *name;
+	sem_t *expected;
+	int iterations;
+};
+
+static void *concurrent_opener(void *opaque)
+{
+	struct concurrent_open_args *args = opaque;
+
+	for (int i = 0; i < args->iterations; i++) {
+		sem_t *sem = sem_open(args->name, 0);
+
+		if (sem == SEM_FAILED)
+			return (void *)1;
+		if (sem != args->expected) {
+			sem_close(sem);
+			return (void *)2;
+		}
+		if (sem_close(sem) == -1)
+			return (void *)3;
+	}
+	return NULL;
+}
+
+static void test_concurrent_open_identity(void)
+{
+	enum { THREADS = 2, ITERATIONS = 1000 };
+	const char *name = "/wasm-sem-thread-opens";
+	struct concurrent_open_args args;
+	struct rlimit original;
+	struct rlimit limited;
+	pthread_t threads[THREADS];
+	void *result;
+	sem_t *sem;
+
+	if (getrlimit(RLIMIT_NOFILE, &original) == -1)
+		test_perror("getrlimit for concurrent semaphore opens");
+	limited = original;
+	if (limited.rlim_cur > 16)
+		limited.rlim_cur = 16;
+	if (setrlimit(RLIMIT_NOFILE, &limited) == -1)
+		test_perror("limit descriptors for concurrent semaphore opens");
+	sem_unlink(name);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 1);
+	if (sem == SEM_FAILED)
+		test_perror("create concurrent-open semaphore");
+	args = (struct concurrent_open_args) {
+		.name = name,
+		.expected = sem,
+		.iterations = ITERATIONS,
+	};
+	for (int i = 0; i < THREADS; i++)
+		if (pthread_create(&threads[i], NULL, concurrent_opener, &args) != 0)
+			test_fail("start concurrent semaphore opener");
+	for (int i = 0; i < THREADS; i++)
+		if (pthread_join(threads[i], &result) != 0 || result)
+			test_fail("concurrent sem_open identity or descriptor cleanup");
+	if (sem_close(sem) == -1 || sem_unlink(name) == -1 ||
+	    setrlimit(RLIMIT_NOFILE, &original) == -1)
+		test_perror("cleanup concurrent semaphore opens");
 }
 
 static void test_values_and_overflow(void)
@@ -362,6 +602,75 @@ static void test_process_mutex(void)
 	unlink(path);
 	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
 		test_perror("close process mutex");
+}
+
+static void test_process_contention_stress(void)
+{
+	enum { CHILDREN = 6, ITERATIONS = 50 };
+	const char *name = "/wasm-sem-stress";
+	const char *path = "/tmp/wasm-sem-stress-count";
+	char start_fd[16];
+	char iterations[16];
+	char *argv[] = { "/init", "stress", (char *)name, (char *)path,
+			 start_fd, iterations, NULL };
+	char starts[CHILDREN];
+	pid_t children[CHILDREN];
+	uint32_t value = 0;
+	sem_t *sem;
+	int start_pipe[2];
+	int fd;
+	int sem_value;
+
+	sem_unlink(name);
+	unlink(path);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 1);
+	fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+	if (sem == SEM_FAILED || fd == -1 ||
+	    write_all(fd, &value, sizeof(value)) == -1 || close(fd) == -1 ||
+	    pipe(start_pipe) == -1)
+		test_perror("prepare process semaphore stress");
+	snprintf(start_fd, sizeof(start_fd), "%d", start_pipe[0]);
+	snprintf(iterations, sizeof(iterations), "%d", ITERATIONS);
+	for (int i = 0; i < CHILDREN; i++)
+		children[i] = spawn_child(argv);
+	memset(starts, 'G', sizeof(starts));
+	if (write_all(start_pipe[1], starts, sizeof(starts)) == -1)
+		test_perror("release process semaphore stress children");
+	for (int i = 0; i < CHILDREN; i++)
+		wait_success(children[i], "process semaphore stress child");
+	fd = open(path, O_RDONLY);
+	if (fd == -1 || read_all(fd, &value, sizeof(value)) == -1 ||
+	    value != CHILDREN * ITERATIONS)
+		test_fail("named semaphore lost a contended critical-section update");
+	if (sem_getvalue(sem, &sem_value) == -1 || sem_value != 1)
+		test_fail("stress semaphore did not finish at its initial value");
+	close(fd);
+	close(start_pipe[0]);
+	close(start_pipe[1]);
+	unlink(path);
+	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
+		test_perror("cleanup process semaphore stress");
+}
+
+static void test_linked_persistence_and_getvalue(void)
+{
+	const char *name = "/wasm-sem-persistent";
+	char *argv[] = { "/init", "post", (char *)name, "3", NULL };
+	sem_t *sem;
+	pid_t child;
+	int value;
+
+	sem_unlink(name);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 0);
+	if (sem == SEM_FAILED || sem_close(sem) == -1)
+		test_perror("create persistent named semaphore");
+	child = spawn_child(argv);
+	wait_success(child, "persistent semaphore child");
+	sem = sem_open(name, 0);
+	if (sem == SEM_FAILED || sem_getvalue(sem, &value) == -1 || value != 3)
+		test_fail("linked semaphore did not persist across close and child exec");
+	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
+		test_perror("cleanup persistent named semaphore");
 }
 
 static void test_wakeup_order(void)
@@ -590,6 +899,15 @@ static void test_timedwait_and_interrupt(void)
 	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 0);
 	if (sem == SEM_FAILED)
 		test_perror("create timed semaphore");
+	deadline = (struct timespec) { 0, 0 };
+	started = monotonic_ms();
+	errno = 0;
+	if (sem_timedwait(sem, &deadline) != -1 || errno != ETIMEDOUT ||
+	    monotonic_ms() - started > 1000)
+		test_fail("expired sem_timedwait did not time out immediately");
+	deadline = (struct timespec) { .tv_nsec = 1000000000 };
+	if (sem_post(sem) == -1 || sem_timedwait(sem, &deadline) == -1)
+		test_fail("available semaphore validated an unused timeout");
 	deadline = realtime_after_ms(150);
 	started = monotonic_ms();
 	errno = 0;
@@ -620,6 +938,14 @@ static void test_timedwait_and_interrupt(void)
 	if (elapsed < 180 || elapsed > 2000)
 		test_fail("signal restart extended absolute semaphore timeout");
 	wait_success(child, "restarting timedwait signal child");
+
+	signal_post_result = -1;
+	signal_sem = sem;
+	child = spawn_child(signal_argv);
+	if (sem_wait(sem) == -1 || signal_post_result != 0 || signal_count != 3)
+		test_fail("sem_post from a restarting signal handler did not wake sem_wait");
+	signal_sem = NULL;
+	wait_success(child, "signal-handler sem_post child");
 	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
 		test_perror("cleanup timed semaphore");
 }
@@ -627,18 +953,90 @@ static void test_timedwait_and_interrupt(void)
 static void test_permissions(void)
 {
 	const char *name = "/wasm-sem-permissions";
+	const char *group_name = "/wasm-sem-group-permissions";
 	char *argv[] = { "/init", "permissions", (char *)name, NULL };
+	char *group_argv[] = { "/init", "group-permissions",
+			       (char *)group_name, NULL };
 	sem_t *sem;
 	pid_t child;
+	mode_t old_umask;
 
 	sem_unlink(name);
-	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 1);
+	old_umask = umask(0077);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0666, 1);
+	umask(old_umask);
 	if (sem == SEM_FAILED)
 		test_perror("create permission semaphore");
 	child = spawn_child(argv);
 	wait_success(child, "semaphore permission child");
 	if (sem_close(sem) == -1 || sem_unlink(name) == -1)
 		test_perror("cleanup permission semaphore");
+
+	sem_unlink(group_name);
+	old_umask = umask(0);
+	sem = sem_open(group_name, O_CREAT | O_EXCL, 0060, 1);
+	umask(old_umask);
+	if (sem == SEM_FAILED)
+		test_perror("create group permission semaphore");
+	child = spawn_child(group_argv);
+	wait_success(child, "group semaphore permission child");
+	if (sem_close(sem) == -1 || sem_unlink(group_name) == -1)
+		test_perror("cleanup group permission semaphore");
+}
+
+static void test_descriptor_exhaustion(void)
+{
+	enum { MAX_FILLERS = 64 };
+	const char *name = "/wasm-sem-emfile-existing";
+	const char *new_name = "/wasm-sem-emfile-new";
+	struct rlimit original;
+	struct rlimit limited;
+	int fillers[MAX_FILLERS];
+	int count = 0;
+	sem_t *sem;
+	sem_t *same;
+	sem_t *fresh;
+
+	if (getrlimit(RLIMIT_NOFILE, &original) == -1)
+		test_perror("getrlimit(RLIMIT_NOFILE)");
+	limited = original;
+	if (limited.rlim_cur > 32)
+		limited.rlim_cur = 32;
+	if (setrlimit(RLIMIT_NOFILE, &limited) == -1)
+		test_perror("setrlimit(RLIMIT_NOFILE)");
+
+	sem_unlink(name);
+	sem_unlink(new_name);
+	sem = sem_open(name, O_CREAT | O_EXCL, 0600, 1);
+	if (sem == SEM_FAILED)
+		test_perror("create descriptor exhaustion semaphore");
+	while (count < MAX_FILLERS && (fillers[count] = dup(STDOUT_FILENO)) != -1)
+		count++;
+	if (count == MAX_FILLERS || errno != EMFILE)
+		test_fail("failed to exhaust descriptor table");
+
+	errno = 0;
+	if (sem_open(name, 0) != SEM_FAILED || errno != EMFILE)
+		test_fail("existing semaphore open ignored descriptor exhaustion");
+	errno = 0;
+	if (sem_open(new_name, O_CREAT | O_EXCL, 0600, 0) != SEM_FAILED ||
+	    errno != EMFILE)
+		test_fail("new semaphore open ignored descriptor exhaustion");
+
+	close(fillers[--count]);
+	same = sem_open(name, 0);
+	if (same == SEM_FAILED || same != sem || sem_close(same) == -1)
+		test_fail("existing semaphore was damaged by failed descriptor allocation");
+	fresh = sem_open(new_name, O_CREAT | O_EXCL, 0600, 0);
+	if (fresh == SEM_FAILED)
+		test_perror("create semaphore after descriptor exhaustion");
+	if (sem_close(fresh) == -1 || sem_unlink(new_name) == -1)
+		test_perror("cleanup descriptor exhaustion replacement");
+	while (count)
+		close(fillers[--count]);
+	if (setrlimit(RLIMIT_NOFILE, &original) == -1 ||
+	    sem_close(sem) == -1 || sem_unlink(name) == -1)
+		test_perror("cleanup descriptor exhaustion test");
 }
 
 int main(int argc, char **argv)
@@ -646,9 +1044,13 @@ int main(int argc, char **argv)
 	if (argc > 1)
 		return child_main(argc, argv);
 
-	test_unnamed_thread_semaphore();
+	test_unnamed_thread_semaphores();
+	test_named_wait_cancellation();
+	test_concurrent_open_identity();
 	test_values_and_overflow();
 	test_process_mutex();
+	test_process_contention_stress();
+	test_linked_persistence_and_getvalue();
 	test_wakeup_order();
 	test_exclusive_create_race();
 	test_unlink_lifetime();
@@ -656,5 +1058,6 @@ int main(int argc, char **argv)
 	test_external_unlink_identity();
 	test_timedwait_and_interrupt();
 	test_permissions();
+	test_descriptor_exhaustion();
 	test_pass();
 }
