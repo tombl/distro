@@ -12,6 +12,7 @@
   openssl,
   python,
   quickjs,
+  socat,
   sqlite3,
   zstd,
   vm-test,
@@ -32,6 +33,7 @@ let
       quickjs
       python
       sqlite3
+      socat
       curl
       git
       dropbear

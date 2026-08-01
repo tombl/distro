@@ -69,6 +69,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     quickjs = callPackage ./quickjs/package.nix { };
     readline = callPackage ./readline/package.nix { };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
+    socat = callPackage ./socat/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };

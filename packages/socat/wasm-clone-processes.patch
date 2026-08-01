@@ -1,0 +1,1065 @@
+Create child processes with clone() instead of fork().
+
+wasm32-unknown-linux-musl has no fork(): the WebAssembly call stack lives
+outside linear memory, so a call cannot return twice.  The platform's
+process-creation primitive is clone() with an entry function -- the child gets
+a private copy of the address space, so it sees every object the parent had,
+including the caller's stack frame, but starts on a fresh stack of its own.
+
+xio_fork()'s callers split cleanly in two along that line:
+
+  * The EXEC, SYSTEM and SHELL addresses fork a sub child that never returns to
+    its caller: it finishes _xioopen_foxec()'s descriptor setup and execs.  That
+    is expressible as an entry function, so this patch turns the child branch
+    into foxec_child() plus a per-address continuation and creates it with the
+    new xio_clone().  Option "nofork" runs the same branch inline, as before.
+
+  * The "fork" address option's child resumes the parent's call chain: it breaks
+    out of the accept loop and returns up through xioopen() into socat's
+    transfer loop.  Only a returning-twice fork() can do that, so xio_fork() now
+    refuses instead of serving one connection and silently ceasing to listen.
+
+sycls.c's Fork() wrapper goes away with its only caller; keeping it would leave
+an undefined reference to fork().
+
+diff --git a/sycls.c b/sycls.c
+index ff11689..a48c635 100644
+--- a/sycls.c
++++ b/sycls.c
+@@ -937,20 +937,8 @@ int Pselect(int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+ }
+ #endif /* HAVE_PSELECT */
+ 
+-#if WITH_SYCLS
+-
+-pid_t Fork(void) {
+-   pid_t pid;
+-   int _errno;
+-   Debug("fork()");
+-   pid = fork();
+-   _errno = errno;
+-   Debug1("fork() -> %d", pid);	/* attention: called twice! */
+-   errno = _errno;
+-   return pid;
+-}
+-
+-#endif /* WITH_SYCLS */
++/* The fork() wrapper is gone: this platform has no fork() and xio_clone()
++   replaced its only caller.  Keeping it would leave an undefined symbol. */
+ 
+ pid_t Waitpid(pid_t pid, int *status, int options) {
+    int _errno;
+diff --git a/sycls.h b/sycls.h
+index d6b0612..f479fb7 100644
+--- a/sycls.h
++++ b/sycls.h
+@@ -88,9 +88,6 @@ int Select(int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+ 	   struct timeval *timeout);
+ int Pselect(int n, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+ 	    const struct timespec *timeout, const sigset_t *sigmask);
+-#if WITH_SYCLS
+-pid_t Fork(void);
+-#endif /* WITH_SYCLS */
+ pid_t Waitpid(pid_t pid, int *status, int options);
+ #if WITH_SYCLS
+ #ifndef HAVE_TYPE_SIGHANDLER
+@@ -232,7 +229,6 @@ void Add_history(const char *string);
+ #define Readlink(p,b,s) readlink(p,b,s)
+ #define Chown(p,o,g) chown(p,o,g)
+ #define Chmod(p,m) chmod(p,m)
+-#define Fork() fork()
+ #define Signal(s,h) signal(s,h)
+ #define Sigaction(s,a,o) sigaction(s,a,o)
+ #define Sigprocmask(h,s,o) sigprocmask(h,s,o)
+diff --git a/xio-exec.c b/xio-exec.c
+index e6d663d..c0c6ce1 100644
+--- a/xio-exec.c
++++ b/xio-exec.c
+@@ -19,71 +19,66 @@ const struct addrdesc xioaddr_exec = { "EXEC",   3, xioopen_exec, GROUP_FD|GROUP
+ 
+ const struct optdesc opt_dash = { "dash", "login", OPT_DASH, GROUP_EXEC, PH_PREEXEC, TYPE_BOOL, OFUNC_SPEC };
+ 
+-static int xioopen_exec(
+-	int argc,
+-	const char *argv[],
+-	struct opt *opts,
+-	int xioflags,	/* XIO_RDONLY, XIO_MAYCHILD etc. */
+-	xiofile_t *xfd,
+-	const struct addrdesc *addrdesc)
++/* The child process does not return into xioopen_exec(): this platform creates
++   it with an entry function rather than a returning-twice fork(), so what used
++   to be the "if (status == 0)" branch is the continuation _xioopen_foxec()
++   hands to the child.  ctx lives in xioopen_exec()'s frame, which the child has
++   a private copy of.  With option "nofork" it runs in the calling process. */
++struct exec_child_ctx {
++   const char **argv;
++   struct opt **optsp;
++   int *duptostderr;
++   bool dash;
++};
++
++static int exec_child(void *arg)
+ {
+-   struct single *sfd = &xfd->stream;
+-   int status;
+-   bool dash = false;
+-   int duptostderr;
++   struct exec_child_ctx *ctx = arg;
++   const char **argv = ctx->argv;
++   struct opt *opts = *ctx->optsp;
++   int duptostderr = *ctx->duptostderr;
++   bool dash = ctx->dash;
+    int numleft;
+ 
+-   if (argc != 2) {
+-      xio_syntax(argv[0], 1, argc-1, addrdesc->syntax);
+-      return STAT_NORETRY;
+-   }
+-
+-   retropt_bool(opts, OPT_DASH, &dash);
+-
+-   status =
+-      _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr);
+-   if (status < 0)
+-      return status;
+-   if (status == 0) {	/* child */
+-      const char *ends[] = { " ", NULL };
+-      const char *hquotes[] = { "'", NULL };
+-      const char *squotes[] = { "\"", NULL };
+-      const char *nests[] = {
++   const char *ends[] = { " ", NULL };
++   const char *hquotes[] = { "'", NULL };
++   const char *squotes[] = { "\"", NULL };
++   const char *nests[] = {
+ 	 "'", "'",
+ 	 "(", ")",
+ 	 "[", "]",
+ 	 "{", "}",
+ 	 NULL
+-      } ;
+-      char **pargv = NULL;
+-      int pargc;
+-      size_t len;
+-      const char *strp;
+-      char *token; /*! */
+-      char *tokp;
+-      char *path = NULL;
+-      char *tmp;
+-
+-      /*! Close(something) */
+-      /* parse command line */
+-      Debug1("child: args = \"%s\"", argv[1]);
+-      pargv = Malloc(8*sizeof(char *));
+-      if (pargv == NULL)  return STAT_RETRYLATER;
+-      len = strlen(argv[1])+1;
+-      strp = argv[1];
+-      while (isspace(*strp))
++   } ;
++   char **pargv = NULL;
++   int pargc;
++   size_t len;
++   const char *strp;
++   char *token; /*! */
++   char *tokp;
++   char *path = NULL;
++   char *tmp;
++
++   /*! Close(something) */
++   /* parse command line */
++   Debug1("child: args = \"%s\"", argv[1]);
++   pargv = Malloc(8*sizeof(char *));
++   if (pargv == NULL)  return STAT_RETRYLATER;
++   len = strlen(argv[1])+1;
++   strp = argv[1];
++   while (isspace(*strp))
+ 	 ++strp;
+-      token = Malloc(len); /*! */
+-      tokp = token;
+-      if (nestlex(&strp, &tokp, &len, ends, hquotes, squotes, nests,
++   token = Malloc(len); /*! */
++   tokp = token;
++   if (nestlex(&strp, &tokp, &len, ends, hquotes, squotes, nests,
+ 		  true, true, false) < 0) {
+ 	 Error("internal: miscalculated string lengths");
+-      }
+-      *tokp++ = '\0';
+-      pargv[0] = strrchr(tokp-1, '/');
+-      if (pargv[0] == NULL)  pargv[0] = token;  else  ++pargv[0];
+-      pargc = 1;
+-      while (*strp == ' ') {
++   }
++   *tokp++ = '\0';
++   pargv[0] = strrchr(tokp-1, '/');
++   if (pargv[0] == NULL)  pargv[0] = token;  else  ++pargv[0];
++   pargc = 1;
++   while (*strp == ' ') {
+ 	 while (*++strp == ' ')  ;
+ 	 if (((pargc+1) & 0x07) == 0x00) { 	/* one more is needed for final NULL */
+ 	    /*0 pargv = Realloc(pargv, (pargc+8)*sizeof(char *)); */
+@@ -96,55 +91,88 @@ static int xioopen_exec(
+ 	    Error("internal: miscalculated string lengths");
+ 	 }
+ 	 *tokp++ = '\0';
+-      }
+-      pargv[pargc] = NULL;
++   }
++   pargv[pargc] = NULL;
+ 
+-      if ((tmp = Malloc(strlen(pargv[0])+2)) == NULL) {
++   if ((tmp = Malloc(strlen(pargv[0])+2)) == NULL) {
+ 	 return STAT_RETRYLATER;
+-      }
+-      if (dash) {
++   }
++   if (dash) {
+ 	 tmp[0] = '-';
+ 	 strcpy(tmp+1, pargv[0]);
+-      } else {
++   } else {
+ 	 strcpy(tmp, pargv[0]);
+-      }
+-      pargv[0] = tmp;
++   }
++   pargv[0] = tmp;
+ 
+-      if (setopt_path(opts, &path) < 0) {
++   if (setopt_path(opts, &path) < 0) {
+ 	 /* this could be dangerous, so let us abort this child... */
+ 	 Exit(1);
+-      }
++   }
+ 
+-      dropopts(opts, PH_PASTEXEC);
+-      if ((numleft = leftopts(opts)) > 0) {
++   dropopts(opts, PH_PASTEXEC);
++   if ((numleft = leftopts(opts)) > 0) {
+ 	 showleft(opts);
+ 	 Error1("INTERNAL: %d option(s) remained unused", numleft);
+ 	 return STAT_NORETRY;
+-      }
++   }
+ 
+-      /* only now redirect stderr */
+-      if (duptostderr >= 0) {
++   /* only now redirect stderr */
++   if (duptostderr >= 0) {
+ 	 diag_dup();
+ 	 Dup2(duptostderr, 2);
+-      }
+-      Notice1("execvp'ing \"%s\"", token);
+-      Execvp(token, pargv);
+-      /* here we come only if execvp() failed */
+-      switch (pargc) {
+-      case 1:
++   }
++   Notice1("execvp'ing \"%s\"", token);
++   Execvp(token, pargv);
++   /* here we come only if execvp() failed */
++   switch (pargc) {
++   case 1:
+ 	 Error3("execvp(\"%s\", \"%s\"): %s",
+ 		token, pargv[0], strerror(errno)); break;
+-      case 2:
++   case 2:
+ 	 Error4("execvp(\"%s\", \"%s\", \"%s\"): %s",
+ 		token, pargv[0], pargv[1], strerror(errno)); break;
+-      case 3:
+-      default:
++   case 3:
++   default:
+ 	 Error5("execvp(\"%s\", \"%s\", \"%s\", \"%s\", ...): %s", token,
+ 		pargv[0], pargv[1], pargv[2], strerror(errno));
+ 	 break;
+-      }
+-      Exit(1);	/* this child process */
+    }
++   Exit(1);	/* this child process */
++   return 0;	/* not reached: Exit() above ends this process */
++}
++static int xioopen_exec(
++	int argc,
++	const char *argv[],
++	struct opt *opts,
++	int xioflags,	/* XIO_RDONLY, XIO_MAYCHILD etc. */
++	xiofile_t *xfd,
++	const struct addrdesc *addrdesc)
++{
++   struct single *sfd = &xfd->stream;
++   int status;
++   bool dash = false;
++   int duptostderr;
++   struct exec_child_ctx ctx;
++
++   if (argc != 2) {
++      xio_syntax(argv[0], 1, argc-1, addrdesc->syntax);
++      return STAT_NORETRY;
++   }
++
++   retropt_bool(opts, OPT_DASH, &dash);
++
++   ctx.argv = argv;
++   ctx.optsp = &opts;
++   ctx.duptostderr = &duptostderr;
++   ctx.dash = dash;
++   status =
++      _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr,
++		     exec_child, &ctx);
++   if (status < 0)
++      return status;
++   if (status == 0)	/* option "nofork": exec over this process */
++      return exec_child(&ctx);
+ 
+    /* parent */
+    _xio_openlate(sfd, opts);
+diff --git a/xio-progcall.c b/xio-progcall.c
+index b2b8242..a63cd2b 100644
+--- a/xio-progcall.c
++++ b/xio-progcall.c
+@@ -42,8 +42,48 @@ const struct optdesc opt_sigint  = { "sigint",    NULL, OPT_SIGINT,      GROUP_P
+ const struct optdesc opt_sigquit = { "sigquit",   NULL, OPT_SIGQUIT,     GROUP_PARENT, PH_LATE,        TYPE_CONST,      OFUNC_SIGNAL, SIGQUIT };
+ 
+ 
+-/* fork for exec/system, but return before exec'ing.
+-   return=0: is child process
++/* This platform has no fork(), so _xioopen_foxec() cannot let a forked child
++   resume in the middle of its own frame.  The child branch is foxec_child()
++   below, entered on the cloned child's fresh stack; the child reaches
++   _xioopen_foxec()'s locals through this structure, which lives in that frame
++   and is part of the address-space copy the child starts with.  With option
++   "nofork" there is no child and _xioopen_foxec() calls foxec_child() inline. */
++struct foxec_child_ctx {
++   struct single *sfd;
++   struct opt *copts;
++   struct opt **optsp;
++   int *duptostderr;
++   bool withfork;
++   bool usepipes;
++   bool withstderr;
++   int rw;
++   short fdi;
++   short fdo;
++   int *trigger;
++   int *sv;
++   int *rdpip;
++   int *wrpip;
++#if HAVE_PTY
++   bool usepty;
++   int ptyfd;
++   int ttyfd;
++   char *tn;
++   char *ptyname;
++   char *linkname;
++#endif /* HAVE_PTY */
++   /* The calling address's child continuation (exec/system/shell).  NULL with
++      option "nofork", where the caller runs it after _xioopen_foxec() returns
++      0, in this same process. */
++   int (*childfunc)(void *);
++   void *childarg;
++};
++
++static int foxec_child(void *arg);
++
++/* Create the child process for exec/system/shell and set up its descriptors.
++   The child does not return here: it enters childfunc(childarg), which execs.
++   With option "nofork" no child is created.
++   return=0: option "nofork"; the caller must exec over this process
+    return>0: is parent process
+    return<0: error occurred, assume parent process and no child exists !!!
+  */
+@@ -51,7 +91,9 @@ int _xioopen_foxec(int xioflags,	/* XIO_RDONLY etc. */
+ 		struct single *sfd,
+ 		   groups_t groups,
+ 		   struct opt **optsp,	/* in: opts; out: opts for parent/child */
+-		   int *duptostderr	/* out: redirect stderr to output fd */
++		   int *duptostderr,	/* out: redirect stderr to output fd */
++		   int (*childfunc)(void *),	/* the child's exec continuation */
++		   void *childarg
+ 		) {
+    struct opt *opts;		/* common options */
+    struct opt *popts = NULL;	/* parent options */
+@@ -82,6 +124,7 @@ int _xioopen_foxec(int xioflags,	/* XIO_RDONLY etc. */
+    char *linkname = NULL;
+    bool opt_unlink_close = true;	/* remove symlink afterwards */
+    int trigger[2]; 	/* [0] watched by parent, [1] closed by child when ready */
++   struct foxec_child_ctx ctx;	/* this frame, as the child branch reads it */
+ 
+    opts = *optsp;
+    if (applyopts_single(sfd, opts, PH_INIT) < 0)  return -1;
+@@ -407,16 +450,126 @@ int _xioopen_foxec(int xioflags,	/* XIO_RDONLY etc. */
+ 
+    xiosetchilddied();	/* set SIGCHLD handler */
+ 
++   ctx.sfd = sfd;
++   ctx.copts = copts;
++   ctx.optsp = optsp;
++   ctx.duptostderr = duptostderr;
++   ctx.withfork = withfork;
++   ctx.usepipes = usepipes;
++   ctx.withstderr = withstderr;
++   ctx.rw = rw;
++   ctx.fdi = fdi;
++   ctx.fdo = fdo;
++   ctx.trigger = trigger;
++   ctx.sv = sv;
++   ctx.rdpip = rdpip;
++   ctx.wrpip = wrpip;
++#if HAVE_PTY
++   ctx.usepty = usepty;
++   ctx.ptyfd = ptyfd;
++   ctx.ttyfd = ttyfd;
++   ctx.tn = tn;
++   ctx.ptyname = ptyname;
++   ctx.linkname = linkname;
++#endif /* HAVE_PTY */
++   ctx.childarg = childarg;
++
+    if (withfork) {
+       Socketpair(PF_UNIX, SOCK_STREAM, 0, trigger);
+-      pid = xio_fork(true, E_ERROR, 0);
++      /* The child enters foxec_child() and goes on to childfunc(), which execs;
++	 it never returns here, so this call yields only the parent's pid. */
++      ctx.childfunc = childfunc;
++      pid = xio_clone(true, E_ERROR, 0, foxec_child, &ctx);
+       if (pid < 0) {
+ 	 return -1;
+       }
++   } else {
++      /* Option "nofork": no child at all.  Run the same branch in this process
++	 and report it to the caller the way a fork()ing socat reports its
++	 child, so the caller execs over us. */
++      ctx.childfunc = NULL;
++      return foxec_child(&ctx);
+    }
+-   if (!withfork || pid == 0) {	/* in single process, or in child */
+-      applyopts_optgroup(sfd, -1, copts, GROUP_PROCESS);
+-      if (withfork) {
++
++   /* for parent (this is our socat process) */
++   Notice1("forked off child process "F_pid, pid);
++   Close(trigger[1]); 	/* in parent */
++
++#if HAVE_PTY
++   if (usepty) {
++#  if 0
++      if (Close(ttyfd) < 0) {
++	 Info2("close(%d): %s", ttyfd, strerror(errno));
++      }
++#  endif
++   } else
++#endif /* HAVE_PTY */
++   if (usepipes) {
++      if (rw == XIO_RDONLY)  Close(rdpip[1]);
++      if (rw == XIO_WRONLY)  Close(wrpip[0]);
++   } else {
++      Close(sv[1]);
++   }
++   sfd->para.exec.pid = pid;
++
++   if (applyopts_single(sfd, popts, PH_LATE) < 0)  return -1;
++   applyopts(sfd, -1, popts, PH_LATE);
++   applyopts(sfd, -1, popts, PH_LATE2);
++   applyopts(sfd, -1, popts, PH_PASTEXEC);
++   if ((numleft = leftopts(popts)) > 0) {
++      showleft(popts);
++      Error1("INTERNAL: %d option(s) remained unused", numleft);
++      return STAT_NORETRY;
++   }
++
++   {
++      struct pollfd fds[1];
++      fds[0].fd = trigger[0];
++      fds[0].events = POLLIN|POLLHUP;
++      Poll(fds, 1, -1);
++      Info("child process notified parent that it is ready");
++   }
++
++#if HAVE_PTY
++   applyopts(sfd, ptyfd, popts, PH_LATE);
++#endif /* HAVE_PTY */
++   if (applyopts_single(sfd, popts, PH_LATE) < 0)
++      return -1;
++
++   *optsp = popts;
++   return pid;	/* indicate parent (main) process */
++}
++
++/* _xioopen_foxec()'s child branch, run either by the cloned child on its own
++   stack or -- with option "nofork" -- inline in the single process.  The
++   aliases below let the body stay identical to the code this was moved from. */
++static int foxec_child(void *arg)
++{
++   struct foxec_child_ctx *ctx = arg;
++   struct single *sfd = ctx->sfd;
++   struct opt *copts = ctx->copts;
++   bool withfork = ctx->withfork;
++   bool usepipes = ctx->usepipes;
++   bool withstderr = ctx->withstderr;
++   int rw = ctx->rw;
++   short fdi = ctx->fdi;
++   short fdo = ctx->fdo;
++   int *trigger = ctx->trigger;
++   int *sv = ctx->sv;
++   int *rdpip = ctx->rdpip;
++   int *wrpip = ctx->wrpip;
++   int *duptostderr = ctx->duptostderr;
++   struct opt **optsp = ctx->optsp;
++#if HAVE_PTY
++   bool usepty = ctx->usepty;
++   int ptyfd = ctx->ptyfd;
++   int ttyfd = ctx->ttyfd;
++   char *tn = ctx->tn;
++   char *ptyname = ctx->ptyname;
++   char *linkname = ctx->linkname;
++#endif /* HAVE_PTY */
++   applyopts_optgroup(sfd, -1, copts, GROUP_PROCESS);
++   if (withfork) {
+ 	 Close(trigger[0]); 	/* in child: not needed here */
+ 	 /* The child should have default handling for SIGCHLD. */
+ 	 /* In particular, it's not defined whether ignoring SIGCHLD is inheritable. */
+@@ -578,70 +731,24 @@ int _xioopen_foxec(int xioflags,	/* XIO_RDONLY etc. */
+ 	    Info("notifying parent that child process is ready");
+ 	    Close(trigger[1]); 	/* in child, notify parent that ready */
+ 	 }
+-      } /* withfork */
+-      else {
++   } /* withfork */
++   else {
+ 	 applyopts(sfd, -1, copts, PH_LATE);
+ 	 applyopts(sfd, -1, copts, PH_LATE2);
+-      }
+-      _xioopen_setdelayeduser();
+-      if (withstderr) {
+-	 *duptostderr = fdo;
+-      } else {
+-	 *duptostderr = -1;
+-      }
+-
+-      *optsp = copts;
+-      return 0;	/* indicate child process */
+    }
+-
+-   /* for parent (this is our socat process) */
+-   Notice1("forked off child process "F_pid, pid);
+-   Close(trigger[1]); 	/* in parent */
+-
+-#if HAVE_PTY
+-   if (usepty) {
+-#  if 0
+-      if (Close(ttyfd) < 0) {
+-	 Info2("close(%d): %s", ttyfd, strerror(errno));
+-      }
+-#  endif
+-   } else
+-#endif /* HAVE_PTY */
+-   if (usepipes) {
+-      if (rw == XIO_RDONLY)  Close(rdpip[1]);
+-      if (rw == XIO_WRONLY)  Close(wrpip[0]);
++   _xioopen_setdelayeduser();
++   if (withstderr) {
++	 *duptostderr = fdo;
+    } else {
+-      Close(sv[1]);
+-   }
+-   sfd->para.exec.pid = pid;
+-
+-   if (applyopts_single(sfd, popts, PH_LATE) < 0)  return -1;
+-   applyopts(sfd, -1, popts, PH_LATE);
+-   applyopts(sfd, -1, popts, PH_LATE2);
+-   applyopts(sfd, -1, popts, PH_PASTEXEC);
+-   if ((numleft = leftopts(popts)) > 0) {
+-      showleft(popts);
+-      Error1("INTERNAL: %d option(s) remained unused", numleft);
+-      return STAT_NORETRY;
+-   }
+-
+-   {
+-      struct pollfd fds[1];
+-      fds[0].fd = trigger[0];
+-      fds[0].events = POLLIN|POLLHUP;
+-      Poll(fds, 1, -1);
+-      Info("child process notified parent that it is ready");
++	 *duptostderr = -1;
+    }
+ 
+-#if HAVE_PTY
+-   applyopts(sfd, ptyfd, popts, PH_LATE);
+-#endif /* HAVE_PTY */
+-   if (applyopts_single(sfd, popts, PH_LATE) < 0)
+-      return -1;
+-
+-   *optsp = popts;
+-   return pid;	/* indicate parent (main) process */
++   *optsp = copts;
++   if (ctx->childfunc != NULL)
++      return ctx->childfunc(ctx->childarg);	/* execs; does not return */
++   return 0;	/* option "nofork": indicate to the caller that it should exec */
+ }
++
+ #endif /* WITH_EXEC || WITH_SYSTEM || WITH_SHELL */
+ 
+ 
+diff --git a/xio-progcall.h b/xio-progcall.h
+index a2aa90b..2f2db3e 100644
+--- a/xio-progcall.h
++++ b/xio-progcall.h
+@@ -23,7 +23,9 @@ extern int _xioopen_foxec(int rw,	/* O_RDONLY etc. */
+ 		struct single *fd,
+ 			  groups_t groups,
+ 		struct opt **opts,
+-			  int *duptostderr
++			  int *duptostderr,
++			  int (*childfunc)(void *),
++			  void *childarg
+ 		);
+ extern int setopt_path(struct opt *opts, char **path);
+ extern
+diff --git a/xio-shell.c b/xio-shell.c
+index 00015a4..9426ccb 100644
+--- a/xio-shell.c
++++ b/xio-shell.c
+@@ -19,6 +19,66 @@ const struct addrdesc xioaddr_shell = { "SHELL", 3, xioopen_shell, GROUP_FD|GROU
+ 
+ const struct optdesc opt_shell = { "shell", NULL, OPT_SHELL, GROUP_SHELL, PH_PREEXEC, TYPE_STRING, OFUNC_SPEC, 0, 0 };
+ 
++/* xioopen_shell()'s child continuation; see exec_child() in xio-exec.c for why
++   the child is a function rather than the far side of a fork(). */
++struct shell_child_ctx {
++	struct opt **optsp;
++	int *duptostderr;
++	const char *shellpath;
++	const char *shellname;
++	const char *string;
++};
++
++static int shell_child(void *arg)
++{
++	struct shell_child_ctx *ctx = arg;
++	struct opt *opts = *ctx->optsp;
++	int duptostderr = *ctx->duptostderr;
++	const char *shellpath = ctx->shellpath;
++	const char *shellname = ctx->shellname;
++	const char *string = ctx->string;
++	char *path = NULL;
++	int result;
++
++	int numleft;
++
++	if (setopt_path(opts, &path) < 0) {
++		/* this could be dangerous, so let us abort this child... */
++		Exit(1);
++	}
++
++	if ((numleft = leftopts(opts)) > 0) {
++		Error1("%d option(s) could not be used", numleft);
++		showleft(opts);
++		return STAT_NORETRY;
++	}
++
++	/* only now redirect stderr */
++	if (duptostderr >= 0) {
++		diag_dup();
++		Dup2(duptostderr, 2);
++	}
++
++	Setenv("SHELL", shellpath, 1);
++
++	if (string != NULL) {
++		Info1("executing shell command \"%s\"", string);
++		Debug3("execl(\"%s\", \"%s\", \"-c\", \"%s\", NULL)",
++		       shellpath, shellname, string);
++		result = execl(shellpath, shellname, "-c", string, (char *)NULL);
++	} else {
++		Info("executing interactive shell");
++		Debug2("execl(\"%s\", \"%s\", NULL)",
++		       shellpath, shellname);
++		result = execl(shellpath, shellname, (char *)NULL);
++	}
++	if (result != 0) {
++		Warn2("execl(\"%s\") returned with status %d", string, result);
++		Warn1("execl(): %s", strerror(errno));
++	}
++	Exit(0);	/* this child process */
++	return 0;	/* not reached: Exit() above ends this process */
++}
+ static int xioopen_shell(
+ 	int argc,
+ 	const char *argv[],
+@@ -29,12 +89,11 @@ static int xioopen_shell(
+ {
+ 	struct single *sfd = &xfd->stream;
+ 	int status;
+-	char *path = NULL;
+ 	int duptostderr;
+-	int result;
+ 	char *shellpath = NULL;
+ 	const char *shellname;
+ 	const char *string = argv[1];
++	struct shell_child_ctx ctx;
+ 
+ 	if (argc < 1 || argc > 2) {
+ 		xio_syntax(argv[0], 1, argc-1, addrdesc->syntax);
+@@ -56,47 +115,16 @@ static int xioopen_shell(
+ 	}
+ 	++shellname;
+ 
+-	status = _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr);
++	ctx.optsp = &opts;
++	ctx.duptostderr = &duptostderr;
++	ctx.shellpath = shellpath;
++	ctx.shellname = shellname;
++	ctx.string = string;
++	status = _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr,
++				shell_child, &ctx);
+ 	if (status < 0)  return status;
+-	if (status == 0) {	/* child */
+-		int numleft;
+-
+-		if (setopt_path(opts, &path) < 0) {
+-			/* this could be dangerous, so let us abort this child... */
+-			Exit(1);
+-		}
+-
+-		if ((numleft = leftopts(opts)) > 0) {
+-			Error1("%d option(s) could not be used", numleft);
+-			showleft(opts);
+-			return STAT_NORETRY;
+-		}
+-
+-		/* only now redirect stderr */
+-		if (duptostderr >= 0) {
+-			diag_dup();
+-			Dup2(duptostderr, 2);
+-		}
+-
+-		Setenv("SHELL", shellpath, 1);
+-
+-		if (string != NULL) {
+-			Info1("executing shell command \"%s\"", string);
+-			Debug3("execl(\"%s\", \"%s\", \"-c\", \"%s\", NULL)",
+-			       shellpath, shellname, string);
+-			result = execl(shellpath, shellname, "-c", string, (char *)NULL);
+-		} else {
+-			Info("executing interactive shell");
+-			Debug2("execl(\"%s\", \"%s\", NULL)",
+-			       shellpath, shellname);
+-			result = execl(shellpath, shellname, (char *)NULL);
+-		}
+-		if (result != 0) {
+-			Warn2("execl(\"%s\") returned with status %d", string, result);
+-			Warn1("execl(): %s", strerror(errno));
+-		}
+-		Exit(0);	/* this child process */
+-	}
++	if (status == 0)	/* option "nofork": exec over this process */
++		return shell_child(&ctx);
+ 
+ 	/* parent */
+ 	return 0;
+diff --git a/xio-system.c b/xio-system.c
+index ebe1bfb..23b77b7 100644
+--- a/xio-system.c
++++ b/xio-system.c
+@@ -18,6 +18,56 @@ static int xioopen_system(int arg, const char *argv[], struct opt *opts, int xio
+ const struct addrdesc xioaddr_system = { "SYSTEM", 3, xioopen_system, GROUP_FD|GROUP_FORK|GROUP_EXEC|GROUP_SOCKET|GROUP_SOCK_UNIX|GROUP_TERMIOS|GROUP_FIFO|GROUP_PTY|GROUP_PARENT, 1, 0, 0 HELP(":<shell-command>") };
+ 
+ 
++/* xioopen_system()'s child continuation; see exec_child() in xio-exec.c for why
++   the child is a function rather than the far side of a fork(). */
++struct system_child_ctx {
++   struct opt **optsp;
++   int *duptostderr;
++   const char *string;
++};
++
++static int system_child(void *arg)
++{
++   struct system_child_ctx *ctx = arg;
++   struct opt *opts = *ctx->optsp;
++   int duptostderr = *ctx->duptostderr;
++   const char *string = ctx->string;
++   char *path = NULL;
++   int result;
++
++   int numleft;
++
++   /* do not shutdown connections that belong our parent */
++   sock[0] = NULL;
++   sock[1] = NULL;
++
++   if (setopt_path(opts, &path) < 0) {
++	 /* this could be dangerous, so let us abort this child... */
++	 Exit(1);
++   }
++
++   if ((numleft = leftopts(opts)) > 0) {
++	 showleft(opts);
++	 Error1("INTERNAL: %d option(s) remained unused", numleft);
++	 return STAT_NORETRY;
++   }
++
++   /* only now redirect stderr */
++   if (duptostderr >= 0) {
++	 diag_dup();
++	 Dup2(duptostderr, 2);
++   }
++   Info1("executing shell command \"%s\"", string);
++   errno=0;
++   result = System(string);
++   if (result != 0) {
++	 Warn2("system(\"%s\") returned with status %d", string, result);
++	 if (errno != 0)
++	    Warn1("system(): %s", strerror(errno));
++   }
++   Exit(result>>8);	/* this child process */
++   return 0;	/* not reached: Exit() above ends this process */
++}
+ static int xioopen_system(
+ 	int argc,
+ 	const char *argv[],
+@@ -28,53 +78,25 @@ static int xioopen_system(
+ {
+    struct single *sfd = &xfd->stream;
+    int status;
+-   char *path = NULL;
+    int duptostderr;
+-   int result;
+    const char *string = argv[1];
++   struct system_child_ctx ctx;
+ 
+    if (argc != 2) {
+       xio_syntax(argv[0], 1, argc-1, addrdesc->syntax);
+       return STAT_NORETRY;
+    }
+ 
++   ctx.optsp = &opts;
++   ctx.duptostderr = &duptostderr;
++   ctx.string = string;
+    status =
+-      _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr);
++      _xioopen_foxec(xioflags, sfd, addrdesc->groups, &opts, &duptostderr,
++		     system_child, &ctx);
+    if (status < 0)
+       return status;
+-   if (status == 0) {	/* child */
+-      int numleft;
+-
+-      /* do not shutdown connections that belong our parent */
+-      sock[0] = NULL;
+-      sock[1] = NULL;
+-
+-      if (setopt_path(opts, &path) < 0) {
+-	 /* this could be dangerous, so let us abort this child... */
+-	 Exit(1);
+-      }
+-
+-      if ((numleft = leftopts(opts)) > 0) {
+-	 showleft(opts);
+-	 Error1("INTERNAL: %d option(s) remained unused", numleft);
+-	 return STAT_NORETRY;
+-      }
+-
+-      /* only now redirect stderr */
+-      if (duptostderr >= 0) {
+-	 diag_dup();
+-	 Dup2(duptostderr, 2);
+-      }
+-      Info1("executing shell command \"%s\"", string);
+-      errno=0;
+-      result = System(string);
+-      if (result != 0) {
+-	 Warn2("system(\"%s\") returned with status %d", string, result);
+-	 if (errno != 0)
+-	    Warn1("system(): %s", strerror(errno));
+-      }
+-      Exit(result>>8);	/* this child process */
+-   }
++   if (status == 0)	/* option "nofork": run the command in this process */
++      return system_child(&ctx);
+ 
+    /* parent */
+    _xio_openlate(sfd, opts);
+diff --git a/xio.h b/xio.h
+index a77b55d..b4c9257 100644
+--- a/xio.h
++++ b/xio.h
+@@ -491,6 +491,8 @@ extern bool first_child;
+ extern int xioinitialize(void);
+ extern int xioinitialize2(void);
+ extern pid_t xio_fork(bool subchild, int level, int shutup);
++extern pid_t xio_clone(bool subchild, int level, int shutup,
++		       int (*func)(void *), void *arg);
+ extern int xio_forked_inchild(void);
+ extern int xiosetopt(char what, const char *arg);
+ extern int xioinqopt(char what, char *arg, size_t n);
+diff --git a/xioinitialize.c b/xioinitialize.c
+index 9c99a5e..4cc7301 100644
+--- a/xioinitialize.c
++++ b/xioinitialize.c
+@@ -211,49 +211,104 @@ int xio_forked_inchild(void) {
+    return result;
+ }
+ 
+-/* subchild != 0 means that the current process is already a child process of
++/* This platform (wasm32-unknown-linux-musl) has no fork(): the WebAssembly
++   call stack lives outside linear memory, so a call cannot return twice.  The
++   process-creation primitive is clone() with an entry function: the child gets
++   a private copy of the address space -- it therefore sees every object the
++   parent had, including the caller's stack frame, reachable through a pointer
++   -- but begins executing func(arg) on a fresh stack of its own.
++
++   xio_clone() below is xio_fork() expressed against that primitive.  It serves
++   the callers whose child never returns to its caller but runs a self-contained
++   setup and then execs: the EXEC, SYSTEM and SHELL addresses.  See xio_fork()
++   for the callers that cannot be expressed this way. */
++
++/* The cloned child runs only _xioopen_foxec()'s child branch and the calling
++   address's exec continuation before execve() discards the image, so it never
++   reaches the 8 MiB depth an ordinary socat process may use. */
++#define XIO_CLONE_STACKSIZE (256*1024)
++
++struct xio_clone_args {
++   bool subchild;
++   int shutup;
++   int (*func)(void *);
++   void *arg;
++};
++
++/* Entry point of the cloned child, running on its own stack.  args points into
++   the parent's frame, which this process has a private copy of. */
++static int xio_clone_entry(void *arg)
++{
++   struct xio_clone_args *args = arg;
++   const char *forkwaitstring;
++   pid_t cpid = Getpid();
++
++   Info1("just born: child process "F_pid, cpid);
++   if (!args->subchild) {
++      /* set SOCAT_PID to new value.  xio_fork() published the parent's `pid`
++	 variable here, which is 0 in a fork() child; there is no such variable
++	 on this side of a clone(), so publish the pid the name promises.  Only
++	 _xioopen_foxec() clones, always as a sub child, so nothing reaches
++	 this. */
++      xiosetenvulong("PID", cpid, 1);
++   } else {
++      /* Make sure the sub process does not hold the trigger pipe open */
++      if (sock1 != NULL) {
++	 struct single *sfd;
++	 sfd = XIO_RDSTREAM(sock1);
++	 if (sfd->triggerfd >= 0)  Close(sfd->triggerfd);
++	 sfd = XIO_WRSTREAM(sock1);
++	 if (sfd->triggerfd >= 0)  Close(sfd->triggerfd);
++      }
++   }
++   /* gdb recommends to have env controlled sleep after fork */
++   if (forkwaitstring = getenv("SOCAT_FORK_WAIT")) {
++      Sleep(atoi(forkwaitstring));
++   }
++   if (xio_forked_inchild() != 0) {
++      Exit(1);
++   }
++   diag_set_int('u', args->shutup);
++
++   /* func() is not expected to return: it execs or exits.  Returning here
++      would leave the child running socat's own code on a stack that ends at
++      this frame, so end the process rather than unwind into nothing. */
++   Exit(args->func(args->arg));
++   return 0;	/* not reached */
++}
++
++/* Create a child process that starts at func(arg) instead of returning from
++   the call, and return its pid; returns -1 without creating a child on error.
++   subchild != 0 means that the current process is already a child process of
+    the master process and thus the new sub child process should not set the
+    SOCAT_PID variable */
+-pid_t xio_fork(bool subchild,
+-	       int level, 	/* log level */
+-	       int shutup) 	/* decrease log level in child process */
++pid_t xio_clone(bool subchild,
++		int level, 	/* log level */
++		int shutup, 	/* decrease log level in child process */
++		int (*func)(void *),	/* what the child runs; does not return */
++		void *arg)
+ {
+-   pid_t pid;
++   struct xio_clone_args args;
+    const char *forkwaitstring;
+-   int forkwaitsecs = 0;
++   char *stack;
++   pid_t pid;
+ 
+-   if ((pid = Fork()) < 0) {
+-      Msg1(level, "fork(): %s", strerror(errno));
+-      return pid;
+-   }
++   args.subchild = subchild;
++   args.shutup = shutup;
++   args.func = func;
++   args.arg = arg;
+ 
+-   if (pid == 0) {	/* child process */
+-      pid_t cpid = Getpid();
+-
+-      Info1("just born: child process "F_pid, cpid);
+-      if (!subchild) {
+-	 /* set SOCAT_PID to new value */
+-	 xiosetenvulong("PID", pid, 1);
+-      } else {
+-	 /* Make sure the sub process does not hold the trigger pipe open */
+-	 if (sock1 != NULL) {
+-	    struct single *sfd;
+-	    sfd = XIO_RDSTREAM(sock1);
+-	    if (sfd->triggerfd >= 0)  Close(sfd->triggerfd);
+-	    sfd = XIO_WRSTREAM(sock1);
+-	    if (sfd->triggerfd >= 0)  Close(sfd->triggerfd);
+-	 }
+-      }
+-      /* gdb recommends to have env controlled sleep after fork */
+-      if (forkwaitstring = getenv("SOCAT_FORK_WAIT")) {
+-	 forkwaitsecs = atoi(forkwaitstring);
+-	 Sleep(forkwaitsecs);
+-      }
+-      if (xio_forked_inchild() != 0) {
+-	 Exit(1);
+-      }
+-      diag_set_int('u', shutup);
+-      return 0;
++   if ((stack = Malloc(XIO_CLONE_STACKSIZE)) == NULL) {
++      Msg1(level, "clone(): %s", strerror(errno));
++      return -1;
++   }
++   /* The child's copy of this allocation is its own, so the parent's copy is
++      free once clone() has returned. */
++   pid = clone(xio_clone_entry, stack+XIO_CLONE_STACKSIZE, SIGCHLD, &args);
++   free(stack);
++   if (pid < 0) {
++      Msg1(level, "clone(): %s", strerror(errno));
++      return -1;
+    }
+ 
+    /* parent process */
+@@ -266,8 +321,23 @@ pid_t xio_fork(bool subchild,
+    Notice1("forked off child process "F_pid, pid);
+    /* gdb recommends to have env controlled sleep after fork */
+    if (forkwaitstring = getenv("SOCAT_FORK_WAIT")) {
+-      forkwaitsecs = atoi(forkwaitstring);
+-      Sleep(forkwaitsecs);
++      Sleep(atoi(forkwaitstring));
+    }
+    return pid;
+ }
++
++/* The remaining callers are all the "fork" address option, whose child resumes
++   the parent's call chain: it breaks out of the accept loop and returns up
++   through xioopen() into socat's transfer loop.  Only a returning-twice fork()
++   can do that, and clone() cannot substitute -- the child's WebAssembly call
++   stack starts empty, so the frames it would return through do not exist.
++   Supporting it would mean turning every listening address's post-accept tail
++   into an explicit continuation.  Refuse rather than serve one connection and
++   silently stop listening. */
++pid_t xio_fork(bool subchild,
++	       int level, 	/* log level */
++	       int shutup) 	/* decrease log level in child process */
++{
++   Fatal("address option \"fork\" is not supported on this platform: it needs fork(), which wasm32-unknown-linux-musl does not provide");
++   return -1;
++}
