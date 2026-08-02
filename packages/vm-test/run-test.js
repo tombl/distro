@@ -33,7 +33,7 @@ if (
   throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk]");
 }
 
-const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
+const { blockDevice, consoleDevice, entropyDevice, spawnMachine, vsockDevice } = await import(
   pathToFileURL(linuxPath).href
 );
 
@@ -137,11 +137,23 @@ function consoleOutput({ failWhenClosed }) {
   });
 }
 
+// An echo service guests can reach at (VMADDR_CID_HOST, port 7), covering
+// guest-initiated vsock connections end to end.
+const vsock = vsockDevice();
+vsock.listen(7, async (connection) => {
+  for (;;) {
+    const chunk = await connection.read();
+    if (chunk.byteLength === 0) return;
+    await connection.write(chunk);
+  }
+});
+
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
 const devices = [
   consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
   entropyDevice(),
+  vsock,
 ];
 
 let disk;

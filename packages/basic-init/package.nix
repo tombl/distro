@@ -203,6 +203,7 @@ in
       tls = check "tls";
       user-memory-growth = check "user-memory-growth";
       user-memory-rlimit = check "user-memory-rlimit";
+      vsock = check "vsock";
       wallclock = check "wallclock";
     };
   };
