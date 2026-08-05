@@ -79,13 +79,19 @@
           default = pkgs.mkShellNoCC {
             packages = [
               formatter
+              wasmpkgs.go-toolchain.package
               wasmpkgs.llvm-toolchain
               pkgs.cmake
               pkgs.ninja
               pkgs.nodejs
               pkgs.pnpm_11
             ];
-            env.sysroot = "${wasmpkgs.sysroot}";
+            env = {
+              inherit (wasmpkgs.platform.system.go) GOOS GOARCH;
+              CGO_ENABLED = "0";
+              GOTOOLCHAIN = "local";
+              sysroot = "${wasmpkgs.sysroot}";
+            };
           };
 
         }

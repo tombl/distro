@@ -32,6 +32,28 @@ Runtime overlays must not contain conflicting paths. If two fragments need to
 provide the same path, resolve that ownership in the packages rather than
 depending on image composition order.
 
+## Go packages
+
+Use the scope's `buildGoModule` exactly as you would use nixpkgs' builder:
+
+```nix
+{ buildGoModule }:
+
+buildGoModule {
+  pname = "example";
+  version = "1.0.0";
+  src = ./.;
+  vendorHash = null; # Replace with the fixed-output hash when dependencies exist.
+}
+```
+
+The builder uses the pinned native Go fork and produces `linux/wasm` programs
+with CGO disabled. Target binaries cannot run during a normal Nix build, so
+package checks are disabled by default; add a `vm-test` passthru check for
+runtime coverage. The default development shell exposes the same toolchain and
+target environment, so ordinary commands such as `go build` produce matching
+WebAssembly binaries.
+
 ## Building and running
 
 - **Stage new files before running any Nix command.** Flakes copy a Git worktree
