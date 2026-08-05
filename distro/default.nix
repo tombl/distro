@@ -69,6 +69,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # A native forked Go compiler plus nixpkgs' module builder for linux/wasm.
     go-toolchain = callPackage ./go-toolchain/package.nix { };
     buildGoModule = self.go-toolchain.buildGoModule;
+    go-compat = callPackage ./go-compat/package.nix { };
 
     # userland:
     apk-tools = callPackage ./apk-tools/package.nix {
@@ -90,6 +91,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     git = callPackage ./git/package.nix { };
     grep = callPackage ./grep/package.nix { };
     go-smoke = callPackage ./go-smoke/package.nix { };
+    go-ecosystem = callPackage ./go-ecosystem/package.nix { };
     jq = callPackage ./jq/package.nix { };
     less = callPackage ./less/package.nix { };
     lua = callPackage ./lua/package.nix { };
