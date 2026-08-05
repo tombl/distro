@@ -255,6 +255,24 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.writeFile(`${directory}/large`, large);
   assert.deepEqual(await guest.fs.readFile(`${directory}/large`), large);
 
+  // More entries than fit in one guest page exercises the no-MMU virtio-fs
+  // readdir pagination path rather than only the first FUSE response.
+  const pagedDirectory = new MemoryNode("directory", 0o755);
+  for (let index = 0; index < 192; index += 1) {
+    pagedDirectory.children.set(
+      `entry-${index.toString().padStart(3, "0")}`,
+      new MemoryNode("file", 0o644),
+    );
+  }
+  backend.root.children.set("paged", pagedDirectory);
+  const pagedEntries = [];
+  for await (const entry of guest.fs.readDir("/workspace/shared/paged")) {
+    pagedEntries.push(entry.name);
+  }
+  assert.equal(pagedEntries.length, 192);
+  assert.equal(new Set(pagedEntries).size, 192);
+  backend.root.children.delete("paged");
+
   await guest.fs.rename(`${directory}/hello`, `${directory}/renamed`);
   assert.deepEqual([...backend.root.children.get("directory")!.children.keys()].sort(), [
     "large",

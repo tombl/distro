@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test --test-concurrency=1"
+    "test": "node --test --test-concurrency=1 tests"
   },
   "dependencies": {
     "@tombl/linux-guest": "workspace:*"

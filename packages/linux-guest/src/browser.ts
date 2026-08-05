@@ -28,6 +28,7 @@ interface Metadata {
   gid: number;
   atime: VirtioFileSystemTimestamp;
   mtime: VirtioFileSystemTimestamp;
+  mtimeOverride: boolean;
   ctime: VirtioFileSystemTimestamp;
 }
 
@@ -90,6 +91,7 @@ class Node implements VirtioFileSystemNode {
   parts: string[];
   handle: FileSystemHandle;
   metadata: Metadata;
+  mutation = Promise.resolve();
   // Browser handles identify a locator rather than an inode generation and may
   // resolve a same-path recreation. Once removal is observed, permanently
   // detach this generation so old guest handles fail instead of retargeting it.
@@ -118,6 +120,7 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
     gid: 0,
     atime: timestamp,
     mtime: timestamp,
+    mtimeOverride: false,
     ctime: timestamp,
   };
 }
@@ -138,6 +141,8 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * When this adapter observes removal, existing descriptors become stale and
  * fail rather than targeting a new entry created at the same path. An external
  * remove-and-recreate with no observed missing state cannot be distinguished.
+ * Writes and truncations through one adapter are serialized per node, but
+ * other adapters or applications can still race its portable API operations.
  */
 export class VirtioFileSystem implements FileSystemBackend {
   readonly root: Node;
@@ -196,6 +201,18 @@ export class VirtioFileSystem implements FileSystemBackend {
     return current;
   }
 
+  async #mutate<T>(node: Node, operation: () => Promise<T>): Promise<T> {
+    const previous = node.mutation;
+    const completion = Promise.withResolvers<void>();
+    node.mutation = completion.promise;
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      completion.resolve();
+    }
+  }
+
   async #child(
     parent: FileSystemDirectoryHandle,
     name: string,
@@ -240,10 +257,12 @@ export class VirtioFileSystem implements FileSystemBackend {
     if (current.handle.kind === "file") {
       const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
       size = BigInt(file.size);
-      current.metadata.mtime = {
-        seconds: BigInt(Math.floor(file.lastModified / 1000)),
-        nanoseconds: (file.lastModified % 1000) * 1_000_000,
-      };
+      if (!current.metadata.mtimeOverride) {
+        current.metadata.mtime = {
+          seconds: BigInt(Math.floor(file.lastModified / 1000)),
+          nanoseconds: (file.lastModified % 1000) * 1_000_000,
+        };
+      }
     }
     return {
       mode: current.metadata.mode,
@@ -260,35 +279,42 @@ export class VirtioFileSystem implements FileSystemBackend {
 
   async setattr(node: VirtioFileSystemNode, changes: VirtioFileSystemSetAttributes) {
     const current = this.#as_node(node);
-    if (changes.size !== undefined) {
-      if (current.handle.kind !== "file") {
-        throw new VirtioFileSystemError("EISDIR");
+    return await this.#mutate(current, async () => {
+      this.#as_node(current);
+      if (changes.size !== undefined) {
+        if (current.handle.kind !== "file") {
+          throw new VirtioFileSystemError("EISDIR");
+        }
+        const writable = await opfs_call(
+          (current.handle as FileSystemFileHandle).createWritable({
+            keepExistingData: true,
+          }),
+        );
+        try {
+          await opfs_call(writable.truncate(checked_offset(changes.size)));
+        } finally {
+          await opfs_call(writable.close());
+        }
+        // Truncation changes the backing file, so its native timestamp becomes
+        // authoritative unless this setattr also supplies an explicit mtime.
+        current.metadata.mtimeOverride = false;
       }
-      const writable = await opfs_call(
-        (current.handle as FileSystemFileHandle).createWritable({
-          keepExistingData: true,
-        }),
-      );
-      try {
-        await opfs_call(writable.truncate(checked_offset(changes.size)));
-      } finally {
-        await opfs_call(writable.close());
+      if (changes.mode !== undefined) {
+        current.metadata.mode = (current.metadata.mode & 0o170000) | (changes.mode & 0o7777);
       }
-    }
-    if (changes.mode !== undefined) {
-      current.metadata.mode = (current.metadata.mode & 0o170000) | (changes.mode & 0o7777);
-    }
-    if (changes.uid !== undefined) current.metadata.uid = changes.uid;
-    if (changes.gid !== undefined) current.metadata.gid = changes.gid;
-    if (changes.atime !== undefined) {
-      current.metadata.atime = changes.atime === "now" ? now() : changes.atime;
-    }
-    if (changes.mtime !== undefined) {
-      current.metadata.mtime = changes.mtime === "now" ? now() : changes.mtime;
-    }
-    if (changes.ctime !== undefined) current.metadata.ctime = changes.ctime;
-    else current.metadata.ctime = now();
-    return await this.getattr(current);
+      if (changes.uid !== undefined) current.metadata.uid = changes.uid;
+      if (changes.gid !== undefined) current.metadata.gid = changes.gid;
+      if (changes.atime !== undefined) {
+        current.metadata.atime = changes.atime === "now" ? now() : changes.atime;
+      }
+      if (changes.mtime !== undefined) {
+        current.metadata.mtime = changes.mtime === "now" ? now() : changes.mtime;
+        current.metadata.mtimeOverride = true;
+      }
+      if (changes.ctime !== undefined) current.metadata.ctime = changes.ctime;
+      else current.metadata.ctime = now();
+      return await this.getattr(current);
+    });
   }
 
   async open(node: VirtioFileSystemNode, flags: number) {
@@ -357,25 +383,29 @@ export class VirtioFileSystem implements FileSystemBackend {
     data: Uint8Array,
   ) {
     const current = this.#open_handle(node, handle);
-    if (current.handle.kind !== "file") {
-      throw new VirtioFileSystemError("EISDIR");
-    }
-    const writable = await opfs_call(
-      (current.handle as FileSystemFileHandle).createWritable({
-        keepExistingData: true,
-      }),
-    );
-    try {
-      await opfs_call(writable.seek(checked_offset(offset)));
-      const copy = new Uint8Array(data.byteLength);
-      copy.set(data);
-      await opfs_call(writable.write(copy.buffer));
-    } finally {
-      await opfs_call(writable.close());
-    }
-    current.metadata.mtime = now();
-    current.metadata.ctime = current.metadata.mtime;
-    return data.byteLength;
+    return await this.#mutate(current, async () => {
+      this.#open_handle(node, handle);
+      if (current.handle.kind !== "file") {
+        throw new VirtioFileSystemError("EISDIR");
+      }
+      const writable = await opfs_call(
+        (current.handle as FileSystemFileHandle).createWritable({
+          keepExistingData: true,
+        }),
+      );
+      try {
+        await opfs_call(writable.seek(checked_offset(offset)));
+        const copy = new Uint8Array(data.byteLength);
+        copy.set(data);
+        await opfs_call(writable.write(copy.buffer));
+      } finally {
+        await opfs_call(writable.close());
+      }
+      current.metadata.mtime = now();
+      current.metadata.mtimeOverride = false;
+      current.metadata.ctime = current.metadata.mtime;
+      return data.byteLength;
+    });
   }
 
   async opendir(node: VirtioFileSystemNode) {
@@ -445,11 +475,9 @@ export class VirtioFileSystem implements FileSystemBackend {
       const input = await opfs_call((source as FileSystemFileHandle).getFile());
       const output = await opfs_call(destination.getFileHandle(name, { create: true }));
       const writable = await opfs_call(output.createWritable());
-      try {
-        await opfs_call(writable.write(await input.arrayBuffer()));
-      } finally {
-        await opfs_call(writable.close());
-      }
+      // pipeTo closes the destination after success and aborts it if reading
+      // the source fails, without materializing the complete file in memory.
+      await opfs_call(input.stream().pipeTo(writable));
       return output;
     }
     const output = await opfs_call(destination.getDirectoryHandle(name, { create: true }));
@@ -490,12 +518,30 @@ export class VirtioFileSystem implements FileSystemBackend {
       );
     }
 
-    const copied = await this.#copy(source_node.handle, this.#directory(new_parent), newName);
-    await opfs_call(
-      this.#directory(old_parent).removeEntry(oldName, {
-        recursive: source_node.handle.kind === "directory",
-      }),
-    );
+    const destination = this.#directory(new_parent);
+    const cleanup_destination = () =>
+      destination
+        .removeEntry(newName, {
+          recursive: source_node.handle.kind === "directory",
+        })
+        .catch(() => {});
+    let copied: FileSystemHandle;
+    try {
+      copied = await this.#copy(source_node.handle, destination, newName);
+    } catch (error) {
+      await cleanup_destination();
+      throw error;
+    }
+    try {
+      await opfs_call(
+        this.#directory(old_parent).removeEntry(oldName, {
+          recursive: source_node.handle.kind === "directory",
+        }),
+      );
+    } catch (error) {
+      await cleanup_destination();
+      throw error;
+    }
 
     const moved = [...this.#nodes].filter(
       ([key]) => key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`),
