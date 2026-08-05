@@ -40,7 +40,4 @@ export const getdents_inode = await readFile(join(directory, "getdents-inode"));
 
 export const lifecycle_assets = {
   initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
-  initramfs_path: join(directory, "lifecycle-initramfs.cpio"),
-  rootfs_path: join(directory, "rootfs.squashfs"),
-  runner: join(directory, "runner"),
 };

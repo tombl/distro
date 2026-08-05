@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json"
+    "check": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --test-concurrency=1 tests"
+  },
+  "dependencies": {
+    "@tombl/linux-guest": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.9.5",

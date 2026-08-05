@@ -4,7 +4,6 @@
   image,
   linux,
   node-workspace,
-  runner,
   stdenv,
   vm-test,
 }:
@@ -44,13 +43,13 @@ let
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
-    "runner" = "${runner.package}/bin/wasm-linux-runner";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
     inherit ((builtins.fromJSON (builtins.readFile ./package.json))) version;
     src = ../..;
+    env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
       pkgs.nodejs
@@ -92,6 +91,7 @@ let
     pname = "linux-guest-integration-test";
     version = "0.0.0";
     src = ../..;
+    env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
       pkgs.nodejs

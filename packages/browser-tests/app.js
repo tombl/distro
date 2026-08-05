@@ -1,4 +1,4 @@
-import { consoleDevice, spawnMachine } from "@tombl/linux";
+import { consoleDevice, spawnMachine, virtioFileSystemDevice } from "@tombl/linux";
 import { spawnGuest } from "@tombl/linux-guest";
 import { VirtioFileSystem } from "@tombl/linux-guest/browser";
 
@@ -191,7 +191,28 @@ globalThis.opfsVirtioFileSystem = async () => {
   const nestedNode = await reopened.lookup(movedDirectory, "nested");
   const nestedHandle = await reopened.open(nestedNode, 0);
   const nestedPersisted = await reopened.read(nestedNode, nestedHandle, 0n, 5);
+  await filesystem.setattr(created.node, {
+    mtime: { seconds: 123n, nanoseconds: 456_000_000 },
+  });
   const stat = await filesystem.getattr(created.node);
+
+  const concurrent = await filesystem.create(filesystem.root, "concurrent", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(
+    concurrent.node,
+    concurrent.handle,
+    0n,
+    new TextEncoder().encode("000000"),
+  );
+  await Promise.all([
+    filesystem.write(concurrent.node, concurrent.handle, 0n, new TextEncoder().encode("abc")),
+    filesystem.write(concurrent.node, concurrent.handle, 3n, new TextEncoder().encode("def")),
+  ]);
+  const concurrentData = await filesystem.read(concurrent.node, concurrent.handle, 0n, 6);
+  await filesystem.unlink(filesystem.root, "concurrent");
 
   const old = await filesystem.create(filesystem.root, "identity", 0x40 | 0x80 | 0x2, {
     mode: 0o100600,
@@ -271,14 +292,64 @@ globalThis.opfsVirtioFileSystem = async () => {
   await filesystem.unlink(filesystem.root, "rename-source");
   await filesystem.unlink(filesystem.root, "rename-destination");
   return {
+    concurrent: new TextDecoder().decode(concurrentData),
     entries,
     externalMissing: missing === undefined,
     externalReplacement: new TextDecoder().decode(externalReplacementData),
     mode: stat.mode & 0o777,
+    mtime: `${stat.mtime.seconds}.${String(stat.mtime.nanoseconds).padStart(9, "0")}`,
     nestedPersisted: new TextDecoder().decode(nestedPersisted),
     output: new TextDecoder().decode(output),
     persisted: new TextDecoder().decode(persisted),
     renameDestination: new TextDecoder().decode(renameDestinationData),
     replacement: new TextDecoder().decode(replacementData),
+  };
+};
+
+globalThis.opfsVirtioFileSystemGuest = async () => {
+  const storage = await navigator.storage.getDirectory();
+  await storage.removeEntry("virtio-fs-guest-test", { recursive: true }).catch(() => {});
+  const directory = await storage.getDirectoryHandle("virtio-fs-guest-test", { create: true });
+  const filesystem = new VirtioFileSystem(directory);
+  const input = new Uint8Array(256 * 1024);
+  for (let index = 0; index < input.length; index += 1) input[index] = index % 251;
+
+  const mounted = await withGuest(
+    async (guest) => {
+      const mount = await collectProcess(
+        await guest.exec([
+          "sh",
+          "-c",
+          "mkdir -p /workspace/shared && mount -t virtiofs browser-test /workspace/shared",
+        ]),
+      );
+      if (!mount.status.success) throw new Error(`mount failed: ${mount.stderr}`);
+      await guest.fs.writeFile("/workspace/shared/persistent", input);
+      const output = await guest.fs.readFile("/workspace/shared/persistent");
+      return {
+        size: output.byteLength,
+        first: output[0],
+        last: output.at(-1),
+      };
+    },
+    {
+      devices: [
+        virtioFileSystemDevice(filesystem, {
+          tag: "browser-test",
+          cache: false,
+        }),
+      ],
+    },
+  );
+
+  const reopened = new VirtioFileSystem(directory);
+  const node = await reopened.lookup(reopened.root, "persistent");
+  const handle = await reopened.open(node, 0);
+  const persisted = await reopened.read(node, handle, 0n, input.byteLength);
+  return {
+    ...mounted,
+    persistedSize: persisted.byteLength,
+    persistedFirst: persisted[0],
+    persistedLast: persisted.at(-1),
   };
 };

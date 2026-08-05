@@ -55,6 +55,10 @@ importers:
         version: 5.9.3
 
   packages/runner:
+    dependencies:
+      '@tombl/linux-guest':
+        specifier: workspace:*
+        version: link:../linux-guest
     devDependencies:
       '@types/node':
         specifier: ^25.9.5
