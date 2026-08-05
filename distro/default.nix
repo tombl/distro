@@ -66,6 +66,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
 
     # A pinned nightly rustc with a from-source std for the wasm target.
     rust-toolchain = callPackage ./rust-toolchain/package.nix { };
+    # A native forked Go compiler plus nixpkgs' module builder for linux/wasm.
+    go-toolchain = callPackage ./go-toolchain/package.nix { };
+    buildGoModule = self.go-toolchain.buildGoModule;
 
     # userland:
     apk-tools = callPackage ./apk-tools/package.nix {
@@ -86,6 +89,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     gawk = callPackage ./gawk/package.nix { };
     git = callPackage ./git/package.nix { };
     grep = callPackage ./grep/package.nix { };
+    go-smoke = callPackage ./go-smoke/package.nix { };
     jq = callPackage ./jq/package.nix { };
     less = callPackage ./less/package.nix { };
     lua = callPackage ./lua/package.nix { };
