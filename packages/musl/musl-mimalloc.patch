@@ -1,0 +1,197 @@
+diff --git a/Makefile b/Makefile
+index 3ad88b35..26980590 100644
+--- a/Makefile
++++ b/Makefile
+@@ -18,6 +18,9 @@ libdir = $(prefix)/lib
+ syslibdir = /lib
+ 
+ MALLOC_DIR = mallocng
++MIMALLOC_SRC =
++MIMALLOC_CFLAGS =
++MIMALLOC_BUILTIN_INCLUDE = $(shell $(CC) -print-resource-dir)/include
+ SRC_DIRS = $(addprefix $(srcdir)/,src/* src/malloc/$(MALLOC_DIR) crt ldso $(COMPAT_SRC_DIRS))
+ BASE_GLOBS = $(addsuffix /*.c,$(SRC_DIRS))
+ ARCH_GLOBS = $(addsuffix /$(ARCH)/*.[csS],$(SRC_DIRS))
+@@ -32,7 +35,8 @@ LIBC_OBJS = $(filter obj/src/%,$(ALL_OBJS)) $(filter obj/compat/%,$(ALL_OBJS))
+ LDSO_OBJS = $(filter obj/ldso/%,$(ALL_OBJS:%.o=%.lo))
+ CRT_OBJS = $(filter obj/crt/%,$(ALL_OBJS))
+ 
+-AOBJS = $(LIBC_OBJS)
++MIMALLOC_OBJS = $(filter obj/src/malloc/mimalloc/%, $(LIBC_OBJS))
++AOBJS = $(MIMALLOC_OBJS) $(filter-out $(MIMALLOC_OBJS), $(LIBC_OBJS))
+ LOBJS = $(LIBC_OBJS:.o=.lo)
+ GENH = obj/include/bits/alltypes.h obj/include/bits/syscall.h
+ GENH_INT = obj/src/internal/version.h
+@@ -121,6 +125,10 @@ $(OPTIMIZE_SRCS:$(srcdir)/%.c=obj/%.o) $(OPTIMIZE_SRCS:$(srcdir)/%.c=obj/%.lo):
+ MEMOPS_OBJS = $(filter %/memcpy.o %/memmove.o %/memcmp.o %/memset.o, $(LIBC_OBJS))
+ $(MEMOPS_OBJS) $(MEMOPS_OBJS:%.o=%.lo): CFLAGS_ALL += $(CFLAGS_MEMOPS)
+ 
++$(MIMALLOC_OBJS) $(MIMALLOC_OBJS:%.o=%.lo): CFLAGS_ALL += -std=gnu11 -I$(MIMALLOC_SRC)/include -I$(MIMALLOC_SRC)/src -isystem $(MIMALLOC_BUILTIN_INCLUDE) $(MIMALLOC_CFLAGS)
++obj/src/malloc/mimalloc/mimalloc.o obj/src/malloc/mimalloc/mimalloc.lo: CFLAGS_ALL += -fvisibility=hidden
++obj/src/malloc/mimalloc/mimalloc.o obj/src/malloc/mimalloc/mimalloc.lo: $(MIMALLOC_SRC)/src/static.c
++
+ NOSSP_OBJS = $(CRT_OBJS) $(LDSO_OBJS) $(filter \
+ 	%/__libc_start_main.o %/__init_tls.o %/__stack_chk_fail.o \
+ 	%/__set_thread_area.o %/memset.o %/memcpy.o \
+diff --git a/src/env/__init_tls.c b/src/env/__init_tls.c
+index b6f5f377..3268383d 100644
+--- a/src/env/__init_tls.c
++++ b/src/env/__init_tls.c
+@@ -132,7 +132,9 @@ static void static_init_tls(size_t *aux)
+ 
+ 	if (libc.tls_size > sizeof builtin_tls) {
+ #ifdef __wasm__
+-	mem = __libc_malloc(libc.tls_size);
++	/* The selected allocator may itself use TLS. Keep this one permanent,
++	 * pre-thread-pointer allocation on the bootstrap sbrk allocator. */
++	mem = __libc_malloc_bootstrap(libc.tls_size);
+ #else
+ #ifndef SYS_mmap2
+ #define SYS_mmap2 SYS_mmap
+diff --git a/src/internal/libc.h b/src/internal/libc.h
+index 619bba86..6c17fde0 100644
+--- a/src/internal/libc.h
++++ b/src/internal/libc.h
+@@ -39,6 +39,7 @@ extern hidden struct __libc __libc;
+ 
+ hidden void __init_libc(char **, char *);
+ hidden void __init_tls(size_t *);
++hidden void *__libc_malloc_bootstrap(size_t);
+ hidden void __init_ssp(void *);
+ hidden void __libc_start_init(void);
+ hidden void __funcs_on_exit(void);
+diff --git a/src/malloc/lite_malloc.c b/src/malloc/lite_malloc.c
+index 18a290a2..8a047eeb 100644
+--- a/src/malloc/lite_malloc.c
++++ b/src/malloc/lite_malloc.c
+@@ -39,7 +39,7 @@ static int traverses_stack_p(uintptr_t old, uintptr_t new)
+ static volatile int lock[1];
+ volatile int *const __bump_lockptr = lock;
+ 
+-static void *__simple_malloc(size_t n)
++void *__libc_malloc_bootstrap(size_t n)
+ {
+ 	static uintptr_t brk_, cur, end;
+ 	static unsigned mmap_step;
+@@ -111,7 +111,7 @@ static void *__simple_malloc(size_t n)
+ 	return p;
+ }
+ 
+-weak_alias(__simple_malloc, __libc_malloc_impl);
++weak_alias(__libc_malloc_bootstrap, __libc_malloc_impl);
+ 
+ void *__libc_malloc(size_t n)
+ {
+diff --git a/src/malloc/mimalloc/glue.c b/src/malloc/mimalloc/glue.c
+new file mode 100644
+index 00000000..83e5a30b
+--- /dev/null
++++ b/src/malloc/mimalloc/glue.c
+@@ -0,0 +1,49 @@
++#include <errno.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <malloc.h>
++#include <mimalloc.h>
++
++void *__libc_malloc_impl(size_t len)
++{
++	void *p = mi_malloc(len);
++	if (!p) errno = ENOMEM;
++	return p;
++}
++weak_alias(__libc_malloc_impl, malloc);
++
++void __libc_free(void *p)
++{
++	mi_free(p);
++}
++
++void *__libc_realloc(void *p, size_t len)
++{
++	void *new = mi_realloc(p, len);
++	if (!new) errno = ENOMEM;
++	return new;
++}
++
++void *aligned_alloc(size_t align, size_t len)
++{
++	if ((align & -align) != align) {
++		errno = EINVAL;
++		return 0;
++	}
++	if (align < sizeof(void *)) align = sizeof(void *);
++	void *p = mi_malloc_aligned(len, align);
++	if (!p) errno = ENOMEM;
++	return p;
++}
++
++size_t malloc_usable_size(void *p)
++{
++	return p ? mi_usable_size(p) : 0;
++}
++
++/* There is no detached bootstrap mapping to donate in static wasm binaries. */
++void __malloc_donate(char *start, char *end)
++{
++	(void)start;
++	(void)end;
++}
+diff --git a/src/malloc/mimalloc/mimalloc.c b/src/malloc/mimalloc/mimalloc.c
+new file mode 100644
+index 00000000..f4aaf420
+--- /dev/null
++++ b/src/malloc/mimalloc/mimalloc.c
+@@ -0,0 +1,27 @@
++/* Build upstream mimalloc as one libc-internal translation unit. */
++#ifndef _DEFAULT_SOURCE
++#define _DEFAULT_SOURCE
++#endif
++#define MI_LIBC_MUSL 1
++#define MI_BUILD_RELEASE 1
++#define MI_NO_GETENV 1
++/* wasm linear memory has no page-protection primitive. */
++#define MI_GUARDED 0
++#define MI_PRIM_WASM_LINUX 1
++#define MI_TLS_MODEL_PTHREADS 1
++
++/* wasm has no virtual address reservation; use the primitive's reusable
++ * extents directly instead of reserving mimalloc's minimum 8 MiB arena. */
++#define MI_DEFAULT_DISALLOW_ARENA_ALLOC 1
++
++#include <features.h>
++#ifdef weak
++#undef weak
++#endif
++#include <pthread.h>
++#include <stdint.h>
++
++/* Avoid mimalloc's compiler-TLS fallback for its fast thread identifier. */
++#define MI_PRIM_THREAD_ID() ((uintptr_t)pthread_self())
++
++#include <static.c>
+diff --git a/src/malloc/mimalloc/README b/src/malloc/mimalloc/README
+new file mode 100644
+index 00000000..55777118
+--- /dev/null
++++ b/src/malloc/mimalloc/README
+@@ -0,0 +1,19 @@
++This allocator directory adapts an external, unmodified mimalloc source tree
++to musl's private allocation entry points. Select it with MALLOC_DIR=mimalloc
++and set MIMALLOC_SRC to the mimalloc source root.
++
++The mimalloc objects are placed first in libc.a. Their public malloc symbol is
++weak, matching musl's bootstrap allocator, so an ordinary malloc reference
++selects mimalloc while a strong application-provided allocator still wins.
++
++Mimalloc uses its supported pthread-key TLS model. This avoids adding compiler
++TLS to programs that otherwise have none while preserving per-thread heaps and
++normal pthread-key cleanup. Before the initial thread pointer exists, musl's
++main-thread TLS setup allocates through the bootstrap allocator directly.
++The documented MI_PRIM_THREAD_ID hook uses pthread_self; the accompanying
++platform patch also keeps mimalloc's diagnostic recursion guard in a pthread
++key, so linking malloc does not create an application TLS segment.
++
++The platform memory primitives remain part of mimalloc. wasm32 Linux needs a
++primitive that allocates with sbrk and retains/coalesces freed extents because
++linear memory cannot shrink and this musl target intentionally has no mmap.

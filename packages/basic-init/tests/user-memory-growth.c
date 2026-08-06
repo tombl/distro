@@ -35,8 +35,10 @@ int main(void)
 	unsigned char *small[small_allocation_count];
 	unsigned char *split;
 
-	if (initial_pages != module_minimum_pages)
-		test_fail("exec did not start at the module memory minimum");
+	if (initial_pages < module_minimum_pages)
+		test_fail("exec started below the module memory minimum");
+	if (initial_pages > module_minimum_pages + 4)
+		test_fail("allocator initialization grew excessive user memory");
 	initial_headroom = initial_pages * page_size - heap_end;
 	first_size = initial_headroom + page_size;
 	if (first_size < initial_headroom)

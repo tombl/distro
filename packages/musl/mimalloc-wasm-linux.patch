@@ -1,0 +1,353 @@
+diff --git a/src/options.c b/src/options.c
+index 5146b1e..a32e30c 100644
+--- a/src/options.c
++++ b/src/options.c
+@@ -442,16 +442,39 @@ static _Atomic(size_t) warning_count; // = 0;  // when >= max_warning_count stop
+ // variables on demand. This is why we use a _mi_preloading test on such
+ // platforms. However, C code generator may move the initial thread local address
+ // load before the `if` and we therefore split it out in a separate function.
++// The pthread TLS model must not reintroduce compiler TLS through this
++// diagnostic-only recursion guard.
++#if MI_TLS_MODEL_PTHREADS
++static pthread_key_t recurse_key = MI_PTHREAD_KEY_INVALID;
++static pthread_once_t recurse_once = PTHREAD_ONCE_INIT;
++
++static void mi_recurse_key_init(void) {
++  if (pthread_key_create(&recurse_key, NULL) != 0) {
++    recurse_key = MI_PTHREAD_KEY_INVALID;
++  }
++}
++#else
+ static mi_decl_thread bool recurse = false;
++#endif
+ 
+ static mi_decl_noinline bool mi_recurse_enter_prim(void) {
++  #if MI_TLS_MODEL_PTHREADS
++  pthread_once(&recurse_once, &mi_recurse_key_init);
++  if (recurse_key == MI_PTHREAD_KEY_INVALID || pthread_getspecific(recurse_key) != NULL) return false;
++  return (pthread_setspecific(recurse_key, (void*)1) == 0);
++  #else
+   if (recurse) return false;
+   recurse = true;
+   return true;
++  #endif
+ }
+ 
+ static mi_decl_noinline void mi_recurse_exit_prim(void) {
++  #if MI_TLS_MODEL_PTHREADS
++  if (recurse_key != MI_PTHREAD_KEY_INVALID) pthread_setspecific(recurse_key, NULL);
++  #else
+   recurse = false;
++  #endif
+ }
+ 
+ static bool mi_recurse_enter(void) {
+diff --git a/src/prim/prim.c b/src/prim/prim.c
+index f69e106..89dce16 100644
+--- a/src/prim/prim.c
++++ b/src/prim/prim.c
+@@ -14,6 +14,9 @@ depending on the OS.
+ #elif defined(__APPLE__)
+ #include "osx/prim.c"      // macOSX (actually defers to mmap in unix/prim.c)
+ 
++#elif defined(MI_PRIM_WASM_LINUX)
++#include "wasm-linux/prim.c" // sbrk with reusable extents (wasm Linux)
++
+ #elif defined(__wasi__)
+ #define MI_USE_SBRK
+ #include "wasi/prim.c"     // memory-grow or sbrk (Wasm)
+diff --git a/src/prim/wasm-linux/prim.c b/src/prim/wasm-linux/prim.c
+new file mode 100644
+index 0000000..93e346f
+--- /dev/null
++++ b/src/prim/wasm-linux/prim.c
+@@ -0,0 +1,289 @@
++/* ----------------------------------------------------------------------------
++Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
++This is free software; you can redistribute it and/or modify it under the
++terms of the MIT license. A copy of the license can be found in the file
++"LICENSE" at the root of this distribution.
++-----------------------------------------------------------------------------*/
++
++/* This file is included in `src/prim/prim.c`. */
++
++#include "mimalloc.h"
++#include "mimalloc/internal.h"
++#include "mimalloc/prim.h"
++
++#include <pthread.h>
++#include <sched.h>
++#include <stdio.h>
++#include <string.h>
++#include <time.h>
++#include <unistd.h>
++
++typedef struct mi_wasm_extent_s {
++  struct mi_wasm_extent_s* next;
++  size_t size;
++} mi_wasm_extent_t;
++
++static pthread_mutex_t mi_wasm_extent_mutex = PTHREAD_MUTEX_INITIALIZER;
++static mi_wasm_extent_t* mi_wasm_extents;
++
++void _mi_prim_mem_init(mi_os_mem_config_t* config) {
++  config->page_size = 64 * MI_KiB;
++  config->alloc_granularity = 16;
++  config->has_overcommit = false;
++  config->has_partial_free = false;
++  config->has_virtual_reserve = false;
++}
++
++static bool mi_wasm_align_up(uintptr_t value, size_t alignment, uintptr_t* aligned) {
++  const uintptr_t mask = alignment - 1;
++  if (value > UINTPTR_MAX - mask) return false;
++  *aligned = (value + mask) & ~mask;
++  return true;
++}
++
++/* Insert an extent in address order and merge both neighbours. The extent
++ * carries its own metadata, so this primitive never recursively allocates. */
++static void mi_wasm_extent_insert(void* address, size_t size) {
++  if (size < sizeof(mi_wasm_extent_t)) return;
++
++  const uintptr_t start = (uintptr_t)address;
++  if (start > UINTPTR_MAX - size) return;
++  const uintptr_t end = start + size;
++  mi_wasm_extent_t** link = &mi_wasm_extents;
++  mi_wasm_extent_t* previous = NULL;
++  while (*link != NULL && (uintptr_t)*link < start) {
++    previous = *link;
++    link = &previous->next;
++  }
++  mi_wasm_extent_t* next = *link;
++
++  mi_assert_internal(previous == NULL ||
++    (uintptr_t)previous + previous->size <= start);
++  mi_assert_internal(next == NULL || end <= (uintptr_t)next);
++
++  mi_wasm_extent_t* extent;
++  if (previous != NULL && (uintptr_t)previous + previous->size == start) {
++    extent = previous;
++    extent->size += size;
++  }
++  else {
++    extent = (mi_wasm_extent_t*)address;
++    extent->next = next;
++    extent->size = size;
++    *link = extent;
++  }
++
++  if (next != NULL && (uintptr_t)extent + extent->size == (uintptr_t)next) {
++    extent->next = next->next;
++    extent->size += next->size;
++  }
++}
++
++static void* mi_wasm_extent_take(size_t size, size_t alignment) {
++  mi_wasm_extent_t** best = NULL;
++  uintptr_t best_start = 0;
++
++  for (mi_wasm_extent_t** link = &mi_wasm_extents; *link != NULL;
++       link = &(*link)->next) {
++    mi_wasm_extent_t* extent = *link;
++    uintptr_t aligned;
++    if (!mi_wasm_align_up((uintptr_t)extent, alignment, &aligned)) continue;
++    const size_t prefix = aligned - (uintptr_t)extent;
++    if (prefix > extent->size || size > extent->size - prefix) continue;
++    if (best == NULL || extent->size < (*best)->size) {
++      best = link;
++      best_start = aligned;
++    }
++  }
++  if (best == NULL) return NULL;
++
++  mi_wasm_extent_t* extent = *best;
++  const uintptr_t extent_start = (uintptr_t)extent;
++  const size_t extent_size = extent->size;
++  *best = extent->next;
++
++  const size_t prefix = best_start - extent_start;
++  const size_t suffix = extent_size - prefix - size;
++  mi_wasm_extent_insert((void*)extent_start, prefix);
++  mi_wasm_extent_insert((void*)(best_start + size), suffix);
++  return (void*)best_start;
++}
++
++/* sbrk returns the actual old break. If unrelated code grows the break
++ * between our query and allocation, retain the whole range and retry rather
++ * than losing memory or returning an under-aligned region. */
++static void* mi_wasm_extent_grow(size_t size, size_t alignment) {
++  for (;;) {
++    void* current = sbrk(0);
++    if (current == (void*)-1) return NULL;
++
++    uintptr_t expected_start;
++    if (!mi_wasm_align_up((uintptr_t)current, alignment, &expected_start)) return NULL;
++    const size_t prefix = expected_start - (uintptr_t)current;
++    if (size > SIZE_MAX - prefix) return NULL;
++    const size_t request = prefix + size;
++    if (request > INTPTR_MAX) return NULL;
++
++    void* raw = sbrk((intptr_t)request);
++    if (raw == (void*)-1) return NULL;
++    const uintptr_t raw_start = (uintptr_t)raw;
++    if (raw_start > UINTPTR_MAX - request) return NULL;
++    const uintptr_t raw_end = raw_start + request;
++
++    uintptr_t aligned;
++    if (mi_wasm_align_up(raw_start, alignment, &aligned) &&
++        aligned <= raw_end && size <= raw_end - aligned) {
++      mi_wasm_extent_insert(raw, aligned - raw_start);
++      mi_wasm_extent_insert((void*)(aligned + size), raw_end - aligned - size);
++      return (void*)aligned;
++    }
++
++    mi_wasm_extent_insert(raw, request);
++  }
++}
++
++int _mi_prim_free(void* address, size_t size) {
++  if (address == NULL || size == 0) return 0;
++  pthread_mutex_lock(&mi_wasm_extent_mutex);
++  mi_wasm_extent_insert(address, size);
++  pthread_mutex_unlock(&mi_wasm_extent_mutex);
++  return 0;
++}
++
++int _mi_prim_alloc(void* hint_address, size_t size, size_t try_alignment,
++                   bool commit, bool allow_large, bool* is_large,
++                   bool* is_zero, void** address) {
++  MI_UNUSED(hint_address); MI_UNUSED(commit); MI_UNUSED(allow_large);
++  size_t alignment = 64 * MI_KiB;
++  if (try_alignment > alignment && _mi_is_power_of_two(try_alignment)) {
++    alignment = try_alignment;
++  }
++
++  pthread_mutex_lock(&mi_wasm_extent_mutex);
++  void* p = mi_wasm_extent_take(size, alignment);
++  if (p == NULL) p = mi_wasm_extent_grow(size, alignment);
++  pthread_mutex_unlock(&mi_wasm_extent_mutex);
++
++  *is_large = false;
++  *is_zero = (p != NULL);
++  *address = p;
++  if (p == NULL) return ENOMEM;
++  memset(p, 0, size);
++  return 0;
++}
++
++int _mi_prim_commit(void* address, size_t size, bool* is_zero) {
++  MI_UNUSED(address); MI_UNUSED(size);
++  *is_zero = false;
++  return 0;
++}
++
++int _mi_prim_decommit(void* address, size_t size, bool* needs_recommit) {
++  MI_UNUSED(address); MI_UNUSED(size);
++  *needs_recommit = false;
++  return 0;
++}
++
++int _mi_prim_reset(void* address, size_t size) {
++  MI_UNUSED(address); MI_UNUSED(size);
++  return 0;
++}
++
++int _mi_prim_reuse(void* address, size_t size) {
++  MI_UNUSED(address); MI_UNUSED(size);
++  return 0;
++}
++
++int _mi_prim_protect(void* address, size_t size, bool protect) {
++  MI_UNUSED(address); MI_UNUSED(size); MI_UNUSED(protect);
++  return 0;
++}
++
++int _mi_prim_alloc_huge_os_pages(void* hint_address, size_t size, int numa_node,
++                                 bool* is_zero, void** address) {
++  MI_UNUSED(hint_address); MI_UNUSED(size); MI_UNUSED(numa_node);
++  *is_zero = true;
++  *address = NULL;
++  return ENOSYS;
++}
++
++size_t _mi_prim_numa_node(void) {
++  return 0;
++}
++
++size_t _mi_prim_numa_node_count(void) {
++  return 1;
++}
++
++mi_msecs_t _mi_prim_clock_now(void) {
++  struct timespec t;
++  if (clock_gettime(CLOCK_MONOTONIC, &t) == 0) {
++    return ((mi_msecs_t)t.tv_sec * 1000) + ((mi_msecs_t)t.tv_nsec / 1000000L);
++  }
++  return (mi_msecs_t)clock();
++}
++
++void _mi_prim_process_info(mi_process_info_t* pinfo) {
++  MI_UNUSED(pinfo);
++}
++
++void _mi_prim_out_stderr(const char* message) {
++  fputs(message, stderr);
++}
++
++int _mi_prim_getenv(const char* name, char* result, size_t result_size) {
++  MI_UNUSED(name); MI_UNUSED(result); MI_UNUSED(result_size);
++  return 0;
++}
++
++bool _mi_prim_random_buf(void* buffer, size_t length) {
++  unsigned char* p = (unsigned char*)buffer;
++  while (length > 0) {
++    const size_t chunk = (length > 256 ? 256 : length);
++    if (getentropy(p, chunk) != 0) return false;
++    p += chunk;
++    length -= chunk;
++  }
++  return true;
++}
++
++#if defined(MI_USE_PTHREADS)
++pthread_key_t _mi_heap_default_key = MI_PTHREAD_KEY_INVALID;
++
++static void mi_pthread_done(void* value) {
++  if (value != NULL) _mi_thread_done((mi_theap_t*)value);
++}
++
++void _mi_prim_thread_init_auto_done(void) {
++  mi_assert_internal(_mi_heap_default_key == MI_PTHREAD_KEY_INVALID);
++  pthread_key_create(&_mi_heap_default_key, &mi_pthread_done);
++}
++
++void _mi_prim_thread_done_auto_done(void) {
++  pthread_key_t key = _mi_heap_default_key;
++  if (key != MI_PTHREAD_KEY_INVALID) {
++    _mi_heap_default_key = MI_PTHREAD_KEY_INVALID;
++    pthread_key_delete(key);
++  }
++}
++
++void _mi_prim_thread_associate_default_theap(mi_theap_t* theap) {
++  if (_mi_heap_default_key != MI_PTHREAD_KEY_INVALID) {
++    pthread_setspecific(_mi_heap_default_key, theap);
++  }
++}
++#else
++void _mi_prim_thread_init_auto_done(void) {}
++void _mi_prim_thread_done_auto_done(void) {}
++void _mi_prim_thread_associate_default_theap(mi_theap_t* theap) {
++  MI_UNUSED(theap);
++}
++#endif
++
++bool _mi_prim_thread_is_in_threadpool(void) {
++  return false;
++}
++
++void _mi_prim_thread_yield(void) {
++  sched_yield();
++}
