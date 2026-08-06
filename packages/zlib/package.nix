@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "zlib";
   version = "1.3.1";
   inherit src;
+  apk = { };
 
   # zlib's hand-written configure is not autoconf; it rejects the --build/--host
   # flags nixpkgs adds for cross compilation.
@@ -39,16 +40,13 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      roundtrip = vm-test.vmTest {
+      roundtrip = vm-test.installedTest {
         name = "zlib-roundtrip";
-        initramfs = vm-test.mkInitramfs {
-          name = "zlib-roundtrip";
-          init = ./tests/roundtrip-test.sh;
-          contents = [
-            busybox
-            roundtrip
-          ];
-        };
+        init = ./tests/roundtrip-test.sh;
+        contents = [
+          busybox
+          roundtrip
+        ];
       };
     };
 })

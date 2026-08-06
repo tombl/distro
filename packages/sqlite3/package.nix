@@ -16,6 +16,7 @@ let
     pname = "sqlite3";
     version = "3.51.0";
     inherit src;
+    apk.replaces = [ busybox.apk ];
 
     # sqlite's configure builds a code generator with the build compiler.
     depsBuildBuild = [ pkgs.stdenv.cc ];
@@ -45,17 +46,14 @@ let
     env.NIX_CFLAGS_COMPILE = "-DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0";
 
     passthru.checks = {
-      shell = vm-test.vmTest {
+      shell = vm-test.installedTest {
         name = "sqlite3-shell";
-        initramfs = vm-test.mkInitramfs {
-          name = "sqlite3-shell";
-          init = ./sqlite3-test.sh;
-          contents = [
-            busybox
-            ncurses
-            finalAttrs.finalPackage
-          ];
-        };
+        init = ./sqlite3-test.sh;
+        contents = [
+          busybox
+          ncurses
+          finalAttrs.finalPackage
+        ];
       };
     };
   });

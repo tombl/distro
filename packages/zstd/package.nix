@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "zstd";
   version = "1.5.6";
   inherit src;
+  apk = { };
 
   # Only the CLI is wanted, and building just `programs/zstd` links the library
   # sources straight into a static binary, sidestepping the shared-library
@@ -38,16 +39,13 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    roundtrip = vm-test.vmTest {
+    roundtrip = vm-test.installedTest {
       name = "zstd-roundtrip";
-      initramfs = vm-test.mkInitramfs {
-        name = "zstd-roundtrip";
-        init = ./roundtrip-test.sh;
-        contents = [
-          finalAttrs.finalPackage
-          busybox
-        ];
-      };
+      init = ./roundtrip-test.sh;
+      contents = [
+        finalAttrs.finalPackage
+        busybox
+      ];
     };
   };
 })

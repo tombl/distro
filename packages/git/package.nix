@@ -16,6 +16,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "git";
   version = "2.55.0";
   inherit src;
+  apk = { };
 
   # git creates every child through run-command.c:start_command(): a fork()
   # with the fd plumbing (dup2/close of the pipe ends, chdir for cmd->dir) done
@@ -166,19 +167,15 @@ stdenv.mkDerivation (finalAttrs: {
     let
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "git-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "git-${name}";
-            inherit init;
-            # busybox first supplies /bin/sh for Git's installed scripts and
-            # hooks, cat (the pager), and the coreutils the test drives; git
-            # last. All shipped rootfs images compose the same BusyBox base.
-            contents = [
-              busybox
-              finalAttrs.finalPackage
-            ];
-          };
+          inherit init;
+          # BusyBox supplies /bin/sh for Git's installed scripts and hooks,
+          # cat (the pager), and the coreutils the test drives.
+          contents = [
+            busybox
+            finalAttrs.finalPackage
+          ];
         };
     in
     {

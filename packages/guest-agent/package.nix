@@ -9,6 +9,7 @@ let
     pname = "linux-guest-agent";
     version = "0.0.0";
     src = ./.;
+    apk = { };
 
     buildPhase = ''
       runHook preBuild

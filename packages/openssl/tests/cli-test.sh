@@ -8,8 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-# getrandom()/`/dev/urandom` back RAND_bytes and EC key generation.
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+# getrandom()/the runtime's `/dev/urandom` back RAND_bytes and EC key generation.
 cd /tmp || fail "cd /tmp failed"
 
 # (a) version string must name 3.5.7 (proves the binary is ours, not a stray).

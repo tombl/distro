@@ -161,6 +161,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "ltp";
   version = "20260529";
   inherit src;
+  apk = { };
 
   depsBuildBuild = [ pkgs.stdenv.cc ];
 

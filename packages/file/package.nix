@@ -15,6 +15,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "file";
   version = "5.48";
   inherit src;
+  apk.replaces = [ busybox.apk ];
 
   buildInputs = [ zlib ];
 
@@ -23,13 +24,13 @@ stdenv.mkDerivation (finalAttrs: {
   # pinned source and pkgs.file must stay in lockstep.
   makeFlags = [
     "FILE_COMPILE=${lib.getExe pkgs.file}"
-    # Package outputs are rootfs slices, so compile the guest path rather
-    # than the Nix build-time prefix into libmagic.
+    # APK payloads are rooted at /, so compile the guest path rather than the
+    # Nix build-time prefix into libmagic.
     "pkgdatadir=/usr/share/misc"
   ];
 
   # Keep the compiled guest path above, but stage the database under $out so
-  # the slice overlays it at /usr/share/misc in the composed filesystem.
+  # the APK installs it at /usr/share/misc.
   installFlags = [ "pkgdatadir=$(out)/usr/share/misc" ];
 
   configureFlags = [
@@ -48,17 +49,14 @@ stdenv.mkDerivation (finalAttrs: {
       '';
     in
     {
-      detect = vm-test.vmTest {
+      detect = vm-test.installedTest {
         name = "file-detect";
-        initramfs = vm-test.mkInitramfs {
-          name = "file-detect";
-          init = ./detect-test.sh;
-          contents = [
-            finalAttrs.finalPackage
-            busybox
-            fixtures
-          ];
-        };
+        init = ./detect-test.sh;
+        contents = [
+          finalAttrs.finalPackage
+          busybox
+          fixtures
+        ];
       };
     };
 })

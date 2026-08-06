@@ -10,7 +10,6 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export TERM=xterm
 export HOME=/tmp
 
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
@@ -18,7 +17,7 @@ mount -t proc proc /proc || fail "mounting proc failed"
 # below, using the ported openssl CLI. Doing it in-guest means the validity
 # window is anchored to the guest clock, so there is no build-host-vs-guest time
 # skew that could make the cert "not yet valid" during the Python handshake.
-# RAND_bytes/EC keygen read /dev/urandom (devtmpfs, mounted above). The CLI must
+# RAND_bytes/EC keygen read /dev/urandom from the runtime devtmpfs. The CLI must
 # find openssl.cnf through its compiled OPENSSLDIR; no environment override is
 # allowed here because this check validates the fragment's runtime defaults.
 openssl ecparam -name prime256v1 -genkey -noout -out /tmp/key.pem 2>/tmp/sslerr ||

@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "openssl";
   version = "3.5.7";
   inherit src;
+  apk = { };
 
   # apps/speed.c calls mlock() under a bare OPENSSL_SYS_LINUX guard, but
   # musl-wasm declares no <sys/mman.h> functions (they sit behind #ifndef
@@ -116,17 +117,14 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      cli = vm-test.vmTest {
+      cli = vm-test.installedTest {
         name = "openssl-cli";
-        initramfs = vm-test.mkInitramfs {
-          name = "openssl-cli";
-          init = ./tests/cli-test.sh;
-          contents = [
-            busybox
-            finalAttrs.finalPackage
-            handshake
-          ];
-        };
+        init = ./tests/cli-test.sh;
+        contents = [
+          busybox
+          finalAttrs.finalPackage
+          handshake
+        ];
       };
     };
 })

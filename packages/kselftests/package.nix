@@ -50,6 +50,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "kselftests";
   inherit (linux) version;
   inherit src patches;
+  apk = { };
 
   # lib.mk force-sets CC from LLVM/CROSS_COMPILE, but a make command-line
   # assignment wins; passing the wasm cc-wrapper as CC sidesteps lib.mk's missing
@@ -97,16 +98,13 @@ stdenv.mkDerivation (finalAttrs: {
         ${lib.concatMapStrings (b: "cp ${finalAttrs.finalPackage}/${name}/${b} $out/bin/\n") suite.binaries}
       '';
     in
-    vm-test.vmTest {
+    vm-test.installedTest {
       name = "kselftests-${name}";
-      initramfs = vm-test.mkInitramfs {
-        name = "kselftests-${name}";
-        init = suite.run;
-        contents = [
-          busybox
-          suiteBin
-        ];
-      };
+      init = suite.run;
+      contents = [
+        busybox
+        suiteBin
+      ];
     }
   ) checkedSuites;
 })

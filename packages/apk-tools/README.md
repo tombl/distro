@@ -1,62 +1,81 @@
 # apk-tools v3
 
-This port keeps Nix as the package build language and uses apk as the mutable
-installation layer. `mkPackage` converts one rootfs-shaped derivation to a
-native v3 `.apk`; `mkRepository` collects those packages and writes a native v3
-`Packages.adb` index. The `repository` attribute contains the target package
-fragments, while `demo.demoRootfs` is an ext4 image containing apk and a small
-local repository.
+apk is the guest package and root-filesystem installation model. Nix remains
+the source build language: guest derivations build ordinary root-shaped
+outputs, declare which outputs are binary APKs, and expose those artifacts as
+`.apk` and `.apks` passthru attributes.
 
-The target build requires zlib and one crypto backend. This package uses the
-existing OpenSSL port and apk-tools' bundled libfetch, so HTTP, HTTPS,
-signatures, gzip/v2 input, and deflate-compressed v3 input are available. The
-executable is static; its only packaged runtime data is the CA bundle. Package
-scripts additionally require the interpreter named in their shebang, normally
-`/bin/sh`.
+For the common single-output package:
 
-Meson, Ninja, pkg-config, and Lua (for the embedded help database) are
-build-platform tools. scdoc, target Lua/Python bindings, cmocka, and libzstd are
-optional upstream dependencies for documentation, bindings, tests, and zstd
-compression respectively; this port disables them. Repository artifacts use
-deflate so the target does not need libzstd (the distro's `zstd` package
-currently provides the CLI, not the library).
+```nix
+stdenv.mkDerivation {
+  pname = "example";
+  version = "1.0";
+  apk = {
+    depends = [ (apk.virtual "cmd:sh") ];
+  };
+}
+```
 
-Two target adaptations are needed:
+For one source build with multiple binary packages:
 
-- mmap-backed file input is disabled. apk's existing fd-stream path handles
-  package and index reads without changing their semantics.
-- maintainer scripts and triggers use callback `clone()` instead of `fork()`.
-  External URL helpers already use `posix_spawn()` upstream. The namespace
-  capability probe is disabled on wasm; scripts still run in apk's chroot.
+```nix
+stdenv.mkDerivation {
+  pname = "example";
+  version = "1.0";
+  outputs = [ "out" "dev" ];
+  apkPackages = {
+    main = { };
+    dev.output = "dev";
+  };
+}
+```
+
+The normal derivation output remains suitable for guest `buildInputs`.
+`example.apk` is the main native v3 APK and `example.apks.dev` is the
+development APK. Non-main binary packages depend on the exact main package by
+default. Build dependencies never become runtime dependencies implicitly:
+guest software is statically linked, so APK dependencies are typed values made
+with `apk.dep`, `apk.eq`, or `apk.virtual`.
+
+The packaging layer infers versioned `cmd:*` providers from public executable
+files and executable aliases, and infers common shebang interpreter
+dependencies. BusyBox applet symlinks are deliberately not all advertised as
+versioned command providers; `/bin/sh` is its package interface, while file
+replacement packages use APK's `replaces` metadata.
+
+`apk.mkRepository` accepts an attribute set of guest derivations or APKs. With
+`includeDependencies = true`, it follows typed package dependencies to produce
+a minimal repository closure. `apk.mkSystem` installs a selected world into a
+root tree with the host apk implementation, including the native installed
+database. `image.mkFilesystem` then encodes that tree as squashfs or ext4.
+Product configuration and package selections are ordinary profile APKs made by
+`apk.mkProfile`. A file can be a source directly, or carry explicit metadata as
+`{ source = ./init.sh; mode = "0755"; }`.
+
+Published repository membership lives under `packages/repositories/`; it does
+not repeat package metadata. Product-local minimal repositories stay beside the
+profile which selects them and use `includeDependencies = true`.
+
+Host and guest apk-tools are both version 3.0.5. The target executable is
+static and includes the CA bundle needed by bundled libfetch. Its wasm changes
+disable mmap-backed file input and run package scripts/triggers through callback
+`clone()` rather than `fork()`.
+
+Repositories built by Nix are unsigned and local system construction uses
+`--allow-untrusted`. Release signing remains outside Nix so a private key never
+becomes a derivation input or enters the store.
 
 Build the complete repository with:
 
 ```console
-nix build .#legacyPackages.x86_64-linux.apk-tools.repository
+nix build .#legacyPackages.x86_64-linux.repository
 ```
 
-The Nix output is deliberately unsigned and the demo uses `--allow-untrusted`:
-putting a private signing key in a derivation would copy it into the Nix store.
-Sign the finished ADB artifacts outside Nix before publishing a trusted
-repository.
-
-Consumers can define a smaller repository directly:
-
-```nix
-let
-  jqApk = wasmpkgs.apk-tools.mkPackage {
-    package = wasmpkgs.jq;
-  };
-in
-wasmpkgs.apk-tools.mkRepository {
-  name = "my-repository";
-  packages = [ jqApk ];
-}
-```
-
-`depends`, `provides`, `replaces`, and `scripts` are explicit adapter inputs.
-Static linkage means build inputs do not become apk dependencies, and existing
-package fragments already copy required runtime data into their own outputs.
-File ownership is stricter than ordered rootfs overlays: packages which shadow
-BusyBox must declare `replaces = [ "busybox" ]`, and any other overlapping
-fragments need the same ownership decision before they can be co-installed.
+The repository's install check boots a package-installed ext4 system, invokes
+the target apk to install jq, Lua, and a scripted package from a nested local
+repository, runs the programs, and verifies the target installed database.
+Ordinary port checks use `vm-test.installedTest`, which builds the same minimal
+profile → repository → installed system pipeline around their test fixtures.
+Raw initramfs tests remain available for kernel behavior below the packaging
+boundary and tests which need a separate scratch disk.

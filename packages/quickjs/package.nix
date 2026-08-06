@@ -15,6 +15,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "quickjs";
   version = "0.15.1";
   inherit src;
+  apk = { };
 
   # quickjs-ng over Bellard's quickjs: it is actively maintained and ships the
   # pre-generated gen/repl.c and gen/standalone.c in the release, so the qjs CLI
@@ -69,16 +70,13 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    language = vm-test.vmTest {
+    language = vm-test.installedTest {
       name = "quickjs-language";
-      initramfs = vm-test.mkInitramfs {
-        name = "quickjs-language";
-        init = ./language-test.sh;
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./language-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

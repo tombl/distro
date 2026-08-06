@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "lua";
   version = "5.4.8";
   inherit src;
+  apk = { };
 
   # Package outputs are overlaid at the guest root. Compile Lua's module search
   # paths for that runtime filesystem instead of its /usr/local default.
@@ -45,20 +46,17 @@ stdenv.mkDerivation (finalAttrs: {
     let
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "lua-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "lua-${name}";
-            inherit init;
-            contents = [
-              finalAttrs.finalPackage
-              busybox
-            ];
-            files = {
-              "/usr/share/lua/5.4/guest_test.lua" = builtins.toFile "guest-test.lua" ''
-                return { answer = 42 }
-              '';
-            };
+          inherit init;
+          contents = [
+            finalAttrs.finalPackage
+            busybox
+          ];
+          files = {
+            "/usr/share/lua/5.4/guest_test.lua" = builtins.toFile "guest-test.lua" ''
+              return { answer = 42 }
+            '';
           };
         };
     in

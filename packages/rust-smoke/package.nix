@@ -15,18 +15,16 @@ let
     version = "0.0.0";
     src = ./.;
     cargoLock.lockFile = ./Cargo.lock;
+    apk = { };
 
-    passthru.checks.threads = vm-test.vmTest {
+    passthru.checks.threads = vm-test.installedTest {
       name = "rust-smoke-threads";
       cpus = 2;
-      initramfs = vm-test.mkInitramfs {
-        name = "rust-smoke-threads";
-        init = ./threads-test.sh;
-        contents = [
-          busybox
-          rust-smoke
-        ];
-      };
+      init = ./threads-test.sh;
+      contents = [
+        busybox
+        rust-smoke
+      ];
     };
   };
 in

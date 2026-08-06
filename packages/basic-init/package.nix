@@ -1,31 +1,36 @@
 {
   pkgs,
+  lib,
   stdenv,
   vm-test,
 }:
 
 let
   buildInitWith =
-    name: source: extraFlags:
-    stdenv.mkDerivation {
-      inherit name;
-      src = ./.;
+    name: source: extraFlags: package:
+    stdenv.mkDerivation (
+      {
+        pname = name;
+        version = "0.0.0";
+        src = ./.;
 
-      buildPhase = ''
-        runHook preBuild
-        $CC ${extraFlags} -Wl,--fatal-warnings -o init ${source}
-        runHook postBuild
-      '';
+        buildPhase = ''
+          runHook preBuild
+          $CC ${extraFlags} -Wl,--fatal-warnings -o init ${source}
+          runHook postBuild
+        '';
 
-      installPhase = ''
-        runHook preInstall
-        mkdir -p $out/bin
-        cp init $out/bin/init
-        runHook postInstall
-      '';
-    };
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out/bin
+          cp init $out/bin/init
+          runHook postInstall
+        '';
+      }
+      // lib.optionalAttrs package { apk = { }; }
+    );
 
-  buildInit = name: source: buildInitWith name source "";
+  buildInit = name: source: buildInitWith name source "" false;
 
   check =
     name:
@@ -139,6 +144,7 @@ let
         name = "basic-init-signal-syscall-return-${name}";
         init = "${
           buildInitWith "basic-init-signal-syscall-return-${name}" "tests/signal-syscall-return.c" extraFlags
+            false
         }/bin/init";
       };
     };
@@ -152,8 +158,8 @@ let
     cpus = 2;
   };
 in
-(buildInit "basic-init" "init.c").overrideAttrs {
-  passthru = {
+(buildInitWith "basic-init" "init.c" "" true).overrideAttrs (old: {
+  passthru = (old.passthru or { }) // {
     inherit remoteMemoryInitramfs schedulerHandoffInitramfs;
     checks = {
       auxv = check "auxv";
@@ -206,4 +212,4 @@ in
       wallclock = check "wallclock";
     };
   };
-}
+})

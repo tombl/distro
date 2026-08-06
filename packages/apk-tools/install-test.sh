@@ -14,7 +14,7 @@ mount -t proc proc /proc || fail "mounting proc failed"
 apk --version | grep -q 'apk-tools 3.0.5' || fail "unexpected apk version"
 apk --allow-untrusted \
   --repository /repo/wasm32/Packages.adb \
-  add --initdb jq lua apk-script-test || fail "installing packages"
+  add jq lua apk-script-test || fail "installing packages"
 
 printf '%s\n' installed-through-apk >/tmp/persistent
 sync

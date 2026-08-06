@@ -15,6 +15,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "curl";
   version = "8.21.0";
   inherit src;
+  apk = { };
 
   buildInputs = [
     openssl
@@ -64,18 +65,15 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    transfers = vm-test.vmTest {
+    transfers = vm-test.installedTest {
       name = "curl-transfers";
-      initramfs = vm-test.mkInitramfs {
-        name = "curl-transfers";
-        init = ./tests/transfers-test.sh;
-        contents = [
-          # curl-config and wcurl are shell scripts. Runnable distro images
-          # always compose BusyBox as their /bin/sh provider.
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./tests/transfers-test.sh;
+      contents = [
+        # curl-config and wcurl are shell scripts. Runnable distro images
+        # always install BusyBox as their /bin/sh provider.
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

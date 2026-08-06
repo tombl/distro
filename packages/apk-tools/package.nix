@@ -10,6 +10,7 @@ stdenv.mkDerivation {
   pname = "apk-tools";
   version = "3.0.5";
   inherit src;
+  apk = { };
 
   patches = [
     ./callback-clone.patch
