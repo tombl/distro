@@ -3,6 +3,9 @@
 # isolation headers the guest needs.
 name = "linux"
 compatibility_date = "2026-08-07"
+# PR previews are versioned preview URLs on workers.dev; this defaults off
+# once the worker has custom domains, so enable it explicitly.
+preview_urls = true
 
 [assets]
 directory = "deploy"
@@ -15,11 +18,3 @@ custom_domain = true
 [[routes]]
 pattern = "www.low.land"
 custom_domain = true
-
-# Pull requests deploy to the preview environment instead, so branch builds
-# get a stable workers.dev URL without claiming the production custom domain
-# or overwriting production.
-[env.preview]
-name = "linux-preview"
-routes = []
-workers_dev = true
