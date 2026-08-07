@@ -134,7 +134,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
         run: |
-          nix develop .#ci --command wrangler deploy --env preview
+          # Upload a version without deploying: it gets a unique, stable
+          # workers.dev preview URL and production traffic is untouched.
+          nix develop .#ci --command wrangler versions upload
 
   stage-npm:
     name: Stage packages on npm
