@@ -13,6 +13,15 @@ let
     init = ./boot-init.sh;
     contents = [ busybox ];
   };
+
+  # The kernel assets are content-stable per build but served under fixed
+  # names, so they are cached immutable under a build-versioned directory:
+  # a new build changes the version and every URL, so browsers never revalidate
+  # the heavy kernel libraries across the guest's many workers. The version
+  # tracks the kernel, the guest SDK, and the rootfs.
+  ver = builtins.substring 0 16 (
+    builtins.hashString "sha256" "${linux}${linux-guest.package}${rootfs}"
+  );
 in
 
 pkgs.stdenvNoCC.mkDerivation {
@@ -20,31 +29,36 @@ pkgs.stdenvNoCC.mkDerivation {
   version = "0.0.0";
   src = ./.;
 
-  # dist/ and vmlinux.wasm are the wasm kernel host library and kernel. The
-  # library loads vmlinux.wasm relative to itself (dist/index.js -> ../vmlinux.wasm),
-  # so they sit as siblings, exactly as the linux package lays them out. The
-  # guest SDK (linux-guest) ships alongside for the browser-side network
-  # adapters, and the page imports both through an import map. The apk repo is
-  # not served here: the publish script signs it and uploads it to R2, and the
-  # page learns that URL from repo.json.
   installPhase = ''
     runHook preInstall
 
+    # The kernel assets sit under a fixed /static/ prefix with a per-build
+    # version directory, so a single _headers splat (/* is greedy across
+    # slashes, and only one splat is allowed per rule) can mark them immutable.
+    mkdir -p $out/static/v${ver}
+    # dist/index.js loads vmlinux.wasm relative to itself (../vmlinux.wasm),
+    # so the kernel library and kernel sit as siblings inside the versioned
+    # directory, exactly as the linux package lays them out.
+    cp -rL ${linux}/dist $out/static/v${ver}/dist
+    cp -L ${linux}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
+    cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
+
+    # The rootfs is served under its own content hash so the seed can be
+    # cached immutable too; the page learns the name from rootfs.ext4.sha256.
+    sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${rootfs} | awk '{ print $1 }')
+    gzip --best --no-name --stdout ${rootfs} > $out/rootfs-''${sha}.ext4.gz
+    printf '%s' "$sha" > $out/rootfs.ext4.sha256
+
     mkdir -p $out
+    substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
     cp index.html $out/index.html
     cp _headers $out/_headers
     cp repo.json $out/repo.json
     cp -r vendor $out/vendor
-    ln -s ${linux}/dist $out/dist
-    ln -s ${linux}/vmlinux.wasm $out/vmlinux.wasm
-    ln -s ${linux-guest.package}/dist $out/guest
     ln -s ${initramfs} $out/initramfs.cpio
-    gzip --best --no-name --stdout ${rootfs} > $out/rootfs.ext4.gz
-    ${pkgs.openssl}/bin/openssl dgst -sha256 -r ${rootfs} \
-      | awk '{ print $1 }' > $out/rootfs.ext4.sha256
 
     # The hosting provider rejects individual assets larger than 25 MB.
-    rootfs_bytes=$(wc -c < $out/rootfs.ext4.gz)
+    rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.ext4.gz)
     if [ "$rootfs_bytes" -gt 25000000 ]; then
       echo "site rootfs is $rootfs_bytes bytes; hosting limit is 25000000" >&2
       exit 1
