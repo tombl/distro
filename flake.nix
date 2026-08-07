@@ -88,6 +88,18 @@
             env.sysroot = "${wasmpkgs.sysroot}";
           };
 
+          # The deploy shell: sign the apk repository and publish the site to
+          # Cloudflare. apk-tools-host is the repo's own apk, so the signed
+          # index matches what the wasm client expects.
+          ci = pkgs.mkShellNoCC {
+            packages = [
+              pkgs.jq
+              pkgs.rclone
+              wasmpkgs.apk-tools-host
+              pkgs.wrangler
+            ];
+          };
+
         }
       );
 
