@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { FSError } from "@tombl/linux";
-import { FS } from "../src/node.ts";
+import { NodeFS } from "../src/node.ts";
 
 // Virtio-fs carries Linux ABI flags even when this test runs on another host.
 const linux_open = {
@@ -37,7 +37,7 @@ await mkdir(outside);
 after(() => rm(temporary, { recursive: true, force: true }));
 
 test("node virtio-fs adapter reads and writes beneath its root", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const created = await filesystem.create!(
     filesystem.root,
     "hello",
@@ -58,7 +58,7 @@ test("node virtio-fs adapter reads and writes beneath its root", async () => {
 });
 
 test("node virtio-fs adapter rejects adversarial path components", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   for (const name of ["", ".", "..", "../outside", "/absolute", "nul\0byte"]) {
     await assert.rejects(
       async () => filesystem.lookup(filesystem.root, name),
@@ -71,7 +71,7 @@ test("node virtio-fs adapter rejects adversarial path components", async () => {
 test("node virtio-fs adapter exposes a final symlink without following it", async () => {
   await writeFile(path.join(outside, "secret"), "outside");
   await symlink(path.join(outside, "secret"), path.join(shared, "escape"));
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const escaped = await filesystem.lookup(filesystem.root, "escape");
   assert(escaped);
   assert.equal((await filesystem.getattr(escaped)).mode & constants.S_IFMT, constants.S_IFLNK);
@@ -84,7 +84,7 @@ test("node virtio-fs adapter never follows a final symlink for metadata operatio
   await writeFile(target, "outside", { mode: 0o640 });
   await symlink(target, link);
   const before = await stat(target);
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const escaped = await filesystem.lookup(filesystem.root, "metadata-escape");
   assert(escaped);
 
@@ -108,7 +108,7 @@ test("node virtio-fs adapter never follows a final symlink for metadata operatio
 });
 
 test("node virtio-fs adapter keeps open files distinct across unlink and recreate", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const old = await filesystem.create!(filesystem.root, "recreated", linux_open.readwrite, {
     mode: constants.S_IFREG | 0o600,
     uid: process.getuid!(),
@@ -149,7 +149,7 @@ test("node virtio-fs adapter keeps open files distinct across unlink and recreat
 });
 
 test("node virtio-fs adapter preserves inode generations across replacement rename", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const source = await filesystem.create!(filesystem.root, "rename-source", linux_open.readwrite, {
     mode: constants.S_IFREG | 0o600,
     uid: process.getuid!(),
@@ -182,7 +182,7 @@ test("node virtio-fs adapter preserves inode generations across replacement rena
 test("node virtio-fs adapter enforces read-only shares in the backend", async () => {
   const name = "read-only-source";
   await writeFile(path.join(shared, name), "readable");
-  const filesystem = new FS(shared, { readOnly: true });
+  const filesystem = new NodeFS(shared, { readOnly: true });
   const node = await filesystem.lookup(filesystem.root, name);
   assert(node);
   const handle = await filesystem.open!(node, linux_open.readonly | linux_open.closeOnExec);
@@ -217,7 +217,7 @@ test("node virtio-fs adapter enforces read-only shares in the backend", async ()
 });
 
 test("node virtio-fs adapter rejects Linux open modes it cannot implement", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const node = await filesystem.lookup(filesystem.root, "hello");
   assert(node);
   await assert.rejects(
@@ -227,7 +227,7 @@ test("node virtio-fs adapter rejects Linux open modes it cannot implement", asyn
 });
 
 test("node virtio-fs adapter creates symbolic links", async () => {
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const linked = await filesystem.symlink!(filesystem.root, "hello-link", "hello", {
     mode: constants.S_IFLNK | 0o777,
     uid: process.getuid!(),
@@ -238,7 +238,7 @@ test("node virtio-fs adapter creates symbolic links", async () => {
 
 test("node virtio-fs adapter detects an ancestor replaced by a symlink", async () => {
   await mkdir(path.join(shared, "safe"));
-  const filesystem = new FS(shared);
+  const filesystem = new NodeFS(shared);
   const safe = await filesystem.lookup(filesystem.root, "safe");
   assert(safe);
 

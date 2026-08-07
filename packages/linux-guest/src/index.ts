@@ -7,7 +7,7 @@ export {
   vsockDevice,
   type DeviceTreeNode,
   type VirtioDevice,
-  type FS as FileSystemBackend,
+  type FS,
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  type FS as FileSystemBackend,
+  type FS,
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,
@@ -226,7 +226,7 @@ class Handle {
   }
 }
 
-export interface FSOptions {
+export interface NodeFSOptions {
   /** Reject all operations which could modify the shared directory. */
   readOnly?: boolean;
 }
@@ -242,14 +242,14 @@ export interface FSOptions {
  * host process concurrently restructuring the shared tree: standard Node APIs
  * cannot resolve every operation beneath a trusted directory descriptor.
  */
-export class FS implements FileSystemBackend<Node, Handle> {
+export class NodeFS implements FS<Node, Handle> {
   readonly root: Node;
   readonly readOnly: boolean;
   readonly #root_path: Promise<string>;
   readonly #nodes = new Map<string, Node>();
   #path_tail = Promise.resolve();
 
-  constructor(root: string, options: FSOptions = {}) {
+  constructor(root: string, options: NodeFSOptions = {}) {
     this.root = new Node([]);
     this.readOnly = options.readOnly ?? false;
     this.#nodes.set("", this.root);

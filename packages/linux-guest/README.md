@@ -26,9 +26,9 @@ guest.machine.close();
 
 ```js
 import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
-import { FS } from "@tombl/linux-guest/node";
+import { NodeFS } from "@tombl/linux-guest/node";
 
-const shared = new FS("/srv/guest-share");
+const shared = new NodeFS("/srv/guest-share");
 const guest = await spawnGuest({
   devices: [
     fileSystemDevice(shared, {
@@ -71,10 +71,10 @@ Use OPFS for storage private to the site:
 
 ```js
 import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
-import { FS } from "@tombl/linux-guest/browser";
+import { BrowserFS } from "@tombl/linux-guest/browser";
 
 const opfs = await navigator.storage.getDirectory();
-const shared = new FS(
+const shared = new BrowserFS(
   await opfs.getDirectoryHandle("guest", { create: true }),
 );
 const guest = await spawnGuest({
@@ -90,7 +90,7 @@ It also accepts a user-selected directory for interchange with local
 applications:
 
 ```js
-const shared = new FS(
+const shared = new BrowserFS(
   await window.showDirectoryPicker({ mode: "readwrite" }),
 );
 const device = fileSystemDevice(shared, {

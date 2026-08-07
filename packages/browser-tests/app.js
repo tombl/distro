@@ -1,6 +1,6 @@
 import { consoleDevice, spawnMachine, fileSystemDevice } from "@tombl/linux";
 import { spawnGuest } from "@tombl/linux-guest";
-import { FS } from "@tombl/linux-guest/browser";
+import { BrowserFS } from "@tombl/linux-guest/browser";
 
 async function collectProcess(child) {
   const [status, stdout, stderr] = await Promise.all([
@@ -154,7 +154,7 @@ globalThis.opfsVirtioFileSystem = async () => {
   const storage = await navigator.storage.getDirectory();
   await storage.removeEntry("virtio-fs-test", { recursive: true }).catch(() => {});
   const directory = await storage.getDirectoryHandle("virtio-fs-test", { create: true });
-  const filesystem = new FS(directory);
+  const filesystem = new BrowserFS(directory);
   const created = await filesystem.create(filesystem.root, "hello", 0x40 | 0x80 | 0x2, {
     mode: 0o100640,
     uid: 1000,
@@ -183,7 +183,7 @@ globalThis.opfsVirtioFileSystem = async () => {
     .map((entry) => entry.name)
     .sort();
 
-  const reopened = new FS(directory);
+  const reopened = new BrowserFS(directory);
   const node = await reopened.lookup(reopened.root, "renamed");
   const handle = await reopened.open(node, 0);
   const persisted = await reopened.read(node, handle, 0n, input.length);
@@ -310,7 +310,7 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
   const storage = await navigator.storage.getDirectory();
   await storage.removeEntry("virtio-fs-guest-test", { recursive: true }).catch(() => {});
   const directory = await storage.getDirectoryHandle("virtio-fs-guest-test", { create: true });
-  const filesystem = new FS(directory);
+  const filesystem = new BrowserFS(directory);
   const input = new Uint8Array(256 * 1024);
   for (let index = 0; index < input.length; index += 1) input[index] = index % 251;
 
@@ -342,7 +342,7 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
     },
   );
 
-  const reopened = new FS(directory);
+  const reopened = new BrowserFS(directory);
   const node = await reopened.lookup(reopened.root, "persistent");
   const handle = await reopened.open(node, 0);
   const persisted = await reopened.read(node, handle, 0n, input.byteLength);
