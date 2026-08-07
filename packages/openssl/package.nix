@@ -116,17 +116,14 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      cli = vm-test.vmTest {
+      cli = vm-test.installedTest {
         name = "openssl-cli";
-        initramfs = vm-test.mkInitramfs {
-          name = "openssl-cli";
-          init = ./tests/cli-test.sh;
-          contents = [
-            busybox
-            finalAttrs.finalPackage
-            handshake
-          ];
-        };
+        init = ./tests/cli-test.sh;
+        contents = [
+          busybox
+          finalAttrs.finalPackage
+          handshake
+        ];
       };
     };
 })

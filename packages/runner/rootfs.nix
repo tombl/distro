@@ -1,4 +1,5 @@
 {
+  apk,
   basic-init,
   busybox,
   curl,
@@ -12,31 +13,42 @@
   openssl,
   python,
   quickjs,
+  repositories,
   sqlite3,
-  zstd,
   vm-test,
+  zstd,
 }:
 
 let
-  package = image.mkRootfs {
+  package = image.mkFilesystem {
     name = "runner-rootfs";
-    init = ./rootfs-init.sh;
-    contents = [
-      busybox
-      zstd
-      file
-      jq
-      lua
-      make
-      openssl
-      quickjs
-      python
-      sqlite3
-      curl
-      git
-      dropbear
-    ];
-    files."/bin/basic-init" = "${basic-init}/bin/init";
+    root = apk.mkSystem {
+      name = "runner";
+      repositories = [ repositories.main ];
+      packages = [
+        basic-init
+        busybox
+        zstd
+        file
+        jq
+        lua
+        make
+        openssl
+        quickjs
+        python
+        sqlite3
+        curl
+        git
+        dropbear
+      ];
+      files."/init" = {
+        source = ./rootfs-init.sh;
+        mode = "0755";
+      };
+      # A real copy, not a link: the wasm kernel cannot exec (or even stat -x)
+      # through a symlink to an executable.
+      files."/bin/basic-init" = "${basic-init}/bin/init";
+    };
   };
 in
 package

@@ -20,10 +20,19 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
   self:
   let
     inherit (self) callPackage;
+    mainRepository = callPackage ./repositories/main.nix { };
   in
   {
     inherit debug;
     platform = callPackage ./platform.nix { };
+    apk-tools-src = callPackage ./apk-tools/source.nix { };
+    apk-tools-host = pkgs.apk-tools.overrideAttrs (_old: {
+      version = "3.0.5";
+      src = self.apk-tools-src;
+    });
+    apk = callPackage ./apk {
+      tools = self.apk-tools-host;
+    };
 
     # The toolchain bootstrap. These build with the build platform's stdenv and
     # explicit flags because they exist to produce the wasm stdenv below; they
@@ -42,7 +51,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # is an ordinary nixpkgs-style package.
     stdenv = if debug then self.stdenvDebug else self.stdenvRelease;
     # Imported rather than callPackaged: callPackage's makeOverridable would
-    # shadow the stdenv's own `.override`, which the adapters below need.
+    # shadow the stdenv's own `.override`, which the debug adapter needs.
     stdenvRelease = import ./stdenv.nix {
       inherit pkgs;
       inherit (self) platform llvm-toolchain sysroot;
@@ -53,9 +62,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rust-toolchain = callPackage ./rust-toolchain/package.nix { };
 
     # userland:
+    apk-tools = callPackage ./apk-tools/package.nix {
+      src = self.apk-tools-src;
+    };
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
+    ca-certificates = callPackage ./ca-certificates/package.nix { };
     curl = callPackage ./curl/package.nix { };
     dropbear = callPackage ./dropbear/package.nix { };
     file = callPackage ./file/package.nix { };
@@ -81,6 +94,16 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # Shared immutable filesystem construction. Product-specific images remain
     # owned by their consumer packages.
     image = callPackage ./image { };
+
+    apk-checks = callPackage ./apk/checks.nix { };
+    repositories = {
+      main = mainRepository // {
+        checks.install = self.apk-checks.install;
+      };
+      recurseForDerivations = true;
+    };
+    # Conventional flat flake entry point for the primary published artifact.
+    repository = mainRepository;
 
     # The private guest protocol and its JavaScript SDK ship together.
     guest-agent = callPackage ./guest-agent/package.nix { };

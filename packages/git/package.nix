@@ -6,6 +6,7 @@
     hash = "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=";
   },
   busybox,
+  ca-certificates,
   zlib,
   curl,
   openssl,
@@ -156,29 +157,24 @@ stdenv.mkDerivation (finalAttrs: {
   installTargets = [ "install" ];
   installFlags = [ "DESTDIR=${placeholder "out"}" ];
 
-  postInstall = ''
-    mkdir -p $out/etc/ssl/certs
-    cp ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
-      $out/etc/ssl/certs/ca-certificates.crt
-  '';
+  # The CA bundle is a dependency-owned runtime file, not part of the payload:
+  # installing it here would conflict with the ca-certificates package.
+  passthru.apk.depends = [ "ca-certificates" ];
 
   passthru.checks =
     let
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "git-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "git-${name}";
-            inherit init;
-            # busybox first supplies /bin/sh for Git's installed scripts and
-            # hooks, cat (the pager), and the coreutils the test drives; git
-            # last. All shipped rootfs images compose the same BusyBox base.
-            contents = [
-              busybox
-              finalAttrs.finalPackage
-            ];
-          };
+          inherit init;
+          # BusyBox supplies /bin/sh for Git's installed scripts and hooks,
+          # cat (the pager), and the coreutils the test drives.
+          contents = [
+            busybox
+            ca-certificates
+            finalAttrs.finalPackage
+          ];
         };
     in
     {

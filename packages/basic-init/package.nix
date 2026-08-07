@@ -8,7 +8,8 @@ let
   buildInitWith =
     name: source: extraFlags:
     stdenv.mkDerivation {
-      inherit name;
+      pname = name;
+      version = "0.0.0";
       src = ./.;
 
       buildPhase = ''
@@ -152,8 +153,8 @@ let
     cpus = 2;
   };
 in
-(buildInit "basic-init" "init.c").overrideAttrs {
-  passthru = {
+(buildInitWith "basic-init" "init.c" "").overrideAttrs (old: {
+  passthru = (old.passthru or { }) // {
     inherit remoteMemoryInitramfs schedulerHandoffInitramfs;
     checks = {
       auxv = check "auxv";
@@ -206,4 +207,4 @@ in
       wallclock = check "wallclock";
     };
   };
-}
+})

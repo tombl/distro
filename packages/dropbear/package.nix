@@ -76,20 +76,16 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      session = vm-test.vmTest {
+      session = vm-test.installedTest {
         name = "dropbear-session";
-        initramfs = vm-test.mkInitramfs {
-          name = "dropbear-session";
-          init = ./tests/session-test.sh;
-          # busybox first supplies sh (the login shell dropbear spawns), the
-          # coreutils the test drives, and ip/mount; dropbear + the listener
-          # fixture last.
-          contents = [
-            busybox
-            finalAttrs.finalPackage
-            tcpSpawn
-          ];
-        };
+        init = ./tests/session-test.sh;
+        # BusyBox supplies sh (the login shell dropbear spawns), the coreutils
+        # the test drives, and ip/mount.
+        contents = [
+          busybox
+          finalAttrs.finalPackage
+          tcpSpawn
+        ];
       };
     };
 })

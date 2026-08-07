@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "xz";
   version = "5.6.4";
   inherit src;
+  passthru.apk.replaces = [ "busybox" ];
 
   # Static-only target; NLS pulls in gettext, the sandbox methods (Capsicum,
   # Landlock, pledge) need syscalls the wasm kernel lacks, and the POSIX
@@ -30,16 +31,13 @@ stdenv.mkDerivation (finalAttrs: {
   patches = [ ./wasm-sigmask.patch ];
 
   passthru.checks = {
-    roundtrip = vm-test.vmTest {
+    roundtrip = vm-test.installedTest {
       name = "xz-roundtrip";
-      initramfs = vm-test.mkInitramfs {
-        name = "xz-roundtrip";
-        init = ./roundtrip-test.sh;
-        contents = [
-          finalAttrs.finalPackage
-          busybox
-        ];
-      };
+      init = ./roundtrip-test.sh;
+      contents = [
+        finalAttrs.finalPackage
+        busybox
+      ];
     };
   };
 })

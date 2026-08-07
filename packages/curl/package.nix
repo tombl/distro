@@ -9,6 +9,7 @@
   zlib,
   vm-test,
   busybox,
+  ca-certificates,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -57,25 +58,21 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ca-embed"
   ];
 
-  postInstall = ''
-    mkdir -p $out/etc/ssl/certs
-    cp ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
-      $out/etc/ssl/certs/ca-certificates.crt
-  '';
+  # The CA bundle is a dependency-owned runtime file, not part of the payload:
+  # installing it here would conflict with the ca-certificates package.
+  passthru.apk.depends = [ "ca-certificates" ];
 
   passthru.checks = {
-    transfers = vm-test.vmTest {
+    transfers = vm-test.installedTest {
       name = "curl-transfers";
-      initramfs = vm-test.mkInitramfs {
-        name = "curl-transfers";
-        init = ./tests/transfers-test.sh;
-        contents = [
-          # curl-config and wcurl are shell scripts. Runnable distro images
-          # always compose BusyBox as their /bin/sh provider.
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./tests/transfers-test.sh;
+      contents = [
+        # curl-config and wcurl are shell scripts. Runnable distro images
+        # always install BusyBox as their /bin/sh provider.
+        busybox
+        ca-certificates
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

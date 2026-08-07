@@ -69,16 +69,13 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    language = vm-test.vmTest {
+    language = vm-test.installedTest {
       name = "quickjs-language";
-      initramfs = vm-test.mkInitramfs {
-        name = "quickjs-language";
-        init = ./language-test.sh;
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./language-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

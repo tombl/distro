@@ -13,7 +13,6 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export HOME=/root
 
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mkdir -p /dev/pts || fail "creating /dev/pts failed"
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"
 mount -t proc proc /proc 2>/dev/null

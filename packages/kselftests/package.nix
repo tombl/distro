@@ -97,16 +97,13 @@ stdenv.mkDerivation (finalAttrs: {
         ${lib.concatMapStrings (b: "cp ${finalAttrs.finalPackage}/${name}/${b} $out/bin/\n") suite.binaries}
       '';
     in
-    vm-test.vmTest {
+    vm-test.installedTest {
       name = "kselftests-${name}";
-      initramfs = vm-test.mkInitramfs {
-        name = "kselftests-${name}";
-        init = suite.run;
-        contents = [
-          busybox
-          suiteBin
-        ];
-      };
+      init = suite.run;
+      contents = [
+        busybox
+        suiteBin
+      ];
     }
   ) checkedSuites;
 })

@@ -39,16 +39,13 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      roundtrip = vm-test.vmTest {
+      roundtrip = vm-test.installedTest {
         name = "zlib-roundtrip";
-        initramfs = vm-test.mkInitramfs {
-          name = "zlib-roundtrip";
-          init = ./tests/roundtrip-test.sh;
-          contents = [
-            busybox
-            roundtrip
-          ];
-        };
+        init = ./tests/roundtrip-test.sh;
+        contents = [
+          busybox
+          roundtrip
+        ];
       };
     };
 })

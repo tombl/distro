@@ -26,16 +26,13 @@ stdenv.mkDerivation (finalAttrs: {
     let
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "jq-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "jq-${name}";
-            inherit init;
-            contents = [
-              finalAttrs.finalPackage
-              busybox
-            ];
-          };
+          inherit init;
+          contents = [
+            finalAttrs.finalPackage
+            busybox
+          ];
         };
     in
     {
