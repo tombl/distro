@@ -25,13 +25,13 @@ guest.machine.close();
 `@tombl/linux-guest/node` adapts a host directory to virtio-fs:
 
 ```js
-import { spawnGuest, virtioFileSystemDevice } from "@tombl/linux-guest";
-import { VirtioFileSystem } from "@tombl/linux-guest/node";
+import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
+import { FS } from "@tombl/linux-guest/node";
 
-const shared = new VirtioFileSystem("/srv/guest-share");
+const shared = new FS("/srv/guest-share");
 const guest = await spawnGuest({
   devices: [
-    virtioFileSystemDevice(shared, {
+    fileSystemDevice(shared, {
       tag: "host",
       cache: false,
     }),
@@ -70,16 +70,16 @@ In a browser, the adapter accepts any writable `FileSystemDirectoryHandle`.
 Use OPFS for storage private to the site:
 
 ```js
-import { spawnGuest, virtioFileSystemDevice } from "@tombl/linux-guest";
-import { VirtioFileSystem } from "@tombl/linux-guest/browser";
+import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
+import { FS } from "@tombl/linux-guest/browser";
 
 const opfs = await navigator.storage.getDirectory();
-const shared = new VirtioFileSystem(
+const shared = new FS(
   await opfs.getDirectoryHandle("guest", { create: true }),
 );
 const guest = await spawnGuest({
   devices: [
-    virtioFileSystemDevice(shared, {
+    fileSystemDevice(shared, {
       tag: "persistent",
     }),
   ],
@@ -90,10 +90,10 @@ It also accepts a user-selected directory for interchange with local
 applications:
 
 ```js
-const shared = new VirtioFileSystem(
+const shared = new FS(
   await window.showDirectoryPicker({ mode: "readwrite" }),
 );
-const device = virtioFileSystemDevice(shared, {
+const device = fileSystemDevice(shared, {
   tag: "interchange",
   cache: false,
 });

@@ -3,13 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileSystemDevice } from "../src/index.ts";
-import { NodeFS } from "../src/node.ts";
+import { FS } from "../src/node.ts";
 import { guest_test } from "./fixture.ts";
 
 guest_test("node virtio-fs adapter mounts in a guest", async (t, fixture) => {
   const shared = await mkdtemp(path.join(tmpdir(), "linux-guest-node-mount-"));
   t.after(() => rm(shared, { recursive: true, force: true }));
-  const filesystem = new NodeFS(shared);
+  const filesystem = new FS(shared);
   const guest = await fixture.spawn([
     fileSystemDevice(filesystem, { tag: "node-test", cache: false }),
   ]);
