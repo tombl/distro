@@ -97,15 +97,16 @@
     <script type="importmap">
       {
         "imports": {
-          "@tombl/linux": "./dist/index.js",
-          "@tombl/linux/bytes": "./dist/bytes.js"
+          "@tombl/linux": "./static/__ASSETS__/dist/index.js",
+          "@tombl/linux/bytes": "./static/__ASSETS__/dist/bytes.js",
+          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js"
         }
       }
     </script>
     <script type="module">
       import { FitAddon, Terminal, WebglAddon } from "./vendor/xterm/dist.js";
-      import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "./dist/index.js";
-      import { attach_guest, createNetwork, fetchNetwork } from "./guest/index.js";
+      import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
+      import { attach_guest, createNetwork, fetchNetwork } from "@tombl/linux-guest";
 
       const term = new Terminal({
         convertEol: true,
@@ -183,7 +184,7 @@
         const file = await handle.getFile();
         let disk;
         if (file.size === 0) {
-          const response = await fetch("rootfs.ext4.gz");
+          const response = await fetch(`rootfs-${sha}.ext4.gz`);
           if (!response.ok) throw new Error(`failed to fetch rootfs seed: ${response.status}`);
           disk = new Uint8Array(
             await new Response(
