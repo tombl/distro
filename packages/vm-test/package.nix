@@ -1,6 +1,7 @@
 # Build-platform test harness: boots the kernel under Node and asserts on a
 # pass marker. See docs/architecture.md, "Testing".
 {
+  apk,
   pkgs,
   lib,
   image,
@@ -71,9 +72,62 @@ let
         [ "$status" -eq 0 ] || exit "$status"
         mkdir $out
       '';
+
+  installedTest =
+    {
+      name,
+      init,
+      contents ? [ ],
+      files ? { },
+      cpus ? 1,
+    }:
+    let
+      fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
+      packages = map apk.packageFrom contents;
+      repository = apk.mkRepository {
+        name = "${fixtureName}-test";
+        packages = lib.listToAttrs (
+          map (p: {
+            inherit (p) name;
+            value = p;
+          }) packages
+        );
+      };
+      system = apk.mkSystem {
+        name = "${fixtureName}-test";
+        repositories = [ repository ];
+        inherit packages;
+        files = files // {
+          "/init" = {
+            source = init;
+            mode = "0755";
+          };
+          "/vm-test-setup-dev-fd" = {
+            source = ./setup-dev-fd.sh;
+            mode = "0755";
+          };
+        };
+      };
+      disk = image.mkFilesystem {
+        name = "${fixtureName}-test";
+        root = system;
+        # Package checks are disposable machines and commonly exercise writes
+        # to /etc, /root, and /var. Keep production image policy separate from
+        # this mutable test fixture.
+        format = "ext4";
+      };
+    in
+    assert lib.assertMsg (!(files ? "/init")) "installedTest files cannot define /init; use init";
+    assert lib.assertMsg (
+      !(files ? "/vm-test-setup-dev-fd")
+    ) "installedTest files cannot override /vm-test-setup-dev-fd";
+    vmTest {
+      inherit cpus name disk;
+      initramfs = image.bootInitramfs;
+    };
 in
 {
   mkInitramfs = mkTestInitramfs;
-  inherit runner vmTest;
+  inherit installedTest runner vmTest;
   recurseForDerivations = true;
 }

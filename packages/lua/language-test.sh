@@ -8,8 +8,7 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-# os.execute/io.popen spawn /bin/sh, which wants /dev/null.
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+# os.execute/io.popen spawn /bin/sh, which uses the runtime's /dev/null.
 
 # Core language features: arithmetic, strings, tables, and file io.
 cat >/tmp/core.lua <<'LUA'

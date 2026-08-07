@@ -56,17 +56,14 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      line-editing = vm-test.vmTest {
+      line-editing = vm-test.installedTest {
         name = "readline-line-editing";
-        initramfs = vm-test.mkInitramfs {
-          name = "readline-line-editing";
-          init = ./readline-test.sh;
-          contents = [
-            busybox
-            ncurses
-            readline-echo
-          ];
-        };
+        init = ./readline-test.sh;
+        contents = [
+          busybox
+          ncurses
+          readline-echo
+        ];
       };
     };
 })

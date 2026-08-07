@@ -45,20 +45,17 @@ stdenv.mkDerivation (finalAttrs: {
     let
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "lua-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "lua-${name}";
-            inherit init;
-            contents = [
-              finalAttrs.finalPackage
-              busybox
-            ];
-            files = {
-              "/usr/share/lua/5.4/guest_test.lua" = builtins.toFile "guest-test.lua" ''
-                return { answer = 42 }
-              '';
-            };
+          inherit init;
+          contents = [
+            finalAttrs.finalPackage
+            busybox
+          ];
+          files = {
+            "/usr/share/lua/5.4/guest_test.lua" = builtins.toFile "guest-test.lua" ''
+              return { answer = 42 }
+            '';
           };
         };
     in

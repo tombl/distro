@@ -77,11 +77,16 @@ pkgs.stdenv.override (old: {
     # never exports the tool variables the way prefixed cross wrappers do;
     # plain Makefiles otherwise fall back to the build platform's `ar`.
     export AR=llvm-ar RANLIB=llvm-ranlib NM=llvm-nm
-    # This target is assembled into an FHS root with a real /sbin. nixpkgs'
+    # This target is installed by apk into an FHS root with a real /sbin. nixpkgs'
     # move-sbin hook replaces package sbin directories with `sbin -> bin`, which
-    # cannot be overlaid with another package's real sbin directory. Keep the
-    # installed layout and let the rootfs builders merge directories normally.
+    # conflicts with another APK's real sbin directory. Keep the installed FHS
+    # layout and let apk track file ownership normally.
     export dontMoveSbin=1
+    # The guest is an FHS root, not a Nix store: patchShebangs would rewrite
+    # script interpreters to /nix/store paths that do not exist there. Keep
+    # the original /bin/sh-style shebangs; APK packaging declares the
+    # interpreters a payload needs.
+    export dontPatchShebangs=1
     export CONFIG_SITE=${configSite}
     export NIX_CFLAGS_LINK="${
       toString (map (flag: "-Wl,${flag}") platform.linkerFlags)

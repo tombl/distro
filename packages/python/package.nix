@@ -21,6 +21,7 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
+    passthru.apk.depends = [ "ncurses" ];
 
     # Cross-compiling CPython needs a host interpreter of the *same* minor
     # version to run the freeze/regen steps; --with-build-python below points
@@ -50,9 +51,9 @@ let
     # configure runs a host interpreter (build python of the same minor) for
     # its freeze steps and never executes the wasm binary it produces.
     configureFlags = [
-      # Rootfs slices are overlaid on / in the guest. Compile the FHS prefix
-      # into getpath and stage it under $out with DESTDIR below, so Python
-      # finds /usr/lib/python3.13 without PYTHONHOME or a Nix store path.
+      # The APK is installed at / in the guest. Compile the FHS prefix into
+      # getpath and stage it under $out with DESTDIR below, so Python finds
+      # /usr/lib/python3.13 without PYTHONHOME or a Nix store path.
       "--prefix=/usr"
       "--disable-shared"
       "--with-build-python=${pkgs.python313}/bin/python3"
@@ -132,31 +133,25 @@ let
       test -x $out/usr/bin/python3.13
       test -f $out/usr/lib/python3.13/os.py
 
-      # _curses is statically linked, but setupterm() still needs compiled
-      # terminal descriptions at runtime. Keep the Python rootfs slice
-      # self-contained instead of relying on a separate ncurses slice.
-      mkdir -p $out/share
-      cp -r ${ncurses}/share/terminfo $out/share/terminfo
+      # _curses is statically linked. Its compiled terminal descriptions are
+      # supplied by the typed ncurses APK runtime dependency above.
     '';
 
     passthru.checks = {
-      interpreter = vm-test.vmTest {
+      interpreter = vm-test.installedTest {
         name = "python-interpreter";
         # A larger stack than the toolchain default is unnecessary here; the
         # 8 MiB platform default covers CPython's recursion in these tests.
-        initramfs = vm-test.mkInitramfs {
-          name = "python-interpreter";
-          init = ./python-test.sh;
-          # busybox first so its applets (echo, sh) are present; python later.
-          # openssl CLI generates the ephemeral TLS test cert/key in-guest, so
-          # its validity window tracks the guest clock (no build-vs-guest time
-          # skew) and no PEM fixture has to be baked into the image.
-          contents = [
-            busybox
-            openssl
-            finalAttrs.finalPackage
-          ];
-        };
+        init = ./python-test.sh;
+        # openssl CLI generates the ephemeral TLS test cert/key in-guest, so
+        # its validity window tracks the guest clock (no build-vs-guest time
+        # skew) and no PEM fixture has to be baked into the image.
+        contents = [
+          busybox
+          ncurses
+          openssl
+          finalAttrs.finalPackage
+        ];
       };
     };
   });

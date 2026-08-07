@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "bzip2";
   version = "1.0.8";
   inherit src;
+  passthru.apk.replaces = [ "busybox" ];
 
   # The stock Makefile hardcodes the build toolchain and, in its default `all`
   # target, runs the freshly built bzip2 over sample files, which cannot
@@ -32,7 +33,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   # Upstream's monolithic install target also installs bzgrep, bzdiff, and
   # bzmore (plus their aliases). Those shell wrappers require tools which are
-  # deliberately not part of this rootfs slice, so install only the native
+  # deliberately not part of this package, so install only the native
   # programs, library, header, and matching manual page.
   installPhase = ''
     runHook preInstall
@@ -49,18 +50,13 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    roundtrip = vm-test.vmTest {
+    roundtrip = vm-test.installedTest {
       name = "bzip2-roundtrip";
-      initramfs = vm-test.mkInitramfs {
-        name = "bzip2-roundtrip";
-        init = ./roundtrip-test.sh;
-        contents = [
-          busybox
-          # Overlay the bzip2 slice last so the check cannot accidentally use
-          # a similarly named BusyBox applet.
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./roundtrip-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })
