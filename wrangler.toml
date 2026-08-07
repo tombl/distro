@@ -1,0 +1,20 @@
+# The site is a static site on Workers Static Assets: no Worker script, just
+# the assets directory. _headers in that directory applies the cross-origin
+# isolation headers the guest needs.
+name = "linux"
+compatibility_date = "2026-08-07"
+
+[assets]
+directory = "deploy"
+
+# Serve on the new domain. Uncomment once low.land's nameservers are on
+# Cloudflare; the deploy will fail until then. (Or add the custom domain in
+# the dashboard.)
+#
+# [[routes]]
+# pattern = "low.land"
+# custom_domain = true
+#
+# [[routes]]
+# pattern = "www.low.land"
+# custom_domain = true

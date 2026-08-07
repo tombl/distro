@@ -28,5 +28,8 @@ apk --allow-untrusted mkndx \
   --output "$work/wasm32/Packages.adb" \
   "$work/wasm32/"*.apk
 
-# rclone reads the R2 remote from RCLONE_CONFIG_R2_* env vars.
-rclone copyto "$work/wasm32" r2:tombl-apk/wasm32 --create-empty-src-dirs
+# rclone reads the R2 remote from RCLONE_CONFIG_R2_* env vars. The bucket is
+# bound to the assets.low.land custom domain, so /apk/wasm32/... serves as
+# https://assets.low.land/apk/wasm32/...
+bucket="${R2_BUCKET:?set R2_BUCKET to the R2 bucket name}"
+rclone copyto "$work/wasm32" "r2:${bucket}/apk/wasm32" --create-empty-src-dirs
