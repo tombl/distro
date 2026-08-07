@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  type FS as FileSystemBackend,
+  type FS,
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,
@@ -142,7 +142,7 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * Writes and truncations through one adapter are serialized per node, but
  * other adapters or applications can still race its portable API operations.
  */
-export class FS implements FileSystemBackend<Node, Handle> {
+export class BrowserFS implements FS<Node, Handle> {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
 
