@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import {
-  type VirtioFileSystem as VirtioFileSystemBackend,
-  type VirtioFileSystemAttributes,
-  type VirtioFileSystemCreateContext,
-  type VirtioFileSystemDirectoryEntry,
-  VirtioFileSystemError,
-  type VirtioFileSystemHandle,
-  type VirtioFileSystemNode,
-  type VirtioFileSystemSetAttributes,
-  virtioFileSystemDevice,
+  type FS,
+  type FSAttributes,
+  type FSCreateContext,
+  type FSDirectoryEntry,
+  FSError,
+  type FSSetAttributes,
+  fileSystemDevice,
 } from "@tombl/linux";
 import { SeekMode } from "../src/index.ts";
 import { getdents_inode } from "./assets.ts";
@@ -20,7 +18,7 @@ const FileType = {
   file: 0o100000,
 } as const;
 
-class MemoryNode implements VirtioFileSystemNode {
+class MemoryNode {
   readonly kind: "directory" | "file";
   mode: number;
   data = new Uint8Array();
@@ -32,7 +30,7 @@ class MemoryNode implements VirtioFileSystemNode {
   }
 }
 
-class MemoryHandle implements VirtioFileSystemHandle {
+class MemoryHandle {
   readonly node: MemoryNode;
 
   constructor(node: MemoryNode) {
@@ -40,7 +38,7 @@ class MemoryHandle implements VirtioFileSystemHandle {
   }
 }
 
-class MemoryFileSystem implements VirtioFileSystemBackend {
+class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
   readonly root = new MemoryNode("directory", 0o755);
   handleGetattrs = 0;
   releases = 0;
@@ -50,22 +48,22 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
   directoryOpenWaiter: (() => void) | undefined;
   readonly destroyStarted = Promise.withResolvers<void>();
 
-  #node(node: VirtioFileSystemNode) {
+  #node(node: MemoryNode) {
     assert(node instanceof MemoryNode);
     return node;
   }
 
-  #directory(node: VirtioFileSystemNode) {
+  #directory(node: MemoryNode) {
     const result = this.#node(node);
-    if (result.kind !== "directory") throw new VirtioFileSystemError("ENOTDIR");
+    if (result.kind !== "directory") throw new FSError("ENOTDIR");
     return result;
   }
 
-  lookup(parent: VirtioFileSystemNode, name: string) {
+  lookup(parent: MemoryNode, name: string) {
     return this.#directory(parent).children.get(name);
   }
 
-  getattr(node: VirtioFileSystemNode, handle?: VirtioFileSystemHandle): VirtioFileSystemAttributes {
+  getattr(node: MemoryNode, handle?: MemoryHandle): FSAttributes {
     if (handle !== undefined) this.handleGetattrs += 1;
     const current = this.#node(node);
     return {
@@ -78,13 +76,13 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
     };
   }
 
-  setattr(node: VirtioFileSystemNode, changes: VirtioFileSystemSetAttributes) {
+  setattr(node: MemoryNode, changes: FSSetAttributes) {
     const current = this.#node(node);
     if (changes.mode !== undefined) {
       current.mode = (current.mode & 0o170000) | (changes.mode & 0o7777);
     }
     if (changes.size !== undefined) {
-      if (current.kind !== "file") throw new VirtioFileSystemError("EISDIR");
+      if (current.kind !== "file") throw new FSError("EISDIR");
       const size = Number(changes.size);
       const data = new Uint8Array(size);
       data.set(current.data.subarray(0, size));
@@ -93,28 +91,28 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
     return this.getattr(current);
   }
 
-  open(node: VirtioFileSystemNode) {
+  open(node: MemoryNode) {
     const current = this.#node(node);
-    if (current.kind !== "file") throw new VirtioFileSystemError("EISDIR");
+    if (current.kind !== "file") throw new FSError("EISDIR");
     return new MemoryHandle(current);
   }
 
   create(
-    parent: VirtioFileSystemNode,
+    parent: MemoryNode,
     name: string,
     _flags: number,
-    context: VirtioFileSystemCreateContext,
+    context: FSCreateContext,
   ) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new VirtioFileSystemError("EEXIST");
+    if (directory.children.has(name)) throw new FSError("EEXIST");
     const node = new MemoryNode("file", context.mode);
     directory.children.set(name, node);
     return { node, handle: new MemoryHandle(node) };
   }
 
   read(
-    node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
+    node: MemoryNode,
+    _handle: MemoryHandle,
     offset: bigint,
     length: number,
   ) {
@@ -123,8 +121,8 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
   }
 
   write(
-    node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
+    node: MemoryNode,
+    _handle: MemoryHandle,
     offset: bigint,
     data: Uint8Array,
   ) {
@@ -139,13 +137,13 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
     return data.byteLength;
   }
 
-  opendir(node: VirtioFileSystemNode) {
+  opendir(node: MemoryNode) {
     this.directoryOpenWaiter?.();
     this.directoryOpenWaiter = undefined;
     return new MemoryHandle(this.#directory(node));
   }
 
-  readdir(node: VirtioFileSystemNode): VirtioFileSystemDirectoryEntry[] {
+  readdir(node: MemoryNode): FSDirectoryEntry<MemoryNode>[] {
     return [...this.#directory(node).children].map(([name, node]) => ({
       name,
       node,
@@ -155,6 +153,12 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
   release() {
     this.releases += 1;
   }
+
+  // In-memory store: already durable in the host process, so flush and fsync
+  // are declared no-ops.
+  flush() {}
+
+  fsync() {}
 
   releasedir() {
     this.directoryReleases += 1;
@@ -166,40 +170,40 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
     await this.destroyGate;
   }
 
-  mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
+  mkdir(parent: MemoryNode, name: string, context: FSCreateContext) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new VirtioFileSystemError("EEXIST");
+    if (directory.children.has(name)) throw new FSError("EEXIST");
     const node = new MemoryNode("directory", context.mode);
     directory.children.set(name, node);
     return node;
   }
 
-  unlink(parent: VirtioFileSystemNode, name: string) {
+  unlink(parent: MemoryNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new VirtioFileSystemError("ENOENT");
-    if (node.kind !== "file") throw new VirtioFileSystemError("EISDIR");
+    if (!node) throw new FSError("ENOENT");
+    if (node.kind !== "file") throw new FSError("EISDIR");
     directory.children.delete(name);
   }
 
-  rmdir(parent: VirtioFileSystemNode, name: string) {
+  rmdir(parent: MemoryNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new VirtioFileSystemError("ENOENT");
-    if (node.kind !== "directory") throw new VirtioFileSystemError("ENOTDIR");
-    if (node.children.size !== 0) throw new VirtioFileSystemError("ENOTEMPTY");
+    if (!node) throw new FSError("ENOENT");
+    if (node.kind !== "directory") throw new FSError("ENOTDIR");
+    if (node.children.size !== 0) throw new FSError("ENOTEMPTY");
     directory.children.delete(name);
   }
 
   rename(
-    oldParent: VirtioFileSystemNode,
+    oldParent: MemoryNode,
     oldName: string,
-    newParent: VirtioFileSystemNode,
+    newParent: MemoryNode,
     newName: string,
   ) {
     const old_directory = this.#directory(oldParent);
     const node = old_directory.children.get(oldName);
-    if (!node) throw new VirtioFileSystemError("ENOENT");
+    if (!node) throw new FSError("ENOENT");
     old_directory.children.delete(oldName);
     this.#directory(newParent).children.set(newName, node);
   }
@@ -208,7 +212,7 @@ class MemoryFileSystem implements VirtioFileSystemBackend {
 guest_test("virtio-fs", async (_t, fixture) => {
   const backend = new MemoryFileSystem();
   const guest = await fixture.spawn([
-    virtioFileSystemDevice(backend, { tag: "test", cache: false }),
+    fileSystemDevice(backend, { tag: "test", cache: false }),
   ]);
   const mounted = await guest.exec([
     "sh",

@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  type VirtioFileSystem as FileSystemBackend,
-  type VirtioFileSystemAttributes,
-  type VirtioFileSystemCreateContext,
-  type VirtioFileSystemDirectoryEntry,
-  VirtioFileSystemError,
-  type VirtioFileSystemHandle,
-  type VirtioFileSystemNode,
-  type VirtioFileSystemSetAttributes,
-  type VirtioFileSystemStat,
+  type FS as FileSystemBackend,
+  type FSAttributes,
+  type FSCreateContext,
+  type FSDirectoryEntry,
+  FSError,
+  type FSSetAttributes,
+  type FSStat,
 } from "@tombl/linux";
 import { constants, type BigIntStats } from "node:fs";
 import {
@@ -52,15 +50,15 @@ const known_errors = new Set([
 ]);
 
 function filesystem_error(error: unknown): never {
-  if (error instanceof VirtioFileSystemError) throw error;
+  if (error instanceof FSError) throw error;
   const code = (error as NodeJS.ErrnoException)?.code;
   if (code && known_errors.has(code)) {
-    throw new VirtioFileSystemError(
-      code as ConstructorParameters<typeof VirtioFileSystemError>[0],
+    throw new FSError(
+      code as ConstructorParameters<typeof FSError>[0],
       (error as Error).message,
     );
   }
-  throw new VirtioFileSystemError("EIO", error instanceof Error ? error.message : String(error));
+  throw new FSError("EIO", error instanceof Error ? error.message : String(error));
 }
 
 async function node_call<T>(operation: Promise<T>): Promise<T> {
@@ -80,7 +78,7 @@ function valid_name(name: string) {
     name.includes("\0") ||
     name.includes(path.sep)
   ) {
-    throw new VirtioFileSystemError("EINVAL", "invalid path component");
+    throw new FSError("EINVAL", "invalid path component");
   }
   return name;
 }
@@ -92,7 +90,7 @@ function seconds(nanoseconds: bigint) {
   };
 }
 
-function attributes(stats: BigIntStats): VirtioFileSystemAttributes {
+function attributes(stats: BigIntStats): FSAttributes {
   return {
     mode: Number(stats.mode),
     size: stats.size,
@@ -111,7 +109,7 @@ function attributes(stats: BigIntStats): VirtioFileSystemAttributes {
 function checked_offset(value: bigint) {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 0) {
-    throw new VirtioFileSystemError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return result;
 }
@@ -145,7 +143,7 @@ const host_constants = constants as unknown as Record<string, number | undefined
 
 function translate_open_flags(flags: number) {
   if (!Number.isInteger(flags) || flags < 0 || flags > 0xffff_ffff) {
-    throw new VirtioFileSystemError("EINVAL", "invalid Linux open flags");
+    throw new FSError("EINVAL", "invalid Linux open flags");
   }
 
   let remaining = flags;
@@ -155,13 +153,13 @@ function translate_open_flags(flags: number) {
   if (access === linux_open.readonly) result = constants.O_RDONLY;
   else if (access === linux_open.writeonly) result = constants.O_WRONLY;
   else if (access === linux_open.readwrite) result = constants.O_RDWR;
-  else throw new VirtioFileSystemError("EINVAL", "invalid Linux open access mode");
+  else throw new FSError("EINVAL", "invalid Linux open access mode");
 
   const map = (linux: number, host: number | undefined, name: string) => {
     if (!(remaining & linux)) return;
     remaining &= ~linux;
     if (host === undefined) {
-      throw new VirtioFileSystemError("EOPNOTSUPP", `${name} is not supported by this host`);
+      throw new FSError("EOPNOTSUPP", `${name} is not supported by this host`);
     }
     result |= host;
   };
@@ -189,10 +187,10 @@ function translate_open_flags(flags: number) {
   remaining &= ~(linux_open.largeFile | linux_open.closeOnExec);
 
   if (remaining & (linux_open.path | linux_open.temporaryFile)) {
-    throw new VirtioFileSystemError("EOPNOTSUPP", "unsupported Linux open mode");
+    throw new FSError("EOPNOTSUPP", "unsupported Linux open mode");
   }
   if (remaining !== 0) {
-    throw new VirtioFileSystemError(
+    throw new FSError(
       "EINVAL",
       `unsupported Linux open flags 0x${remaining.toString(16)}`,
     );
@@ -211,7 +209,7 @@ function may_write(flags: number) {
   );
 }
 
-class Node implements VirtioFileSystemNode {
+class Node {
   parts: string[];
   attached = true;
 
@@ -220,7 +218,7 @@ class Node implements VirtioFileSystemNode {
   }
 }
 
-class Handle implements VirtioFileSystemHandle {
+class Handle {
   readonly file: FileHandle | undefined;
 
   constructor(file?: FileHandle) {
@@ -228,7 +226,7 @@ class Handle implements VirtioFileSystemHandle {
   }
 }
 
-export interface VirtioFileSystemOptions {
+export interface FSOptions {
   /** Reject all operations which could modify the shared directory. */
   readOnly?: boolean;
 }
@@ -244,14 +242,14 @@ export interface VirtioFileSystemOptions {
  * host process concurrently restructuring the shared tree: standard Node APIs
  * cannot resolve every operation beneath a trusted directory descriptor.
  */
-export class VirtioFileSystem implements FileSystemBackend {
+export class FS implements FileSystemBackend<Node, Handle> {
   readonly root: Node;
   readonly readOnly: boolean;
   readonly #root_path: Promise<string>;
   readonly #nodes = new Map<string, Node>();
   #path_tail = Promise.resolve();
 
-  constructor(root: string, options: VirtioFileSystemOptions = {}) {
+  constructor(root: string, options: FSOptions = {}) {
     this.root = new Node([]);
     this.readOnly = options.readOnly ?? false;
     this.#nodes.set("", this.root);
@@ -271,7 +269,7 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   #writable() {
-    if (this.readOnly) throw new VirtioFileSystemError("EROFS", "filesystem is read-only");
+    if (this.readOnly) throw new FSError("EROFS", "filesystem is read-only");
   }
 
   #node(parts: string[]) {
@@ -284,12 +282,12 @@ export class VirtioFileSystem implements FileSystemBackend {
     return node;
   }
 
-  #parts(node: VirtioFileSystemNode) {
+  #parts(node: Node) {
     if (!(node instanceof Node)) {
-      throw new VirtioFileSystemError("EINVAL", "node belongs to another filesystem");
+      throw new FSError("EINVAL", "node belongs to another filesystem");
     }
     if (!node.attached) {
-      throw new VirtioFileSystemError("ENOENT", "filesystem node is no longer attached");
+      throw new FSError("ENOENT", "filesystem node is no longer attached");
     }
     return node.parts;
   }
@@ -299,7 +297,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     const result = path.resolve(root, ...parts);
     const relative = path.relative(root, result);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new VirtioFileSystemError("EACCES", "path escapes the shared directory");
+      throw new FSError("EACCES", "path escapes the shared directory");
     }
     return result;
   }
@@ -315,12 +313,12 @@ export class VirtioFileSystem implements FileSystemBackend {
     const actual_parent = await node_call(realpath(parent));
     const relative = path.relative(root, actual_parent);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new VirtioFileSystemError("EACCES", "path escapes through a symbolic link");
+      throw new FSError("EACCES", "path escapes through a symbolic link");
     }
     return result;
   }
 
-  async #stats(node: VirtioFileSystemNode) {
+  async #stats(node: Node) {
     return await node_call(lstat(await this.#validated_path(this.#parts(node)), { bigint: true }));
   }
 
@@ -334,7 +332,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     }
   }
 
-  async lookup(parent: VirtioFileSystemNode, name: string) {
+  async lookup(parent: Node, name: string) {
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
       const node = this.#node(parts);
@@ -343,7 +341,7 @@ export class VirtioFileSystem implements FileSystemBackend {
         return node;
       } catch (error) {
         if (
-          error instanceof VirtioFileSystemError &&
+          error instanceof FSError &&
           (error as { readonly errno: number }).errno === 2
         ) {
           this.#forget(parts);
@@ -354,24 +352,24 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async getattr(node: VirtioFileSystemNode, handle?: VirtioFileSystemHandle) {
+  async getattr(node: Node, handle?: Handle) {
     if (handle instanceof Handle && handle.file) {
       return attributes(await node_call(handle.file.stat({ bigint: true })));
     }
     return await this.#path_operation(async () => attributes(await this.#stats(node)));
   }
 
-  async readlink(node: VirtioFileSystemNode) {
+  async readlink(node: Node) {
     return await this.#path_operation(async () =>
       node_call(readlink(await this.#validated_path(this.#parts(node)))),
     );
   }
 
   async symlink(
-    parent: VirtioFileSystemNode,
+    parent: Node,
     name: string,
     target: string,
-    _context: VirtioFileSystemCreateContext,
+    _context: FSCreateContext,
   ) {
     this.#writable();
     return await this.#path_operation(async () => {
@@ -382,8 +380,8 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async #setattr(
-    node: VirtioFileSystemNode,
-    changes: VirtioFileSystemSetAttributes,
+    node: Node,
+    changes: FSSetAttributes,
     file?: FileHandle,
   ) {
     const target = file ? undefined : await this.#validated_path(this.#parts(node));
@@ -394,7 +392,7 @@ export class VirtioFileSystem implements FileSystemBackend {
         if (file) await file.chmod(changes.mode & 0o7777);
         else {
           if ((await this.#stats(node)).isSymbolicLink()) {
-            throw new VirtioFileSystemError("EOPNOTSUPP", "cannot change a symbolic link's mode");
+            throw new FSError("EOPNOTSUPP", "cannot change a symbolic link's mode");
           }
           await chmod(target!, changes.mode & 0o7777);
         }
@@ -421,7 +419,7 @@ export class VirtioFileSystem implements FileSystemBackend {
       if (changes.atime !== undefined || changes.mtime !== undefined) {
         const existing = await current();
         const now = new Date();
-        const to_date = (value: VirtioFileSystemSetAttributes["atime"], fallback: bigint) => {
+        const to_date = (value: FSSetAttributes["atime"], fallback: bigint) => {
           if (value === undefined) return new Date(Number(fallback / 1_000_000n));
           if (value === "now") return now;
           return new Date(Number(value.seconds * 1000n) + (value.nanoseconds ?? 0) / 1_000_000);
@@ -438,9 +436,9 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async setattr(
-    node: VirtioFileSystemNode,
-    changes: VirtioFileSystemSetAttributes,
-    handle?: VirtioFileSystemHandle,
+    node: Node,
+    changes: FSSetAttributes,
+    handle?: Handle,
   ) {
     this.#writable();
     if (handle instanceof Handle && handle.file) {
@@ -449,7 +447,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     return await this.#path_operation(async () => this.#setattr(node, changes));
   }
 
-  async open(node: VirtioFileSystemNode, flags: number) {
+  async open(node: Node, flags: number) {
     if (this.readOnly && may_write(flags)) this.#writable();
     const host_flags = translate_open_flags(flags) | constants.O_NOFOLLOW;
     return await this.#path_operation(async () => {
@@ -459,10 +457,10 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async create(
-    parent: VirtioFileSystemNode,
+    parent: Node,
     name: string,
     flags: number,
-    context: VirtioFileSystemCreateContext,
+    context: FSCreateContext,
   ) {
     this.#writable();
     const host_flags =
@@ -476,13 +474,13 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async read(
-    _node: VirtioFileSystemNode,
-    handle: VirtioFileSystemHandle,
+    _node: Node,
+    handle: Handle,
     offset: bigint,
     length: number,
   ) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     const buffer = new Uint8Array(length);
     const { bytesRead } = await node_call(
@@ -492,14 +490,14 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async write(
-    _node: VirtioFileSystemNode,
-    handle: VirtioFileSystemHandle,
+    _node: Node,
+    handle: Handle,
     offset: bigint,
     data: Uint8Array,
   ) {
     this.#writable();
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     const { bytesWritten } = await node_call(
       handle.file.write(data, 0, data.byteLength, checked_offset(offset)),
@@ -507,43 +505,43 @@ export class VirtioFileSystem implements FileSystemBackend {
     return bytesWritten;
   }
 
-  async flush(_node: VirtioFileSystemNode, handle: VirtioFileSystemHandle) {
+  async flush(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     await node_call(handle.file.datasync());
   }
 
-  async fsync(_node: VirtioFileSystemNode, handle: VirtioFileSystemHandle, dataOnly: boolean) {
+  async fsync(_node: Node, handle: Handle, dataOnly: boolean) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     await node_call(dataOnly ? handle.file.datasync() : handle.file.sync());
   }
 
-  async release(_node: VirtioFileSystemNode, handle: VirtioFileSystemHandle) {
+  async release(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     await node_call(handle.file.close());
   }
 
-  async opendir(node: VirtioFileSystemNode) {
+  async opendir(node: Node) {
     return await this.#path_operation(async () => {
       const stats = await this.#stats(node);
-      if (!stats.isDirectory()) throw new VirtioFileSystemError("ENOTDIR");
+      if (!stats.isDirectory()) throw new FSError("ENOTDIR");
       return new Handle();
     });
   }
 
   async readdir(
-    node: VirtioFileSystemNode,
-    _handle: VirtioFileSystemHandle,
-  ): Promise<VirtioFileSystemDirectoryEntry[]> {
+    node: Node,
+    _handle: Handle,
+  ): Promise<FSDirectoryEntry<Node>[]> {
     return await this.#path_operation(async () => {
       const parts = this.#parts(node);
       const target = await this.#validated_path(parts);
-      const result: VirtioFileSystemDirectoryEntry[] = [];
+      const result: FSDirectoryEntry<Node>[] = [];
       for (const entry of await node_call(readdir(target, { withFileTypes: true }))) {
         result.push({
           name: entry.name,
@@ -554,7 +552,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
+  async mkdir(parent: Node, name: string, context: FSCreateContext) {
     this.#writable();
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
@@ -567,7 +565,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async unlink(parent: VirtioFileSystemNode, name: string) {
+  async unlink(parent: Node, name: string) {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
@@ -577,7 +575,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async rmdir(parent: VirtioFileSystemNode, name: string) {
+  async rmdir(parent: Node, name: string) {
     this.#writable();
     await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
@@ -588,9 +586,9 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async rename(
-    oldParent: VirtioFileSystemNode,
+    oldParent: Node,
     oldName: string,
-    newParent: VirtioFileSystemNode,
+    newParent: Node,
     newName: string,
   ) {
     this.#writable();
@@ -614,16 +612,16 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async access(node: VirtioFileSystemNode, mask: number) {
+  async access(node: Node, mask: number) {
     await this.#path_operation(async () => {
       if ((await this.#stats(node)).isSymbolicLink()) {
-        throw new VirtioFileSystemError("ELOOP");
+        throw new FSError("ELOOP");
       }
       await node_call(access(await this.#validated_path(this.#parts(node)), mask));
     });
   }
 
-  async statfs(_node: VirtioFileSystemNode): Promise<VirtioFileSystemStat> {
+  async statfs(_node: Node): Promise<FSStat> {
     const stats = await node_call(statfs(await this.#root_path, { bigint: true }));
     return {
       blocks: stats.blocks,

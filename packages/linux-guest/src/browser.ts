@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  type VirtioFileSystem as FileSystemBackend,
-  type VirtioFileSystemAttributes,
-  type VirtioFileSystemCreateContext,
-  type VirtioFileSystemDirectoryEntry,
-  VirtioFileSystemError,
-  type VirtioFileSystemHandle,
-  type VirtioFileSystemNode,
-  type VirtioFileSystemSetAttributes,
-  type VirtioFileSystemTimestamp,
+  type FS as FileSystemBackend,
+  type FSAttributes,
+  type FSCreateContext,
+  type FSDirectoryEntry,
+  FSError,
+  type FSSetAttributes,
+  type FSTimestamp,
 } from "@tombl/linux";
 
 const FileType = {
@@ -26,13 +24,13 @@ interface Metadata {
   mode: number;
   uid: number;
   gid: number;
-  atime: VirtioFileSystemTimestamp;
-  mtime: VirtioFileSystemTimestamp;
+  atime: FSTimestamp;
+  mtime: FSTimestamp;
   mtimeOverride: boolean;
-  ctime: VirtioFileSystemTimestamp;
+  ctime: FSTimestamp;
 }
 
-function now(): VirtioFileSystemTimestamp {
+function now(): FSTimestamp {
   const milliseconds = Date.now();
   return {
     seconds: BigInt(Math.floor(milliseconds / 1000)),
@@ -48,13 +46,13 @@ function valid_name(name: string) {
     name.includes("/") ||
     name.includes("\0")
   ) {
-    throw new VirtioFileSystemError("EINVAL", "invalid path component");
+    throw new FSError("EINVAL", "invalid path component");
   }
   return name;
 }
 
 function opfs_error(error: unknown): never {
-  if (error instanceof VirtioFileSystemError) throw error;
+  if (error instanceof FSError) throw error;
   const name = error instanceof DOMException ? error.name : "";
   const code =
     {
@@ -65,8 +63,8 @@ function opfs_error(error: unknown): never {
       QuotaExceededError: "ENOSPC",
       TypeMismatchError: "EINVAL",
     }[name] ?? "EIO";
-  throw new VirtioFileSystemError(
-    code as ConstructorParameters<typeof VirtioFileSystemError>[0],
+  throw new FSError(
+    code as ConstructorParameters<typeof FSError>[0],
     error instanceof Error ? error.message : String(error),
   );
 }
@@ -82,12 +80,12 @@ async function opfs_call<T>(operation: Promise<T>): Promise<T> {
 function checked_offset(value: bigint) {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 0) {
-    throw new VirtioFileSystemError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return result;
 }
 
-class Node implements VirtioFileSystemNode {
+class Node {
   parts: string[];
   handle: FileSystemHandle;
   metadata: Metadata;
@@ -104,7 +102,7 @@ class Node implements VirtioFileSystemNode {
   }
 }
 
-class Handle implements VirtioFileSystemHandle {
+class Handle {
   readonly node: Node;
 
   constructor(node: Node) {
@@ -144,7 +142,7 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * Writes and truncations through one adapter are serialized per node, but
  * other adapters or applications can still race its portable API operations.
  */
-export class VirtioFileSystem implements FileSystemBackend {
+export class FS implements FileSystemBackend<Node, Handle> {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
 
@@ -153,20 +151,20 @@ export class VirtioFileSystem implements FileSystemBackend {
     this.#nodes.set("", this.root);
   }
 
-  #as_node(node: VirtioFileSystemNode) {
+  #as_node(node: Node) {
     if (!(node instanceof Node)) {
-      throw new VirtioFileSystemError("EINVAL", "node belongs to another filesystem");
+      throw new FSError("EINVAL", "node belongs to another filesystem");
     }
     if (!node.attached) {
-      throw new VirtioFileSystemError("ENOENT", "filesystem node is no longer attached");
+      throw new FSError("ENOENT", "filesystem node is no longer attached");
     }
     return node;
   }
 
-  #directory(node: VirtioFileSystemNode) {
+  #directory(node: Node) {
     const result = this.#as_node(node);
     if (result.handle.kind !== "directory") {
-      throw new VirtioFileSystemError("ENOTDIR");
+      throw new FSError("ENOTDIR");
     }
     return result.handle as FileSystemDirectoryHandle;
   }
@@ -193,10 +191,10 @@ export class VirtioFileSystem implements FileSystemBackend {
     }
   }
 
-  #open_handle(node: VirtioFileSystemNode, handle: VirtioFileSystemHandle) {
+  #open_handle(node: Node, handle: Handle) {
     const current = this.#as_node(node);
     if (!(handle instanceof Handle) || handle.node !== current) {
-      throw new VirtioFileSystemError("EBADF");
+      throw new FSError("EBADF");
     }
     return current;
   }
@@ -240,7 +238,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     }
   }
 
-  async lookup(parent: VirtioFileSystemNode, name: string) {
+  async lookup(parent: Node, name: string) {
     const parent_node = this.#as_node(parent);
     const parts = [...parent_node.parts, valid_name(name)];
     const handle = await this.#child(this.#directory(parent), name);
@@ -251,7 +249,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     return this.#remember(parts, handle);
   }
 
-  async getattr(node: VirtioFileSystemNode): Promise<VirtioFileSystemAttributes> {
+  async getattr(node: Node): Promise<FSAttributes> {
     const current = this.#as_node(node);
     let size = 0n;
     if (current.handle.kind === "file") {
@@ -277,13 +275,13 @@ export class VirtioFileSystem implements FileSystemBackend {
     };
   }
 
-  async setattr(node: VirtioFileSystemNode, changes: VirtioFileSystemSetAttributes) {
+  async setattr(node: Node, changes: FSSetAttributes) {
     const current = this.#as_node(node);
     return await this.#mutate(current, async () => {
       this.#as_node(current);
       if (changes.size !== undefined) {
         if (current.handle.kind !== "file") {
-          throw new VirtioFileSystemError("EISDIR");
+          throw new FSError("EISDIR");
         }
         const writable = await opfs_call(
           (current.handle as FileSystemFileHandle).createWritable({
@@ -317,10 +315,10 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async open(node: VirtioFileSystemNode, flags: number) {
+  async open(node: Node, flags: number) {
     const current = this.#as_node(node);
     if (current.handle.kind !== "file") {
-      throw new VirtioFileSystemError("EISDIR");
+      throw new FSError("EISDIR");
     }
     if (flags & OpenFlags.TRUNCATE) {
       await this.setattr(current, { size: 0n });
@@ -329,10 +327,10 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async create(
-    parent: VirtioFileSystemNode,
+    parent: Node,
     name: string,
     flags: number,
-    context: VirtioFileSystemCreateContext,
+    context: FSCreateContext,
   ) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
@@ -340,10 +338,10 @@ export class VirtioFileSystem implements FileSystemBackend {
     const existing = await this.#child(directory, name);
     if (existing) {
       if (flags & OpenFlags.EXCLUSIVE) {
-        throw new VirtioFileSystemError("EEXIST");
+        throw new FSError("EEXIST");
       }
       if (existing.kind !== "file") {
-        throw new VirtioFileSystemError("EISDIR");
+        throw new FSError("EISDIR");
       }
     }
     const file = existing ?? (await opfs_call(directory.getFileHandle(name, { create: true })));
@@ -358,14 +356,14 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async read(
-    node: VirtioFileSystemNode,
-    handle: VirtioFileSystemHandle,
+    node: Node,
+    handle: Handle,
     offset: bigint,
     length: number,
   ) {
     const current = this.#open_handle(node, handle);
     if (current.handle.kind !== "file") {
-      throw new VirtioFileSystemError("EISDIR");
+      throw new FSError("EISDIR");
     }
     const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
     current.metadata.atime = now();
@@ -377,8 +375,8 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async write(
-    node: VirtioFileSystemNode,
-    handle: VirtioFileSystemHandle,
+    node: Node,
+    handle: Handle,
     offset: bigint,
     data: Uint8Array,
   ) {
@@ -386,7 +384,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     return await this.#mutate(current, async () => {
       this.#open_handle(node, handle);
       if (current.handle.kind !== "file") {
-        throw new VirtioFileSystemError("EISDIR");
+        throw new FSError("EISDIR");
       }
       const writable = await opfs_call(
         (current.handle as FileSystemFileHandle).createWritable({
@@ -408,17 +406,23 @@ export class VirtioFileSystem implements FileSystemBackend {
     });
   }
 
-  async opendir(node: VirtioFileSystemNode) {
+  // OPFS commits each write when its writable closes, so a file is durable by
+  // the time `write` resolves; flush and fsync have nothing left to do.
+  async flush() {}
+
+  async fsync() {}
+
+  async opendir(node: Node) {
     this.#directory(node);
     return new Handle(this.#as_node(node));
   }
 
   async readdir(
-    node: VirtioFileSystemNode,
-    handle: VirtioFileSystemHandle,
-  ): Promise<VirtioFileSystemDirectoryEntry[]> {
+    node: Node,
+    handle: Handle,
+  ): Promise<FSDirectoryEntry<Node>[]> {
     const current = this.#open_handle(node, handle);
-    const result: VirtioFileSystemDirectoryEntry[] = [];
+    const result: FSDirectoryEntry<Node>[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
       result.push({
         name,
@@ -428,11 +432,11 @@ export class VirtioFileSystem implements FileSystemBackend {
     return result;
   }
 
-  async mkdir(parent: VirtioFileSystemNode, name: string, context: VirtioFileSystemCreateContext) {
+  async mkdir(parent: Node, name: string, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     if (await this.#child(this.#directory(parent), name)) {
-      throw new VirtioFileSystemError("EEXIST");
+      throw new FSError("EEXIST");
     }
     const handle = await opfs_call(
       this.#directory(parent).getDirectoryHandle(name, { create: true }),
@@ -444,23 +448,23 @@ export class VirtioFileSystem implements FileSystemBackend {
     return node;
   }
 
-  async unlink(parent: VirtioFileSystemNode, name: string) {
+  async unlink(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
-    if (!child) throw new VirtioFileSystemError("ENOENT");
+    if (!child) throw new FSError("ENOENT");
     if (this.#as_node(child).handle.kind !== "file") {
-      throw new VirtioFileSystemError("EISDIR");
+      throw new FSError("EISDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
     this.#forget([...this.#as_node(parent).parts, name]);
   }
 
-  async rmdir(parent: VirtioFileSystemNode, name: string) {
+  async rmdir(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.lookup(parent, name);
-    if (!child) throw new VirtioFileSystemError("ENOENT");
+    if (!child) throw new FSError("ENOENT");
     if (this.#as_node(child).handle.kind !== "directory") {
-      throw new VirtioFileSystemError("ENOTDIR");
+      throw new FSError("ENOTDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
     this.#forget([...this.#as_node(parent).parts, name]);
@@ -488,9 +492,9 @@ export class VirtioFileSystem implements FileSystemBackend {
   }
 
   async rename(
-    oldParent: VirtioFileSystemNode,
+    oldParent: Node,
     oldName: string,
-    newParent: VirtioFileSystemNode,
+    newParent: Node,
     newName: string,
   ) {
     oldName = valid_name(oldName);
@@ -499,7 +503,7 @@ export class VirtioFileSystem implements FileSystemBackend {
     const new_parent = this.#as_node(newParent);
     if (old_parent === new_parent && oldName === newName) return;
     const source = await this.lookup(old_parent, oldName);
-    if (!source) throw new VirtioFileSystemError("ENOENT");
+    if (!source) throw new FSError("ENOENT");
     const source_node = this.#as_node(source);
     const old_parts = [...old_parent.parts, oldName];
     const new_parts = [...new_parent.parts, newName];
@@ -507,12 +511,12 @@ export class VirtioFileSystem implements FileSystemBackend {
       source_node.handle.kind === "directory" &&
       new_parts.slice(0, old_parts.length).join("/") === old_parts.join("/")
     ) {
-      throw new VirtioFileSystemError("EINVAL", "cannot move a directory into itself");
+      throw new FSError("EINVAL", "cannot move a directory into itself");
     }
 
     const existing = await this.lookup(new_parent, newName);
     if (existing) {
-      throw new VirtioFileSystemError(
+      throw new FSError(
         "EOPNOTSUPP",
         "browser filesystems cannot atomically replace a rename destination",
       );
@@ -551,9 +555,9 @@ export class VirtioFileSystem implements FileSystemBackend {
       const relative = node.parts.slice(old_parts.length);
       let handle: FileSystemHandle = copied;
       for (const component of relative) {
-        if (handle.kind !== "directory") throw new VirtioFileSystemError("EIO");
+        if (handle.kind !== "directory") throw new FSError("EIO");
         const child = await this.#child(handle as FileSystemDirectoryHandle, component);
-        if (!child) throw new VirtioFileSystemError("EIO");
+        if (!child) throw new FSError("EIO");
         handle = child;
       }
       node.handle = handle;

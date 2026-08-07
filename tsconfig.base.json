@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+
+    "target": "es2024",
+    "lib": [
+      "es2024",
+      "esnext.disposable",
+      "webworker",
+      "webworker.iterable",
+      "webworker.asynciterable"
+    ],
+    "skipLibCheck": true,
+
+    "strict": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

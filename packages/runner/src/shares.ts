@@ -1,5 +1,5 @@
-import { type VirtioDevice, virtioFileSystemDevice } from "@tombl/linux";
-import { VirtioFileSystem as NodeFileSystem } from "@tombl/linux-guest/node";
+import { type VirtioDevice, fileSystemDevice } from "@tombl/linux";
+import { FS as NodeFileSystem } from "@tombl/linux-guest/node";
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -66,7 +66,7 @@ export function configureShares(arguments_: ShareArgument[]): ConfiguredShares {
 
   const devices = shares.map((share) => {
     const filesystem = new NodeFileSystem(share.host, { readOnly: share.readOnly });
-    return virtioFileSystemDevice(filesystem, {
+    return fileSystemDevice(filesystem, {
       tag: share.tag,
       cache: false,
     });
