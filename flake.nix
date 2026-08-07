@@ -111,6 +111,22 @@
             program = lib.getExe wasmpkgs.runner.package;
           };
 
+          # site-deploy (packages/site-deploy) builds the site and wrangler
+          # into one script; these apps just pick the wrangler subcommand.
+          # Deploy the current tree to the production worker (low.land).
+          wrangler-deploy = {
+            type = "app";
+            program = "${wasmpkgs.site-deploy}";
+          };
+
+          # Upload a version for a per-commit preview URL; production untouched.
+          wrangler-preview = {
+            type = "app";
+            program = "${pkgs.writeShellScript "wrangler-preview" ''
+              exec ${wasmpkgs.site-deploy} versions upload "$@"
+            ''}";
+          };
+
           default = self.apps.${pkgs.stdenv.hostPlatform.system}.runner;
         }
       );
