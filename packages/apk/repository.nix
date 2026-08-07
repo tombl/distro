@@ -13,6 +13,7 @@ let
       packages,
       arch ? platform.apkArch,
       description ? name,
+      signingKey ? null,
     }:
     let
       packageList = lib.concatLists (
@@ -56,6 +57,11 @@ let
         apk --allow-untrusted mkndx \
           --compression deflate:9 \
           --description ${lib.escapeShellArg description} \
+          ${
+            lib.optionalString (signingKey != null) ''
+              --sign-key ${lib.escapeShellArg (toString signingKey)} \
+            ''
+          } \
           --output $out/${arch}/Packages.adb \
           $out/${arch}/*.apk
       '';
