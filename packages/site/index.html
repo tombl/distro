@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Linux</title>
+    <style>
+      @import url(vendor/xterm/xterm.css);
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      html {
+        height: 100%;
+        body {
+          margin: 0;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          .terminal {
+            flex: 1;
+          }
+        }
+      }
+      details {
+        font-size: 1.2rem;
+        margin: 1rem;
+        summary {
+          user-select: none;
+        }
+        form {
+          display: grid;
+          grid-template-columns: 15ch 1fr;
+          grid-column: 2;
+          input {
+            font-family: monospace;
+          }
+          button {
+            grid-column: span 2;
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <details open>
+      <summary>info & options</summary>
+
+      <p>Welcome to Linux running natively in your browser!</p>
+
+      <p>
+        There's no x86_64/RISC-V emulation going on here, instead this is a port of the kernel to
+        WebAssembly.
+      </p>
+
+      <p>
+        We've got a patched version of the Linux kernel running, complete with virtio devices,
+        memory isolation, and multi-core support. For the userspace, we've ported BusyBox and Musl,
+        and much more.
+      </p>
+
+      <p>
+        If this sounds interesting, you can check out the source at
+        <a href="https://github.com/tombl/linux">github.com/tombl/linux</a> (the kernel) and
+        <a href="https://github.com/tombl/distro">github.com/tombl/distro</a> (the userspace and
+        this site).
+      </p>
+
+      <form>
+        <label for="cmdline">
+          <a href="https://www.kernel.org/doc/html/v7.1/admin-guide/kernel-parameters.html">
+            Kernel parameters
+          </a>
+        </label>
+        <input type="text" name="cmdline" id="cmdline" />
+        <label for="initcpio">URL to an initramfs</label>
+        <input type="text" name="initcpio" id="initcpio" />
+        <button type="submit">Reboot</button>
+      </form>
+    </details>
+    <script>
+      function reportError(error) {
+        alert(`${error}`);
+      }
+
+      addEventListener("error", (event) => reportError(event.error));
+      addEventListener("unhandledrejection", (event) => reportError(event.reason));
+
+      const details = document.querySelector("details");
+      if (localStorage.getItem("detailsOpen") !== null) {
+        details.open = localStorage.getItem("detailsOpen") === "true";
+      }
+      details.addEventListener("toggle", () => {
+        localStorage.setItem("detailsOpen", details.open.toString());
+      });
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@tombl/linux": "./dist/index.js",
+          "@tombl/linux/bytes": "./dist/bytes.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import { FitAddon, Terminal, WebglAddon } from "./vendor/xterm/dist.js";
+      import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "./dist/index.js";
+      import { attach_guest, createNetwork, fetchNetwork } from "./guest/index.js";
+
+      const term = new Terminal({
+        convertEol: true,
+        fontFamily: "monospace",
+      });
+      const termFit = new FitAddon();
+      term.loadAddon(termFit);
+      term.open(document.body);
+      termFit.fit();
+      window.onresize = () => termFit.fit();
+      try {
+        term.loadAddon(new WebglAddon());
+      } catch (err) {
+        console.warn(err);
+      }
+
+      if (!window.crossOriginIsolated) {
+        term.write("Error: not cross origin isolated\n");
+      }
+
+      const { cmdline = "", initcpio: initcpioPath = "initramfs.cpio" } = Object.fromEntries(
+        new URLSearchParams(location.search),
+      );
+      document.querySelector("input[name=cmdline]").value = cmdline;
+      document.querySelector("input[name=initcpio]").value = initcpioPath;
+
+      const stdin = new ReadableStream({
+        start(controller) {
+          term.onData((data) => {
+            controller.enqueue(data);
+          });
+        },
+      }).pipeThrough(new TextEncoderStream());
+
+      // xterm consumes writes asynchronously; awaiting its completion callback
+      // turns the writable stream into true backpressure, so a chatty guest
+      // fills its own virtio console queue instead of buffering inside xterm.
+      const toTerminal = (data) => new Promise((resolve) => term.write(data, resolve));
+
+      const stdout = new WritableStream({
+        write(chunk) {
+          return toTerminal(chunk);
+        },
+      });
+
+      const ttyConsole = consoleDevice(stdin, stdout);
+
+      // Push the terminal's dimensions into the virtio console config, so the
+      // guest sees the new size and delivers SIGWINCH to the foreground
+      // process. The machine reads the config at boot, so seed it before
+      // spawnMachine; onResize covers every later fit.
+      const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
+      term.onResize(resizeConsole);
+      window.onresize = () => termFit.fit();
+      resizeConsole();
+
+      // The virtio console claims stdout; the kernel's pre-console output must
+      // go somewhere that isn't already locked, so it gets its own stream.
+      const bootOut = new WritableStream({
+        write(chunk) {
+          return toTerminal(chunk);
+        },
+      });
+
+      // The writable rootfs lives in OPFS, keyed by the served image's hash so
+      // an upgraded rootfs reseeds itself and old copies are simply orphaned.
+      // First visit downloads and decompresses the seed; afterwards the guest
+      // reads and writes the persisted disk, so `apk add` survives reloads.
+      async function openDisk() {
+        const sha = await fetch("rootfs.ext4.sha256").then((res) =>
+          res.text().then((t) => t.trim()),
+        );
+        const directory = await navigator.storage.getDirectory();
+        const handle = await directory.getFileHandle(`rootfs-${sha}.ext4`, { create: true });
+        const file = await handle.getFile();
+        let disk;
+        if (file.size === 0) {
+          const response = await fetch("rootfs.ext4.gz");
+          if (!response.ok) throw new Error(`failed to fetch rootfs seed: ${response.status}`);
+          disk = new Uint8Array(
+            await new Response(
+              response.body.pipeThrough(new DecompressionStream("gzip")),
+            ).arrayBuffer(),
+          );
+          const writable = await handle.createWritable();
+          await writable.write(disk);
+          await writable.close();
+        } else {
+          disk = new Uint8Array(await file.arrayBuffer());
+        }
+
+        // Reads and writes hit an in-memory image for speed; dirty blocks are
+        // flushed to OPFS on each virtio flush. Sync handles are only exposed
+        // in workers, so the async file API keeps this on the main thread.
+        const BLOCK = 4096;
+        const dirty = new Set();
+        return {
+          capacity: disk.byteLength,
+          read(offset, length) {
+            return disk.slice(offset, offset + length);
+          },
+          write(offset, data) {
+            disk.set(data, offset);
+            const first = Math.floor(offset / BLOCK);
+            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
+            for (let block = first; block <= last; block++) dirty.add(block);
+            return data.byteLength;
+          },
+          async flush() {
+            if (dirty.size === 0) return;
+            const writable = await handle.createWritable({ keepExistingData: true });
+            for (const block of dirty) {
+              const offset = block * BLOCK;
+              await writable.write({
+                type: "write",
+                position: offset,
+                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
+              });
+            }
+            await writable.close();
+            dirty.clear();
+          },
+        };
+      }
+
+      // The page's network: guest HTTP/1 becomes HTTPS via the browser's
+      // fetch, which is exactly what `apk add` needs to reach the served repo.
+      const network = createNetwork(
+        fetchNetwork({
+          fetch: (request) => fetch(request),
+        }),
+      );
+      const { attachment } = attach_guest(network);
+
+      const initcpio = await fetch(initcpioPath).then((res) => res.ok && res.arrayBuffer());
+      if (!initcpio) {
+        term.write(`Failed to fetch initramfs.\n`);
+      }
+
+      const disk = await openDisk();
+
+      // The signed repo lives on R2; the guest speaks plaintext HTTP and
+      // fetchNetwork upgrades it to the https URL the page itself fetches.
+      const { repository } = await fetch("repo.json").then((res) => res.json());
+      const apkRepo = repository.replace(/^https:\/\//, "http://");
+      const machine = await spawnMachine({
+        // The guest's init configures eth0 and /etc/apk/repositories from these.
+        cmdline: [
+          `addr=${attachment.address}`,
+          `gw=${network.gateway}`,
+          `apkrepo=${apkRepo}`,
+          cmdline.replace(/\+/g, " "),
+        ].join(" "),
+        devices: [blockDevice(disk), ttyConsole, entropyDevice(), attachment.device],
+        initcpio: new Uint8Array(initcpio),
+      });
+
+      machine.bootConsole.pipeTo(bootOut);
+    </script>
+  </body>
+</html>

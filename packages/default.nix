@@ -95,6 +95,17 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # owned by their consumer packages.
     image = callPackage ./image { };
 
+    # The static site: a page that boots a wasm Linux kernel against the site's
+    # own userspace image. The repository is built unsigned and published to R2
+    # by scripts/publish-apk-repo.sh, which owns the signing key.
+    site-repository = callPackage ./site/repository.nix { };
+    site-rootfs = callPackage ./site/rootfs.nix {
+      repository = self.site-repository;
+    };
+    site = callPackage ./site/package.nix {
+      rootfs = self.site-rootfs;
+    };
+
     apk-checks = callPackage ./apk/checks.nix { };
     repositories = {
       main = mainRepository // {
