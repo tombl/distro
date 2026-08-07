@@ -38,16 +38,13 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   passthru.checks = {
-    roundtrip = vm-test.vmTest {
+    roundtrip = vm-test.installedTest {
       name = "zstd-roundtrip";
-      initramfs = vm-test.mkInitramfs {
-        name = "zstd-roundtrip";
-        init = ./roundtrip-test.sh;
-        contents = [
-          finalAttrs.finalPackage
-          busybox
-        ];
-      };
+      init = ./roundtrip-test.sh;
+      contents = [
+        finalAttrs.finalPackage
+        busybox
+      ];
     };
   };
 })

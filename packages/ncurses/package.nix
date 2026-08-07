@@ -21,8 +21,8 @@ stdenv.mkDerivation (finalAttrs: {
   # The database is compiled data shared across architectures, so it is
   # copied from a build-platform ncurses of the same version below rather
   # than compiled here with a target `tic` that cannot run. The default
-  # search dir is the FHS path the rootfs flattens $out/share into, so
-  # setupterm() finds it at runtime with no TERMINFO in the environment.
+  # search dir is the FHS path installed by the APK, so setupterm() finds it
+  # at runtime with no TERMINFO in the environment.
   configureFlags = [
     "--without-shared"
     "--without-debug"
@@ -90,17 +90,14 @@ stdenv.mkDerivation (finalAttrs: {
       };
     in
     {
-      terminfo = vm-test.vmTest {
+      terminfo = vm-test.installedTest {
         name = "ncurses-terminfo";
-        initramfs = vm-test.mkInitramfs {
-          name = "ncurses-terminfo";
-          init = ./ncurses-test.sh;
-          contents = [
-            busybox
-            finalAttrs.finalPackage
-            ncurses-test
-          ];
-        };
+        init = ./ncurses-test.sh;
+        contents = [
+          busybox
+          finalAttrs.finalPackage
+          ncurses-test
+        ];
       };
     };
 })

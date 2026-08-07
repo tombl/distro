@@ -11,8 +11,7 @@ export HOME=/root
 export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
-# git spawns git-remote-http (posix_spawn) and it opens /dev/null.
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+# git spawns git-remote-http (posix_spawn), which uses the runtime's /dev/null.
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 mkdir -p /root /tmp

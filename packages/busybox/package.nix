@@ -16,7 +16,8 @@
 
 let
   package = stdenv.mkDerivation (finalAttrs: {
-    name = "busybox";
+    pname = "busybox";
+    version = "1.37.0";
     inherit src;
 
     # busybox builds host tools with HOSTCC during the target build.
@@ -127,13 +128,10 @@ let
       let
         check =
           name: init:
-          vm-test.vmTest {
+          vm-test.installedTest {
             name = "busybox-${name}";
-            initramfs = vm-test.mkInitramfs {
-              name = "busybox-${name}";
-              inherit init;
-              contents = [ finalAttrs.finalPackage ];
-            };
+            inherit init;
+            contents = [ finalAttrs.finalPackage ];
           };
       in
       {

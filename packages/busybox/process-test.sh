@@ -8,7 +8,6 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mkdir -p /dev/pts /etc/network/if-pre-up.d /etc/network/if-up.d \
   /etc/network/if-down.d /etc/network/if-post-down.d /var/run || fail "creating runtime directories failed"
 mount -t devpts devpts /dev/pts || fail "mounting devpts failed"

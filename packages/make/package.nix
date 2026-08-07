@@ -13,6 +13,7 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "make";
   version = "4.4.1";
   inherit src;
+  passthru.apk.replaces = [ "busybox" ];
 
   # make runs every recipe through a child process. On wasm there is no
   # fork()/vfork(), only posix_spawn (clone+execve); make already has a full
@@ -38,17 +39,13 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "make-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "make-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, make last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

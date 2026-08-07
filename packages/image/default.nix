@@ -3,8 +3,7 @@
 rec {
   mkBundle = callPackage ./bundle.nix { };
   mkInitramfs = callPackage ./initramfs.nix { };
-  mkRootfs = callPackage ./rootfs.nix { };
-  mkGuestRootfs = callPackage ./guest-rootfs.nix { inherit mkRootfs; };
+  mkFilesystem = callPackage ./filesystem.nix { };
 
   bootInitramfs = callPackage ./boot-initramfs.nix { inherit mkInitramfs; };
 

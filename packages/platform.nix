@@ -3,6 +3,7 @@
 rec {
   targetTriple = "wasm32-unknown-linux-musl";
   multiarchTriple = "wasm32-linux-musl";
+  apkArch = "wasm32";
 
   # The elaborated nixpkgs platform used as the stdenv's host platform. The
   # kernel is Linux but the executable format is not ELF; getting that right
