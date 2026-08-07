@@ -106,6 +106,22 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       rootfs = self.site-rootfs;
     };
 
+    # The deploy wrapper. Building it realizes the site and wrangler; running
+    # it materializes the assets into ./deploy (dereferencing the store
+    # symlinks) and invokes wrangler with the given subcommand, defaulting to
+    # `deploy` for production and `versions upload` for a preview.
+    site-deploy = pkgs.writeShellScript "site-deploy" ''
+      set -euo pipefail
+      root="$(git rev-parse --show-toplevel)"
+      cd "$root"
+      # A previous run leaves deploy/ read-only (copied from the store).
+      chmod -R u+w deploy 2>/dev/null || true
+      rm -rf deploy
+      cp -rL ${self.site} deploy
+      chmod -R u+w deploy
+      exec ${pkgs.wrangler}/bin/wrangler "''${1:-deploy}" "''${@:2}"
+    '';
+
     apk-checks = callPackage ./apk/checks.nix { };
     repositories = {
       main = mainRepository // {

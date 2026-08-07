@@ -119,24 +119,18 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: "https://7d87194d9d4af2959fb81de343dd63d9.r2.cloudflarestorage.com"
         run: |
           packages/site/scripts/publish-apk-repo.sh
-      - name: Build site
-        run: |
-          nix build .#site --out-link result --print-build-logs
-          rm -rf deploy && cp -rL result deploy
       - name: Deploy production
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
         run: |
-          nix develop .#ci --command wrangler deploy
+          nix run .#wrangler-deploy
       - name: Deploy preview
         if: github.event_name == 'pull_request'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
         run: |
-          # Upload a version without deploying: it gets a unique, stable
-          # workers.dev preview URL and production traffic is untouched.
-          nix develop .#ci --command wrangler versions upload
+          nix run .#wrangler-preview
 
   stage-npm:
     name: Stage packages on npm
