@@ -19,15 +19,9 @@ for p in file http https; do
   echo "$protocols" | grep -qw "$p" || fail "protocol $p missing from: $protocols"
 done
 
-# The VM harness has no external NIC, so it cannot reach a public TLS endpoint.
-# Assert the configure-time default used by curl and the trust anchors that will
-# back a verified handshake in networked images.
-ca_bundle=/etc/ssl/certs/ca-certificates.crt
-[ "$(curl-config --ca)" = "$ca_bundle" ] ||
-  fail "unexpected default CA bundle: $(curl-config --ca)"
-[ -s "$ca_bundle" ] || fail "default CA bundle is missing or empty"
-grep -q '^-----BEGIN CERTIFICATE-----$' "$ca_bundle" ||
-  fail "default CA bundle contains no certificates"
+# HTTPS leaves the guest through the host Fetch bridge, so curl must not bake a
+# nonexistent guest trust-store path into the package.
+[ -z "$(curl-config --ca)" ] || fail "unexpected default CA bundle: $(curl-config --ca)"
 
 # (b) file:// round trip: fetch a local file through curl and byte-compare.
 : >/tmp/data

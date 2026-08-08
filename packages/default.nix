@@ -20,7 +20,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
   self:
   let
     inherit (self) callPackage;
-    mainRepository = callPackage ./repositories/main.nix { };
+    baseRepository = callPackage ./repository.nix { };
   in
   {
     inherit debug;
@@ -68,7 +68,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
-    ca-certificates = callPackage ./ca-certificates/package.nix { };
     curl = callPackage ./curl/package.nix { };
     dropbear = callPackage ./dropbear/package.nix { };
     file = callPackage ./file/package.nix { };
@@ -96,14 +95,11 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     image = callPackage ./image { };
 
     apk-checks = callPackage ./apk/checks.nix { };
-    repositories = {
-      main = mainRepository // {
-        checks.install = self.apk-checks.install;
+    repository = baseRepository // {
+      checks = {
+        inherit (self.apk-checks) install store-references;
       };
-      recurseForDerivations = true;
     };
-    # Conventional flat flake entry point for the primary published artifact.
-    repository = mainRepository;
 
     # The private guest protocol and its JavaScript SDK ship together.
     guest-agent = callPackage ./guest-agent/package.nix { };

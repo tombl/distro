@@ -4,14 +4,14 @@
   guest-agent,
   image,
   pkgs,
-  repositories,
+  repository,
 }:
 
 image.mkFilesystem {
   name = "guest-rootfs";
   root = apk.mkSystem {
     name = "guest";
-    repositories = [ repositories.main ];
+    repositories = [ repository ];
     packages = [
       busybox
       guest-agent

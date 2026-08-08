@@ -6,7 +6,6 @@
     hash = "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=";
   },
   busybox,
-  ca-certificates,
   zlib,
   curl,
   openssl,
@@ -157,10 +156,6 @@ stdenv.mkDerivation (finalAttrs: {
   installTargets = [ "install" ];
   installFlags = [ "DESTDIR=${placeholder "out"}" ];
 
-  # The CA bundle is a dependency-owned runtime file, not part of the payload:
-  # installing it here would conflict with the ca-certificates package.
-  passthru.apk.depends = [ "ca-certificates" ];
-
   passthru.checks =
     let
       check =
@@ -172,7 +167,6 @@ stdenv.mkDerivation (finalAttrs: {
           # cat (the pager), and the coreutils the test drives.
           contents = [
             busybox
-            ca-certificates
             finalAttrs.finalPackage
           ];
         };

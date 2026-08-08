@@ -16,7 +16,6 @@
 # Share records contain only a fixed tag/mode and a base64-encoded absolute
 # guest path. Keeping the path out of shell syntax makes spaces and metacharacters
 # safe; the runner rejects control characters before constructing the record.
-set -f
 for parameter in $(/bin/busybox cat /proc/cmdline); do
   case "$parameter" in
   wasm.share=*)
@@ -54,6 +53,4 @@ for parameter in $(/bin/busybox cat /proc/cmdline); do
     ;;
   esac
 done
-set +f
-
 exec /bin/busybox setsid /bin/busybox cttyhack /bin/busybox sh

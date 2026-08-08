@@ -34,9 +34,8 @@ test("runner mounts writable and read-only host shares", async (t) => {
     { stdio: ["pipe", "pipe", "pipe"] },
   );
   let output = "";
-  child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  child.stdin.end(`
+  let sentCommands = false;
+  const commands = `
 printf 'from guest\\n' > '/workspace/writable share/guest.txt'
 cat '/workspace/read only/host.txt'
 if printf 'changed\\n' > '/workspace/read only/host.txt'; then
@@ -45,7 +44,16 @@ else
   printf '%s%s\\n' READ_ONLY_ ENFORCED
 fi
 /sbin/poweroff -f
-`);
+`;
+  const consume = (chunk: Buffer) => {
+    output += chunk.toString();
+    if (!sentCommands && output.includes("~ #")) {
+      sentCommands = true;
+      child.stdin.end(commands);
+    }
+  };
+  child.stdout.on("data", consume);
+  child.stderr.on("data", consume);
 
   const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve, reject) => {
@@ -55,8 +63,8 @@ fi
   );
   assert.deepEqual(result, { code: 0, signal: null }, output);
   assert.match(output, /from host/);
-  assert.match(output, /READ_ONLY_ENFORCED/);
-  assert.doesNotMatch(output, /READ_ONLY_WRITE_SUCCEEDED/);
+  assert.match(output, /(?:^|\r?\n)READ_ONLY_ENFORCED\r?(?:\n|$)/);
+  assert.doesNotMatch(output, /(?:^|\r?\n)READ_ONLY_WRITE_SUCCEEDED\r?(?:\n|$)/);
   assert.equal(await readFile(path.join(writable, "guest.txt"), "utf8"), "from guest\n");
   assert.equal(await readFile(path.join(readonly, "host.txt"), "utf8"), "from host\n");
 });

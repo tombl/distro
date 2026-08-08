@@ -4,7 +4,6 @@
   basic-init,
   busybox,
   bzip2,
-  ca-certificates,
   curl,
   dropbear,
   file,
@@ -30,14 +29,13 @@
 # serves. Membership is the aports equivalent of a repository directory; each
 # derivation carries its optional APK metadata as passthru.apk.
 apk.mkRepository {
-  name = "main";
+  name = "repository";
   packages = {
     inherit
       apk-tools
       basic-init
       busybox
       bzip2
-      ca-certificates
       curl
       dropbear
       file

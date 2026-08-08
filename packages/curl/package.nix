@@ -9,7 +9,6 @@
   zlib,
   vm-test,
   busybox,
-  ca-certificates,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -27,9 +26,8 @@ stdenv.mkDerivation (finalAttrs: {
   # turned off explicitly so the cross configure cannot latch onto a stray
   # host copy. Plain HTTP/HTTPS/FILE transfers need no fork; the threaded
   # resolver is disabled so name lookups stay in-process (numeric addresses
-  # in the VM check resolve without DNS regardless). The CA bundle path is an
-  # absolute guest path: $out is only a staging root and does not exist once
-  # this slice is overlaid onto the guest filesystem.
+  # in the VM check resolve without DNS regardless). Guest HTTPS is bridged by
+  # the host Fetch implementation, so the package carries no CA trust store.
   configureFlags = [
     "--disable-shared"
     "--enable-static"
@@ -53,14 +51,10 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ngtcp2"
     "--without-libssh2"
     "--without-libssh"
-    "--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt"
+    "--without-ca-bundle"
     "--without-ca-path"
     "--without-ca-embed"
   ];
-
-  # The CA bundle is a dependency-owned runtime file, not part of the payload:
-  # installing it here would conflict with the ca-certificates package.
-  passthru.apk.depends = [ "ca-certificates" ];
 
   passthru.checks = {
     transfers = vm-test.installedTest {
@@ -70,7 +64,6 @@ stdenv.mkDerivation (finalAttrs: {
         # curl-config and wcurl are shell scripts. Runnable distro images
         # always install BusyBox as their /bin/sh provider.
         busybox
-        ca-certificates
         finalAttrs.finalPackage
       ];
     };

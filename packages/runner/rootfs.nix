@@ -13,7 +13,7 @@
   openssl,
   python,
   quickjs,
-  repositories,
+  repository,
   sqlite3,
   vm-test,
   zstd,
@@ -24,7 +24,7 @@ let
     name = "runner-rootfs";
     root = apk.mkSystem {
       name = "runner";
-      repositories = [ repositories.main ];
+      repositories = [ repository ];
       packages = [
         basic-init
         busybox

@@ -3,6 +3,8 @@
   lib,
   tools,
   platform,
+  llvm-toolchain-unwrapped,
+  checkStoreReferences,
 }:
 
 let
@@ -58,7 +60,10 @@ let
     pkgs.runCommand "apk-${name}-${version}"
       {
         nativeBuildInputs = [
+          checkStoreReferences
           pkgs.fakeroot
+          pkgs.perl
+          llvm-toolchain-unwrapped
           tools
         ];
         passthru = {
@@ -77,6 +82,38 @@ let
         mkdir -p $out root
         cp -a --no-preserve=ownership ${payload}/. root/
         chmod -R u+w root
+
+        # Nix outputs and their dependencies are installed at store paths,
+        # while all corresponding APKs are installed under /. Relocate text
+        # metadata and absolute symlinks, then discard build-only paths from
+        # wasm objects and archives. Binary path prefixes are overwritten with
+        # the same number of slashes: this preserves section offsets while the
+        # guest resolves the resulting path under /.
+        while IFS= read -r -d "" link; do
+          target=$(readlink "$link")
+          relocated=$(printf '%s' "$target" | sed -E \
+            's|/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/]+||g')
+          if [ "$relocated" != "$target" ]; then
+            ln -sfn "$relocated" "$link"
+          fi
+        done < <(find root -type l -print0)
+        while IFS= read -r -d "" file; do
+          if grep -Iq . "$file" && grep -Eq \
+            '/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-' "$file"; then
+            sed -Ei \
+              's|/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/[:space:]"'"'"']+||g' \
+              "$file"
+          fi
+          llvm-strip --strip-debug "$file" 2>/dev/null || true
+          perl -0777 -pi -e \
+            's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
+            "$file"
+        done < <(find root -type f -print0)
+
+        # APK payloads run outside Nix and must be self-contained. Check the
+        # uncompressed tree, including symlink targets, before mkpkg hides file
+        # contents inside its compressed archive.
+        apk-check-store-references root ${lib.concatStringsSep " " (map toString (builtins.attrValues normalizedScripts))}
 
         # apk mkpkg builds the archive from on-disk ownership, so the payload
         # must look root-owned. fakeroot records the chown so the archive

@@ -32,7 +32,10 @@ pkgs.runCommand "${name}.${format}"
     mkdir root
     cp -a --no-preserve=ownership ${root}/. root/
     chmod -R u+w root
-    mkdir -p root/dev root/proc root/run root/sys root/tmp root/workspace
+    # The standard FHS dirs. /root in particular is the root user's home:
+    # programs that chdir to it before exec (busybox crond's job children)
+    # fail without it.
+    mkdir -p root/dev root/proc root/root root/run root/sys root/tmp root/workspace
     chmod 01777 root/tmp
 
     ${

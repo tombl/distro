@@ -36,6 +36,19 @@ let
     name = "apk-install-repository";
     version = "1-r0";
   };
+  storeReferences = pkgs.runCommand "apk-store-reference-check" { } ''
+    mkdir -p clean bad
+    printf '%s\n' guest-path > clean/path
+    ${apk.checkStoreReferences}/bin/apk-check-store-references clean
+
+    printf '%s\n' /nix/store/00000000000000000000000000000000-forbidden > bad/file
+    ln -s /nix/store/11111111111111111111111111111111-forbidden bad/link
+    if ${apk.checkStoreReferences}/bin/apk-check-store-references bad; then
+      echo "store-reference checker accepted a contaminated payload" >&2
+      exit 1
+    fi
+    touch $out
+  '';
 in
 {
   install = vm-test.installedTest {
@@ -47,4 +60,5 @@ in
       repositoryPackage
     ];
   };
+  store-references = storeReferences;
 }
