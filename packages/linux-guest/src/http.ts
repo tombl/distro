@@ -31,7 +31,13 @@ function parse_head(text: string, strict_crlf: boolean): HttpHead {
       throw new Error(`malformed HTTP header: ${header}`);
     }
     const name = header.slice(0, colon);
-    const value = header.slice(colon + 1).trim();
+    // RFC 9112 forbids CR inside field values, and control characters other
+    // than HTAB and SP have no place in them at all.
+    const raw_value = header.slice(colon + 1);
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\r]/.test(raw_value)) {
+      throw new Error(`malformed HTTP header: ${header}`);
+    }
+    const value = raw_value.trim();
     rawHeaders.push([name, value]);
     headers.append(name, value);
   }
@@ -125,10 +131,16 @@ export class ByteReader {
       if (index !== -1) {
         if (index + 1 > MAX_LINE_BYTES) throw new Error("HTTP line too long");
         const bytes = this.#consume(index + 1);
-        if (this.#strict_crlf && (index === 0 || bytes[index - 1] !== 0x0d)) {
-          throw new Error("HTTP requires CRLF line endings");
-        }
         const end = index > 0 && bytes[index - 1] === 0x0d ? index - 1 : index;
+        if (this.#strict_crlf) {
+          if (index === 0 || bytes[index - 1] !== 0x0d) {
+            throw new Error("HTTP requires CRLF line endings");
+          }
+          // A CR may only be the line terminator, never inside the line.
+          for (let at = 0; at < end; at++) {
+            if (bytes[at] === 0x0d) throw new Error("HTTP requires CRLF line endings");
+          }
+        }
         return decoder.decode(bytes.subarray(0, end));
       }
       if (this.#buffer.byteLength > MAX_LINE_BYTES) throw new Error("HTTP line too long");
@@ -160,7 +172,9 @@ export class ByteReader {
 export function parse_request_line(line: string): { method: string; target: string } {
   const match = /^([A-Z]+) (\/[^ ]*) HTTP\/1\.[01]$/.exec(line);
   if (!match) throw new Error(`unsupported HTTP request line: ${line}`);
-  if (/[#\\\u0000-\u001f\u007f]/.test(match[2]!)) {
+  // Request targets are ASCII URIs; anything else (control characters,
+  // non-ASCII bytes, fragments) must be percent-encoded.
+  if (/[#\\\u0000-\u001f\u007f-\uffff]/.test(match[2]!)) {
     throw new Error(`unsupported HTTP request target: ${match[2]}`);
   }
   return { method: match[1]!, target: match[2]! };
@@ -227,6 +241,10 @@ export function fixed_body(reader: ByteReader, length: number): ReadableStream<U
   });
 }
 
+/** RFC 9112 chunk-size syntax: hex digits plus optional chunk extensions. */
+const CHUNK_SIZE_RE =
+  /^[0-9a-fA-F]+(?:;[!#$%&'*+.^_`|~0-9A-Za-z-]+(?:=(?:"[^"]*"|[!#$%&'*+.^_`|~0-9A-Za-z-]+))?)*$/;
+
 /** Decodes a chunked transfer coding, discarding any trailer fields. */
 export function chunked_body(reader: ByteReader): ReadableStream<Uint8Array> {
   let remaining = 0;
@@ -238,10 +256,13 @@ export function chunked_body(reader: ByteReader): ReadableStream<Uint8Array> {
           if ((await reader.line()) !== "") throw new Error("malformed chunk boundary");
           between_chunks = false;
         }
-        const size = (await reader.line()).split(";")[0]!.trim();
-        if (!/^[0-9a-fA-F]+$/.test(size)) throw new Error(`malformed chunk size: ${size}`);
-        remaining = Number.parseInt(size, 16);
-        if (!Number.isSafeInteger(remaining)) throw new Error(`chunk size is too large: ${size}`);
+        const size_line = await reader.line();
+        if (!CHUNK_SIZE_RE.test(size_line)) {
+          throw new Error(`malformed chunk size: ${size_line}`);
+        }
+        remaining = Number.parseInt(size_line, 16);
+        if (!Number.isSafeInteger(remaining))
+          throw new Error(`chunk size is too large: ${size_line}`);
         if (remaining === 0) {
           let trailer_bytes = 0;
           for (;;) {
