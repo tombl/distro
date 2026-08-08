@@ -1,5 +1,6 @@
 .*
 !.gitignore
+!.gitattributes
 !.github
 node_modules
 result*
