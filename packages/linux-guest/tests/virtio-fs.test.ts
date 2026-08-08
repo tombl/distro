@@ -97,12 +97,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     return new MemoryHandle(current);
   }
 
-  create(
-    parent: MemoryNode,
-    name: string,
-    _flags: number,
-    context: FSCreateContext,
-  ) {
+  create(parent: MemoryNode, name: string, _flags: number, context: FSCreateContext) {
     const directory = this.#directory(parent);
     if (directory.children.has(name)) throw new FSError("EEXIST");
     const node = new MemoryNode("file", context.mode);
@@ -110,22 +105,12 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     return { node, handle: new MemoryHandle(node) };
   }
 
-  read(
-    node: MemoryNode,
-    _handle: MemoryHandle,
-    offset: bigint,
-    length: number,
-  ) {
+  read(node: MemoryNode, _handle: MemoryHandle, offset: bigint, length: number) {
     const current = this.#node(node);
     return current.data.slice(Number(offset), Number(offset) + length);
   }
 
-  write(
-    node: MemoryNode,
-    _handle: MemoryHandle,
-    offset: bigint,
-    data: Uint8Array,
-  ) {
+  write(node: MemoryNode, _handle: MemoryHandle, offset: bigint, data: Uint8Array) {
     const current = this.#node(node);
     const start = Number(offset);
     if (start + data.byteLength > current.data.byteLength) {
@@ -195,12 +180,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
     directory.children.delete(name);
   }
 
-  rename(
-    oldParent: MemoryNode,
-    oldName: string,
-    newParent: MemoryNode,
-    newName: string,
-  ) {
+  rename(oldParent: MemoryNode, oldName: string, newParent: MemoryNode, newName: string) {
     const old_directory = this.#directory(oldParent);
     const node = old_directory.children.get(oldName);
     if (!node) throw new FSError("ENOENT");
@@ -211,9 +191,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 
 guest_test("virtio-fs", async (_t, fixture) => {
   const backend = new MemoryFileSystem();
-  const guest = await fixture.spawn([
-    fileSystemDevice(backend, { tag: "test", cache: false }),
-  ]);
+  const guest = await fixture.spawn([fileSystemDevice(backend, { tag: "test", cache: false })]);
   const mounted = await guest.exec([
     "sh",
     "-c",
