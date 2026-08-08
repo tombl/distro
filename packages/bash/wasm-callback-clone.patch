@@ -1,0 +1,644 @@
+--- a/jobs.h
++++ b/jobs.h
+@@ -294,7 +294,10 @@
+ extern void list_stopped_jobs (int);
+ extern void list_running_jobs (int);
+ 
+-extern pid_t make_child (char *, int);
++typedef int sh_child_func_t (void *);
++
++extern pid_t make_child (char *, int, sh_child_func_t *, void *);
++extern pid_t make_child_fork (char *, int);
+ 
+ extern int get_tty_state (void);
+ extern int set_tty_state (void);
+--- a/jobs.c
++++ b/jobs.c
+@@ -66,6 +66,7 @@
+ #include "execute_cmd.h"
+ #include "flags.h"
+ 
++#include "bash-clone.h"
+ #include "typemax.h"
+ 
+ #include "builtins/builtext.h"
+@@ -2257,12 +2258,104 @@
+   map_over_jobs (print_job, format, -1);
+ }
+ 
++/* Deliberate guard for make_child callers whose child continuation has not
++   been converted yet.  The wasm fork shim diagnoses the exact gap and traps;
++   it cannot be mistaken for a recoverable process-creation failure. */
++pid_t
++make_child_fork (char *command, int flags)
++{
++  (void)command;
++  (void)flags;
++  return fork ();
++}
++
++typedef struct
++{
++  sh_child_func_t *child_func;
++  void *child_arg;
++  int flags;
++} MAKE_CHILD_ARGS;
++
++/* Entered on bash_clone's fresh child stack.  ARGS and every continuation
++   it references are heap objects captured by clone's private memory copy. */
++static int
++make_child_callback (void *vargs)
++{
++  MAKE_CHILD_ARGS *args;
++  sh_child_func_t *child_func;
++  void *child_arg;
++  int async_p, flags;
++  pid_t mypid;
++
++  args = (MAKE_CHILD_ARGS *)vargs;
++  child_func = args->child_func;
++  child_arg = args->child_arg;
++  flags = args->flags;
++  async_p = (flags & FORK_ASYNC);
++
++  subshell_environment |= SUBSHELL_IGNTRAP;
++  mypid = getpid ();
++
++  /* Close default_buffered_input if it's > 0.  We don't close it if it's
++     0 because that's the file descriptor used when redirecting input. */
++  unset_bash_input (0);
++
++  CLRINTERRUPT;
++
++  /* Restore top-level signal mask, including unblocking SIGTERM. */
++  restore_sigmask ();
++
++  if (job_control)
++    {
++      if (pipeline_pgrp == 0)
++        pipeline_pgrp = mypid;
++
++      if (pipeline_pgrp == shell_pgrp)
++        ignore_tty_job_signals ();
++      else
++        default_tty_job_signals ();
++
++      if ((flags & FORK_NOJOB) == 0 && setpgid (mypid, pipeline_pgrp) < 0)
++        sys_error (_("child setpgid (%ld to %ld)"), (long)mypid,
++                   (long)pipeline_pgrp);
++
++      if ((flags & FORK_NOTERM) == 0 && async_p == 0 &&
++          pipeline_pgrp != shell_pgrp &&
++          ((subshell_environment & (SUBSHELL_ASYNC|SUBSHELL_PIPE)) == 0) &&
++          running_in_background == 0)
++        give_terminal_to (pipeline_pgrp, 0);
++
++#if defined (PGRP_PIPE)
++      if (pipeline_pgrp == mypid)
++        pipe_read (pgrp_pipe);
++#endif
++    }
++  else
++    {
++      if (pipeline_pgrp == 0)
++        pipeline_pgrp = shell_pgrp;
++      default_tty_job_signals ();
++    }
++
++#if defined (PGRP_PIPE)
++  sh_closepipe (pgrp_pipe);
++#endif
++
++#if defined (RECYCLES_PIDS)
++  if (last_asynchronous_pid == mypid)
++    last_asynchronous_pid = 1;
++#endif
++
++  return child_func (child_arg);
++}
++
+-/* Fork, handling errors.  Returns the pid of the newly made child, or 0.
++/* Clone a child, handling errors.  Returns its pid in the parent.
+    COMMAND is just for remembering the name of the command; we don't do
+    anything else with it.  ASYNC_P says what to do with the tty.  If
+    non-zero, then don't give it away. */
+ pid_t
+-make_child (char *command, int flags)
++make_child (char *command, int flags, sh_child_func_t *child_func,
++            void *child_arg)
+ {
+   int async_p;
+   unsigned int forksleep;
+@@ -2269,6 +2362,7 @@
+   pid_t pid;
+   PROCESS *child;
+   SigHandler *oterm;
++  MAKE_CHILD_ARGS *args;
+ 
+   sigemptyset (&oset_copy);
+   sigprocmask (SIG_BLOCK, (sigset_t *)NULL, &oset_copy);
+@@ -2294,6 +2388,11 @@
+   async_p = (flags & FORK_ASYNC);
+   forksleep = 1;
+ 
++  args = (MAKE_CHILD_ARGS *)xmalloc (sizeof (MAKE_CHILD_ARGS));
++  args->child_func = child_func;
++  args->child_arg = child_arg;
++  args->flags = flags;
++
+   /* If default_buffered_input is active, we are reading a script.  If
+      the command is asynchronous, we have already duplicated /dev/null
+      as fd 0, but have not changed the buffered stream corresponding to
+@@ -2302,7 +2401,8 @@
+     sync_buffered_stream (default_buffered_input);
+ 
+   /* Create the child, handle severe errors.  Retry on EAGAIN. */
+-  while ((pid = fork ()) < 0 && errno == EAGAIN && forksleep < FORKSLEEP_MAX)
++  while ((pid = bash_clone (make_child_callback, args)) < 0 &&
++         errno == EAGAIN && forksleep < FORKSLEEP_MAX)
+     {
+       /* bash-4.2 */
+       /* keep SIGTERM blocked until we reset the handler to SIG_IGN */
+@@ -2311,7 +2411,7 @@
+       waitchld (-1, 0);
+ 
+       errno = EAGAIN;		/* restore errno */
+-      sys_error ("fork: retry");
++      sys_error ("clone: retry");
+ 
+       if (sleep (forksleep) != 0)
+ 	break;
+@@ -2322,13 +2422,14 @@
+       sigprocmask (SIG_SETMASK, &set, (sigset_t *)NULL);
+     }
+ 
+-  if (pid != 0)
+-    if (interactive_shell)
+-      set_signal_handler (SIGTERM, oterm);
++  free (args);
++
++  if (interactive_shell)
++    set_signal_handler (SIGTERM, oterm);
+ 
+   if (pid < 0)
+     {
+-      sys_error ("fork");
++      sys_error ("clone");
+ 
+       /* Kill all of the processes in the current pipeline. */
+       terminate_current_pipeline ();
+@@ -2340,100 +2441,8 @@
+       set_exit_status (EX_NOEXEC);
+       throw_to_top_level ();	/* Reset signals, etc. */
+     }
+ 
+-  if (pid == 0)
+-    {
+-      /* In the child.  Give this child the right process group, set the
+-	 signals to the default state for a new process. */
+-      pid_t mypid;
+-
+-      subshell_environment |= SUBSHELL_IGNTRAP;
+-
+-      /* If this ends up being changed to modify or use `command' in the
+-	 child process, go back and change callers who free `command' in
+-	 the child process when this returns. */
+-      mypid = getpid ();
+-
+-      /* Close default_buffered_input if it's > 0.  We don't close it if it's
+-	 0 because that's the file descriptor used when redirecting input,
+-	 and it's wrong to close the file in that case. */
+-      unset_bash_input (0);
+-
+-      CLRINTERRUPT;	/* XXX - children have their own interrupt state */
+-
+-      /* Restore top-level signal mask, including unblocking SIGTERM */
+-      restore_sigmask ();
+-  
+-      if (job_control)
+-	{
+-	  /* All processes in this pipeline belong in the same
+-	     process group. */
+-
+-	  if (pipeline_pgrp == 0)	/* This is the first child. */
+-	    pipeline_pgrp = mypid;
+-
+-	  /* Check for running command in backquotes. */
+-	  /* XXX - do this if (flags & FORK_NOJOB)? */
+-	  if (pipeline_pgrp == shell_pgrp)
+-	    ignore_tty_job_signals ();
+-	  else
+-	    default_tty_job_signals ();
+-
+-	  /* Set the process group before trying to mess with the terminal's
+-	     process group.  This is mandated by POSIX. */
+-	  /* This is in accordance with the Posix 1003.1 standard,
+-	     section B.7.2.4, which says that trying to set the terminal
+-	     process group with tcsetpgrp() to an unused pgrp value (like
+-	     this would have for the first child) is an error.  Section
+-	     B.4.3.3, p. 237 also covers this, in the context of job control
+-	     shells. */
+-	  if ((flags & FORK_NOJOB) == 0 && setpgid (mypid, pipeline_pgrp) < 0)
+-	    sys_error (_("child setpgid (%ld to %ld)"), (long)mypid, (long)pipeline_pgrp);
+-
+-	  /* By convention (and assumption above), if
+-	     pipeline_pgrp == shell_pgrp, we are making a child for
+-	     command substitution.
+-	     In this case, we don't want to give the terminal to the
+-	     shell's process group (we could be in the middle of a
+-	     pipeline, for example). */
+-	  if ((flags & FORK_NOTERM) == 0 && async_p == 0 && pipeline_pgrp != shell_pgrp && ((subshell_environment&(SUBSHELL_ASYNC|SUBSHELL_PIPE)) == 0) && running_in_background == 0)
+-	    give_terminal_to (pipeline_pgrp, 0);
+-
+-#if defined (PGRP_PIPE)
+-	  if (pipeline_pgrp == mypid)
+-	    pipe_read (pgrp_pipe);
+-#endif
+-	}
+-      else			/* Without job control... */
+-	{
+-	  if (pipeline_pgrp == 0)
+-	    pipeline_pgrp = shell_pgrp;
+-
+-	  /* If these signals are set to SIG_DFL, we encounter the curious
+-	     situation of an interactive ^Z to a running process *working*
+-	     and stopping the process, but being unable to do anything with
+-	     that process to change its state.  On the other hand, if they
+-	     are set to SIG_IGN, jobs started from scripts do not stop when
+-	     the shell running the script gets a SIGTSTP and stops. */
+-
+-	  default_tty_job_signals ();
+-	}
+-
+-#if defined (PGRP_PIPE)
+-      /* Release the process group pipe, since our call to setpgid ()
+-	 is done.  The last call to sh_closepipe is done in stop_pipeline. */
+-      sh_closepipe (pgrp_pipe);
+-#endif /* PGRP_PIPE */
+-
+-      /* Don't set last_asynchronous_pid in the child */
+-
+-#if defined (RECYCLES_PIDS)
+-      if (last_asynchronous_pid == mypid)
+-	/* Avoid pid aliasing.  1 seems like a safe, unusual pid value. */
+-	last_asynchronous_pid = 1;
+-#endif
+-    }
+-  else
++  /* bash_clone returns only in the parent. */
+     {
+       /* In the parent.  Remember the pid of the child just created
+ 	 as the proper pgrp if this is the first child. */
+--- a/subst.c
++++ b/subst.c
+@@ -6408,6 +6408,6 @@
+ #endif /* JOB_CONTROL */
+ 
+-  pid = make_child ((char *)NULL, FORK_ASYNC|FORK_PROCSUB);
++  pid = make_child_fork ((char *)NULL, FORK_ASYNC|FORK_PROCSUB);
+   if (pid == 0)
+     {
+ #if 0
+@@ -7130,6 +7130,115 @@
+   return (ret);
+ }
+ 
++typedef struct
++{
++  char *string;
++  int read_fd;
++  int write_fd;
++  int expand_flags;
++  int parse_flags;
++} COMMAND_SUBSTITUTE_ARGS;
++
++static int
++command_substitute_child (void *vargs)
++{
++  COMMAND_SUBSTITUTE_ARGS *args;
++  int function_value, rc, result;
++
++  args = (COMMAND_SUBSTITUTE_ARGS *)vargs;
++
++  reset_signal_handlers ();
++  if (ISINTERRUPT)
++    {
++      kill (getpid (), SIGINT);
++      CLRINTERRUPT;
++    }
++  QUIT;
++  subshell_environment |= SUBSHELL_RESETTRAP;
++  subshell_environment &= ~SUBSHELL_IGNTRAP;
++
++#if defined (JOB_CONTROL)
++  set_sigchld_handler ();
++#endif
++  /* The callback bypasses command_substitute's common post-fork path.  Do
++     not let the child treat the parent's in-progress pipeline as its own. */
++  stop_making_children ();
++
++  interactive = 0;
++
++#if defined (JOB_CONTROL)
++  if (pipeline_pgrp > 0 && pipeline_pgrp != shell_pgrp)
++    shell_pgrp = pipeline_pgrp;
++#endif
++
++  set_sigint_handler ();
++  free_pushed_string_input ();
++  fpurge (stdout);
++
++  if (dup2 (args->write_fd, 1) < 0)
++    {
++      sys_error ("%s", _("command_substitute: cannot duplicate pipe as fd 1"));
++      exit (EXECUTION_FAILURE);
++    }
++
++  if ((args->write_fd != fileno (stdin)) &&
++      (args->write_fd != fileno (stdout)) &&
++      (args->write_fd != fileno (stderr)))
++    close (args->write_fd);
++  if ((args->read_fd != fileno (stdin)) &&
++      (args->read_fd != fileno (stdout)) &&
++      (args->read_fd != fileno (stderr)))
++    close (args->read_fd);
++
++  subshell_environment |= SUBSHELL_COMSUB;
++  change_flag ('v', FLAG_OFF);
++  if (inherit_errexit == 0)
++    {
++      builtin_ignoring_errexit = 0;
++      change_flag ('e', FLAG_OFF);
++    }
++  set_shellopts ();
++
++  if (expanding_redir)
++    {
++      flush_temporary_env ();
++      expanding_redir = 0;
++    }
++
++  remove_quoted_escapes (args->string);
++  if (expand_aliases && (args->expand_flags & PF_BACKQUOTE) == 0)
++    expand_aliases = posixly_correct == 0;
++
++  startup_state = 2;
++  parse_and_execute_level = 0;
++  result = setjmp_nosigs (top_level);
++
++  if (result == 0 && return_catch_flag)
++    function_value = setjmp_nosigs (return_catch);
++  else
++    function_value = 0;
++
++  if (result == ERREXIT || result == EXITPROG || result == EXITBLTIN)
++    rc = last_command_exit_value;
++  else if (result)
++    rc = EXECUTION_FAILURE;
++  else if (function_value)
++    rc = return_catch_value;
++  else
++    {
++      subshell_level++;
++      rc = parse_and_execute (args->string, "command substitution",
++                              args->parse_flags | SEVAL_NOHIST);
++    }
++
++  last_command_exit_value = rc;
++  rc = run_exit_trap ();
++#if defined (PROCESS_SUBSTITUTION)
++  unlink_fifo_list ();
++#endif
++  exit (rc);
++}
++
+ /* Perform command substitution on STRING.  This returns a WORD_DESC * with the
+    contained string possibly quoted. */
+ WORD_DESC *
+@@ -7137,8 +7246,9 @@
+ {
+   pid_t pid, old_pid, old_pipeline_pgrp, old_async_pid;
+   char *istring, *s;
+-  int result, fildes[2], function_value, pflags, rc, tflag, fork_flags;
++  int fildes[2], pflags, tflag, fork_flags;
+   WORD_DESC *ret;
++  COMMAND_SUBSTITUTE_ARGS *child_args;
+   sigset_t set, oset;
+ 
+   istring = (char *)NULL;
+@@ -7248,31 +7358,21 @@
+ 
+   old_async_pid = last_asynchronous_pid;
+   fork_flags = (subshell_environment&SUBSHELL_ASYNC) ? FORK_ASYNC : 0;
+-  pid = make_child ((char *)NULL, fork_flags|FORK_NOTERM|FORK_COMSUB);
++  child_args = (COMMAND_SUBSTITUTE_ARGS *)xmalloc (sizeof (*child_args));
++  child_args->string = string;
++  child_args->read_fd = fildes[0];
++  child_args->write_fd = fildes[1];
++  child_args->expand_flags = flags;
++  child_args->parse_flags = pflags;
++  pid = make_child ((char *)NULL, fork_flags|FORK_NOTERM|FORK_COMSUB,
++                    command_substitute_child, child_args);
++  free (child_args);
+   last_asynchronous_pid = old_async_pid;
+ 
+-  if (pid == 0)
+-    {
+-      /* Reset the signal handlers in the child, but don't free the
+-	 trap strings.  Set a flag noting that we have to free the
+-	 trap strings if we run trap to change a signal disposition. */
+-      reset_signal_handlers ();
+-      if (ISINTERRUPT)
+-	{
+-	  kill (getpid (), SIGINT);
+-	  CLRINTERRUPT;		/* if we're ignoring SIGINT somehow */
+-	}	
+-      QUIT;	/* catch any interrupts we got post-fork */
+-      subshell_environment |= SUBSHELL_RESETTRAP;
+-      subshell_environment &= ~SUBSHELL_IGNTRAP;
+-    }
+-
+ #if defined (JOB_CONTROL)
+-  /* XXX DO THIS ONLY IN PARENT ? XXX */
+   set_sigchld_handler ();
+   stop_making_children ();
+-  if (pid != 0)
+-    pipeline_pgrp = old_pipeline_pgrp;
++  pipeline_pgrp = old_pipeline_pgrp;
+ #else
+   stop_making_children ();
+ #endif /* JOB_CONTROL */
+@@ -7290,131 +7390,6 @@
+       return ((WORD_DESC *)NULL);
+     }
+ 
+-  if (pid == 0)
+-    {
+-      /* The currently executing shell is not interactive. */
+-      interactive = 0;
+-
+-#if defined (JOB_CONTROL)
+-      /* Invariant: in child processes started to run command substitutions,
+-	 pipeline_pgrp == shell_pgrp. Other parts of the shell assume this. */
+-      if (pipeline_pgrp > 0 && pipeline_pgrp != shell_pgrp)
+-	shell_pgrp = pipeline_pgrp;
+-#endif
+-
+-      set_sigint_handler ();	/* XXX */
+-
+-      free_pushed_string_input ();
+-
+-      /* Discard  buffered stdio output before replacing the underlying file
+-	 descriptor. */
+-      fpurge (stdout);
+-
+-      if (dup2 (fildes[1], 1) < 0)
+-	{
+-	  sys_error ("%s", _("command_substitute: cannot duplicate pipe as fd 1"));
+-	  exit (EXECUTION_FAILURE);
+-	}
+-
+-      /* If standard output is closed in the parent shell
+-	 (such as after `exec >&-'), file descriptor 1 will be
+-	 the lowest available file descriptor, and end up in
+-	 fildes[0].  This can happen for stdin and stderr as well,
+-	 but stdout is more important -- it will cause no output
+-	 to be generated from this command. */
+-      if ((fildes[1] != fileno (stdin)) &&
+-	  (fildes[1] != fileno (stdout)) &&
+-	  (fildes[1] != fileno (stderr)))
+-	close (fildes[1]);
+-
+-      if ((fildes[0] != fileno (stdin)) &&
+-	  (fildes[0] != fileno (stdout)) &&
+-	  (fildes[0] != fileno (stderr)))
+-	close (fildes[0]);
+-
+-#ifdef __CYGWIN__
+-      /* Let stdio know the fd may have changed from text to binary mode, and
+-	 make sure to preserve stdout line buffering. */
+-      freopen (NULL, "w", stdout);
+-      sh_setlinebuf (stdout);
+-#endif /* __CYGWIN__ */
+-
+-      /* This is a subshell environment. */
+-      subshell_environment |= SUBSHELL_COMSUB;
+-
+-      /* Many shells do not appear to inherit the -v option for command
+-	 substitutions. */
+-      change_flag ('v', FLAG_OFF);
+-
+-      /* When inherit_errexit option is not enabled, command substitution does
+-	 not inherit the -e flag.  It is enabled when Posix mode is enabled */
+-      if (inherit_errexit == 0)
+-	{
+-	  builtin_ignoring_errexit = 0;
+-	  change_flag ('e', FLAG_OFF);
+-	}
+-      set_shellopts ();
+-
+-      /* If we are expanding a redirection, we can dispose of any temporary
+-	 environment we received, since redirections are not supposed to have
+-	 access to the temporary environment.  We will have to see whether this
+-	 affects temporary environments supplied to `eval', but the temporary
+-	 environment gets copied to builtin_env at some point. */
+-      if (expanding_redir)
+-	{
+-	  flush_temporary_env ();
+-	  expanding_redir = 0;
+-	}
+-
+-      remove_quoted_escapes (string);
+-
+-      /* We want to expand aliases on this pass if we are not in posix mode
+-	 for backwards compatibility. parse_and_execute() takes care of
+-	 setting expand_aliases back to the global value when executing the
+-	 parsed string. We only do this for $(...) command substitution,
+-	 since that is what parse_comsub handles; `` comsubs are processed
+-	 using parse.y:parse_matched_pair(). */
+-      if (expand_aliases && (flags & PF_BACKQUOTE) == 0)
+-        expand_aliases = posixly_correct == 0;
+-
+-      startup_state = 2;	/* see if we can avoid a fork */
+-      parse_and_execute_level = 0;
+-
+-      /* Give command substitution a place to jump back to on failure,
+-	 so we don't go back up to main (). */
+-      result = setjmp_nosigs (top_level);
+-
+-      /* If we're running a command substitution inside a shell function,
+-	 trap `return' so we don't return from the function in the subshell
+-	 and go off to never-never land. */
+-      if (result == 0 && return_catch_flag)
+-	function_value = setjmp_nosigs (return_catch);
+-      else
+-	function_value = 0;
+-
+-      if (result == ERREXIT)
+-	rc = last_command_exit_value;
+-      else if (result == EXITPROG || result == EXITBLTIN)
+-	rc = last_command_exit_value;
+-      else if (result)
+-	rc = EXECUTION_FAILURE;
+-      else if (function_value)
+-	rc = return_catch_value;
+-      else
+-	{
+-	  subshell_level++;
+-	  rc = parse_and_execute (string, "command substitution", pflags|SEVAL_NOHIST);
+-	  /* leave subshell level intact for any exit trap */
+-	}
+-
+-      last_command_exit_value = rc;
+-      rc = run_exit_trap ();
+-#if defined (PROCESS_SUBSTITUTION)
+-      unlink_fifo_list ();
+-#endif
+-      exit (rc);
+-    }
+-  else
+     {
+       int dummyfd;
+ 
+--- a/execute_cmd.c
++++ b/execute_cmd.c
+@@ -698,5 +698,5 @@
+       tcmd = make_command_string (command);
+       fork_flags = asynchronous ? FORK_ASYNC : 0;
+-      paren_pid = make_child (p = savestring (tcmd), fork_flags);
++      paren_pid = make_child_fork (p = savestring (tcmd), fork_flags);
+ 
+       if (user_subshell && signal_is_trapped (ERROR_TRAP) && 
+@@ -2522,7 +2522,7 @@
+   expand_aliases = expaliases_flag;
+   cmdflags = command->flags;
+ 
+-  coproc_pid = make_child (p = savestring (tcmd), FORK_ASYNC);
++  coproc_pid = make_child_fork (p = savestring (tcmd), FORK_ASYNC);
+ 
+   if (coproc_pid == 0)
+     {
+@@ -4218,6 +4218,6 @@
+       /* We have a null command, but we really want a subshell to take
+ 	 care of it.  Just fork, do piping and redirections, and exit. */
+       fork_flags = async ? FORK_ASYNC : 0;
+-      if (make_child ((char *)NULL, fork_flags) == 0)
++      if (make_child_fork ((char *)NULL, fork_flags) == 0)
+ 	{
+ 	  /* Cancel traps, in trap.c. */
+@@ -4547,5 +4547,5 @@
+       fork_flags = async ? FORK_ASYNC : 0;
+       xc = the_printed_command_except_trap;
+-      if (make_child (p = xc ? savestring (xc) : savestring (""), fork_flags) == 0)
++      if (make_child_fork (p = xc ? savestring (xc) : savestring (""), fork_flags) == 0)
+ 	{
+ 	  already_forked = 1;
+@@ -5831,7 +5831,7 @@
+   else
+     {
+       fork_flags = async ? FORK_ASYNC : 0;
+-      pid = make_child (p = savestring (command_line), fork_flags);
++      pid = make_child_fork (p = savestring (command_line), fork_flags);
+     }
+ 
+   if (pid == 0)
