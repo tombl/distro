@@ -1,0 +1,52 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 00e2ebf..1251576 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -106,7 +106,7 @@ version = "^0.11.2"
+ [dependencies.itoa]
+ version = "1.0.17"
+
+-[dependencies.memmap2]
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux")))'.dependencies.memmap2]
+ version = "0.9.10"
+
+ [dependencies.serde]
+diff --git a/src/file/init.rs b/src/file/init.rs
+index 7b2dd10..ce7af68 100644
+--- a/src/file/init.rs
++++ b/src/file/init.rs
+@@ -1,6 +1,9 @@
+ #![allow(unused)]
+
+-use std::path::{Path, PathBuf};
++use std::{
++    io::{Read, Seek},
++    path::{Path, PathBuf},
++};
+
+ use crate::{File, State, decode, extension};
+
+@@ -60,8 +63,15 @@ impl File {
+         let path = path.into();
+         let (data, mtime) = {
+             let mut file = std::fs::File::open(&path)?;
++            #[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++            let data = {
++                let mut data = Vec::new();
++                file.read_to_end(&mut data)?;
++                data
++            };
+             // SAFETY: we have to take the risk of somebody changing the file underneath. Git never writes into the same file.
+             #[allow(unsafe_code)]
++            #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+             let data = unsafe { memmap2::MmapOptions::new().map_copy_read_only(&file)? };
+
+             if !skip_hash {
+@@ -77,6 +87,7 @@ impl File {
+                     let _span = gix_features::trace::detail!("gix::open_index::hash_index", path = ?path);
+                     let meta = file.metadata()?;
+                     let num_bytes_to_hash = meta.len() - object_hash.len_in_bytes() as u64;
++                    file.rewind()?;
+                     gix_hash::bytes(
+                         &mut file,
+                         num_bytes_to_hash,

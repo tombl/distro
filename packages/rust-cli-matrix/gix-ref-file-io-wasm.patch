@@ -1,0 +1,63 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 24cbfc1..effb63b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -91,7 +91,7 @@ version = "^0.11.2"
+ [dependencies.gix-validate]
+ version = "^0.11.2"
+
+-[dependencies.memmap2]
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux")))'.dependencies.memmap2]
+ version = "0.9.10"
+
+ [dependencies.serde]
+diff --git a/src/store/packed/mod.rs b/src/store/packed/mod.rs
+index 8e0f2d1..2fd4c5d 100644
+--- a/src/store/packed/mod.rs
++++ b/src/store/packed/mod.rs
+@@ -2,6 +2,7 @@ use std::path::PathBuf;
+
+ use gix_hash::ObjectId;
+ use gix_object::bstr::{BStr, BString};
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+ use memmap2::Mmap;
+
+ use crate::{FullNameRef, Namespace, file, transaction::RefEdit};
+@@ -10,6 +11,7 @@ enum Backing {
+     /// The buffer is loaded entirely in memory, along with the `offset` to the first record past the header.
+     InMemory(Vec<u8>),
+     /// The buffer is mapping the file on disk, along with the offset to the first record past the header
++    #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+     Mapped(Mmap),
+ }
+
+diff --git a/src/store/packed/buffer.rs b/src/store/packed/buffer.rs
+index 2150970..e83e5f6 100644
+--- a/src/store/packed/buffer.rs
++++ b/src/store/packed/buffer.rs
+@@ -9,6 +9,7 @@ impl AsRef<[u8]> for packed::Backing {
+     fn as_ref(&self) -> &[u8] {
+         match self {
+             packed::Backing::InMemory(data) => data,
++            #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+             packed::Backing::Mapped(map) => map,
+         }
+     }
+@@ -69,6 +70,17 @@ pub mod open {
+             use_memory_map_if_larger_than_bytes: u64,
+             object_hash: gix_hash::Kind,
+         ) -> Result<Self, Error> {
++            #[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++            let backing = {
++                use std::io::Read;
++
++                let _ = use_memory_map_if_larger_than_bytes;
++                let mut file = std::fs::File::open(&path)?;
++                let mut data = Vec::new();
++                file.read_to_end(&mut data)?;
++                packed::Backing::InMemory(data)
++            };
++            #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+             let backing = if std::fs::metadata(&path)?.len() <= use_memory_map_if_larger_than_bytes {
+                 packed::Backing::InMemory(std::fs::read(&path)?)
+             } else {

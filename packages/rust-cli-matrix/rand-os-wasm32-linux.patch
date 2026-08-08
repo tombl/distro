@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 05a8146..437f7c7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -334,6 +334,7 @@ mod_use!(
+ #[cfg(all(
+     target_arch = "wasm32",
+     not(target_os = "emscripten"),
++    not(target_os = "linux"),
+     not(feature = "wasm-bindgen"),
+     not(feature = "stdweb"),
+ ))]

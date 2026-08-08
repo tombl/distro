@@ -1,0 +1,8 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 216f2f0..ab4af2b 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -77,2 +77,2 @@
+-[target."cfg(not(any(target_os = \"unknown\", target_arch = \"wasm32\")))".dependencies.libc]
++[target."cfg(not(any(target_os = \"unknown\", all(target_arch = \"wasm32\", not(target_os = \"linux\")))))".dependencies.libc]
+ version = "^0.2.144"

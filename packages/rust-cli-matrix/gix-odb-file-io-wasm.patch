@@ -1,0 +1,98 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index f0ef17d..2dfbd70 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -97,7 +97,7 @@ version = "^0.7.2"
+ [dependencies.gix-quote]
+ version = "^0.7.2"
+
+-[dependencies.memmap2]
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux")))'.dependencies.memmap2]
+ version = "0.9.10"
+
+ [dependencies.parking_lot]
+diff --git a/src/store_impls/loose/find.rs b/src/store_impls/loose/find.rs
+index 24e5b74..34d08a2 100644
+--- a/src/store_impls/loose/find.rs
++++ b/src/store_impls/loose/find.rs
+@@ -4,6 +4,11 @@ use gix_features::zlib;
+
+ use crate::store_impls::loose::{HEADER_MAX_SIZE, Store, hash_path};
+
++#[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++type FileData = Vec<u8>;
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
++type FileData = memmap2::Mmap;
++
+ /// Returned by [`Store::try_find()`]
+ #[derive(thiserror::Error, Debug)]
+ #[allow(missing_docs)]
+@@ -29,7 +34,10 @@ pub enum Error {
+
+ /// Object lookup
+ impl Store {
++    #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
+     const OPEN_OR_MAP_ACTION: &'static str = "open or map";
++    #[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++    const OPEN_OR_MAP_ACTION: &'static str = "open or read";
+
+     /// Returns true if the given id is contained in our repository.
+     pub fn contains(&self, id: &gix_hash::oid) -> bool {
+@@ -118,7 +126,7 @@ impl Store {
+     /// Returns `None` if `id` does not exist in the database.
+     pub fn try_header(&self, id: &gix_hash::oid) -> Result<Option<(u64, gix_object::Kind)>, Error> {
+         let path = hash_path(id, self.path.clone());
+-        let map = match self.map_loose_object(&path)? {
++        let map = match self.load_loose_object(&path)? {
+             Some(map) => map,
+             None => return Ok(None),
+         };
+@@ -142,7 +150,7 @@ impl Store {
+
+     fn find_inner<'a>(&self, id: &gix_hash::oid, out: &'a mut Vec<u8>) -> Result<Option<gix_object::Data<'a>>, Error> {
+         let path = hash_path(id, self.path.clone());
+-        let map = match self.map_loose_object(&path)? {
++        let map = match self.load_loose_object(&path)? {
+             Some(map) => map,
+             None => return Ok(None),
+         };
+@@ -226,8 +234,8 @@ impl Store {
+         Ok(())
+     }
+
+-    fn map_loose_object(&self, path: &std::path::Path) -> Result<Option<memmap2::Mmap>, Error> {
+-        let map = match mmap::read_only(path) {
++    fn load_loose_object(&self, path: &std::path::Path) -> Result<Option<FileData>, Error> {
++        let map = match file_data::read_only(path) {
+             Ok(map) => map,
+             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+             Err(err) => {
+@@ -250,15 +258,26 @@ impl Store {
+     }
+ }
+
+-mod mmap {
++mod file_data {
+     use std::path::Path;
+
+-    pub fn read_only(path: &Path) -> std::io::Result<memmap2::Mmap> {
++    #[cfg(not(all(target_arch = "wasm32", target_os = "linux")))]
++    pub fn read_only(path: &Path) -> std::io::Result<super::FileData> {
+         let file = std::fs::File::open(path)?;
+         // SAFETY: we have to take the risk of somebody changing the file underneath. Git never writes into the same file.
+         #[allow(unsafe_code)]
+         unsafe {
+             memmap2::MmapOptions::new().map_copy_read_only(&file)
+         }
+     }
++
++    #[cfg(all(target_arch = "wasm32", target_os = "linux"))]
++    pub fn read_only(path: &Path) -> std::io::Result<super::FileData> {
++        use std::io::Read;
++
++        let mut file = std::fs::File::open(path)?;
++        let mut data = Vec::new();
++        file.read_to_end(&mut data)?;
++        Ok(data)
++    }
+ }

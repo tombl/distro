@@ -1,0 +1,8 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 109422e..4952e87 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -230,2 +230,2 @@
+-[target.'cfg(not(any(target_os = "unknown", target_arch = "wasm32")))'.dependencies.libc]
++[target.'cfg(not(any(target_os = "unknown", all(target_arch = "wasm32", not(target_os = "linux")))))'.dependencies.libc]
+ version = "^0.2.173"
