@@ -4,7 +4,6 @@
   image,
   linux,
   node-workspace,
-  runner,
   stdenv,
   vm-test,
 }:
@@ -27,6 +26,7 @@ let
     };
   network-test = test-program "network-test" ./tests/network-test.c;
   user-trap = test-program "user-trap" ./tests/user-trap.c;
+  getdents-inode = test-program "getdents-inode" ./tests/getdents-inode.c;
 
   lifecycle-initramfs = vm-test.mkInitramfs {
     name = "linux-guest-lifecycle";
@@ -42,13 +42,14 @@ let
     "rootfs.squashfs" = "${image}/rootfs.squashfs";
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
-    "runner" = "${runner.package}/bin/wasm-linux-runner";
+    "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
   };
 
   package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
     inherit ((builtins.fromJSON (builtins.readFile ./package.json))) version;
     src = ../..;
+    env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
       pkgs.nodejs
@@ -90,6 +91,7 @@ let
     pname = "linux-guest-integration-test";
     version = "0.0.0";
     src = ../..;
+    env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
       pkgs.nodejs

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
+import { configureShares, type ShareArgument } from "./shares.ts";
 
 function assert(cond: unknown, message = "Assertion failed"): asserts cond {
   if (!cond) throw new Error(message);
@@ -12,9 +13,10 @@ function assert(cond: unknown, message = "Assertion failed"): asserts cond {
 
 const cpus = availableParallelism();
 
-const args = parseArgs({
+const parsed = parseArgs({
   args: process.argv.slice(2),
   allowNegative: true,
+  tokens: true,
   options: {
     cmdline: {
       short: "c",
@@ -49,8 +51,17 @@ const args = parseArgs({
       default: [],
       multiple: true,
     },
+    share: {
+      type: "string",
+      multiple: true,
+    },
+    "share-ro": {
+      type: "string",
+      multiple: true,
+    },
   },
-}).values;
+});
+const args = parsed.values;
 
 if (args.help) {
   console.log(`usage: run.ts [options]
@@ -62,6 +73,9 @@ options:
       --no-console        Don't attach a console device
       --no-entropy        Don't attach an entropy device
       --disk <string>     Path to a disk image to use (can be specified multiple times)
+      --share HOST:GUEST  Mount a host directory read-write (can be specified multiple times)
+      --share-ro HOST:GUEST
+                          Mount a host directory read-only (can be specified multiple times)
   -h, --help              Show this help message
 `);
   process.exit(0);
@@ -71,6 +85,15 @@ assert(!Number.isNaN(parseInt(args.cpus, 10)), "cpus must be a number");
 
 const devices = [];
 let restoreTerminal = () => {};
+
+const shareArguments: ShareArgument[] = [];
+for (const token of parsed.tokens) {
+  if (token.kind !== "option" || (token.name !== "share" && token.name !== "share-ro")) continue;
+  assert(token.value !== undefined, `--${token.name} requires HOST:GUEST`);
+  shareArguments.push({ value: token.value, readOnly: token.name === "share-ro" });
+}
+const shares = configureShares(shareArguments);
+devices.push(...shares.devices);
 
 if (args.console) {
   if (process.stdin.isTTY) {
@@ -163,7 +186,7 @@ for (const disk of args.disk) {
 }
 
 const machine = await spawnMachine({
-  cmdline: args.cmdline,
+  cmdline: [args.cmdline, shares.cmdline].filter(Boolean).join(" "),
   cpus: parseInt(args.cpus, 10),
   devices,
   initcpio: await readFile(args.initcpio),

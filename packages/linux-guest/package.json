@@ -19,6 +19,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
     }
   },
   "scripts": {
@@ -26,6 +34,7 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^24",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
