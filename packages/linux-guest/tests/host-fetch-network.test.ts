@@ -14,7 +14,7 @@ import {
 } from "../src/index.ts";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 import { ByteReader } from "../src/http.ts";
-import { assets } from "./assets.ts";
+import { root_device } from "./assets.ts";
 import { closed_input, collect, console_output, pattern_bytes } from "./helpers.ts";
 
 const decoder = new TextDecoder();
@@ -42,7 +42,7 @@ async function with_guest(options: NetworkOptions, fn: (guest: NetworkedGuest) =
   const guest = await spawnGuest({
     cpus: 1,
     network,
-    assets,
+    root: root_device(),
     devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
   });
   const console_done = guest.machine.bootConsole.pipeTo(console_output());

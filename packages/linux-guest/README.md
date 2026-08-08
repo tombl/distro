@@ -11,9 +11,14 @@ npm install @tombl/linux @tombl/linux-guest
 ## Usage
 
 ```js
-import { spawnGuest } from "@tombl/linux-guest";
+import { blockDevice, spawnGuest } from "@tombl/linux-guest";
 
-const guest = await spawnGuest();
+const rootfs = new Uint8Array(await fetch("/rootfs.squashfs").then((r) => r.arrayBuffer()));
+const root = blockDevice({
+  capacity: rootfs.byteLength,
+  read: (offset, length) => rootfs.subarray(offset, offset + length),
+});
+const guest = await spawnGuest({ root });
 const process = await guest.exec(["uname", "-a"]);
 
 console.log(await new Response(process.stdout).text());
@@ -30,6 +35,7 @@ import { NodeFS } from "@tombl/linux-guest/node";
 
 const shared = new NodeFS("/srv/guest-share");
 const guest = await spawnGuest({
+  root,
   devices: [
     fileSystemDevice(shared, {
       tag: "host",
@@ -78,6 +84,7 @@ const shared = new BrowserFS(
   await opfs.getDirectoryHandle("guest", { create: true }),
 );
 const guest = await spawnGuest({
+  root,
   devices: [
     fileSystemDevice(shared, {
       tag: "persistent",
@@ -138,7 +145,7 @@ wasm-linux-runner \
 read-only guest mount with backend enforcement, so raw guest filesystem calls
 cannot make the host directory writable. Shares disable virtio-fs metadata and
 name caching for host/guest interchange. Automatic mounting is provided by the
-default runner image; a custom `--initcpio` must consume the `wasm.share=`
+default runner image; a custom root disk must consume the `wasm.share=`
 kernel parameters and mount the attached devices itself.
 
 ## Documentation

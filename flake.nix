@@ -44,7 +44,7 @@
       # legacyPackages preserves the owner-oriented package sets. The packages
       # output projects each set's primary derivation back to the conventional
       # flat flake interface, so `nix build .#site` remains the obvious command
-      # while `legacyPackages.${system}.site.image.rootfs` stays navigable.
+      # while `legacyPackages.${system}.site.rootfs` stays navigable.
       packages = eachSystem (
         { wasmpkgs, ... }: lib.mapAttrs packageFrom (lib.filterAttrs isPackage wasmpkgs)
       );
@@ -105,25 +105,36 @@
 
       apps = eachSystem (
         { pkgs, wasmpkgs, ... }:
+        let
+          siteDeploy = pkgs.writeShellScript "site-deploy" ''
+            set -euo pipefail
+            root="$(git rev-parse --show-toplevel)"
+            cd "$root"
+            chmod -R u+w deploy 2>/dev/null || true
+            rm -rf deploy
+            cp -rL ${wasmpkgs.site.package} deploy
+            chmod -R u+w deploy
+            exec ${pkgs.wrangler}/bin/wrangler \
+              "$@" --config packages/site/wrangler.toml
+          '';
+        in
         {
           runner = {
             type = "app";
             program = lib.getExe wasmpkgs.runner.package;
           };
 
-          # site-deploy (packages/site-deploy) builds the site and wrangler
-          # into one script; these apps just pick the wrangler subcommand.
-          # Deploy the current tree to the production worker (low.land).
           wrangler-deploy = {
             type = "app";
-            program = "${wasmpkgs.site-deploy}";
+            program = "${pkgs.writeShellScript "wrangler-deploy" ''
+              exec ${siteDeploy} deploy "$@"
+            ''}";
           };
 
-          # Upload a version for a per-commit preview URL; production untouched.
           wrangler-preview = {
             type = "app";
             program = "${pkgs.writeShellScript "wrangler-preview" ''
-              exec ${wasmpkgs.site-deploy} versions upload "$@"
+              exec ${siteDeploy} versions upload "$@"
             ''}";
           };
 

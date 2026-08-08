@@ -1,7 +1,7 @@
 {
   busybox,
   pkgs,
-  image,
+  rootfs,
   linux,
   node-workspace,
   stdenv,
@@ -37,9 +37,8 @@ let
   # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
-    "initramfs.cpio" = "${image}/initramfs.cpio";
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
-    "rootfs.squashfs" = "${image}/rootfs.squashfs";
+    "rootfs.squashfs" = rootfs;
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
@@ -64,8 +63,6 @@ let
       tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
       pnpm --filter=@tombl/linux-guest check
       pnpm --filter=@tombl/linux-guest build
-      cp ${image}/initramfs.cpio packages/linux-guest/initramfs.cpio
-      cp ${image}/rootfs.squashfs packages/linux-guest/rootfs.squashfs
 
       runHook postBuild
     '';
@@ -77,8 +74,6 @@ let
       cp packages/linux-guest/package.json $out/package.json
       cp packages/linux-guest/README.md $out/README.md
       cp packages/linux-guest/LICENSE $out/LICENSE
-      cp packages/linux-guest/initramfs.cpio $out/initramfs.cpio
-      cp packages/linux-guest/rootfs.squashfs $out/rootfs.squashfs
       cp -r packages/linux-guest/dist $out/dist
       pnpm --filter=@tombl/linux-guest pack --pack-destination $out
       mv $out/tombl-linux-guest-*.tgz $out/linux-guest.tgz

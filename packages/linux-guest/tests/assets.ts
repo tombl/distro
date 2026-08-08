@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { blockDevice } from "../src/index.ts";
 
 const ATTRIBUTE = "linux-guest.checks.tests.assets";
 const exec_file = promisify(execFile);
@@ -24,10 +25,16 @@ async function build() {
 
 const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
 
-export const assets = {
-  initramfs: await readFile(join(directory, "initramfs.cpio")),
-  rootfs: await readFile(join(directory, "rootfs.squashfs")),
-};
+export const rootfs = await readFile(join(directory, "rootfs.squashfs"));
+
+export function root_device() {
+  return blockDevice({
+    capacity: rootfs.byteLength,
+    read(offset, length) {
+      return rootfs.subarray(offset, offset + length);
+    },
+  });
+}
 
 /** A static guest executable that exercises the guest-side network stack. */
 export const network_test = await readFile(join(directory, "network-test"));

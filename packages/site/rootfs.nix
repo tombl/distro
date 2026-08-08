@@ -5,6 +5,7 @@
   apk,
   apk-tools,
   busybox,
+  guest-agent,
   image,
   pkgs,
   repository,
@@ -16,6 +17,7 @@ let
     repositories = [ repository ];
     packages = [
       busybox
+      guest-agent
       apk-tools
     ];
     files = {
@@ -24,6 +26,9 @@ let
         mode = "0755";
       };
       "/etc/apk/keys/site.rsa.pub" = repository.publicKey;
+      "/etc/apk/repositories" = pkgs.writeText "site-apk-repositories" ''
+        http://assets.low.land/apk/wasm32/Packages.adb
+      '';
       "/etc/resolv.conf" = pkgs.writeText "site-resolv.conf" ''
         nameserver 192.0.2.1
       '';

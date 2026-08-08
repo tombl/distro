@@ -111,6 +111,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           APK_SIGNING_KEY: ${{secrets.APK_SIGNING_KEY}}
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
           R2_BUCKET: ${{secrets.R2_BUCKET}}
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -130,7 +131,13 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
         run: |
-          nix run .#wrangler-preview
+          output=$(nix run .#wrangler-preview -- \
+            --preview-alias "pr-${{ github.event.pull_request.number }}" \
+            --message "PR #${{ github.event.pull_request.number }} at ${GITHUB_SHA}" 2>&1 | tee /dev/stderr)
+          {
+            echo "### Site preview"
+            printf '%s\n' "$output" | grep -Eo 'https://[^[:space:]]+' | tail -1
+          } >> "$GITHUB_STEP_SUMMARY"
 
   stage-npm:
     name: Stage packages on npm

@@ -1,19 +1,11 @@
 {
   pkgs,
-  busybox,
-  image,
   linux,
   linux-guest,
   rootfs,
 }:
 
 let
-  initramfs = image.mkInitramfs {
-    name = "site-boot-initramfs";
-    init = ./boot-init.sh;
-    contents = [ busybox ];
-  };
-
   # The kernel assets are content-stable per build but served under fixed
   # names, so they are cached immutable under a build-versioned directory:
   # a new build changes the version and every URL, so browsers never revalidate
@@ -53,9 +45,7 @@ pkgs.stdenvNoCC.mkDerivation {
     substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
     cp index.html $out/index.html
     cp _headers $out/_headers
-    cp repo.json $out/repo.json
     cp -r vendor $out/vendor
-    ln -s ${initramfs} $out/initramfs.cpio
 
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.ext4.gz)
@@ -66,10 +56,5 @@ pkgs.stdenvNoCC.mkDerivation {
 
     runHook postInstall
   '';
-  passthru = {
-    inherit
-      initramfs
-      rootfs
-      ;
-  };
+  passthru = { inherit rootfs; };
 }

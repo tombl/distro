@@ -1,7 +1,6 @@
 { callPackage }:
 
 rec {
-  mkBundle = callPackage ./bundle.nix { };
   mkInitramfs = callPackage ./initramfs.nix { };
   mkFilesystem = callPackage ./filesystem.nix { };
 

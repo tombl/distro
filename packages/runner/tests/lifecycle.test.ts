@@ -9,7 +9,7 @@ function required_environment(name: string): string {
 }
 
 const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
-const initramfs = required_environment("LINUX_RUNNER_TEST_LIFECYCLE_INITRAMFS");
+const disk = required_environment("LINUX_RUNNER_TEST_LIFECYCLE_DISK");
 
 interface RunnerResult {
   code: number | null;
@@ -19,11 +19,9 @@ interface RunnerResult {
 }
 
 async function run_runner(cmdline: string, cpus = 1): Promise<RunnerResult> {
-  const child = spawn(
-    runner,
-    ["--initcpio", initramfs, "--cpus", cpus.toString(), "--cmdline", cmdline],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
+  const child = spawn(runner, ["--disk", disk, "--cpus", cpus.toString(), "--cmdline", cmdline], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let output = "";
   let triggeredAt: number | undefined;
   const consume = (chunk: Buffer) => {

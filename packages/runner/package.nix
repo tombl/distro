@@ -1,4 +1,5 @@
 {
+  apk,
   busybox,
   pkgs,
   lib,
@@ -6,14 +7,30 @@
   linux-guest,
   node-workspace,
   image,
+  repository,
+  rootfs,
   vm-test,
 }:
 
 let
-  lifecycle-initramfs = vm-test.mkInitramfs {
+  lifecycle-rootfs = image.mkFilesystem {
     name = "linux-runner-lifecycle";
-    init = ../linux-guest/tests/lifecycle-init.sh;
-    contents = [ busybox ];
+    format = "ext4";
+    root = apk.mkSystem {
+      name = "linux-runner-lifecycle";
+      repositories = [ repository ];
+      packages = [ busybox ];
+      files = {
+        "/init" = {
+          source = ../linux-guest/tests/lifecycle-init.sh;
+          mode = "0755";
+        };
+        "/vm-test-setup-dev-fd" = {
+          source = ../vm-test/setup-dev-fd.sh;
+          mode = "0755";
+        };
+      };
+    };
   };
 
   console-initramfs = vm-test.mkInitramfs {
@@ -64,26 +81,19 @@ let
 
   package = pkgs.writeShellScriptBin "wasm-linux-runner" ''
     has_disk=0
-    has_initcpio=0
     for arg in "$@"; do
       case "$arg" in
         --disk | --disk=*) has_disk=1 ;;
-        --initcpio | --initcpio=* | -i) has_initcpio=1 ;;
       esac
     done
 
-    initcpio_args=()
-    if [ "$has_initcpio" -eq 0 ]; then
-      initcpio_args=(--initcpio ${image}/initramfs.cpio)
-    fi
-
     disk_args=()
     if [ "$has_disk" -eq 0 ]; then
-      disk_args=(--disk ${image}/rootfs.squashfs)
+      disk_args=(--disk ${rootfs})
     fi
 
     exec ${lib.getExe pkgs.nodejs} ${app}/run.ts \
-      "''${initcpio_args[@]}" "''${disk_args[@]}" "$@"
+      "''${disk_args[@]}" "$@"
   '';
 
   integration = pkgs.stdenvNoCC.mkDerivation {
@@ -108,7 +118,7 @@ let
       pnpm --filter=@tombl/linux-runner check
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
         LINUX_RUNNER_TEST_CONSOLE_INITRAMFS=${console-initramfs} \
-        LINUX_RUNNER_TEST_LIFECYCLE_INITRAMFS=${lifecycle-initramfs} \
+        LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
         timeout --kill-after=5 300 pnpm --filter=@tombl/linux-runner test
 
       runHook postBuild

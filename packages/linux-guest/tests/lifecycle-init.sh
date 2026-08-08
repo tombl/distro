@@ -2,6 +2,7 @@
 
 export PATH=/bin:/sbin
 
+mount -t devtmpfs devtmpfs /dev || exit 1
 mount -t proc proc /proc || exit 1
 /vm-test-setup-dev-fd || exit 1
 cmdline=" $(cat /proc/cmdline) "

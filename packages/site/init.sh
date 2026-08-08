@@ -2,42 +2,17 @@
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-# The apk-installed busybox already carries its applet symlinks; no reinstall.
-
-# The boot initramfs already moved a devtmpfs onto /dev before switch_root.
+mount -t devtmpfs devtmpfs /dev
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-mkdir -p /tmp /run /workspace
-mount -t tmpfs tmpfs /tmp
-mount -t tmpfs tmpfs /run
-mount -t tmpfs tmpfs /workspace
-chmod 01777 /tmp
 
 # A name for the machine so the motd reads like a real host.
 [ "$(hostname)" = "(none)" ] && hostname lowland
 
-# The boot script passes the guest's network assignment and apk repository at
-# boot, since they only exist once the page knows its own origin.
-address=
-gateway=
-apk_repo=
-# shellcheck disable=SC2013 # the kernel cmdline is deliberately word-split
-for token in $(cat /proc/cmdline); do
-  case "$token" in
-  addr=*) address=${token#addr=} ;;
-  gw=*) gateway=${token#gw=} ;;
-  apkrepo=*) apk_repo=${token#apkrepo=} ;;
-  esac
-done
-
-if [ -n "$address" ]; then
-  /sbin/ifconfig eth0 "$address" netmask 255.255.255.0 up || echo "ifconfig failed: $?" >&2
-  /sbin/route add default gw "$gateway" || echo "route failed: $?" >&2
-fi
-if [ -n "$apk_repo" ]; then
-  # A .adb-suffixed repository line names the v3 index directly.
-  printf '%s\n' "${apk_repo}/wasm32/Packages.adb" >/etc/apk/repositories
-fi
+# The host uses the guest package to own machine and network setup. Keep its
+# agent beside the interactive console shell so spawnGuest can configure the
+# interface and expose the normal exec/filesystem API without taking over PID 1.
+/bin/linux-guest-agent &
 
 # A neofetch-style motd. The apk line is the point: everything else on the
 # page is a demo of what a whole installable machine in the browser can do.

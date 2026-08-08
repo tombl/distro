@@ -10,9 +10,7 @@
     "directory": "packages/linux-guest"
   },
   "files": [
-    "dist",
-    "initramfs.cpio",
-    "rootfs.squashfs"
+    "dist"
   ],
   "type": "module",
   "exports": {

@@ -1,4 +1,4 @@
-import { consoleDevice, spawnMachine, fileSystemDevice } from "@tombl/linux";
+import { blockDevice, consoleDevice, spawnMachine, fileSystemDevice } from "@tombl/linux";
 import { spawnGuest } from "@tombl/linux-guest";
 import { BrowserFS } from "@tombl/linux-guest/browser";
 
@@ -11,10 +11,25 @@ async function collectProcess(child) {
   return { status, stdout, stderr };
 }
 
+const rootfs = fetch("/rootfs.squashfs").then(async (response) => {
+  if (!response.ok) throw new Error(`failed to load rootfs: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+});
+
+async function rootDevice() {
+  const bytes = await rootfs;
+  return blockDevice({
+    capacity: bytes.byteLength,
+    read(offset, length) {
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+}
+
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
 async function withGuest(scenario, options) {
-  const guest = await spawnGuest(options);
+  const guest = await spawnGuest({ root: await rootDevice(), ...options });
   try {
     return await scenario(guest);
   } finally {
@@ -62,7 +77,7 @@ let lifecycleGuest;
 
 globalThis.startRemoteMemoryLifecycle = async () => {
   if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
-  lifecycleGuest = await spawnGuest({ cpus: 1 });
+  lifecycleGuest = await spawnGuest({ root: await rootDevice(), cpus: 1 });
 };
 
 globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {

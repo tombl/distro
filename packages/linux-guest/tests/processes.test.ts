@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { blockDevice, spawnMachine, vsockDevice } from "@tombl/linux";
+import { spawnMachine, vsockDevice } from "@tombl/linux";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { SystemError } from "../src/index.ts";
 import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
-import { assets } from "./assets.ts";
+import { root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
 
@@ -198,15 +198,10 @@ guest_test("processes", async (t, fixture) => {
 guest_test("session teardown", async (t) => {
   await t.test("cleans resources before accepting a fresh session", async () => {
     const vsock = vsockDevice();
-    const root = blockDevice({
-      capacity: assets.rootfs.byteLength,
-      read(offset, length) {
-        return assets.rootfs.subarray(offset, offset + length);
-      },
-    });
+    const root = root_device();
     const machine = await spawnMachine({
       devices: [root, vsock],
-      initcpio: assets.initramfs,
+      cmdline: "root=/dev/vda rootwait init=/init",
     });
     try {
       let first: GuestSession | undefined;

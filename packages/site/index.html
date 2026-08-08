@@ -28,17 +28,6 @@
         summary {
           user-select: none;
         }
-        form {
-          display: grid;
-          grid-template-columns: 15ch 1fr;
-          grid-column: 2;
-          input {
-            font-family: monospace;
-          }
-          button {
-            grid-column: span 2;
-          }
-        }
       }
     </style>
   </head>
@@ -65,18 +54,6 @@
         <a href="https://github.com/tombl/distro">github.com/tombl/distro</a> (the userspace and
         this site).
       </p>
-
-      <form>
-        <label for="cmdline">
-          <a href="https://www.kernel.org/doc/html/v7.1/admin-guide/kernel-parameters.html">
-            Kernel parameters
-          </a>
-        </label>
-        <input type="text" name="cmdline" id="cmdline" />
-        <label for="initcpio">URL to an initramfs</label>
-        <input type="text" name="initcpio" id="initcpio" />
-        <button type="submit">Reboot</button>
-      </form>
     </details>
     <script>
       function reportError(error) {
@@ -105,8 +82,14 @@
     </script>
     <script type="module">
       import { FitAddon, Terminal, WebglAddon } from "./vendor/xterm/dist.js";
-      import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
-      import { attach_guest, createNetwork, fetchNetwork } from "@tombl/linux-guest";
+      import {
+        consoleDevice,
+        createNetwork,
+        entropyDevice,
+        hostFetchNetwork,
+        blockDevice,
+        spawnGuest,
+      } from "@tombl/linux-guest";
 
       const term = new Terminal({
         convertEol: true,
@@ -127,11 +110,7 @@
         term.write("Error: not cross origin isolated\n");
       }
 
-      const { cmdline = "", initcpio: initcpioPath = "initramfs.cpio" } = Object.fromEntries(
-        new URLSearchParams(location.search),
-      );
-      document.querySelector("input[name=cmdline]").value = cmdline;
-      document.querySelector("input[name=initcpio]").value = initcpioPath;
+      const { cmdline = "" } = Object.fromEntries(new URLSearchParams(location.search));
 
       const stdin = new ReadableStream({
         start(controller) {
@@ -235,36 +214,22 @@
       // The page's network: guest HTTP/1 becomes HTTPS via the browser's
       // fetch, which is exactly what `apk add` needs to reach the served repo.
       const network = createNetwork(
-        fetchNetwork({
+        hostFetchNetwork({
           fetch: (request) => fetch(request),
         }),
       );
-      const { attachment } = attach_guest(network);
-
-      const initcpio = await fetch(initcpioPath).then((res) => res.ok && res.arrayBuffer());
-      if (!initcpio) {
-        term.write(`Failed to fetch initramfs.\n`);
-      }
 
       const disk = await openDisk();
-
-      // The signed repo lives on R2; the guest speaks plaintext HTTP and
-      // fetchNetwork upgrades it to the https URL the page itself fetches.
-      const { repository } = await fetch("repo.json").then((res) => res.json());
-      const apkRepo = repository.replace(/^https:\/\//, "http://");
-      const machine = await spawnMachine({
-        // The guest's init configures eth0 and /etc/apk/repositories from these.
-        cmdline: [
-          `addr=${attachment.address}`,
-          `gw=${network.gateway}`,
-          `apkrepo=${apkRepo}`,
-          cmdline.replace(/\+/g, " "),
-        ].join(" "),
-        devices: [blockDevice(disk), ttyConsole, entropyDevice(), attachment.device],
-        initcpio: new Uint8Array(initcpio),
+      const guest = await spawnGuest({
+        root: blockDevice(disk),
+        bootConsole: bootOut,
+        // Keep the public demo multi-core without spawning one wasm worker for
+        // every host CPU on large developer and CI machines.
+        cpus: Math.min(navigator.hardwareConcurrency, 4),
+        network,
+        cmdline: cmdline.replace(/\+/g, " "),
+        devices: [ttyConsole, entropyDevice()],
       });
-
-      machine.bootConsole.pipeTo(bootOut);
     </script>
   </body>
 </html>

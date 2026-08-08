@@ -14,7 +14,7 @@ const types = {
   ".wasm": "application/wasm",
 };
 
-// The guest assets and the scheduler-handoff initramfs are nix build
+// The guest root disk and the scheduler-handoff initramfs are nix build
 // products: present in the packed suite the checks run against, absent in a
 // dev checkout, where we build them ourselves. Same contract as
 // packages/linux-guest/tests/assets.ts, including $LINUX_GUEST_TEST_ASSETS.
@@ -52,10 +52,10 @@ const server = createServer(async (request, response) => {
   };
   if (!exists(path)) {
     try {
-      if (relative.startsWith("node_modules/@tombl/linux-guest/")) {
+      if (relative === "rootfs.squashfs") {
         const directory =
           process.env.LINUX_GUEST_TEST_ASSETS ?? (await build("linux-guest.checks.tests.assets"));
-        path = join(directory, relative.split("/").at(-1));
+        path = join(directory, relative);
       } else if (relative === "scheduler-handoff.cpio") {
         path = await build("basic-init.schedulerHandoffInitramfs");
       } else if (relative === "remote-vm.cpio") {

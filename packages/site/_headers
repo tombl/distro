@@ -1,8 +1,8 @@
 # Kernel and guest SDK assets live under /static/<version>/, which changes
 # every build, and the rootfs under its content hash, so they never change in
 # place: cache them immutable and skip revalidation (the guest's workers load
-# these many times per boot). index.html, rootfs.ext4.sha256, and repo.json
-# revalidate so a new deploy is picked up immediately.
+# these many times per boot). index.html and rootfs.ext4.sha256 revalidate so a
+# new deploy is picked up immediately.
 /static/*
   Cache-Control: public, max-age=31556952, immutable
 

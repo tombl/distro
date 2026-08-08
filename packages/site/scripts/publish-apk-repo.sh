@@ -5,7 +5,7 @@
 # only ever touches a temporary file in the runner, never the nix store.
 set -euo pipefail
 
-repo=$(nix build --no-link --print-out-paths .#site-repository)
+repo=$(nix build --no-link --print-out-paths .#site.repository)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -32,4 +32,7 @@ apk --allow-untrusted mkndx \
 # bound to the assets.low.land custom domain, so /apk/wasm32/... serves as
 # https://assets.low.land/apk/wasm32/...
 bucket="${R2_BUCKET:?set R2_BUCKET to the R2 bucket name}"
-rclone copyto "$work/wasm32" "r2:${bucket}/apk/wasm32" --create-empty-src-dirs
+# Keep the published architecture directory identical to this release. rclone
+# sync deletes destination files missing from the source, matching Alpine's
+# conventional replacement model instead of retaining every historical APK.
+rclone sync "$work/wasm32" "r2:${bucket}/apk/wasm32" --create-empty-src-dirs

@@ -6,10 +6,10 @@
   apk,
   apk-tools,
   busybox,
-  ca-certificates,
   curl,
   file,
   git,
+  guest-agent,
   jq,
   sqlite3,
 }:
@@ -22,10 +22,10 @@ let
       inherit
         apk-tools
         busybox
-        ca-certificates
         curl
         file
         git
+        guest-agent
         jq
         sqlite3
         ;

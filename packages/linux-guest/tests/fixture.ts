@@ -12,7 +12,7 @@ import { once } from "node:events";
 import { createConnection } from "node:net";
 import { Duplex } from "node:stream";
 import { test, type TestContext } from "node:test";
-import { assets, network_test, user_trap } from "./assets.ts";
+import { network_test, root_device, user_trap } from "./assets.ts";
 import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
@@ -48,7 +48,7 @@ export function guest_test(
       const guest = await spawnGuest({
         cpus: 1,
         network,
-        assets,
+        root: root_device(),
         devices: [
           consoleDevice(closed_input(), console_output()),
           entropyDevice(),

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
 import { closeSync, fstatSync, fsync, openSync, readSync, writeSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
@@ -22,11 +21,6 @@ const parsed = parseArgs({
       short: "c",
       type: "string",
       default: "",
-    },
-    initcpio: {
-      short: "i",
-      type: "string",
-      default: new URL("./initramfs.cpio", import.meta.url).pathname,
     },
     cpus: {
       short: "j",
@@ -68,7 +62,6 @@ if (args.help) {
 
 options:
   -c, --cmdline <string>  Command line arguments to pass to the kernel
-  -i, --initcpio <string> Path to the initramfs to boot
   -j, --cpus <number>     Number of CPUs to use (default: number of CPUs on the machine)
       --no-console        Don't attach a console device
       --no-entropy        Don't attach an entropy device
@@ -186,10 +179,11 @@ for (const disk of args.disk) {
 }
 
 const machine = await spawnMachine({
-  cmdline: [args.cmdline, shares.cmdline].filter(Boolean).join(" "),
+  cmdline: ["root=/dev/vda rootwait init=/init", args.cmdline, shares.cmdline]
+    .filter(Boolean)
+    .join(" "),
   cpus: parseInt(args.cpus, 10),
   devices,
-  initcpio: await readFile(args.initcpio),
 });
 
 const bootConsole = machine.bootConsole

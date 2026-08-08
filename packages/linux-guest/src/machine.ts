@@ -1,12 +1,10 @@
 import {
-  blockDevice,
   vsockDevice,
   type Machine,
   spawnMachine,
   type SpawnMachineOptions,
   type VirtioDevice,
 } from "@tombl/linux";
-import { type GuestAssets, packaged_assets } from "./assets.ts";
 import {
   create_guest_client,
   type Exec,
@@ -19,14 +17,16 @@ export interface SpawnGuestOptions extends Omit<
   SpawnMachineOptions,
   "devices" | "initcpio" | "cmdline"
 > {
+  /** Root block device. It is attached as /dev/vda and booted directly. */
+  root: VirtioDevice;
   /** Extra virtio devices to boot with — a console or entropy device from `@tombl/linux`, say. */
   devices?: readonly VirtioDevice[];
   /** Guests attached to the same network can connect to each other. */
   network?: Network;
   /** Extra kernel command line arguments, appended to the defaults. */
   cmdline?: string;
-  /** Boot from these assets instead of the ones bundled with the package. */
-  assets?: GuestAssets;
+  /** Receives kernel output emitted before the guest's regular console is ready. */
+  bootConsole?: WritableStream<Uint8Array>;
 }
 
 /**
@@ -125,8 +125,8 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
 }
 
 /**
- * Boots a Linux guest — the packaged kernel and root filesystem, with the
- * guest agent as init — and resolves once the agent can serve requests:
+ * Boots a Linux guest from the caller's root block device and resolves once
+ * the guest agent can serve requests:
  * `exec`, `fs`, and (given `network`) networking are all usable from then
  * on.
  *
@@ -135,7 +135,7 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  *
  * @example Boot a guest and run a command
  * ```ts
- * const guest = await spawnGuest();
+ * const guest = await spawnGuest({ root: blockDevice(storage) });
  * const process = await guest.exec(["uname", "-a"]);
  * console.log(await new Response(process.stdout).text());
  * guest.machine.close();
@@ -144,8 +144,8 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  * @example Put two guests on one network
  * ```ts
  * const network = createNetwork({ connectTcp, resolveDns });
- * const a = await spawnGuest({ network });
- * const b = await spawnGuest({ network });
+ * const a = await spawnGuest({ root: blockDevice(aStorage), network });
+ * const b = await spawnGuest({ root: blockDevice(bStorage), network });
  * const ping = await b.exec(["ping", "-c", "1", a.network.address]);
  * console.log(await new Response(ping.stdout).text());
  * ```
@@ -153,27 +153,22 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
 export function spawnGuest(
   options: SpawnGuestOptions & { network: Network },
 ): Promise<NetworkedGuest>;
-export function spawnGuest(options?: SpawnGuestOptions): Promise<Guest>;
-export async function spawnGuest(options: SpawnGuestOptions = {}): Promise<Guest> {
-  const { devices = [], network, cmdline = "", assets, ...machine_options } = options;
-  const { initramfs, rootfs } = assets ?? (await packaged_assets());
+export function spawnGuest(options: SpawnGuestOptions): Promise<Guest>;
+export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
+  const { devices = [], root, network, cmdline = "", bootConsole, ...machine_options } = options;
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
-  const root = blockDevice({
-    capacity: rootfs.byteLength,
-    read(offset, length) {
-      return rootfs.subarray(offset, offset + length);
-    },
-  });
   const client = create_guest_client(vsock);
   let machine: Machine;
   try {
     machine = await spawnMachine({
       ...machine_options,
-      cmdline,
+      cmdline: ["root=/dev/vda rootwait init=/init", cmdline].filter(Boolean).join(" "),
       devices: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
-      initcpio: initramfs,
     });
+    if (bootConsole) {
+      void machine.bootConsole.pipeTo(bootConsole).catch(() => {});
+    }
   } catch (error) {
     attached?.attachment.close();
     throw error;

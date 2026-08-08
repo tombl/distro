@@ -19,11 +19,10 @@ image.mkFilesystem {
     files."/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
       nameserver 192.0.2.1
     '';
-    # A real copy, not a link: the wasm kernel cannot exec (or even stat -x)
-    # through a symlink to an executable.
     files."/init" = {
-      source = "${guest-agent}/bin/linux-guest-agent";
+      source = ./init.sh;
       mode = "0755";
     };
+    files."/bin/linux-guest-agent" = "${guest-agent}/bin/linux-guest-agent";
   };
 }

@@ -4,6 +4,7 @@
 # ships a full userland that shadows busybox on PATH, and a shadowing package
 # may not be init-safe. util-linux's setsid taught us this: it spawns the
 # child and exits the parent, which as pid 1 panics the kernel.
+/bin/busybox mount -t devtmpfs devtmpfs /dev
 /bin/busybox mkdir -p /dev/pts
 /bin/busybox mount -t devpts devpts /dev/pts
 /bin/busybox mount -t proc proc /proc
@@ -12,6 +13,10 @@
 /bin/busybox ln -snf /proc/self/fd/1 /dev/stdout
 /bin/busybox ln -snf /proc/self/fd/2 /dev/stderr
 /bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t tmpfs tmpfs /run
+/bin/busybox mount -t tmpfs tmpfs /tmp
+/bin/busybox mount -t tmpfs tmpfs /workspace
+/bin/busybox chmod 01777 /tmp
 
 # Share records contain only a fixed tag/mode and a base64-encoded absolute
 # guest path. Keeping the path out of shell syntax makes spaces and metacharacters
