@@ -19,15 +19,15 @@ import type { GuestNetwork, Network, TcpConnection } from "./network.ts";
  * `Response`. One connect per call with a single attempt — a listener that is
  * not up yet rejects, and retrying is the caller's concern.
  */
-export function guestFetch(
+export function guestFetchHandler(
   network: GuestNetwork,
   options: { port: number },
 ): (request: Request) => Promise<Response>;
-export function guestFetch(
+export function guestFetchHandler(
   network: Network,
   options: { hostname: string; port: number },
 ): (request: Request) => Promise<Response>;
-export function guestFetch(
+export function guestFetchHandler(
   network: GuestNetwork | Network,
   options: { hostname?: string; port: number },
 ): (request: Request) => Promise<Response> {

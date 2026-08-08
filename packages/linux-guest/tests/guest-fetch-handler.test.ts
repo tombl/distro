@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { guestFetch } from "../src/guest-fetch.ts";
+import { guestFetchHandler } from "../src/guest-fetch-handler.ts";
 import type { GuestNetwork, NetworkedGuest, TcpConnection } from "../src/index.ts";
 import { guest_test } from "./fixture.ts";
 import { connect_with_retry } from "./helpers.ts";
@@ -14,12 +14,12 @@ function serve(guest: NetworkedGuest, port: number, script: string) {
   return guest.exec(["tcpsvd", "-c", "2", "0.0.0.0", String(port), "sh", "-c", script]);
 }
 
-guest_test("guest-fetch", async (t, fixture) => {
+guest_test("guest-fetch-handler", async (t, fixture) => {
   const guest = await fixture.spawn();
-  const fetch = guestFetch(guest.network, { port: 8080 });
+  const fetch = guestFetchHandler(guest.network, { port: 8080 });
 
   // The `Network` overload must also typecheck, hostname supplied explicitly.
-  guestFetch(fixture.network, { hostname: guest.network.address, port: 80 });
+  guestFetchHandler(fixture.network, { hostname: guest.network.address, port: 80 });
 
   await t.test("serves a site over busybox httpd", async () => {
     await guest.fs.mkdir("/tmp/www", { recursive: true });
@@ -54,7 +54,7 @@ guest_test("guest-fetch", async (t, fixture) => {
       ),
     );
     const server = await serve(guest, 8081, "cat >/dev/null; cat /tmp/chunked");
-    const done = guestFetch(guest.network, { port: 8081 });
+    const done = guestFetchHandler(guest.network, { port: 8081 });
     try {
       const res = await connect_with_retry(() => done(new Request("http://guest.example/")));
       assert.equal(res.status, 200);
@@ -72,7 +72,7 @@ guest_test("guest-fetch", async (t, fixture) => {
       encoder.encode("HTTP/1.0 200 OK\r\ncontent-type: text/plain\r\n\r\nclose delimited body"),
     );
     const server = await serve(guest, 8082, "cat >/dev/null; cat /tmp/http10");
-    const done = guestFetch(guest.network, { port: 8082 });
+    const done = guestFetchHandler(guest.network, { port: 8082 });
     try {
       const res = await connect_with_retry(() => done(new Request("http://guest.example/")));
       assert.equal(res.status, 200);
@@ -85,7 +85,7 @@ guest_test("guest-fetch", async (t, fixture) => {
   await t.test("handles a 204 with no body", async () => {
     await guest.fs.writeFile("/tmp/no-content", encoder.encode("HTTP/1.1 204 No Content\r\n\r\n"));
     const server = await serve(guest, 8083, "cat >/dev/null; cat /tmp/no-content");
-    const done = guestFetch(guest.network, { port: 8083 });
+    const done = guestFetchHandler(guest.network, { port: 8083 });
     try {
       const res = await connect_with_retry(() => done(new Request("http://guest.example/")));
       assert.equal(res.status, 204);
@@ -100,7 +100,7 @@ guest_test("guest-fetch", async (t, fixture) => {
   await t.test("serializes a bodyless GET", async () => {
     await guest.fs.writeFile("/tmp/resp-get", encoder.encode(canned));
     const server = await serve(guest, 8084, "cat >/tmp/cap-get; cat /tmp/resp-get");
-    const done = guestFetch(guest.network, { port: 8084 });
+    const done = guestFetchHandler(guest.network, { port: 8084 });
     try {
       const res = await connect_with_retry(() =>
         done(new Request("http://guest.example/foo?bar=1")),
@@ -121,7 +121,7 @@ guest_test("guest-fetch", async (t, fixture) => {
   await t.test("serializes a POST with a content-length body", async () => {
     await guest.fs.writeFile("/tmp/resp-post", encoder.encode(canned));
     const server = await serve(guest, 8085, "cat >/tmp/cap-post; cat /tmp/resp-post");
-    const done = guestFetch(guest.network, { port: 8085 });
+    const done = guestFetchHandler(guest.network, { port: 8085 });
     try {
       // undici only exposes content-length when the caller sets it explicitly.
       const res = await connect_with_retry(() =>
@@ -148,7 +148,7 @@ guest_test("guest-fetch", async (t, fixture) => {
   await t.test("serializes a streamed body as chunked", async () => {
     await guest.fs.writeFile("/tmp/resp-stream", encoder.encode(canned));
     const server = await serve(guest, 8086, "cat >/tmp/cap-stream; cat /tmp/resp-stream");
-    const done = guestFetch(guest.network, { port: 8086 });
+    const done = guestFetchHandler(guest.network, { port: 8086 });
     try {
       const res = await connect_with_retry(() => {
         const body = new ReadableStream<Uint8Array>({
@@ -182,7 +182,7 @@ guest_test("guest-fetch", async (t, fixture) => {
     );
     await guest.fs.chmod("/tmp/www/cgi-bin/echo", 0o755);
     const server = await guest.exec(["/usr/sbin/httpd", "-f", "-p", "8087", "-h", "/tmp/www"]);
-    const done = guestFetch(guest.network, { port: 8087 });
+    const done = guestFetchHandler(guest.network, { port: 8087 });
     try {
       const res = await connect_with_retry(() =>
         done(
@@ -209,7 +209,7 @@ guest_test("guest-fetch", async (t, fixture) => {
     // Exit immediately after the response without draining stdin: the complete
     // HTTP response must win over the upload write failure caused by close.
     const server = await serve(guest, 8088, "cat /tmp/too-large");
-    const done = guestFetch(guest.network, { port: 8088 });
+    const done = guestFetchHandler(guest.network, { port: 8088 });
     try {
       const body = new ReadableStream<Uint8Array>({
         pull(controller) {
@@ -231,7 +231,7 @@ guest_test("guest-fetch", async (t, fixture) => {
     const controller = new AbortController();
     controller.abort(new Error("cancelled"));
     await assert.rejects(
-      guestFetch(guest.network, { port: 65535 })(
+      guestFetchHandler(guest.network, { port: 65535 })(
         new Request("http://guest.example/", { signal: controller.signal }),
       ),
       /cancelled/,
@@ -239,7 +239,7 @@ guest_test("guest-fetch", async (t, fixture) => {
   });
 });
 
-test("guestFetch abort cancels a stalled request body", async () => {
+test("guestFetchHandler abort cancels a stalled request body", async () => {
   const started = Promise.withResolvers<void>();
   const cancelled = Promise.withResolvers<unknown>();
   let first = true;
@@ -283,7 +283,7 @@ test("guestFetch abort cancels a stalled request body", async () => {
 
   const controller = new AbortController();
   const init = { method: "POST", body, duplex: "half", signal: controller.signal } as RequestInit;
-  const response = guestFetch(network, { port: 8080 })(new Request("http://guest/", init));
+  const response = guestFetchHandler(network, { port: 8080 })(new Request("http://guest/", init));
   await started.promise;
   await new Promise((resolve) => setTimeout(resolve, 0));
   controller.abort(new Error("cancelled"));

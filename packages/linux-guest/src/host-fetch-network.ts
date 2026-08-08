@@ -14,6 +14,7 @@ import {
 import type { NetworkOptions, TcpSession } from "./network.ts";
 
 const PLACEHOLDER_ADDRESS = "198.18.0.1";
+const INVALID_HOST_RE = /[/\\?#@\s\u0000-\u001f\u007f]/;
 const encoder = new TextEncoder();
 const CONTINUE = encoder.encode("HTTP/1.1 100 Continue\r\n\r\n");
 const BAD_REQUEST = response_bytes("HTTP/1.1 400 Bad Request", "Bad Request\n");
@@ -41,7 +42,7 @@ function response_bytes(status: string, text: string) {
 }
 
 function request_url(host: string, target: string) {
-  if (/[/\\?#@\s\u0000-\u001f\u007f]/.test(host)) throw new Error("invalid HTTP Host");
+  if (INVALID_HOST_RE.test(host)) throw new Error("invalid HTTP Host");
   const origin = new URL(`https://${host}/`);
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash)
     throw new Error("invalid HTTP Host");
@@ -164,7 +165,7 @@ async function exchange(
  * TCP connection into an HTTPS `Request`. The required callback controls the
  * Fetch implementation and its platform policy; ambient `fetch` is never used.
  */
-export function fetchNetwork(options: {
+export function hostFetchNetwork(options: {
   fetch(request: Request): Response | PromiseLike<Response>;
 }): NetworkOptions {
   return {

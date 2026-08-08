@@ -31,11 +31,10 @@ export {
   SeekMode,
   type WriteFileOptions,
 } from "./file.ts";
-export { fetchNetwork } from "./fetch.ts";
-export { guestFetch } from "./guest-fetch.ts";
+export { guestFetchHandler } from "./guest-fetch-handler.ts";
+export { hostFetchNetwork } from "./host-fetch-network.ts";
 export { type Guest, type NetworkedGuest, spawnGuest, type SpawnGuestOptions } from "./machine.ts";
 export {
-  attach_guest,
   createNetwork,
   type GuestNetwork,
   type Network,
