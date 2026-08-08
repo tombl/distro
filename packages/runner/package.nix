@@ -16,6 +16,12 @@ let
     contents = [ busybox ];
   };
 
+  console-initramfs = vm-test.mkInitramfs {
+    name = "linux-runner-console";
+    init = ./tests/console-init.sh;
+    contents = [ busybox ];
+  };
+
   app = pkgs.stdenvNoCC.mkDerivation {
     pname = "runner-app";
     version = "0.0.0";
@@ -101,6 +107,7 @@ let
       ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
       pnpm --filter=@tombl/linux-runner check
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
+        LINUX_RUNNER_TEST_CONSOLE_INITRAMFS=${console-initramfs} \
         LINUX_RUNNER_TEST_LIFECYCLE_INITRAMFS=${lifecycle-initramfs} \
         timeout --kill-after=5 300 pnpm --filter=@tombl/linux-runner test
 

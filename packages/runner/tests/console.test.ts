@@ -1,5 +1,6 @@
+import { consoleDevice, spawnMachine } from "@tombl/linux";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 function required_environment(name: string): string {
@@ -8,35 +9,36 @@ function required_environment(name: string): string {
   return value;
 }
 
-const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
+const initramfs = required_environment("LINUX_RUNNER_TEST_CONSOLE_INITRAMFS");
 
-test(
-  "runner preserves console input supplied at launch",
-  { timeout: 45_000 },
-  async (t) => {
-    const child = spawn(runner, ["--cpus", "1"], {
-      signal: t.signal,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let output = "";
-    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+function output_sink(output: { text: string }) {
+  const decoder = new TextDecoder();
+  return new WritableStream<Uint8Array>({
+    write(chunk) {
+      output.text += decoder.decode(chunk, { stream: true });
+    },
+    close() {
+      output.text += decoder.decode();
+    },
+  });
+}
 
-    // Keep the expected marker out of the input byte stream so tty echo
-    // cannot make the assertion pass before the shell executes the script.
-    child.stdin.end(
-      "printf '%s%s\\n' LAUNCH_INPUT_ PRESERVED\n/sbin/poweroff -f\n",
-    );
+test("console preserves input queued before boot", { timeout: 45_000 }, async (t) => {
+  const output = { text: "" };
+  const input = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("queued before boot\n"));
+      controller.close();
+    },
+  });
+  const machine = await spawnMachine({
+    cpus: 1,
+    devices: [consoleDevice(input, output_sink(output))],
+    initcpio: readFile(initramfs),
+  });
+  t.after(() => machine.close());
+  void machine.bootConsole.pipeTo(output_sink(output)).catch(() => {});
 
-    const result = await new Promise<{
-      code: number | null;
-      signal: NodeJS.Signals | null;
-    }>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) => resolve({ code, signal }));
-    });
-
-    assert.deepEqual(result, { code: 0, signal: null }, output);
-    assert.match(output, /LAUNCH_INPUT_PRESERVED/);
-  },
-);
+  await machine.closed;
+  assert.match(output.text, /console-input: queued before boot/, output.text);
+});
