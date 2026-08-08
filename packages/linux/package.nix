@@ -9,8 +9,10 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "73c98b7acaaaeba4107d047956db7317615019de";
-    hash = "sha256-hzRcmf5UypPSO5BAqidbPbwpeN0UM+KOlJ2K0p9vfis=";
+    # Temporary review pin for tombl/linux#44. Replace this with the wasm
+    # commit containing tombl/linux#43 and #44 after both PRs merge.
+    rev = "e0786820a2a166245b35ba09509b608c3d8ca1a9";
+    hash = "sha256-uW2IcOTsoiM9a+L7KdCZ5h0A8k5yRWM31Vc5hTsA4nw=";
   },
 }:
 

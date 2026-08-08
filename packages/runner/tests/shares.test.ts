@@ -40,9 +40,9 @@ test("runner mounts writable and read-only host shares", async (t) => {
 printf 'from guest\\n' > '/workspace/writable share/guest.txt'
 cat '/workspace/read only/host.txt'
 if printf 'changed\\n' > '/workspace/read only/host.txt'; then
-  echo READ_ONLY_WRITE_SUCCEEDED
+  printf '%s%s\\n' READ_ONLY_WRITE_ SUCCEEDED
 else
-  echo READ_ONLY_ENFORCED
+  printf '%s%s\\n' READ_ONLY_ ENFORCED
 fi
 /sbin/poweroff -f
 `);
