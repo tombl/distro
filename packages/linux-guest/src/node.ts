@@ -53,10 +53,7 @@ function filesystem_error(error: unknown): never {
   if (error instanceof FSError) throw error;
   const code = (error as NodeJS.ErrnoException)?.code;
   if (code && known_errors.has(code)) {
-    throw new FSError(
-      code as ConstructorParameters<typeof FSError>[0],
-      (error as Error).message,
-    );
+    throw new FSError(code as ConstructorParameters<typeof FSError>[0], (error as Error).message);
   }
   throw new FSError("EIO", error instanceof Error ? error.message : String(error));
 }
@@ -190,10 +187,7 @@ function translate_open_flags(flags: number) {
     throw new FSError("EOPNOTSUPP", "unsupported Linux open mode");
   }
   if (remaining !== 0) {
-    throw new FSError(
-      "EINVAL",
-      `unsupported Linux open flags 0x${remaining.toString(16)}`,
-    );
+    throw new FSError("EINVAL", `unsupported Linux open flags 0x${remaining.toString(16)}`);
   }
   return result;
 }
@@ -340,10 +334,7 @@ export class NodeFS implements FS<Node, Handle> {
         await this.#stats(node);
         return node;
       } catch (error) {
-        if (
-          error instanceof FSError &&
-          (error as { readonly errno: number }).errno === 2
-        ) {
+        if (error instanceof FSError && (error as { readonly errno: number }).errno === 2) {
           this.#forget(parts);
           return undefined;
         }
@@ -365,12 +356,7 @@ export class NodeFS implements FS<Node, Handle> {
     );
   }
 
-  async symlink(
-    parent: Node,
-    name: string,
-    target: string,
-    _context: FSCreateContext,
-  ) {
+  async symlink(parent: Node, name: string, target: string, _context: FSCreateContext) {
     this.#writable();
     return await this.#path_operation(async () => {
       const parts = [...this.#parts(parent), valid_name(name)];
@@ -379,11 +365,7 @@ export class NodeFS implements FS<Node, Handle> {
     });
   }
 
-  async #setattr(
-    node: Node,
-    changes: FSSetAttributes,
-    file?: FileHandle,
-  ) {
+  async #setattr(node: Node, changes: FSSetAttributes, file?: FileHandle) {
     const target = file ? undefined : await this.#validated_path(this.#parts(node));
     const current = async () =>
       file ? await node_call(file.stat({ bigint: true })) : await this.#stats(node);
@@ -435,11 +417,7 @@ export class NodeFS implements FS<Node, Handle> {
     }
   }
 
-  async setattr(
-    node: Node,
-    changes: FSSetAttributes,
-    handle?: Handle,
-  ) {
+  async setattr(node: Node, changes: FSSetAttributes, handle?: Handle) {
     this.#writable();
     if (handle instanceof Handle && handle.file) {
       return await this.#setattr(node, changes, handle.file);
@@ -456,12 +434,7 @@ export class NodeFS implements FS<Node, Handle> {
     });
   }
 
-  async create(
-    parent: Node,
-    name: string,
-    flags: number,
-    context: FSCreateContext,
-  ) {
+  async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
     this.#writable();
     const host_flags =
       translate_open_flags(flags | linux_open.create) | constants.O_CREAT | constants.O_NOFOLLOW;
@@ -473,12 +446,7 @@ export class NodeFS implements FS<Node, Handle> {
     });
   }
 
-  async read(
-    _node: Node,
-    handle: Handle,
-    offset: bigint,
-    length: number,
-  ) {
+  async read(_node: Node, handle: Handle, offset: bigint, length: number) {
     if (!(handle instanceof Handle) || !handle.file) {
       throw new FSError("EBADF");
     }
@@ -489,12 +457,7 @@ export class NodeFS implements FS<Node, Handle> {
     return buffer.subarray(0, bytesRead);
   }
 
-  async write(
-    _node: Node,
-    handle: Handle,
-    offset: bigint,
-    data: Uint8Array,
-  ) {
+  async write(_node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     this.#writable();
     if (!(handle instanceof Handle) || !handle.file) {
       throw new FSError("EBADF");
@@ -534,10 +497,7 @@ export class NodeFS implements FS<Node, Handle> {
     });
   }
 
-  async readdir(
-    node: Node,
-    _handle: Handle,
-  ): Promise<FSDirectoryEntry<Node>[]> {
+  async readdir(node: Node, _handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
     return await this.#path_operation(async () => {
       const parts = this.#parts(node);
       const target = await this.#validated_path(parts);
@@ -585,12 +545,7 @@ export class NodeFS implements FS<Node, Handle> {
     });
   }
 
-  async rename(
-    oldParent: Node,
-    oldName: string,
-    newParent: Node,
-    newName: string,
-  ) {
+  async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
     this.#writable();
     await this.#path_operation(async () => {
       const old_parts = [...this.#parts(oldParent), valid_name(oldName)];

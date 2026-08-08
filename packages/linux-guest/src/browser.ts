@@ -326,12 +326,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Handle(current);
   }
 
-  async create(
-    parent: Node,
-    name: string,
-    flags: number,
-    context: FSCreateContext,
-  ) {
+  async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     const directory = this.#directory(parent);
@@ -355,12 +350,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return { node, handle: new Handle(node) };
   }
 
-  async read(
-    node: Node,
-    handle: Handle,
-    offset: bigint,
-    length: number,
-  ) {
+  async read(node: Node, handle: Handle, offset: bigint, length: number) {
     const current = this.#open_handle(node, handle);
     if (current.handle.kind !== "file") {
       throw new FSError("EISDIR");
@@ -374,12 +364,7 @@ export class BrowserFS implements FS<Node, Handle> {
     );
   }
 
-  async write(
-    node: Node,
-    handle: Handle,
-    offset: bigint,
-    data: Uint8Array,
-  ) {
+  async write(node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     const current = this.#open_handle(node, handle);
     return await this.#mutate(current, async () => {
       this.#open_handle(node, handle);
@@ -417,10 +402,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Handle(this.#as_node(node));
   }
 
-  async readdir(
-    node: Node,
-    handle: Handle,
-  ): Promise<FSDirectoryEntry<Node>[]> {
+  async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
     const current = this.#open_handle(node, handle);
     const result: FSDirectoryEntry<Node>[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
@@ -491,12 +473,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return output;
   }
 
-  async rename(
-    oldParent: Node,
-    oldName: string,
-    newParent: Node,
-    newName: string,
-  ) {
+  async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
     oldName = valid_name(oldName);
     newName = valid_name(newName);
     const old_parent = this.#as_node(oldParent);

@@ -207,10 +207,7 @@ test("node virtio-fs adapter enforces read-only shares in the backend", async ()
       }),
     () => filesystem.unlink!(filesystem.root, name),
   ]) {
-    await assert.rejects(
-      operation,
-      (error) => error instanceof FSError && error.errno === 30,
-    );
+    await assert.rejects(operation, (error) => error instanceof FSError && error.errno === 30);
   }
   await filesystem.release!(node, handle);
   assert.equal(await readFile(path.join(shared, name), "utf8"), "readable");
