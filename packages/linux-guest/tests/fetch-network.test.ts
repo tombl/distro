@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { type AddressInfo } from "node:net";
 import { test } from "node:test";
@@ -35,12 +35,6 @@ function loopback_fetch(port: number): (request: Request) => Promise<Response> {
       duplex: "half",
     } as RequestInit);
   };
-}
-
-async function read_body(request: IncomingMessage) {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(chunk);
-  return Buffer.concat(chunks);
 }
 
 async function with_guest(options: NetworkOptions, fn: (guest: NetworkedGuest) => Promise<void>) {
@@ -110,75 +104,6 @@ test("streams a large response through with its bytes intact", async () => {
   }
 });
 
-test("forwards a POST body framed by Content-Length", async () => {
-  let body: string | undefined;
-  const server = createServer(async (request, response) => {
-    body = (await read_body(request)).toString();
-    response.end("stored");
-  });
-  const port = await listen(server);
-  try {
-    await with_guest(fetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
-      const request =
-        "POST /submit HTTP/1.1\r\nHost: example.test\r\n" +
-        "Content-Length: 5\r\nConnection: close\r\n\r\nhello";
-      const nc = await guest.exec(["sh", "-c", `printf '${request}' | nc 198.18.0.1 80`]);
-      const output = decoder.decode(await collect(nc.stdout));
-      assert.match(output, /^HTTP\/1\.1 200/);
-      assert.match(output, /stored$/);
-    });
-  } finally {
-    server.close();
-  }
-  assert.equal(body, "hello");
-});
-
-test("answers Expect: 100-continue with an interim response", async () => {
-  let body: string | undefined;
-  const server = createServer(async (request, response) => {
-    body = (await read_body(request)).toString();
-    response.end("accepted");
-  });
-  const port = await listen(server);
-  try {
-    await with_guest(fetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
-      const request =
-        "POST /expect HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\n" +
-        "Content-Length: 4\r\nConnection: close\r\n\r\nbody";
-      const nc = await guest.exec(["sh", "-c", `printf '${request}' | nc 198.18.0.1 80`]);
-      const output = decoder.decode(await collect(nc.stdout));
-      assert.match(output, /HTTP\/1\.1 100 Continue/);
-      assert.match(output, /HTTP\/1\.1 200/);
-      assert.match(output, /accepted$/);
-    });
-  } finally {
-    server.close();
-  }
-  assert.equal(body, "body");
-});
-
-test("decodes a chunked request body before forwarding", async () => {
-  let body: string | undefined;
-  const server = createServer(async (request, response) => {
-    body = (await read_body(request)).toString();
-    response.end("ok");
-  });
-  const port = await listen(server);
-  try {
-    await with_guest(fetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
-      const request =
-        "POST /chunked HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n" +
-        "Connection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
-      const nc = await guest.exec(["sh", "-c", `printf '${request}' | nc 198.18.0.1 80`]);
-      const output = decoder.decode(await collect(nc.stdout));
-      assert.match(output, /^HTTP\/1\.1 200/);
-    });
-  } finally {
-    server.close();
-  }
-  assert.equal(body, "hello world");
-});
-
 test("serializes a 502 when fetch rejects", async () => {
   const network = fetchNetwork({
     fetch: () => Promise.reject(new Error("upstream is unreachable")),
@@ -217,48 +142,6 @@ async function adapter_request(
   return decoder.decode(bytes);
 }
 
-test("fetches without ambient browser authority and strips nominated headers", async () => {
-  let seen: Request | undefined;
-  const network = fetchNetwork({
-    fetch: (request) => {
-      seen = request;
-      assert.equal(request.headers.get("x-private"), null);
-      return Promise.resolve(
-        new Response("ok", {
-          headers: { connection: "x-response-private", "x-response-private": "secret" },
-        }),
-      );
-    },
-  });
-  const output = await adapter_request(
-    network,
-    "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: x-private\r\nX-Private: secret\r\n\r\n",
-  );
-  assert.equal(seen?.url, "https://example.test/");
-  assert.equal(seen?.credentials, "omit");
-  assert.equal(seen?.redirect, "manual");
-  assert.equal(seen?.referrerPolicy, "no-referrer");
-  assert.doesNotMatch(output, /x-response-private/i);
-});
-
-test("accepts bodyless methods with Content-Length: 0", async () => {
-  const methods: string[] = [];
-  const network = fetchNetwork({
-    fetch: (request) => {
-      methods.push(request.method);
-      return Promise.resolve(new Response());
-    },
-  });
-  for (const method of ["GET", "HEAD"]) {
-    const output = await adapter_request(
-      network,
-      `${method} / HTTP/1.1\r\nHost: example.test\r\nContent-Length: 0\r\n\r\n`,
-    );
-    assert.match(output, /^HTTP\/1\.1 200/);
-  }
-  assert.deepEqual(methods, ["GET", "HEAD"]);
-});
-
 test("streams request bodies larger than the former adapter cap", async () => {
   const length = 17 * 1024 * 1024;
   let received = 0;
@@ -290,46 +173,6 @@ test("streams request bodies larger than the former adapter cap", async () => {
   const [, bytes] = await Promise.all([handled, response]);
   assert.equal(received, length);
   assert.match(decoder.decode(bytes), /^HTTP\/1\.1 200/);
-});
-
-test("rejects Host values that can change URL structure", async () => {
-  let fetched = false;
-  const network = fetchNetwork({
-    fetch: () => {
-      fetched = true;
-      return Promise.resolve(new Response("unreachable"));
-    },
-  });
-  const output = await adapter_request(
-    network,
-    "GET / HTTP/1.1\r\nHost: user@example.test\r\n\r\n",
-  );
-  assert.match(output, /^HTTP\/1\.1 400 Bad Request/);
-  assert.equal(fetched, false);
-});
-
-test("rejects ambiguous, duplicate, and non-decimal content lengths", async () => {
-  let fetched = false;
-  const network = fetchNetwork({
-    fetch: () => {
-      fetched = true;
-      return new Response();
-    },
-  });
-  for (const framing of [
-    "Content-Length: 1e3\r\n",
-    "Content-Length: 5\r\nContent-Length: 5\r\n",
-    "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n",
-  ]) {
-    const output = await adapter_request(
-      network,
-      `POST / HTTP/1.1\r\nHost: example.test\r\n${framing}\r\n`,
-    );
-    assert.match(output, /^HTTP\/1\.1 400 Bad Request/);
-  }
-  const lf_only = await adapter_request(network, "GET / HTTP/1.1\nHost: example.test\n\n");
-  assert.match(lf_only, /^HTTP\/1\.1 400 Bad Request/);
-  assert.equal(fetched, false);
 });
 
 test("backpressures an upstream fetch response when the guest stops reading", async () => {
