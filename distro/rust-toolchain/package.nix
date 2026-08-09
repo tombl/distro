@@ -182,6 +182,10 @@ let
             sysroot = null;
           }
         }/bin/rustc-unsysrooted
+        # Source locations used by panic reporting survive in the compiled
+        # standard library, so remap both immutable inputs and this temporary
+        # build tree before every consumer inherits those paths through std.
+        export RUSTFLAGS="--remap-path-prefix=/nix/store=/usr/src/nix --remap-path-prefix=$NIX_BUILD_TOP=/usr/src/rust"
         export __CARGO_TESTS_ONLY_SRC_ROOT=$PWD/src/library
         export CARGO_BUILD_JOBS=$NIX_BUILD_CORES
         cd sysroot-build
@@ -267,6 +271,12 @@ let
               directory = "${pkgs.rustPlatform.importCargoLock cargoLock}"
               EOF
             ''}
+            # Rust keeps source locations used by panic reporting in live data,
+            # so stripping debug sections cannot remove store paths from the
+            # resulting guest binary. Remap the store namespace while compiling
+            # so diagnostics remain useful without claiming build-only sources
+            # will exist in the guest at runtime.
+            export RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=/nix/store=/usr/src/nix"
             export CARGO_BUILD_JOBS=$NIX_BUILD_CORES
             cargo build --release --offline --target ${targetTriple}
 
