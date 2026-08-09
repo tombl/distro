@@ -295,16 +295,16 @@ globalThis.opfsVirtioFileSystem = async () => {
     0n,
     new TextEncoder().encode("destination"),
   );
-  await filesystem
-    .rename(filesystem.root, "rename-source", filesystem.root, "rename-destination")
-    .catch(() => {});
-  const renameDestinationData = await filesystem.read(
-    renameDestination.node,
-    renameDestination.handle,
-    0n,
-    11,
+  await filesystem.rename(filesystem.root, "rename-source", filesystem.root, "rename-destination");
+  const renamed = await filesystem.lookup(filesystem.root, "rename-destination");
+  const renamedHandle = await filesystem.open(renamed, 0);
+  const renameDestinationData = await filesystem.read(renamed, renamedHandle, 0n, 6);
+  const renameSourceMissing =
+    (await filesystem.lookup(filesystem.root, "rename-source")) === undefined;
+  const replacedHandleStale = await filesystem.getattr(renameDestination.node).then(
+    () => false,
+    () => true,
   );
-  await filesystem.unlink(filesystem.root, "rename-source");
   await filesystem.unlink(filesystem.root, "rename-destination");
   return {
     concurrent: new TextDecoder().decode(concurrentData),
@@ -317,6 +317,8 @@ globalThis.opfsVirtioFileSystem = async () => {
     output: new TextDecoder().decode(output),
     persisted: new TextDecoder().decode(persisted),
     renameDestination: new TextDecoder().decode(renameDestinationData),
+    renameSourceMissing,
+    replacedHandleStale,
     replacement: new TextDecoder().decode(replacementData),
   };
 };

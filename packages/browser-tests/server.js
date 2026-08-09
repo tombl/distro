@@ -72,12 +72,35 @@ const server = createServer(async (request, response) => {
     response.writeHead(404).end();
     return;
   }
-  response.writeHead(200, {
+  const { size } = statSync(path);
+  const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+  if (!range && size === 0) {
+    response.writeHead(200, {
+      "Content-Type": types[extname(path)] ?? "application/octet-stream",
+      "Accept-Ranges": "bytes",
+      "Content-Length": 0,
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+    });
+    response.end();
+    return;
+  }
+  const start = range ? Number(range[1]) : 0;
+  const end = range && range[2] !== "" ? Number(range[2]) : size - 1;
+  if (start < 0 || end < start || end >= size) {
+    response.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
+    return;
+  }
+  response.writeHead(range ? 206 : 200, {
     "Content-Type": types[extname(path)] ?? "application/octet-stream",
+    "Accept-Ranges": "bytes",
+    "Content-Length": end - start + 1,
+    ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
     "Cross-Origin-Embedder-Policy": "require-corp",
     "Cross-Origin-Opener-Policy": "same-origin",
   });
-  createReadStream(path).pipe(response);
+  if (request.method === "HEAD") response.end();
+  else createReadStream(path, { start, end }).pipe(response);
 });
 
 server.listen(0, "127.0.0.1", () => {

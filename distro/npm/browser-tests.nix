@@ -5,6 +5,7 @@
   kernel,
   linux-guest,
   pkgs,
+  site,
 }:
 
 let
@@ -13,32 +14,41 @@ let
   playwrightVersion = packageJson.devDependencies."@playwright/test";
   driverVersion = pkgs.playwright-driver.version;
 
-  suite =
-    pkgs.runCommand "browser-tests"
-      {
-        passthru.checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (lib.genAttrs projects check);
+  baseSuite = pkgs.runCommand "browser-tests" { } ''
+    mkdir -p \
+      $out/node_modules/@playwright \
+      $out/node_modules/@lowland/bytes \
+      $out/node_modules/@lowland/kernel \
+      $out/node_modules/@tombl/linux-guest
+    cp ${source}/app.js $out/app.js
+    cp ${source}/index.html $out/index.html
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
+    cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
+    cp ${source}/server.js $out/server.js
+    cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
+    mkdir $out/tests
+    cp ${source}/tests/boot.spec.js $out/tests/
+    cp ${source}/tests/remote-memory.spec.js $out/tests/
+    cp ${source}/tests/spawn-stress.spec.js $out/tests/
+    cp ${source}/tests/virtio-fs.spec.js $out/tests/
+    cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+    cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
+    cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
+    tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+  '';
+
+  suite = baseSuite // {
+    checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+      (lib.genAttrs projects check)
+      // {
+        site-live = siteCheck;
+        service-worker = serviceWorkerCheck;
       }
-      ''
-        mkdir -p \
-          $out/node_modules/@playwright \
-          $out/node_modules/@lowland/bytes \
-          $out/node_modules/@lowland/kernel \
-          $out/node_modules/@tombl/linux-guest
-        cp ${source}/app.js $out/app.js
-        cp ${source}/index.html $out/index.html
-        cp ${source}/playwright.config.js $out/playwright.config.js
-        cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
-        cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
-        cp ${source}/server.js $out/server.js
-        cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
-        cp -r ${source}/tests $out/tests
-        cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
-        cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
-        cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
-        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
-        cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
-        tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
-      '';
+    );
+  };
 
   projects = [
     "chromium"
@@ -81,10 +91,48 @@ let
       export TMPDIR="$NIX_BUILD_TOP/tmp"
       mkdir "$TMPDIR"
       ${environment project}
-      cd ${suite}
+      cd ${baseSuite}
       node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
       touch $out
     '';
+
+  siteSuite = pkgs.runCommand "site-browser-tests" { } ''
+    mkdir -p $out/node_modules/@playwright $out/tests
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/server.js $out/server.js
+    cp ${source}/tests/site-live.spec.js $out/tests/site-live.spec.js
+    cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+    cp -rL ${site.package}/. $out/
+  '';
+
+  serviceWorkerSuite = pkgs.runCommand "service-worker-browser-tests" { } ''
+    mkdir -p $out/node_modules/@playwright $out/tests
+    cp ${source}/playwright.config.js $out/playwright.config.js
+    cp ${source}/server.js $out/server.js
+    cp ${source}/app.js $out/app.js
+    cp ${source}/tests/service-worker.spec.js $out/tests/service-worker.spec.js
+    cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
+    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+    cp ${source}/index.html $out/index.html
+    cp ${../../apps/site/service-worker.js} $out/service-worker.js
+  '';
+
+  chromiumCheck =
+    name: testSuite:
+    pkgs.runCommand name { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+      export TMPDIR="$NIX_BUILD_TOP/tmp"
+      mkdir "$TMPDIR"
+      ${environment "chromium"}
+      cd ${testSuite}
+      node node_modules/@playwright/test/cli.js test --project=chromium --reporter=line
+      touch $out
+    '';
+
+  siteCheck = chromiumCheck "browser-tests-site-live" siteSuite;
+  serviceWorkerCheck = chromiumCheck "browser-tests-service-worker" serviceWorkerSuite;
 in
 assert lib.assertMsg (playwrightVersion == driverVersion) ''
   packages/browser-tests pins @playwright/test ${playwrightVersion}, but nixpkgs playwright-driver is ${driverVersion}

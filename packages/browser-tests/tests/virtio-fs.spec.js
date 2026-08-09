@@ -20,7 +20,9 @@ test("adapts OPFS to the virtio filesystem contract", async ({ page }) => {
     nestedPersisted: "after",
     output: "persistent",
     persisted: "persistent",
-    renameDestination: "destination",
+    renameDestination: "source",
+    renameSourceMissing: true,
+    replacedHandleStale: true,
     replacement: "new",
   });
 });
