@@ -1,11 +1,9 @@
-# The site's guest rootfs: a writable ext4 image with busybox and apk-tools
-# installed from the site's own repository. The boot script seeds it from the
-# server into OPFS, so `apk add` inside the guest persists across reloads.
+# The site's opinionated immutable system image. The guest package supplies the
+# hidden agent disk; this image contains only the system userspace.
 {
   apk,
   apk-tools,
   busybox,
-  guest-agent,
   image,
   pkgs,
   repository,
@@ -17,7 +15,6 @@ let
     repositories = [ repository ];
     packages = [
       busybox
-      guest-agent
       apk-tools
     ];
     files = {
@@ -38,6 +35,4 @@ in
 image.mkFilesystem {
   name = "site-rootfs";
   root = system;
-  format = "ext4";
-  size = "64M";
 }

@@ -150,63 +150,18 @@
         },
       });
 
-      // The writable rootfs lives in OPFS, keyed by the served image's hash so
-      // an upgraded rootfs reseeds itself and old copies are simply orphaned.
-      // First visit downloads and decompresses the seed; afterwards the guest
-      // reads and writes the persisted disk, so `apk add` survives reloads.
+      // Persistence policy deliberately stays out of the image package. This
+      // migration boundary boots the labeled immutable EROFS image directly;
+      // the persistence branch will replace this storage adapter with its
+      // live/install overlay.
       async function openDisk() {
-        const sha = await fetch("rootfs.ext4.sha256").then((res) =>
-          res.text().then((t) => t.trim()),
-        );
-        const directory = await navigator.storage.getDirectory();
-        const handle = await directory.getFileHandle(`rootfs-${sha}.ext4`, { create: true });
-        const file = await handle.getFile();
-        let disk;
-        if (file.size === 0) {
-          const response = await fetch(`rootfs-${sha}.ext4.gz`);
-          if (!response.ok) throw new Error(`failed to fetch rootfs seed: ${response.status}`);
-          disk = new Uint8Array(
-            await new Response(
-              response.body.pipeThrough(new DecompressionStream("gzip")),
-            ).arrayBuffer(),
-          );
-          const writable = await handle.createWritable();
-          await writable.write(disk);
-          await writable.close();
-        } else {
-          disk = new Uint8Array(await file.arrayBuffer());
-        }
-
-        // Reads and writes hit an in-memory image for speed; dirty blocks are
-        // flushed to OPFS on each virtio flush. Sync handles are only exposed
-        // in workers, so the async file API keeps this on the main thread.
-        const BLOCK = 4096;
-        const dirty = new Set();
+        const response = await fetch("__ROOTFS__");
+        if (!response.ok) throw new Error(`failed to fetch rootfs: ${response.status}`);
+        const disk = new Uint8Array(await response.arrayBuffer());
         return {
           capacity: disk.byteLength,
           read(offset, length) {
             return disk.slice(offset, offset + length);
-          },
-          write(offset, data) {
-            disk.set(data, offset);
-            const first = Math.floor(offset / BLOCK);
-            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
-            for (let block = first; block <= last; block++) dirty.add(block);
-            return data.byteLength;
-          },
-          async flush() {
-            if (dirty.size === 0) return;
-            const writable = await handle.createWritable({ keepExistingData: true });
-            for (const block of dirty) {
-              const offset = block * BLOCK;
-              await writable.write({
-                type: "write",
-                position: offset,
-                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
-              });
-            }
-            await writable.close();
-            dirty.clear();
           },
         };
       }
@@ -223,9 +178,9 @@
       const guest = await spawnGuest({
         root: blockDevice(disk),
         bootConsole: bootOut,
-        // Keep the public demo multi-core without spawning one wasm worker for
-        // every host CPU on large developer and CI machines.
-        cpus: Math.min(navigator.hardwareConcurrency, 4),
+        // One CPU is the supported architecture until SMP is ready to become
+        // part of the facade contract.
+        cpus: 1,
         network,
         cmdline: cmdline.replace(/\+/g, " "),
         devices: [ttyConsole, entropyDevice()],

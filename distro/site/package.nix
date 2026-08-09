@@ -36,21 +36,22 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -L ${kernel}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
     cp -rL ${bytes}/dist $out/static/v${ver}/bytes
     cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
+    cp -L ${linux-guest.package}/agent.erofs $out/static/v${ver}/agent.erofs
 
-    # The rootfs is served under its own content hash so the seed can be
-    # cached immutable too; the page learns the name from rootfs.ext4.sha256.
+    # The EROFS image is immutable and is served under its content hash, so the
+    # page can read it directly into the block device.
     sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${rootfs} | awk '{ print $1 }')
-    gzip --best --no-name --stdout ${rootfs} > $out/rootfs-''${sha}.ext4.gz
-    printf '%s' "$sha" > $out/rootfs.ext4.sha256
+    cp ${rootfs} $out/rootfs-''${sha}.erofs
 
     mkdir -p $out
     substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
+    substituteInPlace index.html --replace-fail __ROOTFS__ rootfs-''${sha}.erofs
     cp index.html $out/index.html
     cp _headers $out/_headers
     cp -r vendor $out/vendor
 
     # The hosting provider rejects individual assets larger than 25 MB.
-    rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.ext4.gz)
+    rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.erofs)
     if [ "$rootfs_bytes" -gt 25000000 ]; then
       echo "site rootfs is $rootfs_bytes bytes; hosting limit is 25000000" >&2
       exit 1
