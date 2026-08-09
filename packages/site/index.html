@@ -94,7 +94,11 @@
       } from "@tombl/linux-guest";
       import { BrowserFS } from "@tombl/linux-guest/browser";
 
-      if ("serviceWorker" in navigator) {
+      const bootMode = "__BOOT_MODE__";
+      if (
+        "serviceWorker" in navigator &&
+        (bootMode === "live" || !navigator.serviceWorker.controller)
+      ) {
         await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
       }
 
@@ -284,12 +288,18 @@
       // fetch, which is exactly what `apk add` needs to reach the served repo.
       const network = createNetwork(
         hostFetchNetwork({
-          fetch: (request) => fetch(request),
+          fetch: (request) => {
+            const url = new URL(request.url);
+            if (url.hostname === "site.lowland.invalid") {
+              return fetch(new Request(new URL(url.pathname + url.search, location.origin), request));
+            }
+            return fetch(request);
+          },
         }),
       );
 
-      const disk = await openLiveDisk();
-      const installDisk = await openInstallDisk();
+      const disk = bootMode === "live" ? await openLiveDisk() : await openInstallDisk();
+      const installDisk = bootMode === "live" ? await openInstallDisk() : undefined;
       const opfs = await navigator.storage.getDirectory();
       const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({
@@ -299,16 +309,23 @@
         // every host CPU on large developer and CI machines.
         cpus: Math.min(navigator.hardwareConcurrency, 4),
         network,
-        cmdline: cmdline.replace(/\+/g, " "),
+        configureNetwork: false,
+        cmdline: `${bootMode === "installed" ? "rw " : ""}${cmdline.replace(/\+/g, " ")}`,
         devices: [
           ttyConsole,
-          blockDevice(installDisk),
+          ...(installDisk ? [blockDevice(installDisk)] : []),
           entropyDevice(),
           fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
         ],
       });
+      await guest.fs.mkdir("/run", { recursive: true });
+      await guest.fs.writeFile(
+        "/run/site-origin",
+        new TextEncoder().encode("http://site.lowland.invalid"),
+      );
       await guest.fs.mkdir("/boot", { recursive: true });
       await guest.mount("boot", "/boot", { type: "virtiofs" });
+      document.documentElement.dataset.guestReady = "true";
     </script>
   </body>
 </html>

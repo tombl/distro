@@ -3,6 +3,7 @@
   linux,
   linux-guest,
   installDisk,
+  installerRepository,
   rootfs,
 }:
 
@@ -51,11 +52,14 @@ pkgs.stdenvNoCC.mkDerivation {
     printf '{"sha":"%s","size":%s}' "$install_sha" "$install_size" > $out/install-disk.json
 
     mkdir -p $out
-    substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
+    substituteInPlace index.html \
+      --replace-fail __ASSETS__ v${ver} \
+      --replace-fail __BOOT_MODE__ live
     cp index.html $out/index.html
     cp service-worker.js $out/service-worker.js
     cp _headers $out/_headers
     cp -r vendor $out/vendor
+    cp -rL ${installerRepository} $out/install-repo
 
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.squashfs)

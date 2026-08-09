@@ -1,18 +1,21 @@
 #!/bin/busybox sh
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
 
 [ -c /dev/null ] || mount -t devtmpfs devtmpfs /dev
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 
+# Every page creates one private network, whose first guest is always .2.
+# Configure it before the agent starts so boot does not depend on an agent
+# process-spawn round trip.
+/bin/busybox ifconfig lo up
+/bin/busybox ifconfig eth0 192.0.2.2 netmask 255.255.255.0 up
+/bin/busybox route add default gw 192.0.2.1 eth0
+
 # A name for the machine so the motd reads like a real host.
 [ "$(hostname)" = "(none)" ] && hostname lowland
-
-# The host uses the guest package to own machine and network setup. Keep its
-# agent beside the interactive console shell so spawnGuest can configure the
-# interface and expose the normal exec/filesystem API without taking over PID 1.
-/bin/linux-guest-agent &
 
 # A neofetch-style motd. The apk line is the point: everything else on the
 # page is a demo of what a whole installable machine in the browser can do.
@@ -36,5 +39,10 @@ printf '%-14s%s\n' ' (|     | )' "${label}memory${reset}   $((mem_total - mem_av
 printf '%-14s%s\n' "/'\\_   _/\`\\" "${label}shell${reset}    sh"
 printf '%-14s%s\n' '\___)=(___/' "${label}apk${reset}      add curl jq sqlite3, and more"
 echo
+
+# The host uses the guest package to own machine and network setup. Start it
+# after the MOTD helpers finish: wasm process creation is serialized, so this
+# also avoids racing the host's first network-configuration exec.
+/bin/linux-guest-agent &
 
 exec setsid cttyhack sh

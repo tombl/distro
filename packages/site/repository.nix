@@ -5,6 +5,7 @@
 {
   apk,
   apk-tools,
+  bootFiles,
   busybox,
   curl,
   file,
@@ -21,6 +22,7 @@ let
     packages = {
       inherit
         apk-tools
+        bootFiles
         busybox
         curl
         file

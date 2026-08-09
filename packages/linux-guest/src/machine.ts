@@ -27,6 +27,8 @@ export interface SpawnGuestOptions extends Omit<
   network?: Network;
   /** Extra kernel command line arguments, appended to the defaults. */
   cmdline?: string;
+  /** Set false when the guest configures its attached network device itself. */
+  configureNetwork?: boolean;
   /** Receives kernel output emitted before the guest's regular console is ready. */
   bootConsole?: WritableStream<Uint8Array>;
 }
@@ -161,7 +163,15 @@ export function spawnGuest(
 ): Promise<NetworkedGuest>;
 export function spawnGuest(options: SpawnGuestOptions): Promise<Guest>;
 export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
-  const { devices = [], root, network, cmdline = "", bootConsole, ...machine_options } = options;
+  const {
+    devices = [],
+    root,
+    network,
+    configureNetwork = true,
+    cmdline = "",
+    bootConsole,
+    ...machine_options
+  } = options;
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
@@ -187,7 +197,7 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
 
   try {
     await wait_for_guest(client, machine);
-    if (attached) {
+    if (attached && configureNetwork) {
       await configure_network(
         client.exec,
         client.fs,

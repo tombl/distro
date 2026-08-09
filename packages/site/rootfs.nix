@@ -29,6 +29,10 @@ let
         source = ./init.sh;
         mode = "0755";
       };
+      "/sbin/install-lowland" = {
+        source = ./install-system.sh;
+        mode = "0755";
+      };
       "/etc/apk/keys/site.rsa.pub" = repository.publicKey;
       "/etc/apk/repositories" = pkgs.writeText "site-apk-repositories" ''
         http://assets.low.land/apk/wasm32/Packages.adb
