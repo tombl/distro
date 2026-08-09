@@ -35,6 +35,7 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <linux/vm_sockets.h>
@@ -743,18 +744,128 @@ static int mount_if_needed(const char *source, const char *target,
 	return 0;
 }
 
+enum {
+	erofs_super_offset = 1024,
+	erofs_volume_name_offset = 64,
+	erofs_probe_size = 80,
+	erofs_magic = 0xe0f5e1e2,
+};
+
+static bool is_system_root(const char *device)
+{
+	static const char label[] = "LOWLAND_ROOT";
+	uint8_t super[erofs_probe_size];
+	ssize_t length;
+	int fd;
+
+	fd = open(device, O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return false;
+	do {
+		length = pread(fd, super, sizeof(super), erofs_super_offset);
+	} while (length == -1 && errno == EINTR);
+	close(fd);
+	return length == (ssize_t)sizeof(super) && load_u32(super) == erofs_magic &&
+	       !memcmp(super + erofs_volume_name_offset, label, sizeof(label));
+}
+
+static int find_system_root(char *device, size_t capacity)
+{
+	int attempt;
+
+	for (attempt = 0; attempt < 100; attempt++) {
+		char suffix;
+
+		for (suffix = 'a'; suffix <= 'z'; suffix++) {
+			int length = snprintf(device, capacity, "/dev/vd%c", suffix);
+
+			if (length < 0 || (size_t)length >= capacity) {
+				errno = ENAMETOOLONG;
+				return -1;
+			}
+			if (is_system_root(device))
+				return 0;
+		}
+		usleep(100000);
+	}
+	errno = ENODEV;
+	return -1;
+}
+
+static int make_directory(const char *path, mode_t mode)
+{
+	if (mkdir(path, mode) == -1 && errno != EEXIST)
+		return -1;
+	return 0;
+}
+
+static int prepare_system_root(void)
+{
+	char device[32];
+
+	if (make_directory("/dev", 0755) ||
+	    mount_if_needed("devtmpfs", "/dev", "devtmpfs") ||
+	    make_directory("/dev/pts", 0755) ||
+	    mount_if_needed("devpts", "/dev/pts", "devpts") ||
+	    make_directory("/proc", 0555) ||
+	    mount_if_needed("proc", "/proc", "proc") ||
+	    make_directory("/sys", 0555) ||
+	    mount_if_needed("sysfs", "/sys", "sysfs"))
+		return -1;
+
+	if (find_system_root(device, sizeof(device))) {
+		fprintf(stderr,
+			"linux-guest-agent: no EROFS device labeled LOWLAND_ROOT\n");
+		return -1;
+	}
+	if (mount(device, "/mnt", "erofs", MS_RDONLY, NULL) == -1 ||
+	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
+	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
+	    mount("tmpfs", "/mnt/workspace", "tmpfs", 0, NULL) == -1 ||
+	    chmod("/mnt/tmp", 01777) == -1)
+		return -1;
+
+	if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1 ||
+	    mount("/dev", "/mnt/dev", NULL, MS_MOVE, NULL) == -1 ||
+	    mount("/proc", "/mnt/proc", NULL, MS_MOVE, NULL) == -1 ||
+	    mount("/sys", "/mnt/sys", NULL, MS_MOVE, NULL) == -1 ||
+	    chdir("/mnt") == -1 ||
+	    syscall(SYS_pivot_root, ".", "mnt") == -1 ||
+	    chdir("/") == -1 || umount2("/mnt", MNT_DETACH) == -1)
+		return -1;
+	return 0;
+}
+
+static int start_system_init(void)
+{
+	char *const argv[] = { "/init", NULL };
+	char *const envp[] = { "PATH=/usr/local/bin:/usr/bin:/bin", NULL };
+	int error;
+	pid_t pid;
+
+	if (access("/init", X_OK) == -1)
+		return errno == ENOENT ? 0 : -1;
+	error = posix_spawn(&pid, "/init", NULL, NULL, argv, envp);
+	if (error) {
+		errno = error;
+		return -1;
+	}
+	return 0;
+}
+
 int main(void)
 {
 	int session_listener;
 
 	signal(SIGPIPE, SIG_IGN);
-	/* /proc is load-bearing: the host's realPath and FsFile.stat go
-	 * through /proc/self/fd/N. */
-	if ((mkdir("/dev/pts", 0755) == -1 && errno != EEXIST) ||
-	    mount_if_needed("devpts", "/dev/pts", "devpts") == -1 ||
-	    mount_if_needed("proc", "/proc", "proc") == -1 ||
-	    mount_if_needed("sysfs", "/sys", "sysfs") == -1) {
-		perror("mount");
+	/* /proc remains load-bearing after the root transition: the host's
+	 * realPath and FsFile.stat go through /proc/self/fd/N. */
+	if (prepare_system_root()) {
+		perror("linux-guest-agent: preparing system root");
+		return 1;
+	}
+	if (start_system_init()) {
+		perror("linux-guest-agent: starting system init");
 		return 1;
 	}
 	session_listener = listener(session_port, 1);
@@ -812,6 +923,10 @@ int main(void)
 		}
 		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
 			fprintf(stderr, "session worker failed\n");
+			return 1;
+		}
+		if (start_system_init()) {
+			perror("linux-guest-agent: restarting system init");
 			return 1;
 		}
 	}

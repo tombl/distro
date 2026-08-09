@@ -10,6 +10,7 @@
     "directory": "packages/linux-guest"
   },
   "files": [
+    "agent.erofs",
     "dist"
   ],
   "type": "module",

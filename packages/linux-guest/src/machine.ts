@@ -1,4 +1,5 @@
 import {
+  blockDevice,
   bootMachine,
   type BootMachineOptions,
   vsockDevice,
@@ -17,7 +18,7 @@ export interface SpawnGuestOptions extends Omit<
   BootMachineOptions,
   "plugins" | "initcpio" | "args"
 > {
-  /** Root block device. It is attached as /dev/vda and booted directly. */
+  /** EROFS system image labeled LOWLAND_ROOT. Device order is not significant. */
   root: VirtioDevice;
   /** Extra virtio devices to boot with — a console or entropy device from `@lowland/kernel`, say. */
   devices?: readonly VirtioDevice[];
@@ -27,6 +28,33 @@ export interface SpawnGuestOptions extends Omit<
   cmdline?: string;
   /** Receives kernel output emitted before the guest's regular console is ready. */
   bootConsole?: WritableStream<Uint8Array>;
+}
+
+interface NodeProcess {
+  getBuiltinModule?: (id: "node:fs/promises") => {
+    readFile(path: URL): Promise<Uint8Array<ArrayBuffer>>;
+  };
+}
+
+const agent_image = (async () => {
+  const url = new URL("../agent.erofs", import.meta.url);
+  const process = (globalThis as { process?: NodeProcess }).process;
+  if (process?.getBuiltinModule) {
+    return process.getBuiltinModule("node:fs/promises").readFile(url);
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`failed to load guest agent image: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+})();
+
+async function agent_device() {
+  const bytes = await agent_image;
+  return blockDevice({
+    capacity: bytes.byteLength,
+    read(offset, length) {
+      return bytes.subarray(offset, offset + length);
+    },
+  });
 }
 
 /**
@@ -159,12 +187,15 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
+  const agent = await agent_device();
   let machine: Machine;
   try {
     machine = await bootMachine({
       ...machine_options,
-      args: ["root=/dev/vda", "rootwait", "init=/init", cmdline].filter(Boolean),
-      plugins: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
+      args: ["root=/dev/vda", "rootfstype=erofs", "ro", "rootwait", "init=/init", cmdline].filter(
+        Boolean,
+      ),
+      plugins: [agent, ...devices, root, vsock, ...(attached ? [attached.attachment.device] : [])],
     });
     if (bootConsole) {
       void machine.bootConsole.pipeTo(bootConsole).catch(() => {});

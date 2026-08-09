@@ -11,7 +11,7 @@ async function collectProcess(child) {
   return { status, stdout, stderr };
 }
 
-const rootfs = fetch("/rootfs.squashfs").then(async (response) => {
+const rootfs = fetch("/rootfs.erofs").then(async (response) => {
   if (!response.ok) throw new Error(`failed to load rootfs: ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
 });

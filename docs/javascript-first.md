@@ -90,11 +90,11 @@ This package owns one optional integration: the Lowland guest agent.
 
 - The host protocol client exposes the existing process, filesystem, syscall,
   and networking APIs.
-- The package ships the agent boot disk as a squashfs asset.
+- The package ships the agent boot disk as an EROFS asset.
 - `guestAgent()` returns the agent API and is also a machine plugin provider.
 - It does not boot machines, re-export kernel devices, or ship BusyBox.
 
-The agent executable is PID 1 on its squashfs. It mounts `devtmpfs`, `devpts`,
+The agent executable is PID 1 on its EROFS filesystem. It mounts `devtmpfs`, `devpts`,
 `proc`, `sysfs`, and writable temporary filesystems itself, then serves the
 host protocol. This makes it a small bootloader and control plane without an
 additional CPIO archive or second copy of libc.
@@ -186,7 +186,7 @@ export interface MachineSetup {
 `bootMachine()` normalizes a provider by checking for `getMachinePlugin`, runs
 each `configure()` callback against a private in-progress setup, boots once,
 then awaits each `booted()` callback. A guest-agent provider can therefore add
-its squashfs and vsock devices during configuration and make `bootMachine()`
+its EROFS and vsock devices during configuration and make `bootMachine()`
 resolve only once the agent answers. The setup value is not sealed or exposed
 on the resulting machine; plugin authors are responsible for not retaining and
 misusing a configure-only value.
@@ -221,7 +221,7 @@ The canonical host path does not supply an initramfs. The kernel first boots a
 small agent filesystem:
 
 ```text
-root=/dev/vda rootfstype=squashfs ro rootwait init=/init
+root=/dev/vda rootfstype=erofs ro rootwait init=/init
 ```
 
 The agent runs as PID 1. It mounts `devtmpfs`, `devpts`, `proc`, and `sysfs`.
@@ -233,14 +233,14 @@ agent can remain visible through normal process information in `/proc`.
 The agent finds the system image by label. It does not use the virtio device
 order, a kernel argument, or information returned by `devices.add()`.
 
-The image builder applies the label `LOWLAND_ROOT` as follows:
+The image builder writes `LOWLAND_ROOT` into the native EROFS volume-label
+field. The agent checks the EROFS superblock on each virtio block device and
+does not assume that the system image is `/dev/vdb`. `LOWLAND_AGENT` identifies
+the private boot disk and cannot be mistaken for the system image.
 
-- For ext4, it sets the filesystem label with `mke2fs -L LOWLAND_ROOT`.
-- SquashFS has no filesystem-label field. A SquashFS image therefore sits in a
-  GPT partition whose partition name is `LOWLAND_ROOT`.
-
-The image-construction API must document both forms. The agent accepts either
-the ext4 filesystem label or the GPT partition name.
+The wasm kernel ships one immutable-image filesystem: EROFS. Ext4 remains
+available only for the later installed, writable system designed by the
+persistence work.
 
 The first implementation boots the published image read-only. It does not add
 persistent-storage behavior to the image plugin. A later persistence change
@@ -319,7 +319,7 @@ pnpm artifacts
 ```
 
 It builds and copies all required native artifacts as regular ignored files to
-their owning packages: the kernel wasm, guest-agent squashfs, canonical image,
+their owning packages: the kernel wasm, guest-agent EROFS, canonical image,
 and test images. It does not create store symlinks, provenance sidecars, or an
 alternative downloader. JavaScript commands fail early with this exact remedy
 when an artifact is absent.
@@ -344,7 +344,7 @@ toolchain work.
 
 Node's test runner is the single test harness. Tests import and exercise the
 published JavaScript surfaces and name their required native artifacts as
-ordinary URLs. Early platform tests still boot a tiny test-specific squashfs
+ordinary URLs. Early platform tests still boot a tiny test-specific EROFS image
 and inspect console assertions without the guest agent, so a guest regression
 cannot conceal a kernel or libc failure.
 
@@ -378,7 +378,7 @@ CI application.
    devices as plugins without changing their device APIs.
 3. Boot every canonical low-level test from a block device while retaining the
    kernel initramfs ABI for non-canonical embeddings.
-4. Make the guest agent a PID-1 squashfs plugin and retain its capabilities on
+4. Make the guest agent a PID-1 EROFS plugin and retain its capabilities on
    the agent object.
 5. Define the image-to-`/root` association, publish the minimal image package
    shape, and add the Nix image-to-npm helper.

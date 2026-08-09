@@ -16,7 +16,7 @@ while [ ! -b /dev/vda ]; do
 done
 
 immutable=1
-if ! mount -t squashfs -o ro /dev/vda /newroot 2>/dev/null; then
+if ! mount -t erofs -o ro /dev/vda /newroot 2>/dev/null; then
   immutable=0
   mount -t ext4 -o rw /dev/vda /newroot || exec sh
 fi

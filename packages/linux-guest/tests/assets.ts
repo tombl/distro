@@ -25,13 +25,33 @@ async function build() {
 
 const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
 
-export const rootfs = await readFile(join(directory, "rootfs.squashfs"));
+export const agentfs = await readFile(join(directory, "agent.erofs"));
+export const rootfs = await readFile(join(directory, "rootfs.erofs"));
+export const wrong_rootfs = await readFile(join(directory, "wrong-root.erofs"));
 
 export function root_device() {
   return blockDevice({
     capacity: rootfs.byteLength,
     read(offset, length) {
       return rootfs.subarray(offset, offset + length);
+    },
+  });
+}
+
+export function agent_device() {
+  return blockDevice({
+    capacity: agentfs.byteLength,
+    read(offset, length) {
+      return agentfs.subarray(offset, offset + length);
+    },
+  });
+}
+
+export function wrong_root_device() {
+  return blockDevice({
+    capacity: wrong_rootfs.byteLength,
+    read(offset, length) {
+      return wrong_rootfs.subarray(offset, offset + length);
     },
   });
 }

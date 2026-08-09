@@ -1,28 +1,21 @@
 {
   apk,
   busybox,
-  guest-agent,
   image,
   pkgs,
   repository,
+  label ? "LOWLAND_ROOT",
 }:
 
 image.mkFilesystem {
   name = "guest-rootfs";
+  inherit label;
   root = apk.mkSystem {
     name = "guest";
     repositories = [ repository ];
-    packages = [
-      busybox
-      guest-agent
-    ];
+    packages = [ busybox ];
     files."/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
       nameserver 192.0.2.1
     '';
-    files."/init" = {
-      source = ./init.sh;
-      mode = "0755";
-    };
-    files."/bin/linux-guest-agent" = "${guest-agent}/bin/linux-guest-agent";
   };
 }

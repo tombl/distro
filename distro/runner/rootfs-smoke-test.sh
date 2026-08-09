@@ -15,7 +15,7 @@ while [ ! -b /dev/vda ]; do
 done
 
 mkdir -p /newroot || fail "creating mountpoint failed"
-mount -t squashfs -o ro /dev/vda /newroot || fail "mounting squashfs rootfs failed"
+mount -t erofs -o ro /dev/vda /newroot || fail "mounting EROFS rootfs failed"
 [ -x /newroot/init ] || fail "rootfs is missing init"
 [ -x /newroot/bin/basic-init ] || fail "rootfs is missing basic-init"
 [ -x /newroot/bin/busybox ] || fail "rootfs is missing busybox"

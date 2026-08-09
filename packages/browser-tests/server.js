@@ -10,7 +10,7 @@ const types = {
   ".cpio": "application/octet-stream",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".squashfs": "application/octet-stream",
+  ".erofs": "application/octet-stream",
   ".wasm": "application/wasm",
 };
 
@@ -52,7 +52,7 @@ const server = createServer(async (request, response) => {
   };
   if (!exists(path)) {
     try {
-      if (relative === "rootfs.squashfs") {
+      if (relative === "rootfs.erofs") {
         const directory =
           process.env.LINUX_GUEST_TEST_ASSETS ?? (await build("linux-guest.checks.tests.assets"));
         path = join(directory, relative);

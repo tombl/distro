@@ -10,8 +10,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "015960b05977b3ef9a4370b6a0ea0fb47c063d90";
-    hash = "sha256-8TGFmhORlsz6Izz8VRrN4FpLpxHefZaxO9G35+zLJro=";
+    rev = "1bb690ea73c2bc2bf073f838001fd03f2b55b18b";
+    hash = "sha256-zx7NjzbtDq3bN8QfDYqIr3RJVf1BivIyDcR7ZpSi6fI=";
   },
 }:
 

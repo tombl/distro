@@ -4,7 +4,7 @@ import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { SystemError } from "../src/index.ts";
 import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
-import { root_device } from "./assets.ts";
+import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
 
@@ -201,8 +201,8 @@ guest_test("session teardown", async (t) => {
     const root = root_device();
     const machine = await bootMachine({
       cpus: 1,
-      args: ["root=/dev/vda", "rootwait", "init=/init"],
-      plugins: [root, vsock],
+      args: ["root=/dev/vda", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
+      plugins: [agent_device(), root, vsock],
     });
     try {
       let first: GuestSession | undefined;

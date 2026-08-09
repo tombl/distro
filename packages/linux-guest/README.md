@@ -13,7 +13,7 @@ npm install @lowland/kernel @tombl/linux-guest
 ```js
 import { blockDevice, spawnGuest } from "@tombl/linux-guest";
 
-const rootfs = new Uint8Array(await fetch("/rootfs.squashfs").then((r) => r.arrayBuffer()));
+const rootfs = new Uint8Array(await fetch("/rootfs.erofs").then((r) => r.arrayBuffer()));
 const root = blockDevice({
   capacity: rootfs.byteLength,
   read: (offset, length) => rootfs.subarray(offset, offset + length),
@@ -24,6 +24,12 @@ const process = await guest.exec(["uname", "-a"]);
 console.log(await new Response(process.stdout).text());
 guest.machine.close();
 ```
+
+The root image must be EROFS and its native volume label must be
+`LOWLAND_ROOT`. Device order is deliberately not part of the boot contract:
+the private agent scans attached block devices for that label, pivots into the
+matching image, and unmounts its own boot filesystem before guest processes
+run. Images built by this repository set the label automatically.
 
 ## Share a host directory
 

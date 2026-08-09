@@ -384,8 +384,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         get_devicetree: (buf, size) => {
           const address = buf >>> 0;
           const capacity = size >>> 0;
+          if (address === 0 && capacity === 0) return generated_devicetree.byteLength;
           assert(capacity >= generated_devicetree.byteLength, "Device tree truncated");
           new Uint8Array(wasm_memory.buffer).set(generated_devicetree, address);
+          return generated_devicetree.byteLength;
         },
         get_initramfs: (buf, size) => {
           const address = buf >>> 0;

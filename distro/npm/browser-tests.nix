@@ -30,7 +30,7 @@ let
         cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
         cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
         cp ${source}/server.js $out/server.js
-        cp ${linux-guest.package.checks.tests.assets}/rootfs.squashfs $out/rootfs.squashfs
+        cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
         cp -r ${source}/tests $out/tests
         cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
         cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright

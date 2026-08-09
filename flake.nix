@@ -131,6 +131,8 @@
                     exit 1
                   fi
                   install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+                  install -Dm0644 ${wasmpkgs.linux-guest.package.checks.tests.assets}/agent.erofs \
+                    packages/linux-guest/agent.erofs
                 '';
               }
             );

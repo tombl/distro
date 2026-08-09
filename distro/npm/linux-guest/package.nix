@@ -1,8 +1,10 @@
 {
+  agentfs,
   bytes,
   busybox,
   pkgs,
   rootfs,
+  wrongRoot,
   kernel,
   node-workspace,
   stdenv,
@@ -38,8 +40,10 @@ let
   # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
+    "agent.erofs" = agentfs;
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
-    "rootfs.squashfs" = rootfs;
+    "rootfs.erofs" = rootfs;
+    "wrong-root.erofs" = wrongRoot;
     "network-test" = "${network-test}/bin/network-test";
     "user-trap" = "${user-trap}/bin/user-trap";
     "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
@@ -65,6 +69,7 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
+      cp ${agentfs} packages/linux-guest/agent.erofs
       pnpm --filter=@tombl/linux-guest check
       pnpm --filter=@tombl/linux-guest build
 
@@ -78,6 +83,7 @@ let
       cp packages/linux-guest/package.json $out/package.json
       cp packages/linux-guest/README.md $out/README.md
       cp packages/linux-guest/LICENSE $out/LICENSE
+      cp packages/linux-guest/agent.erofs $out/agent.erofs
       cp -r packages/linux-guest/dist $out/dist
       cp packages/bytes/package.json $out/node_modules/@lowland/bytes/package.json
       cp packages/bytes/README.md $out/node_modules/@lowland/bytes/README.md
@@ -108,6 +114,7 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
+      cp ${agentfs} packages/linux-guest/agent.erofs
       pnpm --filter=@tombl/linux-guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \

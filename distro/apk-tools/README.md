@@ -27,7 +27,7 @@ installs the same way at build time, so build-time and runtime installs cannot
 diverge. `apk.mkSystem` takes repositories and a package selection, runs the
 host apk implementation under fakeroot into a root tree (including the native
 installed database), and layers product `files` and `links` on top.
-`image.mkFilesystem` then encodes that tree as squashfs or ext4.
+`image.mkFilesystem` then encodes that tree as EROFS or ext4.
 
 Port checks use `vm-test.installedTest`, which builds a repository and installed
 system around their test fixtures. Raw initramfs tests remain available for
