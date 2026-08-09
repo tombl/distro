@@ -9,8 +9,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "f2ca017b44770e5dcd93342099c524b004b5818f";
-    hash = "sha256-//zdMS0kWntP1h7Ar0PdpJNqvnKa+vg21tbTiyBLHnM=";
+    rev = "c55bee664af95285dc7f19da79ce572e8ead7010";
+    hash = "sha256-EHNbbl0U69PQOAA3bKrRQIIu/K7IlsgwnZCpqAE0p+o=";
   },
 }:
 
@@ -49,10 +49,6 @@ pkgs.stdenvNoCC.mkDerivation {
       --replace-fail 'git+https://github.com/tombl/linux.git' 'git+https://github.com/tombl/distro.git' \
       --replace-fail '"directory": "tools/wasm"' '"directory": "packages/linux"'
 
-    # A root disk, install disk, console, entropy, network, and virtiofs no
-    # longer fit in the original 2 KiB flattened device-tree boot buffer.
-    substituteInPlace arch/wasm/kernel/setup.c \
-      --replace-fail 'static char devicetree[2048];' 'static char devicetree[4096];'
   '';
 
   buildPhase = ''
@@ -67,9 +63,6 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
 
     make defconfig ${lib.optionalString debug "debug.config"}
-    ${pkgs.bash}/bin/bash scripts/config --enable OVERLAY_FS
-    ${pkgs.bash}/bin/bash scripts/config --enable TMPFS_XATTR
-    make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do
