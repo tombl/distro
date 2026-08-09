@@ -97,6 +97,21 @@ test("configuration failure closes devices already contributed", async () => {
     (error) => error === failure,
   );
   assert.equal(closes, 1);
+  await controller.device.closed;
+});
+
+test("virtio devices expose their generic lifecycle", async () => {
+  const controller = new VirtioController({ deviceId: 1 }, { queues: [] });
+  let settled = false;
+  void controller.device.closed.then(() => {
+    settled = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(settled, false);
+  controller.close();
+  await controller.device.closed;
+  assert.equal(settled, true);
 });
 
 test("booted hooks finish in plugin order", async () => {

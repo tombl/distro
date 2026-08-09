@@ -18,7 +18,7 @@ const root = blockDevice({
   capacity: rootfs.byteLength,
   read: (offset, length) => rootfs.subarray(offset, offset + length),
 });
-const guest = await spawnGuest({ root });
+const guest = await spawnGuest({ cpus: 1, root });
 const process = await guest.exec(["uname", "-a"]);
 
 console.log(await new Response(process.stdout).text());
@@ -35,6 +35,7 @@ import { NodeFS } from "@tombl/linux-guest/node";
 
 const shared = new NodeFS("/srv/guest-share");
 const guest = await spawnGuest({
+  cpus: 1,
   root,
   devices: [
     fileSystemDevice(shared, {
@@ -84,6 +85,7 @@ const shared = new BrowserFS(
   await opfs.getDirectoryHandle("guest", { create: true }),
 );
 const guest = await spawnGuest({
+  cpus: 1,
   root,
   devices: [
     fileSystemDevice(shared, {

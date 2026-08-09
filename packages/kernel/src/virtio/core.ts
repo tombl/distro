@@ -55,27 +55,36 @@ export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
 export interface Virtqueue extends Iterable<VirtqueueChain> {}
 
 class Chain implements VirtqueueChain {
-  #memory: WebAssembly.Memory;
-  #desc: Descriptor[];
-  #release: (written: number) => void;
+  #buffers: Array<VirtqueueBuffer & { target?: Uint8Array }>;
+  #release: (written: number, commit: () => void) => void;
 
-  constructor(memory: WebAssembly.Memory, desc: Descriptor[], release: (written: number) => void) {
-    this.#memory = memory;
-    this.#desc = desc;
+  constructor(
+    memory: WebAssembly.Memory,
+    desc: Descriptor[],
+    release: (written: number, commit: () => void) => void,
+  ) {
+    this.#buffers = desc.map((descriptor) => {
+      const target = new Uint8Array(memory.buffer, Number(descriptor.addr), descriptor.len);
+      const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
+      // Device work may outlive the queue generation across an await. Keep
+      // guest memory isolated until release proves the chain is still valid.
+      return writable
+        ? { array: target.slice(), writable, target }
+        : { array: target.slice(), writable };
+    });
     this.#release = release;
   }
 
   release(written: number) {
-    this.#release(written);
+    this.#release(written, () => {
+      for (const buffer of this.#buffers) {
+        if (buffer.target) buffer.target.set(buffer.array);
+      }
+    });
   }
 
   *[Symbol.iterator]() {
-    for (const desc of this.#desc) {
-      yield {
-        array: new Uint8Array(this.#memory.buffer, Number(desc.addr), desc.len),
-        writable: (desc.flags & DescriptorFlags.WRITE) !== 0,
-      };
-    }
+    yield* this.#buffers;
   }
 }
 
@@ -88,6 +97,7 @@ class PackedVirtqueue implements Virtqueue {
   #used_wrap = true;
   #used_idx = 0;
   #avail_idx = 0;
+  #valid = true;
 
   constructor(memory: WebAssembly.Memory, size: number, desc_addr: number, on_release: () => void) {
     assert(size !== 0);
@@ -95,6 +105,10 @@ class PackedVirtqueue implements Virtqueue {
     this.#size = size;
     this.#desc_addr = desc_addr;
     this.#on_release = on_release;
+  }
+
+  invalidate() {
+    this.#valid = false;
   }
 
   #descriptor(index: number) {
@@ -151,12 +165,14 @@ class PackedVirtqueue implements Virtqueue {
       chain_desc = this.#indirect_descriptors(Number(desc.addr), desc.len / VirtqDescriptor.size);
     }
 
-    return new Chain(this.#memory, chain_desc, (written) => this.#release(id, skip, written));
+    return new Chain(this.#memory, chain_desc, (written, commit) =>
+      this.#release(id, skip, written, commit),
+    );
   }
 
   *[Symbol.iterator]() {
     let chain;
-    while ((chain = this.#pop())) yield chain;
+    while (this.#valid && (chain = this.#pop())) yield chain;
   }
 
   #advance() {
@@ -175,7 +191,9 @@ class PackedVirtqueue implements Virtqueue {
     return index;
   }
 
-  #release(id: number, skip: number, written: number) {
+  #release(id: number, skip: number, written: number, commit: () => void) {
+    if (!this.#valid) return;
+
     const desc = VirtqDescriptor.get(
       new DataView(this.#memory.buffer),
       this.#desc_addr + VirtqDescriptor.size * this.#used_idx,
@@ -185,6 +203,8 @@ class PackedVirtqueue implements Virtqueue {
     if (avail === used || avail !== this.#used_wrap) {
       throw new Error("ring full");
     }
+
+    commit();
 
     let flags = 0;
     if (this.#used_wrap) flags |= DescriptorFlags.AVAIL | DescriptorFlags.USED;
@@ -236,6 +256,8 @@ export type VirtqueueHandler = (
 export interface VirtioDriver {
   /** One handler per virtqueue. */
   readonly queues: readonly VirtqueueHandler[];
+  /** Drops guest-owned protocol state when the guest resets the device. */
+  reset?(): void;
   /** Synchronously starts cancellation needed to unblock queue handlers. */
   stop?(): void;
   /** Called after in-flight queue handlers settle when the device is closed. */
@@ -248,6 +270,7 @@ interface TransportDevice {
   readonly config: Uint8Array;
   attach(get_config: () => Uint8Array, raise_config: RaiseConfigInterrupt): void;
   notify(vq: number, queue: Virtqueue): void | PromiseLike<void>;
+  reset(): void;
   close(): Promise<void>;
 }
 
@@ -255,6 +278,8 @@ const transport_device = Symbol("virtio transport device");
 
 /** A virtio device that can be attached to a machine. */
 export interface VirtioDevice extends MachinePluginProvider {
+  /** Settles after the device has stopped handling queues and finished cleanup. */
+  readonly closed: Promise<void>;
   readonly [transport_device]: TransportDevice;
 }
 
@@ -281,14 +306,17 @@ export class VirtioController {
     let raise_config: RaiseConfigInterrupt | undefined;
     let config_pending = false;
     let closed = false;
-    let close_promise: Promise<void> | undefined;
+    const close_completion = Promise.withResolvers<void>();
+    void close_completion.promise.catch(() => {});
+    let close_started = false;
     const active = new Set<Promise<void>>();
     let exposed = false;
 
     const start_close = () => {
-      if (close_promise) return close_promise;
+      if (close_started) return close_completion.promise;
+      close_started = true;
       closed = true;
-      close_promise = (async () => {
+      void (async () => {
         let failure: PromiseRejectedResult | undefined;
         try {
           driver.stop?.();
@@ -303,9 +331,8 @@ export class VirtioController {
           failure ??= { status: "rejected", reason };
         }
         if (failure) throw failure.reason;
-      })();
-      void close_promise.catch(() => {});
-      return close_promise;
+      })().then(close_completion.resolve, close_completion.reject);
+      return close_completion.promise;
     };
 
     const endpoint: TransportDevice = {
@@ -344,6 +371,10 @@ export class VirtioController {
         return completion.promise;
       },
 
+      reset: () => {
+        if (!closed) driver.reset?.();
+      },
+
       close: start_close,
     };
     const device = {} as VirtioDevice;
@@ -354,6 +385,7 @@ export class VirtioController {
     };
     Object.defineProperty(device, transport_device, { value: endpoint });
     Object.defineProperty(device, getMachinePlugin, { value: () => plugin });
+    Object.defineProperty(device, "closed", { value: close_completion.promise, enumerable: true });
     this.device = device;
 
     this.updateConfig = (next_config) => {
@@ -376,7 +408,7 @@ export class VirtioController {
 }
 
 interface VirtqueueState {
-  queue: Virtqueue | undefined;
+  queue: PackedVirtqueue | undefined;
   /** A kernel notification arrived while its previous handler was in flight. */
   pending: boolean;
   notifying: boolean;
@@ -455,6 +487,7 @@ export function virtio_imports({
       const device = states[dev];
       assert(device);
       const state = queue_state(device, vq);
+      state.queue?.invalidate();
       // Interrupt once per synchronous batch of released chains.
       let armed = false;
       const queue: PackedVirtqueue = new PackedVirtqueue(memory, size, desc_addr >>> 0, () => {
@@ -472,8 +505,21 @@ export function virtio_imports({
       const device = states[dev];
       assert(device);
       const state = device.queues[vq];
-      assert(state?.queue);
+      state?.queue?.invalidate();
+      if (!state) return;
       state.queue = undefined;
+      state.pending = false;
+    },
+    reset(dev) {
+      const device = states[dev];
+      assert(device);
+      for (const state of device.queues) {
+        if (!state) continue;
+        state.queue?.invalidate();
+        state.queue = undefined;
+        state.pending = false;
+      }
+      device.device.reset();
     },
 
     setup(dev, config_irq, config_addr, config_len) {

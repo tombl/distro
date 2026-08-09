@@ -559,7 +559,7 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *   resolveDns: resolve4,
  * });
  *
- * const guest = await spawnGuest({ network });
+ * const guest = await spawnGuest({ cpus: 1, root, network });
  * // Guests can now reach whatever the host process can:
  * const process = await guest.exec(["wget", "-qO-", "http://example.com"]);
  * ```

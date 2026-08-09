@@ -136,7 +136,7 @@
       // Push the terminal's dimensions into the virtio console config, so the
       // guest sees the new size and delivers SIGWINCH to the foreground
       // process. The machine reads the config at boot, so seed it before
-      // spawnMachine; onResize covers every later fit.
+      // bootMachine; onResize covers every later fit.
       const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
       term.onResize(resizeConsole);
       window.onresize = () => termFit.fit();

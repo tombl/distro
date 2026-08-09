@@ -5,7 +5,8 @@ import { once } from "node:events";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import { consoleDevice } from "../src/virtio/console.ts";
-import { ethernetNetwork } from "../src/virtio/net.ts";
+import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
+import { vsockDevice } from "../src/virtio/vsock.ts";
 import { VirtioController, close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
 import {
   allocate_shared_memory,
@@ -140,7 +141,60 @@ test("closing an Ethernet network drops traffic from attached ports", async () =
   assert.throws(() => network.addPort(() => {}));
 });
 
+test("virtio-net preserves pending frames but drops receive chains on reset", async () => {
+  const network = ethernetNetwork();
+  const device = ethernetDevice(network, {
+    macAddress: [0x02, 0, 0, 0, 0, 1],
+  });
+  const sender = network.addPort(() => {});
+  const net_memory = new WebAssembly.Memory({
+    initial: 1,
+    maximum: 1,
+    shared: true,
+  });
+  const imports = virtio_imports({
+    memory: net_memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const queue_receive = (ring: number, address: number) => {
+    const descriptor = new DataView(net_memory.buffer, ring, 16);
+    descriptor.setBigUint64(0, BigInt(address), true);
+    descriptor.setUint32(8, 64, true);
+    descriptor.setUint16(12, 0, true);
+    descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
+  };
+
+  queue_receive(0, 64);
+  imports.enable_vring(0, 0, 1, 0, 1);
+  imports.notify(0, 0);
+  imports.reset(0);
+  imports.disable_vring(0, 0);
+
+  const frame = Uint8Array.from([0x02, 0, 0, 0, 0, 1, 0x02, 0, 0, 0, 0, 2, 0x08, 0x00]);
+  await sender.send(frame);
+  assert.deepEqual([...new Uint8Array(net_memory.buffer, 64, 26)], Array(26).fill(0));
+
+  queue_receive(128, 256);
+  imports.enable_vring(0, 0, 1, 128, 2);
+  imports.notify(0, 0);
+  await Promise.resolve();
+  assert.deepEqual([...new Uint8Array(net_memory.buffer, 256 + 12, frame.byteLength)], [...frame]);
+
+  sender.close();
+  await close_virtio_device(device);
+  network.close();
+});
+
 test("console input is held until the guest opens its port", async () => {
+  const console_memory = new WebAssembly.Memory({
+    initial: 1,
+    maximum: 1,
+    shared: true,
+  });
   let input_controller!: ReadableStreamDefaultController<Uint8Array>;
   const input = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -158,7 +212,7 @@ test("console input is held until the guest opens its port", async () => {
   );
   const delivered = Promise.withResolvers<void>();
   const imports = virtio_imports({
-    memory,
+    memory: console_memory,
     devices: [device],
     trigger_irq() {
       delivered.resolve();
@@ -170,7 +224,7 @@ test("console input is held until the guest opens its port", async () => {
 
   // A packed vring with one receive descriptor (at 64, length 4) that is not
   // yet available: the guest console port is not open.
-  const descriptor = new DataView(memory.buffer);
+  const descriptor = new DataView(console_memory.buffer);
   descriptor.setBigUint64(0, 64n, true);
   descriptor.setUint32(8, 4, true);
   descriptor.setUint16(12, 0, true);
@@ -181,22 +235,173 @@ test("console input is held until the guest opens its port", async () => {
   // The host writes "hi" before the guest opens /dev/hvc0, and the input
   // handler runs while the descriptor is still unavailable.
   input_controller.enqueue(new TextEncoder().encode("hi"));
-  input_controller.close();
   await Promise.resolve();
 
-  // The guest opens the console: the descriptor becomes AVAIL | WRITE and
-  // the device kicks the virtqueue.
-  descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
+  // Linux resets the device while probing it. The old descriptor must be
+  // discarded, while input queued by the host survives for the replacement
+  // queue that represents the opened console port.
+  imports.reset(0);
+  imports.disable_vring(0, 0);
+  const replacement_ring = 128;
+  const replacement = new DataView(console_memory.buffer, replacement_ring, 16);
+  replacement.setBigUint64(0, 256n, true);
+  replacement.setUint32(8, 4, true);
+  replacement.setUint16(12, 0, true);
+  replacement.setUint16(14, (1 << 7) | (1 << 1), true);
+  imports.enable_vring(0, 0, 1, replacement_ring, 1);
   imports.notify(0, 0);
+  assert.deepEqual(
+    [...new Uint8Array(console_memory.buffer, 256, 2)],
+    [0, 0],
+    "input remains queued until the guest console can consume it",
+  );
+
+  const output_ring = 384;
+  const output_address = 512;
+  new Uint8Array(console_memory.buffer, output_address, 5).set(new TextEncoder().encode("ready"));
+  const output_descriptor = new DataView(console_memory.buffer, output_ring, 16);
+  output_descriptor.setBigUint64(0, BigInt(output_address), true);
+  output_descriptor.setUint32(8, 5, true);
+  output_descriptor.setUint16(12, 0, true);
+  output_descriptor.setUint16(14, 1 << 7);
+  imports.enable_vring(0, 1, 1, output_ring, 2);
+  imports.notify(0, 1);
   const undelivered = new Promise((resolve) => setTimeout(resolve, 50));
   await Promise.race([delivered.promise, undelivered]);
 
-  const buffer = new Uint8Array(memory.buffer, 64, 4);
+  assert.deepEqual([...new Uint8Array(console_memory.buffer, 64, 2)], [0, 0]);
+  const buffer = new Uint8Array(console_memory.buffer, 256, 4);
   assert.deepEqual(
     [...buffer.slice(0, 2)],
     [0x68, 0x69],
     "input must be held until the console port opens",
   );
+  input_controller.close();
+  await close_virtio_device(device);
+});
+
+test("virtio-vsock drops guest buffers and connections on reset", async () => {
+  const device = vsockDevice();
+  const vsock_memory = new WebAssembly.Memory({
+    initial: 1,
+    maximum: 1,
+    shared: true,
+  });
+  const imports = virtio_imports({
+    memory: vsock_memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const descriptor = new DataView(vsock_memory.buffer, 0, 16);
+  descriptor.setBigUint64(0, 64n, true);
+  descriptor.setUint32(8, 64, true);
+  descriptor.setUint16(12, 0, true);
+  descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
+  imports.enable_vring(0, 0, 1, 0, 1);
+  imports.notify(0, 0);
+  imports.reset(0);
+
+  const connecting = device.connect(1024, { timeoutMs: 5000 });
+  await Promise.resolve();
+  assert.deepEqual([...new Uint8Array(vsock_memory.buffer, 64, 64)], Array(64).fill(0));
+  imports.reset(0);
+  await assert.rejects(connecting, /vsock device reset while connecting/);
+  await close_virtio_device(device);
+});
+
+test("virtio reset invalidates stale chains and pending notifications", async () => {
+  const reset_memory = new WebAssembly.Memory({
+    initial: 1,
+    maximum: 1,
+    shared: true,
+  });
+  const work = Promise.withResolvers<void>();
+  let notifications = 0;
+  let resets = 0;
+  let interrupts = 0;
+  let complete_stale_chain!: () => void;
+  const controller = new VirtioController(
+    { deviceId: 1 },
+    {
+      queues: [
+        async (queue) => {
+          notifications += 1;
+          const [chain] = queue;
+          assert(chain);
+          if (notifications === 1) {
+            const [buffer] = chain;
+            assert(buffer?.writable);
+            complete_stale_chain = () => {
+              buffer.array[0] = 0xaa;
+              chain.release(1);
+            };
+            await work.promise;
+          } else {
+            chain.release(1);
+          }
+        },
+      ],
+      reset() {
+        resets += 1;
+      },
+    },
+  );
+  const imports = virtio_imports({
+    memory: reset_memory,
+    devices: [controller.device],
+    trigger_irq() {
+      interrupts += 1;
+    },
+    on_error(error) {
+      throw error;
+    },
+  });
+  const queue_descriptor = (ring: number, address: number) => {
+    const descriptor = new DataView(reset_memory.buffer, ring, 16);
+    descriptor.setBigUint64(0, BigInt(address), true);
+    descriptor.setUint32(8, 1, true);
+    descriptor.setUint16(12, 0, true);
+    descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
+    return descriptor;
+  };
+
+  const stale_descriptor = queue_descriptor(0, 64);
+  imports.enable_vring(0, 0, 1, 0, 1);
+  imports.notify(0, 0);
+  imports.notify(0, 0);
+  assert.equal(notifications, 1);
+
+  imports.reset(0);
+  assert.equal(resets, 1);
+  // Linux deletes each queue after resetting the device. This must remain
+  // harmless even though reset already invalidated and detached the queue.
+  imports.disable_vring(0, 0);
+  complete_stale_chain();
+  await Promise.resolve();
+  assert.equal(new Uint8Array(reset_memory.buffer, 64, 1)[0], 0);
+  assert.equal(stale_descriptor.getUint32(8, true), 1);
+  assert.equal(stale_descriptor.getUint16(14, true), (1 << 7) | (1 << 1));
+  assert.equal(interrupts, 0);
+
+  work.resolve();
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.equal(notifications, 1, "reset discarded the coalesced old kick");
+
+  const restored_descriptor = queue_descriptor(128, 192);
+  imports.enable_vring(0, 0, 1, 128, 2);
+  imports.notify(0, 0);
+  for (let i = 0; i < 10; i++) {
+    if (restored_descriptor.getUint16(14, true) & (1 << 15)) break;
+    await Promise.resolve();
+  }
+  assert.equal(notifications, 2);
+  assert.equal(restored_descriptor.getUint32(8, true), 1);
+  assert.notEqual(restored_descriptor.getUint16(14, true) & (1 << 15), 0);
+  await Promise.resolve();
+  assert.equal(interrupts, 1);
 });
 
 test("virtio close drains active queue work before one-time cleanup", async () => {

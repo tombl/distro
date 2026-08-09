@@ -135,7 +135,7 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  *
  * @example Boot a guest and run a command
  * ```ts
- * const guest = await spawnGuest({ root: blockDevice(storage) });
+ * const guest = await spawnGuest({ cpus: 1, root: blockDevice(storage) });
  * const process = await guest.exec(["uname", "-a"]);
  * console.log(await new Response(process.stdout).text());
  * guest.machine.close();
@@ -144,8 +144,8 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  * @example Put two guests on one network
  * ```ts
  * const network = createNetwork({ connectTcp, resolveDns });
- * const a = await spawnGuest({ root: blockDevice(aStorage), network });
- * const b = await spawnGuest({ root: blockDevice(bStorage), network });
+ * const a = await spawnGuest({ cpus: 1, root: blockDevice(aStorage), network });
+ * const b = await spawnGuest({ cpus: 1, root: blockDevice(bStorage), network });
  * const ping = await b.exec(["ping", "-c", "1", a.network.address]);
  * console.log(await new Response(ping.stdout).text());
  * ```
@@ -173,7 +173,9 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
     attached?.attachment.close();
     throw error;
   }
-  void machine.closed
+  // Network ownership follows the NIC itself. This also covers plugin
+  // configuration/boot failures without adding an Ethernet-specific hook.
+  void attached?.attachment.device.closed
     .finally(() => {
       attached?.attachment.close();
     })

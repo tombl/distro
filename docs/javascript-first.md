@@ -127,6 +127,8 @@ export interface BootMachineOptions {
   cpus: number;
   args?: readonly string[];
   plugins?: readonly MachinePluginInput[];
+  /** Low-level custom-embedding support; canonical packages boot from disks. */
+  initcpio?: ArrayBufferView | PromiseLike<ArrayBufferView>;
 }
 
 export interface Machine extends AsyncDisposable {
@@ -143,8 +145,10 @@ export function bootMachine(options: BootMachineOptions): Promise<Machine>;
 resource policy explicit. The zero-argument `Linux.create()` facade may choose
 one CPU as product policy; applications such as the site choose explicitly.
 Caller-supplied kernel arguments remain explicit top-level policy.
-There is no `initramfs`, `rootfs`, or privileged `image` option. A disk is a
-device supplied by a plugin like any other integration.
+There is no `rootfs` or privileged `image` option. `initcpio` preserves the
+kernel's low-level initramfs handoff for custom embeddings and focused kernel
+tests, but canonical packages do not use it. A disk is a device supplied by a
+plugin like any other integration.
 
 The advanced plugin surface can live at `@lowland/kernel/plugin`:
 
@@ -186,6 +190,7 @@ operations on the object returned by `guestAgent()`.
 const agent = guestAgent();
 
 await using machine = await bootMachine({
+  cpus: 1,
   plugins: [agent, image, entropyDevice(), consoleDevice(terminal)],
 });
 
@@ -195,6 +200,10 @@ const result = await agent.run(["uname", "-a"]);
 The block-storage primitive stays reusable. A range-request-backed disk should
 be named for what it does, such as `fetchDisk()`, and live in a focused subpath;
 it should not be called a root disk or coupled to the image package.
+
+Every virtio device exposes a generic `closed` lifecycle promise. Integrations
+that own resources alongside a device bind their cleanup to that promise; the
+transport must not grow device-specific hooks such as an Ethernet `onClose`.
 
 ## Block-root boot contract
 
@@ -230,6 +239,26 @@ operations there. This keeps the coordination inside the two plugins, leaves
 `bootMachine()` image-agnostic, and lets a plain `fetchDisk()` remain only a
 reusable block device. This should be settled with a small API sketch before
 implementation.
+
+### Architecture questions for the next review
+
+The recommended root model is to keep the agent squashfs as the immutable
+control-plane root and mount the selected userspace image at `/root`. This
+keeps agent boot and recovery independent of the chosen distro and avoids
+returning to an initramfs pivot. The decision still needed is whether
+`MachineDevices.add()` returns a stable guest-device reference, or whether a
+smaller private coordination mechanism should associate an image plugin with
+the agent mount.
+
+Persistence should be an explicit storage policy, not a mutation of the image
+package asset. The leading design is an immutable image lower layer plus a
+writable upper layer: memory-backed for ephemeral machines, and backed by a
+caller-supplied block store (an OPFS file in the site, a host file in Node) for
+persistent machines. The review should decide whether this layering belongs in
+`@lowland/image` as one image plugin with an optional writable store, or in the
+`lowland` facade as coordination between separate image and state plugins. The
+former is easier to use; the latter keeps storage policy more independently
+replaceable.
 
 ## High-level JavaScript API
 

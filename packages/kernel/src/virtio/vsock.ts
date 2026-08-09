@@ -365,6 +365,18 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
     }
   }
 
+  function reset_device() {
+    rx_buffers.length = 0;
+    pending_packets.length = 0;
+    for (const state of connections.values()) {
+      if (!state.connected) {
+        state.reject(new Error("vsock device reset while connecting"));
+      }
+      state.controller.close_from_peer();
+    }
+    connections.clear();
+  }
+
   function close_device(controller: VirtioController) {
     if (closed) return;
     for (const state of connections.values()) {
@@ -389,6 +401,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
           // not supported yet.
         },
       ],
+      reset: reset_device,
       close: close_device,
     },
   );
