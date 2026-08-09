@@ -12,7 +12,7 @@
 // check tables, and the error types that carry errnos to consumers live
 // here so their name table cannot drift from the checked numbers.
 
-import { I32LE, Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@lowland/kernel/bytes";
+import { I32LE, Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@lowland/bytes";
 
 // ---------------------------------------------------------------------------
 // Check tables. gen-abi-check.ts walks these.

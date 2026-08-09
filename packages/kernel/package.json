@@ -19,10 +19,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./bytes": {
-      "types": "./dist/bytes.d.ts",
-      "default": "./dist/bytes.js"
-    },
     "./plugin": {
       "types": "./dist/plugin.d.ts",
       "default": "./dist/plugin.js"
@@ -32,6 +28,9 @@
     "build": "tsc",
     "check": "tsc --noEmit && tsc -p test",
     "test": "node --test"
+  },
+  "dependencies": {
+    "@lowland/bytes": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26",

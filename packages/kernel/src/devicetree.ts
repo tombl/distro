@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { type Allocated, Bytes, Struct, U32BE, U64BE, U8, type Unwrap } from "./bytes.ts";
+import { type Allocated, Bytes, Struct, U32BE, U64BE, U8, type Unwrap } from "@lowland/bytes";
 import { assert, unreachable } from "./util.ts";
 
 const FDT_MAGIC = 0xd00dfeed;

@@ -1,4 +1,5 @@
 {
+  bytes,
   pkgs,
   kernel,
   linux-guest,
@@ -12,7 +13,7 @@ let
   # the heavy kernel libraries across the guest's many workers. The version
   # tracks the kernel, the guest SDK, and the rootfs.
   ver = builtins.substring 0 16 (
-    builtins.hashString "sha256" "${kernel}${linux-guest.package}${rootfs}"
+    builtins.hashString "sha256" "${bytes}${kernel}${linux-guest.package}${rootfs}"
   );
 in
 
@@ -33,6 +34,7 @@ pkgs.stdenvNoCC.mkDerivation {
     # directory, exactly as the kernel package lays them out.
     cp -rL ${kernel}/dist $out/static/v${ver}/dist
     cp -L ${kernel}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
+    cp -rL ${bytes}/dist $out/static/v${ver}/bytes
     cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
 
     # The rootfs is served under its own content hash so the seed can be

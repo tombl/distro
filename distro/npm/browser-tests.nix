@@ -1,5 +1,6 @@
 {
   basic-init,
+  bytes,
   lib,
   kernel,
   linux-guest,
@@ -20,6 +21,7 @@ let
       ''
         mkdir -p \
           $out/node_modules/@playwright \
+          $out/node_modules/@lowland/bytes \
           $out/node_modules/@lowland/kernel \
           $out/node_modules/@tombl/linux-guest
         cp ${source}/app.js $out/app.js
@@ -33,6 +35,7 @@ let
         cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
         cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
         cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+        cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
         cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
         tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
       '';

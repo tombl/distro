@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-import { assert } from "./util.ts";
+function assert(condition: unknown): asserts condition {
+  if (!condition) throw new Error("Assertion failed");
+}
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 

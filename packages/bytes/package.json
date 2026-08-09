@@ -1,0 +1,28 @@
+{
+  "name": "@lowland/bytes",
+  "version": "0.0.0",
+  "description": "Internal binary data helpers shared by Lowland packages.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombl/distro.git",
+    "directory": "packages/bytes"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^7"
+  }
+}

@@ -7,6 +7,7 @@
     "test": "playwright test"
   },
   "dependencies": {
+    "@lowland/bytes": "workspace:*",
     "@lowland/kernel": "workspace:*",
     "@tombl/linux-guest": "workspace:*"
   },

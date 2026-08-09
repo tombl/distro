@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { Struct, U16LE, U32LE, U64LE } from "../bytes.ts";
+import { Struct, U16LE, U32LE, U64LE } from "@lowland/bytes";
 import { assert } from "../util.ts";
 import {
   VirtioController,

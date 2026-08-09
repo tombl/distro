@@ -15,7 +15,7 @@
 
 import type { VsockConnection, VsockDevice } from "@lowland/kernel";
 import { ProtocolError } from "./abi.ts";
-import { Bytes, Struct, U16LE, U32LE } from "@lowland/kernel/bytes";
+import { Bytes, Struct, U16LE, U32LE } from "@lowland/bytes";
 
 const SESSION_PORT = 1024;
 const LANE_PORT = 1025;

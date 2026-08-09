@@ -1,5 +1,6 @@
 {
   apk,
+  bytes,
   busybox,
   pkgs,
   lib,
@@ -56,6 +57,7 @@ let
 
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
+      cp -r ${bytes}/dist packages/bytes/dist
       rm packages/runner/node_modules/@tombl/linux-guest
       ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
       pnpm --filter=@tombl/linux-runner check
@@ -66,10 +68,11 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p $out/node_modules/@lowland $out/node_modules/@tombl
+      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@tombl
       cp packages/runner/src/run.ts $out/run.ts
       cp packages/runner/src/shares.ts $out/shares.ts
       cp packages/runner/package.json $out/package.json
+      cp -RL ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -RL packages/runner/node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
       mkdir $out/node_modules/@tombl/linux-guest
       cp ${linux-guest.package}/package.json $out/node_modules/@tombl/linux-guest/package.json
@@ -113,6 +116,7 @@ let
 
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
+      cp -r ${bytes}/dist packages/bytes/dist
       rm packages/runner/node_modules/@tombl/linux-guest
       ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
       pnpm --filter=@tombl/linux-runner check

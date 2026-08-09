@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "artifacts": "nix run .#artifacts",
-    "typecheck": "pnpm --filter=@lowland/kernel build && pnpm --filter=@tombl/linux-guest build && pnpm --recursive check"
+    "typecheck": "pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/kernel build && pnpm --filter=@tombl/linux-guest build && pnpm --recursive check"
   },
   "packageManager": "pnpm@11.13.1"
 }

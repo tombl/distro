@@ -1,4 +1,5 @@
 {
+  bytes,
   busybox,
   pkgs,
   rootfs,
@@ -46,7 +47,9 @@ let
 
   package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
-    inherit ((builtins.fromJSON (builtins.readFile ../../../packages/linux-guest/package.json))) version;
+    inherit ((builtins.fromJSON (builtins.readFile ../../../packages/linux-guest/package.json)))
+      version
+      ;
     src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
@@ -61,6 +64,7 @@ let
 
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
+      cp -r ${bytes}/dist packages/bytes/dist
       pnpm --filter=@tombl/linux-guest check
       pnpm --filter=@tombl/linux-guest build
 
@@ -99,6 +103,7 @@ let
 
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
+      cp -r ${bytes}/dist packages/bytes/dist
       pnpm --filter=@tombl/linux-guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \

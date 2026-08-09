@@ -1,4 +1,5 @@
 {
+  bytes,
   stdenv,
   pkgs,
   kernel,
@@ -37,10 +38,11 @@ let
 
     buildPhase = ''
       runHook preBuild
-      mkdir -p node_modules/@lowland/kernel
+      mkdir -p node_modules/@lowland/bytes node_modules/@lowland/kernel
       cp ${../../packages/linux-guest/src/abi.ts} abi.ts
+      cp -r ${bytes}/. node_modules/@lowland/bytes/
       cp -r ${kernel}/. node_modules/@lowland/kernel/
-      echo '{"type":"module","dependencies":{"@lowland/kernel":"*"}}' > package.json
+      echo '{"type":"module","dependencies":{"@lowland/bytes":"*","@lowland/kernel":"*"}}' > package.json
       node gen-abi-check.ts ./abi.ts > abi-check.c
       $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
         -c abi-check.c -o abi-check.o

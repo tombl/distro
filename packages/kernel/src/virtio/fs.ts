@@ -5,7 +5,7 @@
 // `include/uapi/linux/fuse.h` from the kernel this ships with. Fields are
 // little-endian and every fixed-layout struct is padded to a 64-bit boundary.
 
-import { Bytes, FixedArray, Reader, Struct, U16LE, U32LE, U64LE, I32LE } from "../bytes.ts";
+import { Bytes, FixedArray, Reader, Struct, U16LE, U32LE, U64LE, I32LE } from "@lowland/bytes";
 import {
   VirtioController,
   type VirtioDevice,

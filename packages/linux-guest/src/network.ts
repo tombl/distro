@@ -5,7 +5,7 @@ import {
   type EthernetPort,
   type MacAddress,
 } from "@lowland/kernel";
-import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/kernel/bytes";
+import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);

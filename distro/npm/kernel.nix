@@ -1,4 +1,5 @@
 {
+  bytes,
   linux,
   node-workspace,
   pkgs,
@@ -20,6 +21,7 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preBuild
 
     cp ${linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+    cp -r ${bytes}/dist packages/bytes/dist
     pnpm --filter=@lowland/kernel check
     pnpm --filter=@lowland/kernel test
     pnpm --filter=@lowland/kernel build

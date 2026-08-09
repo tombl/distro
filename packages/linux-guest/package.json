@@ -31,6 +31,9 @@
     "build": "tsc",
     "check": "tsc --noEmit"
   },
+  "dependencies": {
+    "@lowland/bytes": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "^7.0.2"

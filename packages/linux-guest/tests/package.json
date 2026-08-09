@@ -7,6 +7,7 @@
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
+    "@lowland/bytes": "workspace:*",
     "@lowland/kernel": "workspace:*"
   },
   "devDependencies": {
