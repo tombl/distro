@@ -41,7 +41,7 @@ pkgs.runCommand "${name}.${format}"
     # The standard FHS dirs. /root in particular is the root user's home:
     # programs that chdir to it before exec (busybox crond's job children)
     # fail without it.
-    mkdir -p root/dev root/mnt root/proc root/root root/run root/sys root/tmp root/workspace
+    mkdir -p root/dev root/mnt root/proc root/root root/run root/sys root/tmp
     chmod 01777 root/tmp
 
     ${

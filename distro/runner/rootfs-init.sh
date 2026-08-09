@@ -15,7 +15,6 @@
 /bin/busybox mount -t sysfs sysfs /sys
 /bin/busybox mount -t tmpfs tmpfs /run
 /bin/busybox mount -t tmpfs tmpfs /tmp
-/bin/busybox mount -t tmpfs tmpfs /workspace
 /bin/busybox chmod 01777 /tmp
 
 # Share records contain only a fixed tag/mode and a base64-encoded absolute

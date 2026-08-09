@@ -335,12 +335,12 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
         await guest.exec([
           "sh",
           "-c",
-          "mkdir -p /workspace/shared && mount -t virtiofs browser-test /workspace/shared",
+          "mkdir -p /tmp/shared && mount -t virtiofs browser-test /tmp/shared",
         ]),
       );
       if (!mount.status.success) throw new Error(`mount failed: ${mount.stderr}`);
-      await guest.fs.writeFile("/workspace/shared/persistent", input);
-      const output = await guest.fs.readFile("/workspace/shared/persistent");
+      await guest.fs.writeFile("/tmp/shared/persistent", input);
+      const output = await guest.fs.readFile("/tmp/shared/persistent");
       return {
         size: output.byteLength,
         first: output[0],

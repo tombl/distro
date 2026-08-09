@@ -33,6 +33,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/reboot.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -714,6 +715,10 @@ static int session_worker(void *opaque)
 	pthread_t reaper;
 	int lane_listener, rc;
 
+	/* Keep commands and their descendants in a session-owned process group.
+	 * PID 1 can then tear down only that session without touching /init. */
+	if (setpgid(0, 0) == -1)
+		_exit(1);
 	close(args->session_listener);
 	/* Adopt descendants orphaned by commands so the session's reaper can
 	 * collect them while the session is still alive. */
@@ -821,7 +826,6 @@ static int prepare_system_root(void)
 	if (mount(device, "/mnt", "erofs", MS_RDONLY, NULL) == -1 ||
 	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
 	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
-	    mount("tmpfs", "/mnt/workspace", "tmpfs", 0, NULL) == -1 ||
 	    chmod("/mnt/tmp", 01777) == -1)
 		return -1;
 
@@ -836,17 +840,46 @@ static int prepare_system_root(void)
 	return 0;
 }
 
+static void *supervise_system_init(void *opaque)
+{
+	pid_t pid = (pid_t)(intptr_t)opaque;
+	int status;
+
+	while (waitpid(pid, &status, 0) == -1)
+		if (errno != EINTR) {
+			perror("linux-guest-agent: waiting for system init");
+			abort();
+		}
+	fprintf(stderr, "linux-guest-agent: system init exited; powering off\n");
+	if (reboot(RB_POWER_OFF) == -1) {
+		perror("linux-guest-agent: powering off");
+		abort();
+	}
+	return NULL;
+}
+
 static int start_system_init(void)
 {
 	char *const argv[] = { "/init", NULL };
-	char *const envp[] = { "PATH=/usr/local/bin:/usr/bin:/bin", NULL };
+	char *const envp[] = {
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		NULL,
+	};
 	int error;
 	pid_t pid;
+	pthread_t supervisor;
 
 	if (access("/init", X_OK) == -1)
 		return errno == ENOENT ? 0 : -1;
 	error = posix_spawn(&pid, "/init", NULL, NULL, argv, envp);
 	if (error) {
+		errno = error;
+		return -1;
+	}
+	error = pthread_create(&supervisor, NULL, supervise_system_init,
+			       (void *)(intptr_t)pid);
+	if (error) {
+		kill(pid, SIGKILL);
 		errno = error;
 		return -1;
 	}
@@ -906,14 +939,14 @@ int main(void)
 		}
 
 		/* The worker's exit closes every session-owned descriptor and lane.
-		 * Its descendants are now owned by PID 1; kill and reap the entire
-		 * process namespace before allowing another session to start. */
-		if (kill(-1, SIGKILL) == -1 && errno != ESRCH) {
+		 * Its descendants are now owned by PID 1; kill and reap its process
+		 * group before allowing another session to start. */
+		if (kill(-worker, SIGKILL) == -1 && errno != ESRCH) {
 			perror("kill session descendants");
 			return 1;
 		}
 		for (;;) {
-			waited = waitpid(-1, NULL, 0);
+			waited = waitpid(-worker, NULL, 0);
 			if (waited > 0 || (waited == -1 && errno == EINTR))
 				continue;
 			if (waited == -1 && errno == ECHILD)
@@ -923,10 +956,6 @@ int main(void)
 		}
 		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
 			fprintf(stderr, "session worker failed\n");
-			return 1;
-		}
-		if (start_system_init()) {
-			perror("linux-guest-agent: restarting system init");
 			return 1;
 		}
 	}

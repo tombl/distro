@@ -57,10 +57,10 @@ export function guest_test(
       });
       guests.push(guest);
       consoles.push(guest.machine.bootConsole.pipeTo(console_output()));
-      await guest.fs.writeFile("/workspace/network-test", network_test);
-      await guest.fs.chmod("/workspace/network-test", 0o755);
-      await guest.fs.writeFile("/workspace/user-trap", user_trap);
-      await guest.fs.chmod("/workspace/user-trap", 0o755);
+      await guest.fs.writeFile("/tmp/network-test", network_test);
+      await guest.fs.chmod("/tmp/network-test", 0o755);
+      await guest.fs.writeFile("/tmp/user-trap", user_trap);
+      await guest.fs.chmod("/tmp/user-trap", 0o755);
       return guest;
     }
 

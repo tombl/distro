@@ -6,7 +6,7 @@ import { pattern_bytes } from "./helpers.ts";
 guest_test("filesystem", async (t, fixture) => {
   const { fs } = await fixture.spawn();
 
-  const directory = "/workspace/filesystem";
+  const directory = "/tmp/filesystem";
   await fs.mkdir(`${directory}/child`, { recursive: true });
 
   await t.test("reads and writes text files", async () => {

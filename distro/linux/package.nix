@@ -10,8 +10,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "1bb690ea73c2bc2bf073f838001fd03f2b55b18b";
-    hash = "sha256-zx7NjzbtDq3bN8QfDYqIr3RJVf1BivIyDcR7ZpSi6fI=";
+    rev = "9030b7bfd4bb44c6f2a459c9a502f1c21a116ce1";
+    hash = "sha256-xHPwjR6o20JdUZHvOzR/oZHSjRINBW9ghlA0oXsJnms=";
   },
 }:
 
@@ -52,12 +52,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
     make defconfig ${lib.optionalString debug "debug.config"}
 
-    # this is a horrible dirty hack but there's some non-deterministic build failure
-    for i in $(seq 1 3); do
-      if make -C tools/wasm vmlinux.wasm; then
-        break
-      fi
-    done
+    make -C tools/wasm vmlinux.wasm
 
     cp tools/wasm/vmlinux.wasm $out/
 

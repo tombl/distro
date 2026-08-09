@@ -27,18 +27,18 @@ test("runner mounts writable and read-only host shares", async (t) => {
       "--cpus",
       "1",
       "--share",
-      `${writable}:/workspace/writable share`,
+      `${writable}:/tmp/writable share`,
       "--share-ro",
-      `${readonly}:/workspace/read only`,
+      `${readonly}:/tmp/read only`,
     ],
     { stdio: ["pipe", "pipe", "pipe"] },
   );
   let output = "";
   let sentCommands = false;
   const commands = `
-printf 'from guest\\n' > '/workspace/writable share/guest.txt'
-cat '/workspace/read only/host.txt'
-if printf 'changed\\n' > '/workspace/read only/host.txt'; then
+printf 'from guest\\n' > '/tmp/writable share/guest.txt'
+cat '/tmp/read only/host.txt'
+if printf 'changed\\n' > '/tmp/read only/host.txt'; then
   printf '%s%s\\n' READ_ONLY_WRITE_ SUCCEEDED
 else
   printf '%s%s\\n' READ_ONLY_ ENFORCED

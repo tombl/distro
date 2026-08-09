@@ -51,13 +51,13 @@ const guest = await spawnGuest({
   ],
 });
 
-await guest.fs.mkdir("/workspace/host");
+await guest.fs.mkdir("/tmp/host");
 const mount = await guest.exec([
   "mount",
   "-t",
   "virtiofs",
   "host",
-  "/workspace/host",
+  "/tmp/host",
 ]);
 if (!(await mount.status).success) throw new Error("mount failed");
 ```
@@ -145,7 +145,7 @@ be repeated and require an absolute guest path:
 
 ```sh
 wasm-linux-runner \
-  --share ./project:/workspace/project \
+  --share ./project:/tmp/project \
   --share-ro ./toolchain:/opt/toolchain
 ```
 

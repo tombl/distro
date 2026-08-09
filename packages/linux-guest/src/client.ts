@@ -40,11 +40,11 @@ import { ChildProcess } from "./process.ts";
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
 
 export interface ExecOptions {
-  /** Working directory for the process. Defaults to `/workspace`. */
+  /** Working directory for the process. Defaults to `/tmp`. */
   cwd?: string;
   /**
    * Environment for the process, merged over the defaults of
-   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/workspace`, and
+   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/root`, and
    * `TMPDIR=/tmp`. Only the variables being changed need to be set.
    */
   env?: Readonly<Record<string, string>>;
@@ -70,7 +70,7 @@ export interface ExecOptions {
  * File operations in the guest, available as `guest.fs`.
  *
  * Paths are guest paths. The packaged root image mounts writable space at
- * `/tmp` and `/workspace`; the system directories are read-only. A failed
+ * `/tmp`; the system directories are read-only. A failed
  * operation rejects with a `SystemError` carrying the errno code — for
  * example `"ENOENT"` when a path does not exist.
  */
@@ -526,14 +526,14 @@ class GuestClient {
     options.signal?.throwIfAborted();
     const environment = {
       PATH: "/bin:/usr/bin:/sbin:/usr/sbin",
-      HOME: "/workspace",
+      HOME: "/root",
       TMPDIR: "/tmp",
       ...options.env,
     };
     const env = Object.entries(environment).map(([key, value]) => `${key}=${value}`);
     const release = await this.#acquire_process_slot();
     try {
-      const spawned = await spawn(session, argv, options.cwd ?? "/workspace", env);
+      const spawned = await spawn(session, argv, options.cwd ?? "/tmp", env);
       return new ChildProcess({
         session,
         ...spawned,

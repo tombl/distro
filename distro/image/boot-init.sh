@@ -27,7 +27,6 @@ fi
 if [ "$immutable" -eq 1 ]; then
   mount -t tmpfs tmpfs /newroot/run || exec sh
   mount -t tmpfs tmpfs /newroot/tmp || exec sh
-  mount -t tmpfs tmpfs /newroot/workspace || exec sh
 fi
 chmod 01777 /newroot/tmp
 mount --move /dev /newroot/dev || exec sh

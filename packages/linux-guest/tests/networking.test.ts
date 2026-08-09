@@ -7,7 +7,7 @@ guest_test("networking", async (t, fixture) => {
   const guest = await fixture.spawn();
 
   await t.test("connects from the host over TCP", async () => {
-    const server = await guest.exec(["/workspace/network-test", "listen", "tcp", "12001"]);
+    const server = await guest.exec(["/tmp/network-test", "listen", "tcp", "12001"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
     const connection = await connect_with_retry(() => guest.network.connect({ port: 12001 }));
@@ -27,7 +27,7 @@ guest_test("networking", async (t, fixture) => {
   await t.test("backpressures guest TCP output until the host reads", async () => {
     const length = 256 * 1024;
     const server = await guest.exec([
-      "/workspace/network-test",
+      "/tmp/network-test",
       "listen",
       "tcp",
       "12005",
@@ -58,7 +58,7 @@ guest_test("networking", async (t, fixture) => {
   await t.test("backpressures host TCP output until the guest reads", async () => {
     const length = 1024 * 1024;
     const server = await guest.exec([
-      "/workspace/network-test",
+      "/tmp/network-test",
       "receive",
       "tcp",
       "12006",
@@ -90,7 +90,7 @@ guest_test("networking", async (t, fixture) => {
   });
 
   await t.test("connects from the host over UDP", async () => {
-    const server = await guest.exec(["/workspace/network-test", "listen", "udp", "12002"]);
+    const server = await guest.exec(["/tmp/network-test", "listen", "udp", "12002"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
     const connection = await guest.network.connect({ port: 12002, transport: "udp" });
@@ -111,7 +111,7 @@ guest_test("networking", async (t, fixture) => {
   });
 
   await t.test("transfers a maximum-size UDP datagram", async () => {
-    const server = await guest.exec(["/workspace/network-test", "listen", "udp", "12004"]);
+    const server = await guest.exec(["/tmp/network-test", "listen", "udp", "12004"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
     const connection = await guest.network.connect({ port: 12004, transport: "udp" });
@@ -149,7 +149,7 @@ guest_test("networking", async (t, fixture) => {
     const address = listener.address() as AddressInfo;
     try {
       const outbound = await guest.exec([
-        "/workspace/network-test",
+        "/tmp/network-test",
         "connect",
         fixture.network.gateway,
         String(address.port),
@@ -172,12 +172,12 @@ guest_test("networking", async (t, fixture) => {
 
   await t.test("connects between guests", async () => {
     const second = await fixture.spawn();
-    const server = await guest.exec(["/workspace/network-test", "listen", "tcp", "12003"]);
+    const server = await guest.exec(["/tmp/network-test", "listen", "tcp", "12003"]);
     const server_output = collect(server.stdout);
     const server_error = collect(server.stderr);
     await new Promise((resolve) => setTimeout(resolve, 25));
     const client = await second.exec([
-      "/workspace/network-test",
+      "/tmp/network-test",
       "connect",
       guest.network.address,
       "12003",

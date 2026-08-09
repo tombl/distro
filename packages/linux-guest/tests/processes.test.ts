@@ -10,7 +10,7 @@ import { collect, pattern_bytes } from "./helpers.ts";
 
 guest_test("processes", async (t, fixture) => {
   const guest = await fixture.spawn();
-  const directory = "/workspace/processes";
+  const directory = "/tmp/processes";
   await guest.fs.mkdir(directory);
   try {
     const large = pattern_bytes(256 * 1024);
@@ -76,7 +76,7 @@ guest_test("processes", async (t, fixture) => {
     await t.test("isolates user module traps to the offending process", async () => {
       const survivor = await guest.exec(["cat"]);
       const survivor_output = collect(survivor.stdout);
-      const crashed = await guest.exec(["/workspace/user-trap"]);
+      const crashed = await guest.exec(["/tmp/user-trap"]);
       assert.deepEqual(await crashed.status, {
         success: false,
         code: 0,
@@ -215,19 +215,19 @@ guest_test("session teardown", async (t) => {
         }
       }
 
-      const fifoPath = "/workspace/session-teardown-fifo";
-      const created = await spawn(first, ["mkfifo", fifoPath], "/workspace", [
+      const fifoPath = "/tmp/session-teardown-fifo";
+      const created = await spawn(first, ["mkfifo", fifoPath], "/tmp", [
         "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
       ]);
       await created.stdin.close();
       assert.equal(await reap(first, created.pid), 0);
       await Promise.all([created.stdout.close(), created.stderr.close()]);
 
-      const abandoned = await openat(first, "/workspace", O.RDONLY, 0);
+      const abandoned = await openat(first, "/tmp", O.RDONLY, 0);
       const child = await spawn(
         first,
         ["sh", "-c", "sleep 30 </dev/null >/dev/null 2>&1 & echo $!"],
-        "/workspace",
+        "/tmp",
         ["PATH=/bin:/usr/bin:/sbin:/usr/sbin"],
       );
       await child.stdin.close();
@@ -243,7 +243,7 @@ guest_test("session teardown", async (t) => {
 
       const second = await GuestSession.connect(vsock);
       try {
-        const replacement = await openat(second, "/workspace", O.RDONLY, 0);
+        const replacement = await openat(second, "/tmp", O.RDONLY, 0);
         // Lane sockets also consume descriptors, so their exact allocation
         // order may differ. Re-entering the old descriptor range proves the
         // abandoned session-owned file was closed.
