@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>bridge requester</title>
+<script>
+  // Embedded hidden by a guest origin's fallback/error page. Same-site with the
+  // hub, so the rendezvous BroadcastChannel reaches the VM page's provider frame.
+  // Broadcasts an idempotent "this origin is wanted" demand until a VM page binds
+  // the origin and the parent reloads out from under us.
+  const channel = new BroadcastChannel("linux-bridge-rendezvous-v1");
+
+  // The demanded origin is the embedder's own origin, read from the postMessage
+  // event — never from message data, so no page can demand another's origin.
+  let origin = null;
+
+  function demand() {
+    if (origin !== null) channel.postMessage({ version: 1, type: "demand", origin });
+  }
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    origin = event.origin;
+    demand();
+  });
+
+  // Re-demand the instant a provider appears, and slowly otherwise while the
+  // parent keeps us alive.
+  channel.onmessage = ({ data }) => {
+    if (data?.version === 1 && data.type === "provider-ready") demand();
+  };
+  setInterval(demand, 5000);
+</script>

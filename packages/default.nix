@@ -95,6 +95,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     image = callPackage ./image { };
 
     site = callPackage ./site { };
+    bridge-site = callPackage ./bridge-site { };
 
     apk-checks = callPackage ./apk/checks.nix { };
     repository = baseRepository // {

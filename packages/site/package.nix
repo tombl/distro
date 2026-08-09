@@ -1,4 +1,5 @@
 {
+  bridge-site,
   pkgs,
   linux,
   linux-guest,
@@ -34,6 +35,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -rL ${linux}/dist $out/static/v${ver}/dist
     cp -L ${linux}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
     cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
+    cp ${bridge-site.package.client} $out/bridge-client.js
 
     # The rootfs is served under its own content hash so the seed can be
     # cached immutable too; the page learns the name from rootfs.ext4.sha256.

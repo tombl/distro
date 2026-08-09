@@ -86,10 +86,12 @@
         consoleDevice,
         createNetwork,
         entropyDevice,
+        guestFetchHandler,
         hostFetchNetwork,
         blockDevice,
         spawnGuest,
       } from "@tombl/linux-guest";
+      import { serveGuest } from "./bridge-client.js";
 
       const term = new Terminal({
         convertEol: true,
@@ -230,6 +232,17 @@
         cmdline: cmdline.replace(/\+/g, " "),
         devices: [ttyConsole, entropyDevice()],
       });
+
+      // The bridge relies on same-site service-worker and BroadcastChannel
+      // storage. Production low.land can therefore serve the sibling
+      // *.localhost.low.land family; previews and local origins intentionally
+      // do not attempt to provide it.
+      if (location.origin === "https://low.land") {
+        serveGuest({
+          hub: "https://hub.localhost.low.land",
+          fetch: (port) => guestFetchHandler(guest.network, { port }),
+        });
+      }
     </script>
   </body>
 </html>
