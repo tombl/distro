@@ -1,6 +1,7 @@
 #!/bin/busybox sh
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
 
 # A name for the machine so the motd reads like a real host.
 [ "$(hostname)" = "(none)" ] && hostname lowland
@@ -24,7 +25,12 @@ printf '%-14s%s\n' '   |:_/ |' "${label}uptime${reset}   ${uptime}"
 printf '%-14s%s\n' '  //   \ \' "${label}cpus${reset}     ${cpus}"
 printf '%-14s%s\n' ' (|     | )' "${label}memory${reset}   $((mem_total - mem_avail)) MiB / ${mem_total} MiB"
 printf '%-14s%s\n' "/'\\_   _/\`\\" "${label}shell${reset}    sh"
-printf '%s\n' '\___)=(___/'
+printf '%-14s%s\n' '\___)=(___/' "${label}apk${reset}      add curl jq sqlite3, and more"
 echo
+
+if [ ! -e /etc/lowland-installed ]; then
+  echo "Run ${bold}install-lowland${reset} to install this machine locally."
+  echo
+fi
 
 exec setsid cttyhack sh

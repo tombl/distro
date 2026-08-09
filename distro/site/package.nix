@@ -3,6 +3,8 @@
   pkgs,
   kernel,
   linux-guest,
+  installDisk,
+  repository,
   rootfs,
 }:
 
@@ -38,17 +40,29 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
     cp -L ${linux-guest.package}/agent.erofs $out/static/v${ver}/agent.erofs
 
-    # The EROFS image is immutable and is served under its content hash, so the
-    # page can read it directly into the block device.
+    # The EROFS image is immutable and served under its content hash. Its
+    # manifest lets the browser range-stream it into the block device.
     sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${rootfs} | awk '{ print $1 }')
     cp ${rootfs} $out/rootfs-''${sha}.erofs
+    size=$(wc -c < ${rootfs})
+    printf '{"sha":"%s","size":%s}' "$sha" "$size" > $out/rootfs.erofs.json
+
+    # This is fetched only when OPFS has no installation disk yet. The logical
+    # ext4 image is sparse and compresses to a small seed.
+    install_sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${installDisk} | awk '{ print $1 }')
+    gzip --best --no-name --stdout ${installDisk} > $out/install-''${install_sha}.ext4.gz
+    install_size=$(wc -c < ${installDisk})
+    printf '{"sha":"%s","size":%s}' "$install_sha" "$install_size" > $out/install-disk.json
 
     mkdir -p $out
-    substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
-    substituteInPlace index.html --replace-fail __ROOTFS__ rootfs-''${sha}.erofs
+    substituteInPlace index.html \
+      --replace-fail __ASSETS__ v${ver} \
+      --replace-fail __BOOT_MODE__ live
     cp index.html $out/index.html
+    cp service-worker.js $out/service-worker.js
     cp _headers $out/_headers
     cp -r vendor $out/vendor
+    cp -rL ${repository} $out/apk
 
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.erofs)
@@ -59,5 +73,5 @@ pkgs.stdenvNoCC.mkDerivation {
 
     runHook postInstall
   '';
-  passthru = { inherit rootfs; };
+  passthru = { inherit installDisk repository rootfs; };
 }

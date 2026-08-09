@@ -230,28 +230,38 @@ filesystems into the new root and calls `pivot_root`. It then unmounts the agent
 filesystem. Programs in the system cannot browse the agent files. The running
 agent can remain visible through normal process information in `/proc`.
 
-The agent finds the system image by label. It does not use the virtio device
-order, a kernel argument, or information returned by `devices.add()`.
+The agent finds the system image by filesystem label. It recognizes EROFS and
+ext4, and requires exactly one attached filesystem labeled `LOWLAND_ROOT`. It
+fails boot if that label is absent or appears more than once. It does not use
+virtio device order, a kernel argument, or information returned by
+`devices.add()` to choose a disk. `LOWLAND_AGENT` identifies the private boot
+disk and cannot be mistaken for the system image.
 
-The image builder writes `LOWLAND_ROOT` into the native EROFS volume-label
-field. The agent checks the EROFS superblock on each virtio block device and
-does not assume that the system image is `/dev/vdb`. `LOWLAND_AGENT` identifies
-the private boot disk and cannot be mistaken for the system image.
+The default behavior mounts the selected filesystem directly: EROFS is
+read-only and ext4 is read-write. The exact kernel argument
+`lowland.root.overlay=tmpfs` instead mounts the selected filesystem read-only
+and places a temporary OverlayFS upper layer over it. This option is a general
+embedding contract, not site-specific logic. It makes an immutable image feel
+writable for one boot without claiming persistence.
 
-The wasm kernel ships one immutable-image filesystem: EROFS. Ext4 remains
-available only for the later installed, writable system designed by the
-persistence work.
+The canonical live site attaches one `LOWLAND_ROOT` EROFS image and enables the
+temporary overlay. Its separate installation disk is labeled
+`LOWLAND_INSTALL`, so it cannot be selected as the root. The installed site
+does not attach the live EROFS image. Before boot, it labels its persistent ext4
+disk `LOWLAND_ROOT` and mounts that disk directly. The private agent filesystem
+is attached in both cases and is never copied into the installed system.
 
-The first implementation boots the published image read-only. It does not add
-persistent-storage behavior to the image plugin. A later persistence change
-can place a temporary or persistent writable filesystem over the read-only
-image. The site and the `lowland` facade select that writable storage. This
-keeps the image package independent of the persistence implementation.
+EROFS is the canonical immutable-image format. SquashFS remains enabled in the
+kernel for other embedders, but the canonical packages do not produce or ship
+a SquashFS system image. Persistent storage is site or facade policy; the image
+builder only constructs filesystems and does not decide how they are stored or
+layered.
 
 Linux retains its initramfs support and the host/kernel handoff ABI for custom
 embeddings. The canonical packages do not materialize or bundle an initramfs.
-The fixed-capacity handoff should eventually become a size-query/copy protocol;
-that kernel improvement is independent of the package migration.
+The device-tree handoff already uses a size-query/copy protocol. The remaining
+fixed-capacity initramfs handoff should eventually use the same protocol; that
+kernel improvement is independent of the package migration.
 
 ## High-level JavaScript API
 

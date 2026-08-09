@@ -4,12 +4,13 @@
 # it to R2, so no private key ever enters the nix store.
 {
   apk,
+  lib,
   apk-tools,
+  bootFiles ? null,
   busybox,
   curl,
   file,
   git,
-  guest-agent,
   jq,
   sqlite3,
 }:
@@ -25,11 +26,11 @@ let
         curl
         file
         git
-        guest-agent
         jq
         sqlite3
         ;
-    };
+    }
+    // lib.optionalAttrs (bootFiles != null) { inherit bootFiles; };
   };
 in
 repository

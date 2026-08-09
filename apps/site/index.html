@@ -76,7 +76,8 @@
         "imports": {
           "@lowland/bytes": "./static/__ASSETS__/bytes/index.js",
           "@lowland/kernel": "./static/__ASSETS__/dist/index.js",
-          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js"
+          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js",
+          "@tombl/linux-guest/browser": "./static/__ASSETS__/guest/browser.js"
         }
       }
     </script>
@@ -86,10 +87,22 @@
         consoleDevice,
         createNetwork,
         entropyDevice,
+        fileSystemDevice,
         hostFetchNetwork,
         blockDevice,
         spawnGuest,
       } from "@tombl/linux-guest";
+      import { BrowserFS } from "@tombl/linux-guest/browser";
+
+      const bootMode = "__BOOT_MODE__";
+      if (
+        "serviceWorker" in navigator &&
+        (bootMode === "live" || !navigator.serviceWorker.controller)
+      ) {
+        await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+      }
+
+      const parameters = Object.fromEntries(new URLSearchParams(location.search));
 
       const term = new Terminal({
         convertEol: true,
@@ -100,17 +113,19 @@
       term.open(document.body);
       termFit.fit();
       window.onresize = () => termFit.fit();
-      try {
-        term.loadAddon(new WebglAddon());
-      } catch (err) {
-        console.warn(err);
+      if (parameters.webgl !== "0") {
+        try {
+          term.loadAddon(new WebglAddon());
+        } catch (err) {
+          console.warn(err);
+        }
       }
 
       if (!window.crossOriginIsolated) {
         term.write("Error: not cross origin isolated\n");
       }
 
-      const { cmdline = "" } = Object.fromEntries(new URLSearchParams(location.search));
+      const { cmdline = "" } = parameters;
 
       const stdin = new ReadableStream({
         start(controller) {
@@ -150,31 +165,171 @@
         },
       });
 
-      // Persistence policy deliberately stays out of the image package. This
-      // migration boundary boots the labeled immutable EROFS image directly;
-      // the persistence branch will replace this storage adapter with its
-      // live/install overlay.
-      async function openDisk() {
-        const response = await fetch("__ROOTFS__");
-        if (!response.ok) throw new Error(`failed to fetch rootfs: ${response.status}`);
-        const disk = new Uint8Array(await response.arrayBuffer());
+      // EROFS requests small, scattered compressed blocks. Fetch larger
+      // immutable ranges around them and retain those chunks for the session,
+      // so boot starts before the complete image has transferred.
+      async function openLiveDisk() {
+        const manifestResponse = await fetch("rootfs.erofs.json");
+        if (!manifestResponse.ok) {
+          throw new Error(`failed to fetch rootfs manifest: ${manifestResponse.status}`);
+        }
+        const { sha, size } = await manifestResponse.json();
+        const url = `rootfs-${sha}.erofs`;
+        const CHUNK = 256 * 1024;
+        const chunks = new Map();
+        let whole;
+
+        const loadChunk = (index) => {
+          if (!chunks.has(index)) {
+            chunks.set(
+              index,
+              (async () => {
+                const start = index * CHUNK;
+                const end = Math.min(start + CHUNK, size);
+                const response = await fetch(url, {
+                  headers: { Range: `bytes=${start}-${end - 1}` },
+                });
+                if (response.status === 200) {
+                  whole = new Uint8Array(await response.arrayBuffer());
+                  if (whole.byteLength !== size) throw new Error("rootfs has the wrong size");
+                  return whole.subarray(start, end);
+                }
+                if (response.status !== 206) {
+                  throw new Error(`failed to fetch rootfs range: ${response.status}`);
+                }
+                const data = new Uint8Array(await response.arrayBuffer());
+                if (data.byteLength !== end - start) throw new Error("short rootfs range response");
+                return data;
+              })(),
+            );
+          }
+          return chunks.get(index);
+        };
+
         return {
+          capacity: size,
+          async read(offset, length) {
+            if (offset < 0 || length < 0 || offset + length > size) {
+              throw new RangeError("rootfs read is outside the disk");
+            }
+            if (whole) return whole.slice(offset, offset + length);
+            const first = Math.floor(offset / CHUNK);
+            const last = Math.floor((offset + length - 1) / CHUNK);
+            const loaded = await Promise.all(
+              Array.from({ length: last - first + 1 }, (_, index) => loadChunk(first + index)),
+            );
+            const result = new Uint8Array(length);
+            for (let index = 0; index < loaded.length; index++) {
+              const chunkIndex = first + index;
+              const chunkStart = chunkIndex * CHUNK;
+              const from = Math.max(offset, chunkStart);
+              const to = Math.min(offset + length, chunkStart + loaded[index].byteLength);
+              result.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
+            }
+            return result;
+          },
+        };
+      }
+
+      async function openInstallDisk(root) {
+        const directory = await navigator.storage.getDirectory();
+        const handle = await directory.getFileHandle("root.ext4", { create: true });
+        const file = await handle.getFile();
+        let disk;
+        if (file.size === 0) {
+          const manifest = await fetch("install-disk.json").then((response) => response.json());
+          const response = await fetch(`install-${manifest.sha}.ext4.gz`);
+          if (!response.ok) throw new Error(`failed to fetch install disk: ${response.status}`);
+          disk = new Uint8Array(
+            await new Response(
+              response.body.pipeThrough(new DecompressionStream("gzip")),
+            ).arrayBuffer(),
+          );
+          if (disk.byteLength !== manifest.size) throw new Error("install disk has the wrong size");
+          const writable = await handle.createWritable();
+          await writable.write(disk);
+          await writable.close();
+        } else {
+          disk = new Uint8Array(await file.arrayBuffer());
+        }
+
+        const superblock = 1024;
+        const magicOffset = superblock + 56;
+        const labelOffset = superblock + 120;
+        if (
+          disk.byteLength < labelOffset + 16 ||
+          disk[magicOffset] !== 0x53 ||
+          disk[magicOffset + 1] !== 0xef
+        ) {
+          throw new Error("persistent disk is not a valid ext4 image");
+        }
+
+        const BLOCK = 4096;
+        const dirty = new Set();
+        const storage = {
           capacity: disk.byteLength,
           read(offset, length) {
             return disk.slice(offset, offset + length);
           },
+          write(offset, data) {
+            disk.set(data, offset);
+            const first = Math.floor(offset / BLOCK);
+            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
+            for (let block = first; block <= last; block++) dirty.add(block);
+            return data.byteLength;
+          },
+          async flush() {
+            if (dirty.size === 0) return;
+            const writable = await handle.createWritable({ keepExistingData: true });
+            for (const block of dirty) {
+              const offset = block * BLOCK;
+              await writable.write({
+                type: "write",
+                position: offset,
+                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
+              });
+            }
+            await writable.close();
+            dirty.clear();
+          },
         };
+
+        // The site, rather than the general-purpose agent, ensures that only
+        // the disk selected for this boot carries the canonical root label.
+        const label = new TextEncoder().encode(root ? "LOWLAND_ROOT" : "LOWLAND_INSTALL");
+        const encoded = new Uint8Array(16);
+        encoded.set(label);
+        if (
+          !disk
+            .subarray(labelOffset, labelOffset + encoded.length)
+            .every((v, i) => v === encoded[i])
+        ) {
+          storage.write(labelOffset, encoded);
+          await storage.flush();
+        }
+        return storage;
       }
 
       // The page's network: guest HTTP/1 becomes HTTPS via the browser's
       // fetch, which is exactly what `apk add` needs to reach the served repo.
       const network = createNetwork(
         hostFetchNetwork({
-          fetch: (request) => fetch(request),
+          fetch: (request) => {
+            const url = new URL(request.url);
+            if (url.hostname === "assets.low.land") {
+              return fetch(
+                new Request(new URL(url.pathname + url.search, location.origin), request),
+              );
+            }
+            return fetch(request);
+          },
         }),
       );
 
-      const disk = await openDisk();
+      const disk = bootMode === "live" ? await openLiveDisk() : await openInstallDisk(true);
+      const installDisk = bootMode === "live" ? await openInstallDisk(false) : undefined;
+      const opfs = await navigator.storage.getDirectory();
+      const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({
         root: blockDevice(disk),
         bootConsole: bootOut,
@@ -182,9 +337,16 @@
         // part of the facade contract.
         cpus: 1,
         network,
-        cmdline: cmdline.replace(/\+/g, " "),
-        devices: [ttyConsole, entropyDevice()],
+        cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${cmdline.replace(/\+/g, " ")}`,
+        devices: [
+          ttyConsole,
+          ...(installDisk ? [blockDevice(installDisk)] : []),
+          entropyDevice(),
+          fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
+        ],
       });
+      await guest.fs.mkdir("/boot", { recursive: true });
+      await guest.mount("boot", "/boot", { type: "virtiofs" });
     </script>
   </body>
 </html>
