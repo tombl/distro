@@ -1,0 +1,8 @@
+[package]
+name = "gix-file-probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gix-commitgraph = { version = "=0.37.1", features = ["sha1"] }
+gix-ref = { version = "=0.65.0", features = ["sha1"] }

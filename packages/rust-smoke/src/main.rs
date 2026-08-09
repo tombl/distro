@@ -1,5 +1,9 @@
+use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::mem::{align_of, size_of};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -11,14 +15,143 @@ thread_local! {
 
 static ATOMIC: AtomicUsize = AtomicUsize::new(0);
 
+fn process_child(args: &[String]) -> bool {
+    match args.get(1).map(String::as_str) {
+        Some("--process-child") => {
+            let mut stdin = String::new();
+            std::io::stdin().read_to_string(&mut stdin).unwrap();
+            println!("argv={:?}", &args[2..]);
+            println!("env={}", env::var("RUST_SPAWN_ENV").unwrap());
+            println!("cwd={}", env::current_dir().unwrap().display());
+            println!("stdin={stdin}");
+            eprintln!("child stderr");
+            true
+        }
+        Some("--process-exit") => {
+            std::process::exit(37);
+        }
+        Some("--process-exec") => {
+            let error = Command::new("/bin/busybox")
+                .args(["printf", "EXEC OK"])
+                .exec();
+            panic!("exec failed: {error}");
+        }
+        _ => false,
+    }
+}
+
+fn assert_unsupported(error: std::io::Error) {
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported, "{error}");
+    assert!(error.to_string().contains("requires fork"), "{error}");
+}
+
+fn test_process() {
+    println!("testing std::process::Command through posix_spawn...");
+
+    let mut child = Command::new("/bin/rust-smoke")
+        .args(["--process-child", "plain", "two words"])
+        .env("RUST_SPAWN_ENV", "env value")
+        .current_dir("/tmp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"piped input")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{:?}", output.status);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "argv=[\"plain\", \"two words\"]\nenv=env value\ncwd=/tmp\nstdin=piped input\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "child stderr\n"
+    );
+
+    for iteration in 0..32 {
+        assert!(
+            Command::new("/bin/busybox")
+                .arg("true")
+                .status()
+                .unwrap_or_else(|error| panic!("spawn {iteration} failed: {error}"))
+                .success()
+        );
+    }
+
+    let missing = Command::new("/definitely/missing-rust-command")
+        .spawn()
+        .unwrap_err();
+    assert_eq!(missing.kind(), std::io::ErrorKind::NotFound, "{missing}");
+
+    let status = Command::new("/bin/rust-smoke")
+        .arg("--process-exit")
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(37));
+
+    let spawn_threads: Vec<_> = (0..4)
+        .map(|_| {
+            thread::spawn(|| {
+                for _ in 0..16 {
+                    let status = Command::new("/bin/busybox")
+                        .arg("true")
+                        .status()
+                        .unwrap();
+                    assert!(status.success());
+                }
+            })
+        })
+        .collect();
+    for handle in spawn_threads {
+        handle.join().unwrap();
+    }
+
+    let uid_error = Command::new("/bin/busybox")
+        .arg("true")
+        .uid(unsafe { libc::getuid() })
+        .spawn()
+        .unwrap_err();
+    assert_unsupported(uid_error);
+
+    let pre_exec_error = unsafe {
+        Command::new("/bin/busybox")
+            .arg("true")
+            .pre_exec(|| Ok(()))
+            .spawn()
+            .unwrap_err()
+    };
+    assert_unsupported(pre_exec_error);
+
+    // posix_spawnp resolves the executable with the parent's PATH, so a PATH
+    // supplied only to the child requires the fork/exec fallback to preserve
+    // Command's established behavior.
+    let child_path_error = Command::new("true")
+        .env("PATH", "/bin")
+        .spawn()
+        .unwrap_err();
+    assert_unsupported(child_path_error);
+
+    println!("PROCESS OK");
+}
+
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    if process_child(&args) {
+        return;
+    }
+
     println!("hello from rust on wasm linux!");
-    let args: Vec<String> = std::env::args().collect();
     println!("args: {args:?}");
     assert_eq!(&args[1..], ["one", "two", "three"]);
 
     // core and a consumer's libc crate must agree on the port's ILP32/time64
-    // ABI. SYS_futex distinguishes the fork's asm-generic table from WALI's
+    // ABI. SYS_futex distinguishes this port's asm-generic table from WALI's
     // x86_64-like syscall table, so this also proves Cargo used the path
     // override rather than the registry source from Cargo.lock.
     assert_eq!(size_of::<std::ffi::c_long>(), 4);
@@ -111,6 +244,8 @@ fn main() {
     });
     assert_eq!(scoped_sum, 10);
     println!("scoped threads: sum={scoped_sum}");
+
+    test_process();
 
     println!("total elapsed: {:?}", start.elapsed());
     println!("THREADS OK");

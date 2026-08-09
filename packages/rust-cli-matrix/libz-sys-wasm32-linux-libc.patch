@@ -1,0 +1,13 @@
+diff --git a/build.rs b/build.rs
+index 74655c4..bcd52cc 100644
+--- a/build.rs
++++ b/build.rs
+@@ -118,7 +118,7 @@ fn build_zlib(cfg: &mut cc::Build, target: &str) {
+         .file("src/zlib/uncompr.c")
+         .file("src/zlib/zutil.c");
+
+-    if !cfg!(feature = "libc") || target.starts_with("wasm32") {
++    if !cfg!(feature = "libc") || (target.starts_with("wasm32") && target != "wasm32-unknown-linux-musl") {
+         cfg.define("Z_SOLO", None);
+     } else {
+         cfg.file("src/zlib/gzclose.c")

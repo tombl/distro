@@ -1,0 +1,16 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f0db4d4..4d38a3c 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -105,7 +105,10 @@ mod unix {
+
+ // WebAssembly does not have a specific allocation granularity.
+ // The page size works well.
+-#[cfg(all(not(target_os = "emscripten"), any(target_arch = "wasm32", target_arch = "wasm64")))]
++#[cfg(all(
++    not(any(target_os = "emscripten", target_os = "linux")),
++    any(target_arch = "wasm32", target_arch = "wasm64")
++))]
+ #[inline]
+ fn get_granularity_helper() -> usize {
+     // <https://webassembly.github.io/spec/core/exec/runtime.html#page-size>

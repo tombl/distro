@@ -1,0 +1,65 @@
+diff --git a/build.rs b/build.rs
+index b44fa91..55fe40d 100644
+--- a/build.rs
++++ b/build.rs
+@@ -125,6 +125,7 @@ fn main() {
+
+     let target = env::var("TARGET").unwrap();
+     let windows = target.contains("windows");
++    let wasm32_linux = target == "wasm32-unknown-linux-musl";
+     let dst = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+     let include = dst.join("include");
+     let mut cfg = cc::Build::new();
+@@ -185,6 +186,13 @@ fn main() {
+     // "no symbols" warning on pcre_string_utils.c is because it is only used
+     // when when COMPILE_PCRE8 is not defined, which is the default.
+     add_c_files(&mut cfg, "libgit2/deps/pcre");
++
++    if wasm32_linux {
++        // libgit2's NO_MMAP configuration uses pread/pwrite in the operations
++        // which otherwise depend on mapped files.
++        cfg.define("NO_MMAP", Some("1"));
++        cfg.define("GIT_WASM32_LINUX", Some("1"));
++    }
+
+     cfg.file("libgit2/src/util/allocators/failalloc.c");
+     cfg.file("libgit2/src/util/allocators/stdalloc.c");
+@@ -299,6 +307,20 @@ fn add_c_files(build: &mut cc::Build, path: impl AsRef<Path>) {
+         if e.file_type().unwrap().is_dir() {
+             // skip dirs for now
+         } else if path.extension().and_then(|s| s.to_str()) == Some("c") {
++            // The Unix process implementation is only used by SSH transports,
++            // and this target has no fork. Do not compile it when the crate's
++            // SSH feature is disabled.
++            if env::var("TARGET").ok().as_deref() == Some("wasm32-unknown-linux-musl")
++                && env::var_os("CARGO_FEATURE_SSH").is_none()
++                && path.file_name().and_then(|name| name.to_str()) == Some("process.c")
++                && path
++                    .parent()
++                    .and_then(|parent| parent.file_name())
++                    .and_then(|name| name.to_str())
++                    == Some("unix")
++            {
++                continue;
++            }
+             build.file(&path);
+         }
+     }
+diff --git a/libgit2/src/util/integer.h b/libgit2/src/util/integer.h
+index 984600b..10da1dd 100644
+--- a/libgit2/src/util/integer.h
++++ b/libgit2/src/util/integer.h
+@@ -52,7 +52,12 @@ GIT_INLINE(int) git__is_int(int64_t p)
+ #if (__has_builtin(__builtin_add_overflow) || \
+      (defined(__GNUC__) && (__GNUC__ >= 5)))
+
+-# if (SIZE_MAX == UINT_MAX)
++# if defined(GIT_WASM32_LINUX)
++#  define git__add_sizet_overflow(out, one, two) \
++     __builtin_add_overflow(one, two, out)
++#  define git__multiply_sizet_overflow(out, one, two) \
++     __builtin_mul_overflow(one, two, out)
++# elif (SIZE_MAX == UINT_MAX)
+ #  define git__add_sizet_overflow(out, one, two) \
+      __builtin_uadd_overflow(one, two, out)
+ #  define git__multiply_sizet_overflow(out, one, two) \

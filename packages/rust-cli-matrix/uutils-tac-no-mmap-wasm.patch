@@ -1,0 +1,129 @@
+--- a/src/uu/tac/Cargo.toml
++++ b/src/uu/tac/Cargo.toml
+@@ -22,7 +22,6 @@
+
+ [dependencies]
+ memchr = { workspace = true }
+-memmap2 = { workspace = true }
+ regex = { workspace = true }
+ clap = { workspace = true }
+ libc = { workspace = true }
+@@ -31,6 +30,9 @@
+ fluent = { workspace = true }
+ tempfile = { workspace = true }
+
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))'.dependencies]
++memmap2 = { workspace = true }
++
+ [[bin]]
+ name = "tac"
+ path = "src/main.rs"
+--- a/src/uu/tac/src/tac.rs
++++ b/src/uu/tac/src/tac.rs
+@@ -9,10 +9,13 @@
+
+ use clap::{Arg, ArgAction, Command};
+ use memchr::memmem;
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ use memmap2::Mmap;
+ use std::ffi::{OsStr, OsString};
+-use std::io::{BufWriter, Read, Write, stdin, stdout};
+-use std::{fs::File, io::copy, path::Path};
++use std::io::{BufWriter, Read, Write, stdin, stdout};
++use std::{fs::File, path::Path};
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
++use std::io::copy;
+ #[cfg(unix)]
+ use uucore::error::UError;
+ use uucore::error::UResult;
+@@ -339,5 +342,6 @@
+
+     for filename in filenames {
++        #[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+         let mmap;
+         let buf;
+
+@@ -352,6 +356,25 @@
+                 set_exit_code(1);
+                 continue;
+             }
++            #[cfg(all(
++                target_arch = "wasm32",
++                target_os = "linux",
++                target_vendor = "unknown"
++            ))]
++            {
++                let mut contents = Vec::new();
++                match stdin().read_to_end(&mut contents) {
++                    Ok(_) => {
++                        buf = contents;
++                        &buf
++                    }
++                    Err(e) => {
++                        show!(TacError::ReadError(OsString::from("stdin"), e));
++                        continue;
++                    }
++                }
++            }
++            #[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+             if let Some(mmap1) = try_mmap_stdin() {
+                 mmap = mmap1;
+                 &mmap
+@@ -382,7 +405,26 @@
+                     continue;
+                 }
+             };
+
++            #[cfg(all(
++                target_arch = "wasm32",
++                target_os = "linux",
++                target_vendor = "unknown"
++            ))]
++            {
++                let mut contents = Vec::new();
++                match file.read_to_end(&mut contents) {
++                    Ok(_) => {
++                        buf = contents;
++                        &buf
++                    }
++                    Err(e) => {
++                        show!(TacError::ReadError(filename.clone(), e));
++                        continue;
++                    }
++                }
++            }
++            #[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+             if let Some(mmap1) = try_mmap_file(&file) {
+                 mmap = mmap1;
+                 &mmap
+@@ -417,6 +459,7 @@
+     Ok(())
+ }
+
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ fn try_mmap_stdin() -> Option<Mmap> {
+     // SAFETY: If the file is truncated while we map it, SIGBUS will be raised
+     // and our process will be terminated, thus preventing access of invalid memory.
+@@ -427,13 +470,15 @@
+     if mmap.is_empty() { None } else { Some(mmap) }
+ }
+
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ enum StdinData {
+     Mmap(Mmap),
+     Vec(Vec<u8>),
+ }
+
+ /// Copy stdin to a temp file, then memory-map it.
+ /// Falls back to reading directly into memory if temp file creation fails.
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ fn buffer_stdin() -> std::io::Result<StdinData> {
+     // Try to create a temp file (respects TMPDIR)
+     if let Ok(mut tmp) = tempfile::tempfile() {
+@@ -454,5 +499,6 @@
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ fn try_mmap_file(file: &File) -> Option<Mmap> {
+     // SAFETY: If the file is truncated while we map it, SIGBUS will be raised
+     // and our process will be terminated, thus preventing access of invalid memory.
+     unsafe { Mmap::map(file).ok() }
+ }

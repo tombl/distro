@@ -1,0 +1,122 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 0e14093..c228b79 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -105,15 +105,15 @@ wasmbind = [
+ ]
+ winapi = ["windows-targets"]
+
+-[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\"))))".dependencies.js-sys]
++[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\", target_os = \"linux\"))))".dependencies.js-sys]
+ version = "0.3"
+ optional = true
+
+-[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\"))))".dependencies.wasm-bindgen]
++[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\", target_os = \"linux\"))))".dependencies.wasm-bindgen]
+ version = "0.2"
+ optional = true
+
+-[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\"))))".dev-dependencies.wasm-bindgen-test]
++[target."cfg(all(target_arch = \"wasm32\", not(any(target_os = \"emscripten\", target_os = \"wasi\", target_os = \"linux\"))))".dev-dependencies.wasm-bindgen-test]
+ version = "0.3"
+
+ [target."cfg(target_os = \"android\")".dependencies.android-tzdata]
+diff --git a/src/offset/local/mod.rs b/src/offset/local/mod.rs
+index af6c24b..469f7f0 100644
+--- a/src/offset/local/mod.rs
++++ b/src/offset/local/mod.rs
+@@ -51,7 +51,7 @@ mod inner {
+ #[cfg(all(
+     target_arch = "wasm32",
+     feature = "wasmbind",
+-    not(any(target_os = "emscripten", target_os = "wasi"))
++    not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+ ))]
+ mod inner {
+     use crate::{Datelike, FixedOffset, LocalResult, NaiveDateTime, Timelike};
+diff --git a/src/offset/utc.rs b/src/offset/utc.rs
+index 83f9f39..56a67af 100644
+--- a/src/offset/utc.rs
++++ b/src/offset/utc.rs
+@@ -9,7 +9,7 @@ use core::fmt;
+     not(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     ))
+ ))]
+ use std::time::{SystemTime, UNIX_EPOCH};
+@@ -84,7 +84,7 @@ impl Utc {
+     #[cfg(not(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     )))]
+     #[must_use]
+     pub fn now() -> DateTime<Utc> {
+@@ -99,7 +99,7 @@ impl Utc {
+     #[cfg(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     ))]
+     #[must_use]
+     pub fn now() -> DateTime<Utc> {
+diff --git a/src/datetime/mod.rs b/src/datetime/mod.rs
+index 4edc53d..bed3557 100644
+--- a/src/datetime/mod.rs
++++ b/src/datetime/mod.rs
+@@ -1445,14 +1445,14 @@ impl From<DateTime<Utc>> for SystemTime {
+ #[cfg(all(
+     target_arch = "wasm32",
+     feature = "wasmbind",
+-    not(any(target_os = "emscripten", target_os = "wasi"))
++    not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+ ))]
+ #[cfg_attr(
+     docsrs,
+     doc(cfg(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     )))
+ )]
+ impl From<js_sys::Date> for DateTime<Utc> {
+@@ -1464,14 +1464,14 @@ impl From<js_sys::Date> for DateTime<Utc> {
+ #[cfg(all(
+     target_arch = "wasm32",
+     feature = "wasmbind",
+-    not(any(target_os = "emscripten", target_os = "wasi"))
++    not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+ ))]
+ #[cfg_attr(
+     docsrs,
+     doc(cfg(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     )))
+ )]
+ impl From<&js_sys::Date> for DateTime<Utc> {
+@@ -1483,14 +1483,14 @@ impl From<&js_sys::Date> for DateTime<Utc> {
+ #[cfg(all(
+     target_arch = "wasm32",
+     feature = "wasmbind",
+-    not(any(target_os = "emscripten", target_os = "wasi"))
++    not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+ ))]
+ #[cfg_attr(
+     docsrs,
+     doc(cfg(all(
+         target_arch = "wasm32",
+         feature = "wasmbind",
+-        not(any(target_os = "emscripten", target_os = "wasi"))
++        not(any(target_os = "emscripten", target_os = "wasi", target_os = "linux"))
+     )))
+ )]
+ impl From<DateTime<Utc>> for js_sys::Date {

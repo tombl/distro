@@ -5,8 +5,9 @@ edition = "2021"
 
 [dependencies]
 # Keep this equal to rust-toolchain's libc-src version: Cargo path overrides
-# are intentionally exact, so the smoke proves consumer crates use the fork.
-libc = "=0.2.186"
+# are intentionally exact, so the smoke proves consumers use the locally
+# patched crates.io source.
+libc = "=0.2.189"
 
 [profile.release]
 panic = "abort"

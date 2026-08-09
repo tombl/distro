@@ -1,0 +1,16 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b8ae665..c1e26ce 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -47,7 +47,10 @@ cfg_if::cfg_if! {
+     } else if #[cfg(windows)] {
+         #[path = "windows.rs"]
+         mod imp;
+-    } else if #[cfg(all(target_family = "wasm", not(target_os = "emscripten")))] {
++    } else if #[cfg(all(
++        target_family = "wasm",
++        not(any(target_os = "emscripten", target_os = "linux"))
++    ))] {
+         #[path = "wasm.rs"]
+         mod imp;
+     } else {

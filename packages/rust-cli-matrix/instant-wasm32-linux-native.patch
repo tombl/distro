@@ -1,0 +1,15 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0d8feb0..84a744f 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,9 @@
+ cfg_if::cfg_if! {
+     if #[cfg(any(
+-        all(target_arch = "wasm32", not(target_os = "wasi")),
++        all(
++            target_arch = "wasm32",
++            not(any(target_os = "wasi", target_os = "linux"))
++        ),
+         target_arch = "asmjs"
+     ))] {
+         mod wasm;
