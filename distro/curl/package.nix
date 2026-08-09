@@ -56,6 +56,18 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ca-embed"
   ];
 
+  postFixup = ''
+    # Configure must find the Nix-staged OpenSSL and zlib while cross-building,
+    # but curl-config and the development metadata describe the guest runtime.
+    # Translate those two known build roots to / so downstream guest builds do
+    # not claim that their Nix locations will exist after APK installation.
+    substituteInPlace "$out/bin/curl-config" "$out/lib/libcurl.la" \
+      --replace-fail ${openssl} / \
+      --replace-fail ${zlib} /
+    substituteInPlace "$out/lib/pkgconfig/libcurl.pc" \
+      --replace-fail ${openssl} /
+  '';
+
   passthru.checks = {
     transfers = vm-test.installedTest {
       name = "curl-transfers";

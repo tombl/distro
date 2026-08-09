@@ -73,6 +73,52 @@ pkgs.stdenv.override (old: {
   # the wrappers only read NIX_LDFLAGS when the compiler runs, so it can
   # still be dropped here.
   preHook = (old.preHook or "") + ''
+    # Target derivations are staged for an FHS root even though their Nix
+    # output remains the build-time location. Autotools must compile `/` into
+    # runtime metadata and use DESTDIR only when installing; otherwise config
+    # files and binaries incorrectly retain the temporary Nix output prefix.
+    export prefix=/
+    # Output scripts run in the guest, where Nix's build-time interpreters do
+    # not exist. Keep their FHS shebangs; packages which need host scripts
+    # during the build must patch those sources explicitly with --build.
+    export dontPatchShebangs=1
+
+    # Nix's Meson hook normally points each installation directory directly at
+    # a Nix output. Under DESTDIR that would duplicate the complete store path
+    # inside $out. The final flags win over those defaults and describe the FHS
+    # tree which Meson should stage instead.
+    mesonFlagsArray+=(
+      --libdir=lib --libexecdir=libexec --bindir=bin --sbindir=sbin
+      --includedir=include --mandir=share/man --infodir=share/info
+      --localedir=share/locale
+    )
+
+    stageFhsInstall() {
+      # DESTDIR is an environment contract shared by Autotools, Meson, and
+      # plain Makefiles. Some Makefiles only consume a command-line assignment,
+      # while Meson only consumes the environment, so provide both forms.
+      export DESTDIR="$out"
+      installFlagsArray+=("DESTDIR=$out")
+    }
+    preInstallHooks+=(stageFhsInstall)
+
+    # nixpkgs' normal strip hook is gated on ELF. wasm is intentionally marked
+    # as a distinct executable format, so provide the equivalent platform hook
+    # here. Check exact file signatures before invoking llvm-strip: accepting a
+    # filename or a permissive parser would risk treating opaque data such as a
+    # filesystem image as an object file.
+    stripWasmObjects() {
+      while IFS= read -r -d "" file; do
+        signature=$(od -An -tx1 -N8 "$file" | tr -d ' \n')
+        case "$signature" in
+          0061736d*|213c617263683e0a)
+            llvm-strip --strip-debug "$file"
+            ;;
+        esac
+      done < <(find "$out" -type f -print0)
+    }
+    postFixupHooks+=(stripWasmObjects)
+
     # The toolchain ships unprefixed llvm-* binutils, so the bintools wrapper
     # never exports the tool variables the way prefixed cross wrappers do;
     # plain Makefiles otherwise fall back to the build platform's `ar`.

@@ -38,12 +38,10 @@ stdenv.mkDerivation (finalAttrs: {
   # backgrounding -- there is no fork to background with.
   patches = [ ./run-command-posix-spawn.patch ];
 
-  # git's build runs shell and perl generators on the build host. The shell
-  # ones use #!/bin/sh (present in the sandbox); patchShebangs rewrites any
-  # #!/usr/bin/perl to the build perl, since the sandbox has no /usr/bin/env.
-  # NO_PERL keeps the perl *programs* (git-svn, add--interactive, ...) out of
-  # the build entirely, but a build-time generator can still be perl.
-  nativeBuildInputs = [ pkgs.perl ];
+  # Do not recursively patch source shebangs: that also rewrites installed
+  # commands and hook templates to Nix interpreters which cannot exist in the
+  # guest. NO_PERL excludes Git's Perl programs; PERL_PATH below remains an FHS
+  # path because Git substitutes it into the installed sample hooks.
 
   # POSIX timers work on the pinned kernel, including libcurl's progress timer;
   # the remote VM check exercises the transport without tolerating warnings.
@@ -63,10 +61,6 @@ stdenv.mkDerivation (finalAttrs: {
   # git builds from a plain Makefile; autoconf is optional and its detection
   # would re-derive the platform truths we already know, so skip ./configure.
   dontConfigure = true;
-
-  postPatch = ''
-    patchShebangs --build .
-  '';
 
   # CC/AR come from the wasm toolchain the stdenv exports; git's Makefile hard
   # assigns `CC = cc`, so pass CC/AR on the command line (makeFlagsArray is
@@ -135,6 +129,7 @@ stdenv.mkDerivation (finalAttrs: {
     "NO_PYTHON=YesPlease"
     "NO_GETTEXT=YesPlease"
     "NO_EXPAT=YesPlease"
+    "PERL_PATH=/usr/bin/perl"
     "CURL_CONFIG=${curl}/bin/curl-config"
     "CURL_CFLAGS=-I${curl}/include"
     "NO_INSTALL_HARDLINKS=YesPlease"

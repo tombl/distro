@@ -66,8 +66,19 @@ stdenv.mkDerivation (finalAttrs: {
       ln -sf ncursesw/$(basename $header) $out/include/$(basename $header)
     done
 
-    mkdir -p $out/share
-    cp -r ${pkgs.ncurses}/share/terminfo $out/share/terminfo
+    # configure records the build shell in this generated guest-side helper.
+    # Use the shell path provided by the base system instead of claiming that
+    # Nix's build interpreter will be present at runtime.
+    substituteInPlace $out/bin/ncursesw6-config \
+      --replace-fail ${pkgs.bashNonInteractive}/bin/bash /bin/sh
+
+    # Build the architecture-independent database from upstream source with a
+    # native tic. Copying Nixpkgs' already-compiled database would preserve its
+    # Nix-store tabset path in hundreds of records, which is not a valid runtime
+    # path after this package is installed in the guest.
+    mkdir -p $out/share/terminfo $out/share/tabset
+    ${pkgs.ncurses}/bin/tic -x -o $out/share/terminfo misc/terminfo.src
+    cp misc/tabset/* $out/share/tabset/
   '';
 
   passthru.checks =

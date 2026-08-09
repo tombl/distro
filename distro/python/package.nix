@@ -12,6 +12,7 @@
   readline,
   ncurses,
   openssl,
+  llvm-toolchain,
   vm-test,
   busybox,
 }:
@@ -132,6 +133,21 @@ let
     postInstall = ''
       test -x $out/usr/bin/python3.13
       test -f $out/usr/lib/python3.13/os.py
+
+      # CPython installs a snapshot of its cross-build configuration for
+      # sysconfig and extension builds. Configure necessarily discovered the
+      # Nix-staged toolchain and libraries, but those locations do not exist in
+      # the guest. Translate the known build inputs to their guest commands and
+      # FHS locations, then discard bytecode compiled from the pre-translation
+      # source so Python reads the corrected module.
+      config=$out/usr/lib/python3.13/config-3.13/Makefile
+      sysconfig=$out/usr/lib/python3.13/_sysconfigdata__linux_.py
+      substituteInPlace "$config" "$sysconfig" \
+        --replace-fail ${pkgs.python313}/bin/python3 /usr/bin/python3 \
+        --replace-fail ${pkgs.coreutils}/bin/ /bin/ \
+        --replace-fail ${llvm-toolchain}/bin/ "" \
+        --replace-fail ${openssl} /usr
+      rm -f $out/usr/lib/python3.13/__pycache__/_sysconfigdata__linux_.*.pyc
 
       # _curses is statically linked. Its compiled terminal descriptions are
       # supplied by the typed ncurses APK runtime dependency above.

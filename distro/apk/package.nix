@@ -3,7 +3,6 @@
   lib,
   tools,
   platform,
-  llvm-toolchain-unwrapped,
   checkStoreReferences,
 }:
 
@@ -62,9 +61,6 @@ let
         nativeBuildInputs = [
           checkStoreReferences
           pkgs.fakeroot
-          pkgs.file
-          pkgs.perl
-          llvm-toolchain-unwrapped
           tools
         ];
         passthru = {
@@ -84,58 +80,11 @@ let
         cp -a --no-preserve=ownership ${payload}/. root/
         chmod -R u+w root
 
-        # Nix outputs and their dependencies are installed at store paths,
-        # while all corresponding APKs are installed under /. Relocate text
-        # metadata and absolute symlinks, then discard build-only paths from
-        # wasm objects and archives. Binary path prefixes are overwritten with
-        # the same number of slashes: this preserves section offsets while the
-        # guest resolves the resulting path under /.
-        while IFS= read -r -d "" link; do
-          target=$(readlink "$link")
-          relocated=$(printf '%s' "$target" | sed -E \
-            's|/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/]+||g')
-          if [ "$relocated" != "$target" ]; then
-            ln -sfn "$relocated" "$link"
-          fi
-        done < <(find root -type l -print0)
-        while IFS= read -r -d "" file; do
-          if grep -Iq . "$file" && grep -Eq \
-            '/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-' "$file"; then
-            sed -Ei \
-              's|/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/[:space:]"'"'"']+||g' \
-              "$file"
-          fi
-          # llvm-strip accepts some unrelated binary formats without an error.
-          # In particular, it interprets an EROFS filesystem as an object and
-          # replaces the complete image with a tiny stripped header. Limit the
-          # operation to formats that APK packages actually need us to strip;
-          # opaque data must survive packaging byte-for-byte.
-          case $(file --brief "$file") in
-            "EROFS filesystem"* | "Squashfs filesystem"* | "Linux rev 1.0"*"filesystem data"*)
-              # A filesystem is a nested data format, not part of the APK's
-              # own namespace. Rewriting bytes in place invalidates its
-              # checksums and can corrupt metadata that only resembles a path.
-              ;;
-            "WebAssembly (wasm) binary"* | "current ar archive"*)
-              llvm-strip --strip-debug "$file"
-              perl -0777 -pi -e \
-                's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
-                "$file"
-              ;;
-            *)
-              # Other binary tables (notably terminfo) can embed paths even
-              # though they are not objects. Preserve offsets while relocating
-              # those strings, matching the text relocation above.
-              perl -0777 -pi -e \
-                's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
-                "$file"
-              ;;
-          esac
-        done < <(find root -type f -print0)
-
-        # APK payloads run outside Nix and must be self-contained. Check the
-        # uncompressed tree, including symlink targets, before mkpkg hides file
-        # contents inside its compressed archive.
+        # Payload derivations have already completed the standard environment's
+        # strip and fixup phases. APK conversion must not rewrite their bytes:
+        # any remaining store path means the producing package still assumes
+        # that its Nix installation prefix exists at runtime. Reject both file
+        # contents and symlink targets before mkpkg hides them in the archive.
         apk-check-store-references root ${lib.concatStringsSep " " (map toString (builtins.attrValues normalizedScripts))}
 
         # apk mkpkg builds the archive from on-disk ownership, so the payload
