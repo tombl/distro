@@ -44,6 +44,7 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
     substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
     cp index.html $out/index.html
+    cp service-worker.js $out/service-worker.js
     cp _headers $out/_headers
     cp -r vendor $out/vendor
 

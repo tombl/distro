@@ -76,7 +76,8 @@
         "imports": {
           "@tombl/linux": "./static/__ASSETS__/dist/index.js",
           "@tombl/linux/bytes": "./static/__ASSETS__/dist/bytes.js",
-          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js"
+          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js",
+          "@tombl/linux-guest/browser": "./static/__ASSETS__/guest/browser.js"
         }
       }
     </script>
@@ -88,8 +89,14 @@
         entropyDevice,
         hostFetchNetwork,
         blockDevice,
+        fileSystemDevice,
         spawnGuest,
       } from "@tombl/linux-guest";
+      import { BrowserFS } from "@tombl/linux-guest/browser";
+
+      if ("serviceWorker" in navigator) {
+        await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+      }
 
       const term = new Terminal({
         convertEol: true,
@@ -220,6 +227,8 @@
       );
 
       const disk = await openDisk();
+      const opfs = await navigator.storage.getDirectory();
+      const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({
         root: blockDevice(disk),
         bootConsole: bootOut,
@@ -228,8 +237,14 @@
         cpus: Math.min(navigator.hardwareConcurrency, 4),
         network,
         cmdline: cmdline.replace(/\+/g, " "),
-        devices: [ttyConsole, entropyDevice()],
+        devices: [
+          ttyConsole,
+          entropyDevice(),
+          fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
+        ],
       });
+      await guest.fs.mkdir("/boot", { recursive: true });
+      await guest.mount("boot", "/boot", { type: "virtiofs" });
     </script>
   </body>
 </html>
