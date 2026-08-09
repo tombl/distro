@@ -29,10 +29,6 @@ stdenv.mkDerivation (finalAttrs: {
     "pkgdatadir=/usr/share/misc"
   ];
 
-  # Keep the compiled guest path above, but stage the database under $out so
-  # the APK installs it at /usr/share/misc.
-  installFlags = [ "pkgdatadir=$(out)/usr/share/misc" ];
-
   configureFlags = [
     "--disable-shared"
     "--enable-static"
