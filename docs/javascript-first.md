@@ -28,6 +28,7 @@ API without preserving its multiple machine constructors.
 
 ```text
 packages/                  JavaScript workspace
+  bytes/                   @lowland/bytes (internal)
   kernel/                  @lowland/kernel
   guest/                   @lowland/guest
   image/                   @lowland/image
@@ -52,6 +53,17 @@ not a second application framework: it supplies native artifacts to the
 workspace and applications, and provides reproducible wrappers around both.
 
 ## Package factoring
+
+### `@lowland/bytes`
+
+This internal package contains the binary structure and byte-buffer helpers
+used by the kernel and guest packages. It is published because more than one
+package uses it at run time. Applications must not import it. Its README states
+that it has no compatibility promise.
+
+Lowland releases publish `@lowland/bytes` before the packages that depend on
+it. These packages use the same version until the release workflow defines a
+different versioning rule.
 
 ### `@lowland/kernel`
 
@@ -92,15 +104,13 @@ additional CPIO archive or second copy of libc.
 This is the canonical, separately replaceable userspace image. Its userspace is
 built from the Alpine-style APK package graph and includes BusyBox and apk-tools.
 It contains a small JavaScript module, declarations, and package-relative image
-assets. It is a machine plugin provider; it has no manifest, architecture field,
-schema version, or metadata that no consumer reads.
+assets. It is a machine plugin provider. It attaches the image but does not
+choose whether the machine is temporary or persistent.
 
 The site derives its own image from the same package graph but is not required
-to ship the exact canonical image. It adds site policy such as its message of
-the day and uses persistent browser-backed storage. The remaining root-design
-decision is how writable ephemeral and persistent filesystems are represented
-by the plugin API; that decision is intentionally deferred until the kernel and
-plugin migration is reviewable.
+to ship the exact canonical image. It adds site content such as its message of
+the day. The site or the `lowland` facade, not the image package, selects the
+storage implementation.
 
 Nix should expose a helper for producing another npm package with the same
 shape from any root filesystem derivation. An image is not intrinsically the
@@ -207,58 +217,41 @@ transport must not grow device-specific hooks such as an Ethernet `onClose`.
 
 ## Block-root boot contract
 
-The canonical host path does not supply an initramfs. The agent squashfs is the
-first boot disk and the kernel boots it with the equivalent of:
+The canonical host path does not supply an initramfs. The kernel first boots a
+small agent filesystem:
 
 ```text
 root=/dev/vda rootfstype=squashfs ro rootwait init=/init
 ```
 
-This path has been exercised against the current kernel: virtio-blk discovery,
-squashfs mounting, root pivot, and execution of `/init` all work without a
-supplied initramfs. The current agent needs one expected change before it can
-stay alive in this arrangement: as PID 1 it must mount `devtmpfs` before it
-creates `/dev/pts`.
+The agent runs as PID 1. It mounts `devtmpfs`, `devpts`, `proc`, and `sysfs`.
+It then finds the system image and mounts it. It moves the required virtual
+filesystems into the new root and calls `pivot_root`. It then unmounts the agent
+filesystem. Programs in the system cannot browse the agent files. The running
+agent can remain visible through normal process information in `/proc`.
+
+The agent finds the system image by label. It does not use the virtio device
+order, a kernel argument, or information returned by `devices.add()`.
+
+The image builder applies the label `LOWLAND_ROOT` as follows:
+
+- For ext4, it sets the filesystem label with `mke2fs -L LOWLAND_ROOT`.
+- SquashFS has no filesystem-label field. A SquashFS image therefore sits in a
+  GPT partition whose partition name is `LOWLAND_ROOT`.
+
+The image-construction API must document both forms. The agent accepts either
+the ext4 filesystem label or the GPT partition name.
+
+The first implementation boots the published image read-only. It does not add
+persistent-storage behavior to the image plugin. A later persistence change
+can place a temporary or persistent writable filesystem over the read-only
+image. The site and the `lowland` facade select that writable storage. This
+keeps the image package independent of the persistence implementation.
 
 Linux retains its initramfs support and the host/kernel handoff ABI for custom
 embeddings. The canonical packages do not materialize or bundle an initramfs.
 The fixed-capacity handoff should eventually become a size-query/copy protocol;
 that kernel improvement is independent of the package migration.
-
-The agent disk is the control-plane root. A userspace image is mounted at
-`/root`, and guest processes and filesystem operations are rooted there. The
-exact stable association between an attached image plugin and that mount is the
-one remaining machine-composition detail to specify; it must not depend on a
-public `image` option or an undocumented device-order accident.
-
-The leading candidate is for `setup.devices.add()` to return a stable guest
-device reference. The canonical image plugin can add its disk and contribute a
-private kernel argument such as `lowland.root=<device>`; the agent consumes that
-argument, mounts the device at `/root`, and roots its process and filesystem
-operations there. This keeps the coordination inside the two plugins, leaves
-`bootMachine()` image-agnostic, and lets a plain `fetchDisk()` remain only a
-reusable block device. This should be settled with a small API sketch before
-implementation.
-
-### Architecture questions for the next review
-
-The recommended root model is to keep the agent squashfs as the immutable
-control-plane root and mount the selected userspace image at `/root`. This
-keeps agent boot and recovery independent of the chosen distro and avoids
-returning to an initramfs pivot. The decision still needed is whether
-`MachineDevices.add()` returns a stable guest-device reference, or whether a
-smaller private coordination mechanism should associate an image plugin with
-the agent mount.
-
-Persistence should be an explicit storage policy, not a mutation of the image
-package asset. The leading design is an immutable image lower layer plus a
-writable upper layer: memory-backed for ephemeral machines, and backed by a
-caller-supplied block store (an OPFS file in the site, a host file in Node) for
-persistent machines. The review should decide whether this layering belongs in
-`@lowland/image` as one image plugin with an optional writable store, or in the
-`lowland` facade as coordination between separate image and state plugins. The
-former is easier to use; the latter keeps storage policy more independently
-replaceable.
 
 ## High-level JavaScript API
 
