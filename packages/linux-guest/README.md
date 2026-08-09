@@ -30,7 +30,7 @@ guest.machine.close();
 `@tombl/linux-guest/node` adapts a host directory to virtio-fs:
 
 ```js
-import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
+import { fileSystemDevice, MountFlags, spawnGuest } from "@tombl/linux-guest";
 import { NodeFS } from "@tombl/linux-guest/node";
 
 const shared = new NodeFS("/srv/guest-share");
@@ -45,15 +45,12 @@ const guest = await spawnGuest({
 });
 
 await guest.fs.mkdir("/workspace/host");
-const mount = await guest.exec([
-  "mount",
-  "-t",
-  "virtiofs",
-  "host",
-  "/workspace/host",
-]);
-if (!(await mount.status).success) throw new Error("mount failed");
+await guest.mount("host", "/workspace/host", { type: "virtiofs" });
 ```
+
+`guest.mount()` and `guest.unmount()` invoke the guest syscalls directly, so
+mounting a device does not require a shell or a `mount` executable in the
+image. Pass `MountFlags.BIND` as `flags` to bind mount an existing guest path.
 
 Pass `{ readOnly: true }` to reject writable opens and every mutating backend
 operation. This must be set on the backend even when the guest mount also uses

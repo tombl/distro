@@ -283,6 +283,33 @@ export async function fchownat(
   await syscall(session, NR.fchownat, AT.FDCWD, c_string(path), uid, gid, 0);
 }
 
+export async function mount(
+  session: GuestSession,
+  source: string | null,
+  target: string,
+  type: string | null,
+  flags: number,
+  data: string | null,
+): Promise<void> {
+  await syscall(
+    session,
+    NR.mount,
+    nullable_c_string(source),
+    c_string(target),
+    nullable_c_string(type),
+    flags,
+    nullable_c_string(data),
+  );
+}
+
+export async function umount2(
+  session: GuestSession,
+  target: string,
+  flags: number,
+): Promise<void> {
+  await syscall(session, NR.umount2, c_string(target), flags);
+}
+
 export async function kill(session: GuestSession, pid: number, signal: number): Promise<void> {
   await syscall(session, NR.kill, pid, signal);
 }
@@ -366,4 +393,8 @@ export async function reap(session: GuestSession, pid: number): Promise<number> 
 // input on a personal system.
 function c_string(value: string): { in: Uint8Array } {
   return { in: new TextEncoder().encode(value + "\0") };
+}
+
+function nullable_c_string(value: string | null): number | { in: Uint8Array } {
+  return value === null ? 0 : c_string(value);
 }

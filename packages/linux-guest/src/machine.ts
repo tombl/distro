@@ -10,6 +10,8 @@ import {
   type Exec,
   type FileSystem,
   type GuestClientCapabilities,
+  type Mount,
+  type Unmount,
 } from "./client.ts";
 import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
@@ -41,6 +43,10 @@ export interface Guest {
   readonly fs: FileSystem;
   /** Runs programs in the guest. */
   readonly exec: Exec;
+  /** Mounts a filesystem in the guest without spawning a helper process. */
+  readonly mount: Mount;
+  /** Unmounts a filesystem in the guest without spawning a helper process. */
+  readonly unmount: Unmount;
   /** The guest's network attachment; `undefined` unless spawned with `network`. */
   readonly network: GuestNetwork | undefined;
 }
@@ -189,7 +195,14 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
         network!.gateway,
       );
     }
-    return { machine, fs: client.fs, exec: client.exec, network: attached?.guest_network };
+    return {
+      machine,
+      fs: client.fs,
+      exec: client.exec,
+      mount: client.mount,
+      unmount: client.unmount,
+      network: attached?.guest_network,
+    };
   } catch (error) {
     machine.close();
     throw error;

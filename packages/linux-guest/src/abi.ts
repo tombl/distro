@@ -86,6 +86,8 @@ function define_struct<T extends object>(
 // ---------------------------------------------------------------------------
 
 const nr = scalar_group("__NR_", {
+  umount2: 39,
+  mount: 40,
   openat: 56,
   close: 57,
   read: 63,
@@ -140,6 +142,23 @@ const at = scalar_group("AT_", {
 
 /** *at() flags, e.g. `AT.FDCWD === -100`. */
 export const AT = at.values;
+
+const mount_flags = scalar_group("MS_", {
+  RDONLY: 1,
+  BIND: 4096,
+  REC: 16384,
+});
+
+/** Linux mount flags accepted by {@link Guest.mount}. */
+export const MountFlags = mount_flags.values;
+
+const unmount_flags = scalar_group("MNT_", {
+  FORCE: 1,
+  DETACH: 2,
+});
+
+/** Linux unmount flags accepted by {@link Guest.unmount}. */
+export const UnmountFlags = unmount_flags.values;
 
 // ---------------------------------------------------------------------------
 // File-mode type bits (for st_mode decoding).
@@ -448,6 +467,7 @@ export const abi_checks: {
     "#include <stddef.h>", // offsetof
     "#include <asm/unistd.h>", // __NR_*
     "#include <linux/fcntl.h>", // O_*, AT_*
+    "#include <sys/mount.h>", // MS_*, MNT_*
     "#include <asm/stat.h>", // struct stat64
     "#include <linux/stat.h>", // S_IF*
     "#include <dirent.h>", // struct dirent (== linux_dirent64 header), DT_*
@@ -459,6 +479,8 @@ export const abi_checks: {
     ...nr.checks,
     ...o.checks,
     ...at.checks,
+    ...mount_flags.checks,
+    ...unmount_flags.checks,
     ...s_if.checks,
     ...dt.checks,
     ...e.checks,
