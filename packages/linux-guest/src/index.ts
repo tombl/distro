@@ -20,8 +20,16 @@ export {
   type VsockConnection,
   type VsockDevice,
 } from "@lowland/kernel";
-export { ProtocolError, SystemError } from "./abi.ts";
-export { type Exec, type ExecOptions, type FileData, type FileSystem } from "./client.ts";
+export { MountFlags, ProtocolError, SystemError, UnmountFlags } from "./abi.ts";
+export {
+  type Exec,
+  type ExecOptions,
+  type FileData,
+  type FileSystem,
+  type Mount,
+  type MountOptions,
+  type Unmount,
+} from "./client.ts";
 export {
   type DirEntry,
   type FileInfo,

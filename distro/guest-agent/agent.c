@@ -507,6 +507,12 @@ static int serve_spawn(int fd)
 	goto out;
 
 spawn_failed:
+	/* A spawn errno alone does not identify whether the executable or working
+	 * directory is incompatible with the mounted system root. Keep this narrow
+	 * diagnostic on the guest console so an embedder can repair its image. */
+	fprintf(stderr, "linux-guest-agent: spawning %s in %s: %s\n",
+		argv && argv[0] ? argv[0] : "(invalid)", cwd ? cwd : "(invalid)",
+		strerror(spawn_errno));
 	if (have_actions)
 		posix_spawn_file_actions_destroy(&actions);
 	close_fd(&in[0]);
@@ -754,42 +760,83 @@ enum {
 	erofs_volume_name_offset = 64,
 	erofs_probe_size = 80,
 	erofs_magic = 0xe0f5e1e2,
+	ext4_super_offset = 1024,
+	ext4_magic_offset = 56,
+	ext4_volume_name_offset = 120,
+	ext4_probe_size = 136,
+	ext4_magic = 0xef53,
 };
 
-static bool is_system_root(const char *device)
+enum root_filesystem {
+	root_filesystem_none,
+	root_filesystem_erofs,
+	root_filesystem_ext4,
+};
+
+struct system_root {
+	char device[32];
+	enum root_filesystem filesystem;
+};
+
+static enum root_filesystem probe_system_root(const char *device)
 {
-	static const char label[] = "LOWLAND_ROOT";
-	uint8_t super[erofs_probe_size];
+	static const uint8_t label[16] = "LOWLAND_ROOT";
+	uint8_t super[ext4_probe_size];
 	ssize_t length;
 	int fd;
 
 	fd = open(device, O_RDONLY | O_CLOEXEC);
 	if (fd == -1)
 		return false;
-	do {
+	do
 		length = pread(fd, super, sizeof(super), erofs_super_offset);
-	} while (length == -1 && errno == EINTR);
+	while (length == -1 && errno == EINTR);
 	close(fd);
-	return length == (ssize_t)sizeof(super) && load_u32(super) == erofs_magic &&
-	       !memcmp(super + erofs_volume_name_offset, label, sizeof(label));
+	if (length < (ssize_t)erofs_probe_size)
+		return root_filesystem_none;
+	if (load_u32(super) == erofs_magic &&
+	    !memcmp(super + erofs_volume_name_offset, label, sizeof(label)))
+		return root_filesystem_erofs;
+	if (length >= (ssize_t)ext4_probe_size &&
+	    load_u16(super + ext4_magic_offset) == ext4_magic &&
+	    !memcmp(super + ext4_volume_name_offset, label, sizeof(label)))
+		return root_filesystem_ext4;
+	return root_filesystem_none;
 }
 
-static int find_system_root(char *device, size_t capacity)
+static int find_system_root(struct system_root *root)
 {
 	int attempt;
 
 	for (attempt = 0; attempt < 100; attempt++) {
+		struct system_root found = { 0 };
+		int roots = 0;
 		char suffix;
 
 		for (suffix = 'a'; suffix <= 'z'; suffix++) {
-			int length = snprintf(device, capacity, "/dev/vd%c", suffix);
+			char device[sizeof(root->device)];
+			enum root_filesystem filesystem;
+			int length = snprintf(device, sizeof(device), "/dev/vd%c",
+					      suffix);
 
-			if (length < 0 || (size_t)length >= capacity) {
+			if (length < 0 || (size_t)length >= sizeof(device)) {
 				errno = ENAMETOOLONG;
 				return -1;
 			}
-			if (is_system_root(device))
-				return 0;
+			filesystem = probe_system_root(device);
+			if (filesystem == root_filesystem_none)
+				continue;
+			found.filesystem = filesystem;
+			memcpy(found.device, device, sizeof(found.device));
+			roots++;
+		}
+		if (roots > 1) {
+			errno = EEXIST;
+			return -1;
+		}
+		if (roots == 1) {
+			*root = found;
+			return 0;
 		}
 		usleep(100000);
 	}
@@ -804,9 +851,55 @@ static int make_directory(const char *path, mode_t mode)
 	return 0;
 }
 
+static bool command_line_option(const char *option)
+{
+	char command_line[4096];
+	char *token, *save;
+	ssize_t length;
+	int fd;
+
+	fd = open("/proc/cmdline", O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return false;
+	do
+		length = read(fd, command_line, sizeof(command_line) - 1);
+	while (length == -1 && errno == EINTR);
+	close(fd);
+	if (length < 0)
+		return false;
+	command_line[length] = 0;
+	for (token = strtok_r(command_line, " \t\r\n", &save); token;
+	     token = strtok_r(NULL, " \t\r\n", &save))
+		if (!strcmp(token, option))
+			return true;
+	return false;
+}
+
+static int mount_system_root(const struct system_root *root, bool overlay)
+{
+	const char *type = root->filesystem == root_filesystem_erofs ? "erofs" :
+								     "ext4";
+	unsigned long flags = root->filesystem == root_filesystem_erofs ?
+								 MS_RDONLY : 0;
+
+	if (!overlay)
+		return mount(root->device, "/mnt", type, flags, NULL);
+	if (make_directory("/lower", 0755) ||
+	    make_directory("/overlay", 0755) ||
+	    mount(root->device, "/lower", type, MS_RDONLY, NULL) == -1 ||
+	    mount("tmpfs", "/overlay", "tmpfs", 0, NULL) == -1 ||
+	    make_directory("/overlay/upper", 0755) ||
+	    make_directory("/overlay/work", 0755) ||
+	    mount("overlay", "/mnt", "overlay", 0,
+		  "lowerdir=/lower,upperdir=/overlay/upper,workdir=/overlay/work") == -1)
+		return -1;
+	return 0;
+}
+
 static int prepare_system_root(void)
 {
-	char device[32];
+	struct system_root root;
+	bool overlay;
 
 	if (make_directory("/dev", 0755) ||
 	    mount_if_needed("devtmpfs", "/dev", "devtmpfs") ||
@@ -818,12 +911,15 @@ static int prepare_system_root(void)
 	    mount_if_needed("sysfs", "/sys", "sysfs"))
 		return -1;
 
-	if (find_system_root(device, sizeof(device))) {
-		fprintf(stderr,
-			"linux-guest-agent: no EROFS device labeled LOWLAND_ROOT\n");
+	if (find_system_root(&root)) {
+		if (errno == EEXIST)
+			fprintf(stderr, "linux-guest-agent: multiple filesystems are labeled LOWLAND_ROOT\n");
+		else
+			fprintf(stderr, "linux-guest-agent: no supported filesystem is labeled LOWLAND_ROOT\n");
 		return -1;
 	}
-	if (mount(device, "/mnt", "erofs", MS_RDONLY, NULL) == -1 ||
+	overlay = command_line_option("lowland.root.overlay=tmpfs");
+	if (mount_system_root(&root, overlay) ||
 	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
 	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
 	    chmod("/mnt/tmp", 01777) == -1)
@@ -840,25 +936,36 @@ static int prepare_system_root(void)
 	return 0;
 }
 
-static void *supervise_system_init(void *opaque)
+static void child_exited(int signal)
 {
-	pid_t pid = (pid_t)(intptr_t)opaque;
+	(void)signal;
+}
+
+static void check_system_init(pid_t pid)
+{
+	pid_t waited;
 	int status;
 
-	while (waitpid(pid, &status, 0) == -1)
-		if (errno != EINTR) {
-			perror("linux-guest-agent: waiting for system init");
-			abort();
-		}
+	if (!pid)
+		return;
+	do
+		waited = waitpid(pid, &status, WNOHANG);
+	while (waited == -1 && errno == EINTR);
+	if (!waited)
+		return;
+	if (waited == -1) {
+		perror("linux-guest-agent: waiting for system init");
+		abort();
+	}
 	fprintf(stderr, "linux-guest-agent: system init exited; powering off\n");
 	if (reboot(RB_POWER_OFF) == -1) {
 		perror("linux-guest-agent: powering off");
 		abort();
 	}
-	return NULL;
+	abort();
 }
 
-static int start_system_init(void)
+static int start_system_init(pid_t *pid)
 {
 	char *const argv[] = { "/init", NULL };
 	char *const envp[] = {
@@ -866,20 +973,12 @@ static int start_system_init(void)
 		NULL,
 	};
 	int error;
-	pid_t pid;
-	pthread_t supervisor;
 
+	*pid = 0;
 	if (access("/init", X_OK) == -1)
 		return errno == ENOENT ? 0 : -1;
-	error = posix_spawn(&pid, "/init", NULL, NULL, argv, envp);
+	error = posix_spawn(pid, "/init", NULL, NULL, argv, envp);
 	if (error) {
-		errno = error;
-		return -1;
-	}
-	error = pthread_create(&supervisor, NULL, supervise_system_init,
-			       (void *)(intptr_t)pid);
-	if (error) {
-		kill(pid, SIGKILL);
 		errno = error;
 		return -1;
 	}
@@ -888,16 +987,28 @@ static int start_system_init(void)
 
 int main(void)
 {
+	struct sigaction child_action = { .sa_handler = child_exited };
+	pid_t system_init;
 	int session_listener;
 
 	signal(SIGPIPE, SIG_IGN);
+	sigemptyset(&child_action.sa_mask);
+	if (sigaction(SIGCHLD, &child_action, NULL) == -1) {
+		perror("linux-guest-agent: installing SIGCHLD handler");
+		return 1;
+	}
 	/* /proc remains load-bearing after the root transition: the host's
 	 * realPath and FsFile.stat go through /proc/self/fd/N. */
 	if (prepare_system_root()) {
 		perror("linux-guest-agent: preparing system root");
 		return 1;
 	}
-	if (start_system_init()) {
+	/* A supervisor pthread would share PID 1's address space. The wasm kernel
+	 * refuses to snapshot an address space with another user, so that would
+	 * make every later clone of a session worker fail with EOPNOTSUPP. Keep PID
+	 * 1 single-threaded and let SIGCHLD interrupt its blocking operations so it
+	 * can check the system init here instead. */
+	if (start_system_init(&system_init)) {
 		perror("linux-guest-agent: starting system init");
 		return 1;
 	}
@@ -914,7 +1025,9 @@ int main(void)
 		struct session_worker_args args;
 
 		if (fd == -1) {
-			if (errno != EINTR)
+			if (errno == EINTR)
+				check_system_init(system_init);
+			else
 				perror("accept session");
 			continue;
 		}
@@ -932,6 +1045,8 @@ int main(void)
 		close(fd);
 		do {
 			waited = waitpid(worker, &status, 0);
+			if (waited == -1 && errno == EINTR)
+				check_system_init(system_init);
 		} while (waited == -1 && errno == EINTR);
 		if (waited == -1) {
 			perror("wait session");

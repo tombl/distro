@@ -2,6 +2,7 @@
   agentfs,
   bytes,
   busybox,
+  ext4Root,
   pkgs,
   rootfs,
   wrongRoot,
@@ -41,6 +42,7 @@ let
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
     "agent.erofs" = agentfs;
+    "rootfs.ext4" = ext4Root;
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
     "rootfs.erofs" = rootfs;
     "wrong-root.erofs" = wrongRoot;

@@ -11,6 +11,8 @@ import {
   type Exec,
   type FileSystem,
   type GuestClientCapabilities,
+  type Mount,
+  type Unmount,
 } from "./client.ts";
 import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
@@ -18,7 +20,7 @@ export interface SpawnGuestOptions extends Omit<
   BootMachineOptions,
   "plugins" | "initcpio" | "args"
 > {
-  /** EROFS system image labeled LOWLAND_ROOT. Device order is not significant. */
+  /** EROFS or ext4 system image labeled LOWLAND_ROOT. Device order is not significant. */
   root: VirtioDevice;
   /** Extra virtio devices to boot with — a console or entropy device from `@lowland/kernel`, say. */
   devices?: readonly VirtioDevice[];
@@ -69,6 +71,10 @@ export interface Guest {
   readonly fs: FileSystem;
   /** Runs programs in the guest. */
   readonly exec: Exec;
+  /** Mounts a filesystem in the guest without spawning a helper process. */
+  readonly mount: Mount;
+  /** Unmounts a filesystem in the guest without spawning a helper process. */
+  readonly unmount: Unmount;
   /** The guest's network attachment; `undefined` unless spawned with `network`. */
   readonly network: GuestNetwork | undefined;
 }
@@ -136,20 +142,19 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
   }
   if (failure) throw new Error("guest network device did not appear", { cause: failure });
 
-  // Bring loopback up: the kernel creates lo but leaves it down, so anything
-  // binding or connecting to 127.0.0.1 (a local server, ssh to localhost)
-  // fails until it is up. It has no dependency on eth0 appearing.
-  await run_network_command(exec, ["/sbin/ifconfig", "lo", "up"]);
-
+  // Each agent exec requires a WebAssembly process-memory handoff. Run the
+  // related setup as one single-threaded guest job so a routine boot does not
+  // repeatedly snapshot the multithreaded agent merely to configure one NIC.
+  // Loopback must be included because Linux creates it down by default.
   await run_network_command(exec, [
-    "/sbin/ifconfig",
-    "eth0",
-    address,
-    "netmask",
-    "255.255.255.0",
-    "up",
+    "/bin/sh",
+    "-c",
+    [
+      "/sbin/ifconfig lo up",
+      `/sbin/ifconfig eth0 ${address} netmask 255.255.255.0 up`,
+      `/sbin/route add default gw ${gateway} eth0`,
+    ].join(" && "),
   ]);
-  await run_network_command(exec, ["/sbin/route", "add", "default", "gw", gateway, "eth0"]);
 }
 
 /**
@@ -222,7 +227,14 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
         network!.gateway,
       );
     }
-    return { machine, fs: client.fs, exec: client.exec, network: attached?.guest_network };
+    return {
+      machine,
+      fs: client.fs,
+      exec: client.exec,
+      mount: client.mount,
+      unmount: client.unmount,
+      network: attached?.guest_network,
+    };
   } catch (error) {
     machine.close();
     throw error;

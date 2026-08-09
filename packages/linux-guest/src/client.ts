@@ -15,6 +15,7 @@ import {
   getpid,
   type GuestFd,
   mkdirat,
+  mount,
   openat,
   read,
   readlinkat,
@@ -22,6 +23,7 @@ import {
   spawn,
   symlinkat,
   unlinkat,
+  umount2,
   write,
 } from "./syscalls.ts";
 import {
@@ -213,10 +215,29 @@ export interface FileSystem {
  */
 export type Exec = (argv: readonly string[], options?: ExecOptions) => Promise<ChildProcess>;
 
+export interface MountOptions {
+  /** Filesystem type, such as `virtiofs`, `ext4`, or `tmpfs`. Omit for bind mounts. */
+  type?: string;
+  /** Linux mount flags. */
+  flags?: number;
+  /** Optional filesystem-specific mount data. */
+  data?: string;
+}
+
+export type Mount = (
+  source: string | null,
+  target: string,
+  options?: MountOptions,
+) => Promise<void>;
+
+export type Unmount = (target: string, options?: { flags?: number }) => Promise<void>;
+
 export interface GuestClientCapabilities {
   ping(timeoutMs?: number): Promise<void>;
   readonly fs: FileSystem;
   readonly exec: Exec;
+  readonly mount: Mount;
+  readonly unmount: Unmount;
 }
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
@@ -289,6 +310,21 @@ class GuestClient {
 
   async ping(timeoutMs = 5000) {
     await getpid(await this.#connect(timeoutMs));
+  }
+
+  async mount(source: string | null, target: string, options: MountOptions = {}) {
+    await mount(
+      await this.#connect(),
+      source,
+      target,
+      options.type ?? null,
+      options.flags ?? 0,
+      options.data ?? null,
+    );
+  }
+
+  async unmount(target: string, options: { flags?: number } = {}) {
+    await umount2(await this.#connect(), target, options.flags ?? 0);
   }
 
   async readFile(path: string, options: { signal?: AbortSignal } = {}) {
@@ -572,5 +608,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
       open: client.open.bind(client),
     },
     exec: client.exec.bind(client),
+    mount: client.mount.bind(client),
+    unmount: client.unmount.bind(client),
   };
 }

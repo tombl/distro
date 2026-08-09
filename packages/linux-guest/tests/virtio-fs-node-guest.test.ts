@@ -13,13 +13,8 @@ guest_test("node virtio-fs adapter mounts in a guest", async (t, fixture) => {
   const guest = await fixture.spawn([
     fileSystemDevice(filesystem, { tag: "node-test", cache: false }),
   ]);
-  const mounted = await guest.exec([
-    "sh",
-    "-c",
-    "mkdir -p /tmp/shared && mount -t virtiofs node-test /tmp/shared",
-  ]);
-  const stderr = new Response(mounted.stderr).text();
-  assert.equal((await mounted.status).success, true, await stderr);
+  await guest.fs.mkdir("/tmp/shared", { recursive: true });
+  await guest.mount("node-test", "/tmp/shared", { type: "virtiofs" });
 
   await guest.fs.writeTextFile("/tmp/shared/from-guest", "guest data");
   assert.equal(await readFile(path.join(shared, "from-guest"), "utf8"), "guest data");
@@ -29,4 +24,6 @@ guest_test("node virtio-fs adapter mounts in a guest", async (t, fixture) => {
 
   await guest.fs.rename("/tmp/shared/from-guest", "/tmp/shared/renamed");
   assert.equal(await readFile(path.join(shared, "renamed"), "utf8"), "guest data");
+
+  await guest.unmount("/tmp/shared");
 });

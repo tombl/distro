@@ -5,11 +5,13 @@
   pkgs,
   repository,
   label ? "LOWLAND_ROOT",
+  format ? "erofs",
+  size ? "256M",
 }:
 
 image.mkFilesystem {
   name = "guest-rootfs";
-  inherit label;
+  inherit format label size;
   root = apk.mkSystem {
     name = "guest";
     repositories = [ repository ];

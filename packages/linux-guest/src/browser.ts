@@ -130,10 +130,11 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * or inode metadata. This adapter presents conventional synthetic values for
  * them and keeps chmod/chown/timestamp changes for the lifetime of this object.
  *
- * Rename copies to an empty destination and then removes the source because the
- * portable API has no atomic namespace rename. Failure can leave a partial new
- * destination, or both names if removing the source fails. Replacing an
- * existing destination is unsupported.
+ * Rename copies to the destination and then removes the source because the
+ * portable API has no atomic namespace rename. Replacing a destination first
+ * removes it, as required by package managers and other normal Linux software.
+ * Failure can therefore lose the old destination, leave a partial new one, or
+ * leave both names if removing the source fails.
  *
  * Browser handles cannot keep an unlinked file alive like a POSIX descriptor.
  * When this adapter observes removal, existing descriptors become stale and
@@ -493,10 +494,24 @@ export class BrowserFS implements FS<Node, Handle> {
 
     const existing = await this.lookup(new_parent, newName);
     if (existing) {
-      throw new FSError(
-        "EOPNOTSUPP",
-        "browser filesystems cannot atomically replace a rename destination",
+      const existing_node = this.#as_node(existing);
+      if (source_node.handle.kind === "directory" && existing_node.handle.kind !== "directory") {
+        throw new FSError("ENOTDIR");
+      }
+      if (source_node.handle.kind === "file" && existing_node.handle.kind !== "file") {
+        throw new FSError("EISDIR");
+      }
+      // Linux applications routinely publish updates by renaming a temporary
+      // file over its destination. The portable browser API cannot make that
+      // replacement atomic, but rejecting it prevents package installation and
+      // similarly fundamental workflows. Keep the source until its replacement
+      // has been copied so a failed operation still retains the new data.
+      await opfs_call(
+        this.#directory(new_parent).removeEntry(newName, {
+          recursive: false,
+        }),
       );
+      this.#forget(new_parts);
     }
 
     const destination = this.#directory(new_parent);

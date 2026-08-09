@@ -25,11 +25,17 @@ console.log(await new Response(process.stdout).text());
 guest.machine.close();
 ```
 
-The root image must be EROFS and its native volume label must be
+Exactly one attached EROFS or ext4 filesystem must have the native volume label
 `LOWLAND_ROOT`. Device order is deliberately not part of the boot contract:
 the private agent scans attached block devices for that label, pivots into the
 matching image, and unmounts its own boot filesystem before guest processes
-run. Images built by this repository set the label automatically.
+run. It rejects missing and duplicate root labels. Images built by this
+repository set the label automatically.
+
+By default, EROFS is mounted read-only and ext4 is mounted read-write. Pass
+`cmdline: "lowland.root.overlay=tmpfs"` to mount either image read-only beneath
+a temporary writable OverlayFS. The overlay is discarded when the machine
+stops; durable storage remains the embedding application's responsibility.
 
 ## Share a host directory
 

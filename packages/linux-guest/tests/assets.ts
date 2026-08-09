@@ -27,6 +27,7 @@ const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
 
 export const agentfs = await readFile(join(directory, "agent.erofs"));
 export const rootfs = await readFile(join(directory, "rootfs.erofs"));
+export const ext4_rootfs = await readFile(join(directory, "rootfs.ext4"));
 export const wrong_rootfs = await readFile(join(directory, "wrong-root.erofs"));
 
 export function root_device() {
@@ -35,6 +36,21 @@ export function root_device() {
     read(offset, length) {
       return rootfs.subarray(offset, offset + length);
     },
+  });
+}
+
+export function ext4_root_device() {
+  const disk = new Uint8Array(ext4_rootfs);
+  return blockDevice({
+    capacity: disk.byteLength,
+    read(offset, length) {
+      return disk.slice(offset, offset + length);
+    },
+    write(offset, data) {
+      disk.set(data, offset);
+      return data.byteLength;
+    },
+    flush() {},
   });
 }
 
