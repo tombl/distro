@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { Struct, U16LE, U32LE, U64LE } from "../bytes.ts";
+import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
 import { assert } from "../util.ts";
 import type { Imports } from "../wasm.ts";
 
@@ -253,7 +254,7 @@ interface TransportDevice {
 const transport_device = Symbol("virtio transport device");
 
 /** A virtio device that can be attached to a machine. */
-export interface VirtioDevice {
+export interface VirtioDevice extends MachinePluginProvider {
   readonly [transport_device]: TransportDevice;
 }
 
@@ -346,7 +347,13 @@ export class VirtioController {
       close: start_close,
     };
     const device = {} as VirtioDevice;
+    const plugin: MachinePlugin = {
+      configure(setup) {
+        setup.devices.add(device);
+      },
+    };
     Object.defineProperty(device, transport_device, { value: endpoint });
+    Object.defineProperty(device, getMachinePlugin, { value: () => plugin });
     this.device = device;
 
     this.updateConfig = (next_config) => {

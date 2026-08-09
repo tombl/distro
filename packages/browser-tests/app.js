@@ -1,4 +1,4 @@
-import { blockDevice, consoleDevice, spawnMachine, fileSystemDevice } from "@lowland/kernel";
+import { blockDevice, bootMachine, consoleDevice, fileSystemDevice } from "@lowland/kernel";
 import { spawnGuest } from "@tombl/linux-guest";
 import { BrowserFS } from "@tombl/linux-guest/browser";
 
@@ -29,7 +29,7 @@ async function rootDevice() {
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
 async function withGuest(scenario, options) {
-  const guest = await spawnGuest({ root: await rootDevice(), ...options });
+  const guest = await spawnGuest({ cpus: 1, root: await rootDevice(), ...options });
   try {
     return await scenario(guest);
   } finally {
@@ -142,9 +142,9 @@ async function runInitramfs(path, cpus) {
     },
   });
 
-  const machine = await spawnMachine({
+  const machine = await bootMachine({
     cpus,
-    devices: [consoleDevice(input, outputStream())],
+    plugins: [consoleDevice(input, outputStream())],
     initcpio,
   });
   void machine.bootConsole.pipeTo(outputStream()).catch(reject);

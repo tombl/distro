@@ -1,8 +1,8 @@
 import {
+  bootMachine,
+  type BootMachineOptions,
   vsockDevice,
   type Machine,
-  spawnMachine,
-  type SpawnMachineOptions,
   type VirtioDevice,
 } from "@lowland/kernel";
 import {
@@ -14,8 +14,8 @@ import {
 import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
 export interface SpawnGuestOptions extends Omit<
-  SpawnMachineOptions,
-  "devices" | "initcpio" | "cmdline"
+  BootMachineOptions,
+  "plugins" | "initcpio" | "args"
 > {
   /** Root block device. It is attached as /dev/vda and booted directly. */
   root: VirtioDevice;
@@ -161,10 +161,10 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
   const client = create_guest_client(vsock);
   let machine: Machine;
   try {
-    machine = await spawnMachine({
+    machine = await bootMachine({
       ...machine_options,
-      cmdline: ["root=/dev/vda rootwait init=/init", cmdline].filter(Boolean).join(" "),
-      devices: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
+      args: ["root=/dev/vda", "rootwait", "init=/init", cmdline].filter(Boolean),
+      plugins: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
     });
     if (bootConsole) {
       void machine.bootConsole.pipeTo(bootConsole).catch(() => {});

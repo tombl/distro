@@ -22,6 +22,10 @@
     "./bytes": {
       "types": "./dist/bytes.d.ts",
       "default": "./dist/bytes.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
     }
   },
   "scripts": {

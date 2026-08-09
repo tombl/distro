@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnMachine, vsockDevice } from "@lowland/kernel";
+import { bootMachine, vsockDevice } from "@lowland/kernel";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { SystemError } from "../src/index.ts";
@@ -199,9 +199,10 @@ guest_test("session teardown", async (t) => {
   await t.test("cleans resources before accepting a fresh session", async () => {
     const vsock = vsockDevice();
     const root = root_device();
-    const machine = await spawnMachine({
-      devices: [root, vsock],
-      cmdline: "root=/dev/vda rootwait init=/init",
+    const machine = await bootMachine({
+      cpus: 1,
+      args: ["root=/dev/vda", "rootwait", "init=/init"],
+      plugins: [root, vsock],
     });
     try {
       let first: GuestSession | undefined;

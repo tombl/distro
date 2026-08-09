@@ -33,7 +33,7 @@ if (
   throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk]");
 }
 
-const { blockDevice, consoleDevice, entropyDevice, spawnMachine } = await import(
+const { blockDevice, bootMachine, consoleDevice, entropyDevice } = await import(
   pathToFileURL(linuxPath).href
 );
 
@@ -173,9 +173,9 @@ if (diskPath) {
   );
 }
 
-machine = await spawnMachine({
+machine = await bootMachine({
   cpus,
-  devices,
+  plugins: devices,
   initcpio: readFileSync(initramfsPath),
 }).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });

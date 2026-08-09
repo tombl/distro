@@ -70,7 +70,7 @@ let
       cp packages/runner/src/run.ts $out/run.ts
       cp packages/runner/src/shares.ts $out/shares.ts
       cp packages/runner/package.json $out/package.json
-      cp -RL node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
+      cp -RL packages/runner/node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
       mkdir $out/node_modules/@tombl/linux-guest
       cp ${linux-guest.package}/package.json $out/node_modules/@tombl/linux-guest/package.json
       cp -r ${linux-guest.package}/dist $out/node_modules/@tombl/linux-guest/dist

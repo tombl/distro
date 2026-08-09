@@ -2,6 +2,8 @@
 
 import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
+import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
+import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import {
@@ -61,24 +63,22 @@ export { type VsockConnection, type VsockDevice, vsockDevice } from "./virtio/vs
 type MaybePromise<T> = T | PromiseLike<T>;
 
 /** The resources and boot configuration of a Linux machine. */
-export interface SpawnMachineOptions {
-  /** Kernel command line arguments, appended after `console=hvc0`. */
-  cmdline?: string;
-  /** Virtual CPUs to boot, one Web Worker each. Defaults to the host's hardware concurrency. */
-  cpus?: number;
-  /** The machine's virtio devices, in device tree order. */
-  devices: readonly VirtioDevice[];
+export interface BootMachineOptions {
+  /** Virtual CPUs to boot, one Web Worker each. */
+  cpus: number;
+  /** Kernel command-line arguments, appended after `console=hvc0`. */
+  args?: readonly string[];
+  /** Plugins to configure in array order before the machine boots. */
+  plugins?: readonly MachinePluginInput[];
   /** Initial ramdisk loaded into memory and passed to the kernel. */
   initcpio?: MaybePromise<ArrayBufferView>;
-  /** Recursively merged over the generated device tree before boot. */
-  devicetree?: DeviceTreeNode;
 }
 
 /**
  * A booted Linux machine: one shared WebAssembly memory, one Web Worker per
  * virtual CPU, and its virtio devices.
  */
-export interface Machine extends Disposable {
+export interface Machine extends Disposable, AsyncDisposable {
   /** The machine's physical memory. */
   readonly memory: WebAssembly.Memory;
   /** Kernel output from before the console device is available. */
@@ -150,21 +150,6 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
   return initial;
 }
 
-function is_devicetree_node(value: unknown): value is DeviceTreeNode {
-  return typeof value === "object" && value?.constructor === Object;
-}
-
-function merge_devicetree(target: DeviceTreeNode, source: DeviceTreeNode) {
-  for (const [name, value] of Object.entries(source)) {
-    const current = target[name];
-    if (is_devicetree_node(current) && is_devicetree_node(value)) {
-      merge_devicetree(current, value);
-    } else {
-      target[name] = value;
-    }
-  }
-}
-
 /**
  * Boots the packaged kernel and resolves once it is running: the devices
  * are live and the kernel is executing from then on. What runs next is up
@@ -175,10 +160,10 @@ function merge_devicetree(target: DeviceTreeNode, source: DeviceTreeNode) {
  *
  * @example
  * ```ts
- * const machine = await spawnMachine({
+ * const machine = await bootMachine({
  *   cpus: navigator.hardwareConcurrency,
  *   initcpio: initramfs,
- *   devices: [
+ *   plugins: [
  *     consoleDevice(input, output),
  *     entropyDevice(),
  *     blockDevice(disk),
@@ -186,8 +171,9 @@ function merge_devicetree(target: DeviceTreeNode, source: DeviceTreeNode) {
  * });
  * ```
  */
-export async function spawnMachine(options: SpawnMachineOptions): Promise<Machine> {
-  const devices = options.devices;
+export async function bootMachine(options: BootMachineOptions): Promise<Machine> {
+  const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
+  const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
   let closed = false;
   let failed = false;
@@ -259,8 +245,8 @@ export async function spawnMachine(options: SpawnMachineOptions): Promise<Machin
       "#size-cells": 1,
       chosen: {
         "rng-seed": crypto.getRandomValues(new Uint8Array(64)),
-        bootargs: `console=hvc0 ${options.cmdline ?? ""}`,
-        ncpus: options.cpus ?? navigator.hardwareConcurrency,
+        bootargs: `console=hvc0 ${configured.args.join(" ")}`,
+        ncpus: options.cpus,
       },
       aliases: {},
       memory: {
@@ -301,7 +287,7 @@ export async function spawnMachine(options: SpawnMachineOptions): Promise<Machin
     }
 
     (devicetree.chosen as DeviceTreeNode).sections = sections;
-    if (options.devicetree) merge_devicetree(devicetree, options.devicetree);
+    merge_device_tree(devicetree, configured.deviceTree);
 
     const generated_devicetree = generate_devicetree(devicetree, {
       memory_reservations,
@@ -450,13 +436,19 @@ export async function spawnMachine(options: SpawnMachineOptions): Promise<Machin
     instance = (await WebAssembly.instantiate(vmlinux, imports)) as Instance;
     instance.exports.boot();
 
-    return {
+    const machine: Machine = {
       memory: wasm_memory,
       bootConsole: boot_console.readable,
       closed: closed_promise.promise,
       close,
       [Symbol.dispose]: close,
+      async [Symbol.asyncDispose]() {
+        close();
+        await closed_promise.promise;
+      },
     };
+    await run_machine_booted(plugins, machine);
+    return machine;
   } catch (error) {
     await finish();
     throw error;
