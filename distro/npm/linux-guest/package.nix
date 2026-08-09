@@ -74,12 +74,16 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p $out
+      mkdir -p $out/node_modules/@lowland/bytes
       cp packages/linux-guest/package.json $out/package.json
       cp packages/linux-guest/README.md $out/README.md
       cp packages/linux-guest/LICENSE $out/LICENSE
       cp -r packages/linux-guest/dist $out/dist
-      pnpm --filter=@tombl/linux-guest pack --pack-destination $out
+      cp packages/bytes/package.json $out/node_modules/@lowland/bytes/package.json
+      cp packages/bytes/README.md $out/node_modules/@lowland/bytes/README.md
+      cp packages/bytes/LICENSE $out/node_modules/@lowland/bytes/LICENSE
+      cp -r packages/bytes/dist $out/node_modules/@lowland/bytes/dist
+      npm pack ./packages/linux-guest --pack-destination $out
       mv $out/tombl-linux-guest-*.tgz $out/linux-guest.tgz
 
       runHook postInstall

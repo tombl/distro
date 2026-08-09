@@ -6,5 +6,7 @@ packages:
   - packages/linux-guest/tests
   - packages/runner
 
+linkWorkspacePackages: true
+
 allowBuilds:
   esbuild: true

@@ -32,13 +32,17 @@ pkgs.stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out
+    mkdir -p $out/node_modules/@lowland/bytes
     cp packages/kernel/package.json $out/package.json
     cp packages/kernel/README.md $out/README.md
     cp packages/kernel/LICENSE $out/LICENSE
     cp packages/kernel/vmlinux.wasm $out/vmlinux.wasm
     cp -r packages/kernel/dist $out/dist
-    pnpm --filter=@lowland/kernel pack --pack-destination $out
+    cp packages/bytes/package.json $out/node_modules/@lowland/bytes/package.json
+    cp packages/bytes/README.md $out/node_modules/@lowland/bytes/README.md
+    cp packages/bytes/LICENSE $out/node_modules/@lowland/bytes/LICENSE
+    cp -r packages/bytes/dist $out/node_modules/@lowland/bytes/dist
+    npm pack ./packages/kernel --pack-destination $out
     mv $out/lowland-kernel-*.tgz $out/kernel.tgz
 
     runHook postInstall

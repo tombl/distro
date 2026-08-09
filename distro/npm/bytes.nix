@@ -32,8 +32,6 @@ pkgs.stdenvNoCC.mkDerivation {
     cp packages/bytes/README.md $out/README.md
     cp packages/bytes/LICENSE $out/LICENSE
     cp -r packages/bytes/dist $out/dist
-    pnpm --filter=@lowland/bytes pack --pack-destination $out
-    mv $out/lowland-bytes-*.tgz $out/bytes.tgz
 
     runHook postInstall
   '';

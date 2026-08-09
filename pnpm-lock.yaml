@@ -33,7 +33,7 @@ importers:
   packages/kernel:
     dependencies:
       '@lowland/bytes':
-        specifier: workspace:*
+        specifier: 0.0.0
         version: link:../bytes
     devDependencies:
       '@types/node':
@@ -46,10 +46,10 @@ importers:
   packages/linux-guest:
     dependencies:
       '@lowland/bytes':
-        specifier: workspace:*
+        specifier: 0.0.0
         version: link:../bytes
       '@lowland/kernel':
-        specifier: workspace:*
+        specifier: 0.0.0
         version: link:../kernel
     devDependencies:
       '@types/node':

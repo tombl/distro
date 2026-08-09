@@ -1,6 +1,7 @@
 {
   "name": "@lowland/bytes",
   "version": "0.0.0",
+  "private": true,
   "description": "Internal binary data helpers shared by Lowland packages.",
   "license": "MIT",
   "repository": {

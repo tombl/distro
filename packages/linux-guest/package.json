@@ -32,13 +32,16 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@lowland/bytes": "workspace:*"
+    "@lowland/bytes": "0.0.0"
   },
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@lowland/kernel": "workspace:*"
-  }
+    "@lowland/kernel": "0.0.0"
+  },
+  "bundledDependencies": [
+    "@lowland/bytes"
+  ]
 }

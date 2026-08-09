@@ -57,13 +57,13 @@ workspace and applications, and provides reproducible wrappers around both.
 ### `@lowland/bytes`
 
 This internal package contains the binary structure and byte-buffer helpers
-used by the kernel and guest packages. It is published because more than one
-package uses it at run time. Applications must not import it. Its README states
-that it has no compatibility promise.
+used by the kernel and guest packages. Applications must not import it. Its
+README states that it has no compatibility promise.
 
-Lowland releases publish `@lowland/bytes` before the packages that depend on
-it. These packages use the same version until the release workflow defines a
-different versioning rule.
+It remains a private workspace package. Each published package that uses it
+lists it in `bundledDependencies`, so its release tarball contains a private
+copy and no separate `@lowland/bytes` release or version coordination is
+required.
 
 ### `@lowland/kernel`
 

@@ -2,10 +2,9 @@
 
 `@lowland/bytes` contains binary data helpers shared by Lowland packages.
 
-This is an internal implementation package. It is published so the other
-Lowland packages can share one implementation. It has no compatibility
-promise. Applications must not import it directly.
+This is an internal implementation package. It is private and has no
+compatibility promise. Applications must not import it directly.
 
-Lowland releases must publish this package with the kernel and guest packages
-that depend on it. All packages currently use the same version while the
-release and versioning workflow is under development.
+Published Lowland packages bundle their own copy. `@lowland/bytes` is not
+published or versioned independently. Its `0.0.0` version is only package
+metadata used by the workspace and package tools.
