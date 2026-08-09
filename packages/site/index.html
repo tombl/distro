@@ -226,6 +226,60 @@
         };
       }
 
+      async function openInstallDisk() {
+        const directory = await navigator.storage.getDirectory();
+        const handle = await directory.getFileHandle("root.ext4", { create: true });
+        let file = await handle.getFile();
+        let disk;
+        if (file.size === 0) {
+          const manifest = await fetch("install-disk.json").then((response) => response.json());
+          const response = await fetch(`install-${manifest.sha}.ext4.gz`);
+          if (!response.ok) throw new Error(`failed to fetch install disk: ${response.status}`);
+          disk = new Uint8Array(
+            await new Response(
+              response.body.pipeThrough(new DecompressionStream("gzip")),
+            ).arrayBuffer(),
+          );
+          if (disk.byteLength !== manifest.size) throw new Error("install disk has the wrong size");
+          const writable = await handle.createWritable();
+          await writable.write(disk);
+          await writable.close();
+          file = await handle.getFile();
+        } else {
+          disk = new Uint8Array(await file.arrayBuffer());
+        }
+
+        const BLOCK = 4096;
+        const dirty = new Set();
+        return {
+          capacity: disk.byteLength,
+          read(offset, length) {
+            return disk.slice(offset, offset + length);
+          },
+          write(offset, data) {
+            disk.set(data, offset);
+            const first = Math.floor(offset / BLOCK);
+            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
+            for (let block = first; block <= last; block++) dirty.add(block);
+            return data.byteLength;
+          },
+          async flush() {
+            if (dirty.size === 0) return;
+            const writable = await handle.createWritable({ keepExistingData: true });
+            for (const block of dirty) {
+              const offset = block * BLOCK;
+              await writable.write({
+                type: "write",
+                position: offset,
+                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
+              });
+            }
+            await writable.close();
+            dirty.clear();
+          },
+        };
+      }
+
       // The page's network: guest HTTP/1 becomes HTTPS via the browser's
       // fetch, which is exactly what `apk add` needs to reach the served repo.
       const network = createNetwork(
@@ -235,6 +289,7 @@
       );
 
       const disk = await openLiveDisk();
+      const installDisk = await openInstallDisk();
       const opfs = await navigator.storage.getDirectory();
       const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({
@@ -247,6 +302,7 @@
         cmdline: cmdline.replace(/\+/g, " "),
         devices: [
           ttyConsole,
+          blockDevice(installDisk),
           entropyDevice(),
           fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
         ],

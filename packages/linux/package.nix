@@ -48,6 +48,11 @@ pkgs.stdenvNoCC.mkDerivation {
     substituteInPlace tools/wasm/package.json \
       --replace-fail 'git+https://github.com/tombl/linux.git' 'git+https://github.com/tombl/distro.git' \
       --replace-fail '"directory": "tools/wasm"' '"directory": "packages/linux"'
+
+    # A root disk, install disk, console, entropy, network, and virtiofs no
+    # longer fit in the original 2 KiB flattened device-tree boot buffer.
+    substituteInPlace arch/wasm/kernel/setup.c \
+      --replace-fail 'static char devicetree[2048];' 'static char devicetree[4096];'
   '';
 
   buildPhase = ''

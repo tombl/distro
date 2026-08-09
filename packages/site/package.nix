@@ -2,6 +2,7 @@
   pkgs,
   linux,
   linux-guest,
+  installDisk,
   rootfs,
 }:
 
@@ -42,6 +43,13 @@ pkgs.stdenvNoCC.mkDerivation {
     size=$(wc -c < ${rootfs})
     printf '{"sha":"%s","size":%s}' "$sha" "$size" > $out/rootfs.squashfs.json
 
+    # The persistent disk starts as a blank ext4 filesystem. It is tiny when
+    # compressed despite its 64 MiB logical size, and is only fetched once.
+    install_sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${installDisk} | awk '{ print $1 }')
+    gzip --best --no-name --stdout ${installDisk} > $out/install-''${install_sha}.ext4.gz
+    install_size=$(wc -c < ${installDisk})
+    printf '{"sha":"%s","size":%s}' "$install_sha" "$install_size" > $out/install-disk.json
+
     mkdir -p $out
     substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
     cp index.html $out/index.html
@@ -58,5 +66,5 @@ pkgs.stdenvNoCC.mkDerivation {
 
     runHook postInstall
   '';
-  passthru = { inherit rootfs; };
+  passthru = { inherit installDisk rootfs; };
 }
