@@ -31,7 +31,11 @@ pkgs.stdenvNoCC.mkDerivation {
     substituteInPlace $out/boot/index.html \
       --replace-fail __ASSETS__ v${ver} \
       --replace-fail __BOOT_MODE__ installed
-    printf '%s\n' '+boot/index.html' > $out/etc/apk/protected_paths.d/lowland-boot.list
+    # apk applies protection rules at directory granularity when deciding
+    # whether a package file is locally modified. Protect the boot tree so a
+    # deployment upgrade writes an administrator-edited file as .apk-new
+    # instead of replacing the installed site's customization.
+    printf '%s\n' '+boot/' > $out/etc/apk/protected_paths.d/lowland-boot.list
   '';
 
   passthru.apk = {
