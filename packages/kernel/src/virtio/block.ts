@@ -40,6 +40,8 @@ export interface BlockDeviceStorage {
   write?(offset: number, data: Uint8Array): MaybePromise<number>;
   /** Flushes completed writes. Its presence advertises the flush feature. */
   flush?(): MaybePromise<void>;
+  /** Releases storage resources when the device closes. */
+  close?(): MaybePromise<void>;
   /** Total size in bytes. */
   capacity: number;
 }
@@ -140,5 +142,8 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
     }
   }
 
-  return new VirtioController({ deviceId: 2, features, config }, { queues: [notify] }).device;
+  return new VirtioController(
+    { deviceId: 2, features, config },
+    { queues: [notify], close: () => storage.close?.() },
+  ).device;
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+import { listen_endpoint, post_endpoint } from "./endpoint.ts";
 import { platform } from "./platform.ts";
 import { assert } from "./util.ts";
 import { read_wasm_memories } from "./wasm_binary.ts";
@@ -45,8 +46,9 @@ const unavailable = () => {
   throw new Error("not available on worker thread");
 };
 
-const channel = platform.worker_channel();
-const postMessage = channel.post as (message: WorkerMessage, transfer?: Transferable[]) => void;
+const endpoint = platform.worker_endpoint();
+const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
+  post_endpoint(endpoint, message, transfer);
 
 function user_imports({
   kernel_memory,
@@ -503,20 +505,22 @@ function start({
   }
 }
 
-channel.on_message((raw) => {
-  const message = raw as InitMessage | ForwardedInitMessage;
+listen_endpoint(endpoint, {
+  message(raw) {
+    const message = raw as InitMessage | ForwardedInitMessage;
 
-  // Initial workers receive InitMessage directly from the page. Workers
-  // spawned by another worker receive their InitMessage over this port, which
-  // works around a WebKit bug reclaiming shared Wasm memory across JS VMs.
-  if (message.type === "forwarded_init") {
-    message.port.onmessage = ({ data }) => {
-      message.port.close();
-      start(data as InitMessage);
-    };
-    message.port.start();
-    return;
-  }
+    // Initial workers receive InitMessage directly from the page. Workers
+    // spawned by another worker receive their InitMessage over this port, which
+    // works around a WebKit bug reclaiming shared Wasm memory across JS VMs.
+    if (message.type === "forwarded_init") {
+      message.port.onmessage = ({ data }) => {
+        message.port.close();
+        start(data as InitMessage);
+      };
+      message.port.start();
+      return;
+    }
 
-  start(message);
+    start(message);
+  },
 });
