@@ -62,6 +62,7 @@ let
         nativeBuildInputs = [
           checkStoreReferences
           pkgs.fakeroot
+          pkgs.file
           pkgs.perl
           llvm-toolchain-unwrapped
           tools
@@ -104,10 +105,32 @@ let
               's|/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/[:space:]"'"'"']+||g' \
               "$file"
           fi
-          llvm-strip --strip-debug "$file" 2>/dev/null || true
-          perl -0777 -pi -e \
-            's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
-            "$file"
+          # llvm-strip accepts some unrelated binary formats without an error.
+          # In particular, it interprets an EROFS filesystem as an object and
+          # replaces the complete image with a tiny stripped header. Limit the
+          # operation to formats that APK packages actually need us to strip;
+          # opaque data must survive packaging byte-for-byte.
+          case $(file --brief "$file") in
+            "EROFS filesystem"* | "Squashfs filesystem"* | "Linux rev 1.0"*"filesystem data"*)
+              # A filesystem is a nested data format, not part of the APK's
+              # own namespace. Rewriting bytes in place invalidates its
+              # checksums and can corrupt metadata that only resembles a path.
+              ;;
+            "WebAssembly (wasm) binary"* | "current ar archive"*)
+              llvm-strip --strip-debug "$file"
+              perl -0777 -pi -e \
+                's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
+                "$file"
+              ;;
+            *)
+              # Other binary tables (notably terminfo) can embed paths even
+              # though they are not objects. Preserve offsets while relocating
+              # those strings, matching the text relocation above.
+              perl -0777 -pi -e \
+                's{/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[^/\0]+}{"/" x length($&)}ge' \
+                "$file"
+              ;;
+          esac
         done < <(find root -type f -print0)
 
         # APK payloads run outside Nix and must be self-contained. Check the

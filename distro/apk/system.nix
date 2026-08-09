@@ -102,6 +102,11 @@ let
           ${repositoryArgs} \
           add --initdb ${packageArgs}
 
+        # apk records the build command, including the temporary Nix repository
+        # paths and a wall-clock timestamp. The log has no runtime purpose and
+        # would otherwise make filesystem images impure and non-relocatable.
+        rm $out/var/log/apk.log
+
         # Product configuration is layered on the installed packages after the
         # install; image encoding applies root ownership to the whole tree.
         ${lib.concatMapStringsSep "\n" (path: ''
