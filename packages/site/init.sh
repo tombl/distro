@@ -2,7 +2,7 @@
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-mount -t devtmpfs devtmpfs /dev
+[ -c /dev/null ] || mount -t devtmpfs devtmpfs /dev
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 

@@ -62,6 +62,9 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p $out
 
     make defconfig ${lib.optionalString debug "debug.config"}
+    ${pkgs.bash}/bin/bash scripts/config --enable OVERLAY_FS
+    ${pkgs.bash}/bin/bash scripts/config --enable TMPFS_XATTR
+    make olddefconfig
 
     # this is a horrible dirty hack but there's some non-deterministic build failure
     for i in $(seq 1 3); do

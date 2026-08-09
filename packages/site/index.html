@@ -98,6 +98,7 @@
         await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
       }
 
+      const parameters = Object.fromEntries(new URLSearchParams(location.search));
       const term = new Terminal({
         convertEol: true,
         fontFamily: "monospace",
@@ -107,17 +108,19 @@
       term.open(document.body);
       termFit.fit();
       window.onresize = () => termFit.fit();
-      try {
-        term.loadAddon(new WebglAddon());
-      } catch (err) {
-        console.warn(err);
+      if (parameters.webgl !== "0") {
+        try {
+          term.loadAddon(new WebglAddon());
+        } catch (err) {
+          console.warn(err);
+        }
       }
 
       if (!window.crossOriginIsolated) {
         term.write("Error: not cross origin isolated\n");
       }
 
-      const { cmdline = "" } = Object.fromEntries(new URLSearchParams(location.search));
+      const { cmdline = "" } = parameters;
 
       const stdin = new ReadableStream({
         start(controller) {
@@ -157,63 +160,68 @@
         },
       });
 
-      // The writable rootfs lives in OPFS, keyed by the served image's hash so
-      // an upgraded rootfs reseeds itself and old copies are simply orphaned.
-      // First visit downloads and decompresses the seed; afterwards the guest
-      // reads and writes the persisted disk, so `apk add` survives reloads.
-      async function openDisk() {
-        const sha = await fetch("rootfs.ext4.sha256").then((res) =>
-          res.text().then((t) => t.trim()),
-        );
-        const directory = await navigator.storage.getDirectory();
-        const handle = await directory.getFileHandle(`rootfs-${sha}.ext4`, { create: true });
-        const file = await handle.getFile();
-        let disk;
-        if (file.size === 0) {
-          const response = await fetch(`rootfs-${sha}.ext4.gz`);
-          if (!response.ok) throw new Error(`failed to fetch rootfs seed: ${response.status}`);
-          disk = new Uint8Array(
-            await new Response(
-              response.body.pipeThrough(new DecompressionStream("gzip")),
-            ).arrayBuffer(),
-          );
-          const writable = await handle.createWritable();
-          await writable.write(disk);
-          await writable.close();
-        } else {
-          disk = new Uint8Array(await file.arrayBuffer());
+      // SquashFS requests small, scattered compressed blocks. Fetch larger
+      // immutable ranges around them and retain those chunks for the session,
+      // so boot begins before the complete live image has been transferred.
+      async function openLiveDisk() {
+        const manifestResponse = await fetch("rootfs.squashfs.json");
+        if (!manifestResponse.ok) {
+          throw new Error(`failed to fetch rootfs manifest: ${manifestResponse.status}`);
         }
+        const { sha, size } = await manifestResponse.json();
+        const url = `rootfs-${sha}.squashfs`;
+        const CHUNK = 256 * 1024;
+        const chunks = new Map();
+        let whole;
 
-        // Reads and writes hit an in-memory image for speed; dirty blocks are
-        // flushed to OPFS on each virtio flush. Sync handles are only exposed
-        // in workers, so the async file API keeps this on the main thread.
-        const BLOCK = 4096;
-        const dirty = new Set();
+        const loadChunk = (index) => {
+          if (!chunks.has(index)) {
+            chunks.set(
+              index,
+              (async () => {
+                const start = index * CHUNK;
+                const end = Math.min(start + CHUNK, size);
+                const response = await fetch(url, {
+                  headers: { Range: `bytes=${start}-${end - 1}` },
+                });
+                if (response.status === 200) {
+                  whole = new Uint8Array(await response.arrayBuffer());
+                  if (whole.byteLength !== size) throw new Error("rootfs has the wrong size");
+                  return whole.subarray(start, end);
+                }
+                if (response.status !== 206) {
+                  throw new Error(`failed to fetch rootfs range: ${response.status}`);
+                }
+                const data = new Uint8Array(await response.arrayBuffer());
+                if (data.byteLength !== end - start) throw new Error("short rootfs range response");
+                return data;
+              })(),
+            );
+          }
+          return chunks.get(index);
+        };
+
         return {
-          capacity: disk.byteLength,
-          read(offset, length) {
-            return disk.slice(offset, offset + length);
-          },
-          write(offset, data) {
-            disk.set(data, offset);
-            const first = Math.floor(offset / BLOCK);
-            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
-            for (let block = first; block <= last; block++) dirty.add(block);
-            return data.byteLength;
-          },
-          async flush() {
-            if (dirty.size === 0) return;
-            const writable = await handle.createWritable({ keepExistingData: true });
-            for (const block of dirty) {
-              const offset = block * BLOCK;
-              await writable.write({
-                type: "write",
-                position: offset,
-                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
-              });
+          capacity: size,
+          async read(offset, length) {
+            if (offset < 0 || length < 0 || offset + length > size) {
+              throw new RangeError("rootfs read is outside the disk");
             }
-            await writable.close();
-            dirty.clear();
+            if (whole) return whole.slice(offset, offset + length);
+            const first = Math.floor(offset / CHUNK);
+            const last = Math.floor((offset + length - 1) / CHUNK);
+            const loaded = await Promise.all(
+              Array.from({ length: last - first + 1 }, (_, index) => loadChunk(first + index)),
+            );
+            const result = new Uint8Array(length);
+            for (let index = 0; index < loaded.length; index++) {
+              const chunkIndex = first + index;
+              const chunkStart = chunkIndex * CHUNK;
+              const from = Math.max(offset, chunkStart);
+              const to = Math.min(offset + length, chunkStart + loaded[index].byteLength);
+              result.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
+            }
+            return result;
           },
         };
       }
@@ -226,7 +234,7 @@
         }),
       );
 
-      const disk = await openDisk();
+      const disk = await openLiveDisk();
       const opfs = await navigator.storage.getDirectory();
       const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({

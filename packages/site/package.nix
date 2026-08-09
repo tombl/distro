@@ -35,11 +35,12 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -L ${linux}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
     cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
 
-    # The rootfs is served under its own content hash so the seed can be
-    # cached immutable too; the page learns the name from rootfs.ext4.sha256.
+    # SquashFS is already block-compressed. Serve it directly under a content
+    # hash so the browser can lazily range-read it and cache those ranges.
     sha=$(${pkgs.openssl}/bin/openssl dgst -sha256 -r ${rootfs} | awk '{ print $1 }')
-    gzip --best --no-name --stdout ${rootfs} > $out/rootfs-''${sha}.ext4.gz
-    printf '%s' "$sha" > $out/rootfs.ext4.sha256
+    cp ${rootfs} $out/rootfs-''${sha}.squashfs
+    size=$(wc -c < ${rootfs})
+    printf '{"sha":"%s","size":%s}' "$sha" "$size" > $out/rootfs.squashfs.json
 
     mkdir -p $out
     substituteInPlace index.html --replace-fail __ASSETS__ v${ver}
@@ -49,7 +50,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -r vendor $out/vendor
 
     # The hosting provider rejects individual assets larger than 25 MB.
-    rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.ext4.gz)
+    rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.squashfs)
     if [ "$rootfs_bytes" -gt 25000000 ]; then
       echo "site rootfs is $rootfs_bytes bytes; hosting limit is 25000000" >&2
       exit 1
