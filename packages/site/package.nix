@@ -3,8 +3,8 @@
   linux,
   linux-guest,
   installDisk,
-  repository,
   rootfs,
+  systemRepository,
 }:
 
 let
@@ -59,7 +59,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp service-worker.js $out/service-worker.js
     cp _headers $out/_headers
     cp -r vendor $out/vendor
-    cp -rL ${repository} $out/install-repo
+    cp -rL ${systemRepository} $out/install-repo
 
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.squashfs)
