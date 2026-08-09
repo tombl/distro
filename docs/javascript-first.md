@@ -245,11 +245,13 @@ embedding contract, not site-specific logic. It makes an immutable image feel
 writable for one boot without claiming persistence.
 
 The canonical live site attaches one `LOWLAND_ROOT` EROFS image and enables the
-temporary overlay. Its separate installation disk is labeled
-`LOWLAND_INSTALL`, so it cannot be selected as the root. The installed site
-does not attach the live EROFS image. Before boot, it labels its persistent ext4
-disk `LOWLAND_ROOT` and mounts that disk directly. The private agent filesystem
-is attached in both cases and is never copied into the installed system.
+temporary overlay. It also attaches an unformatted persistent block device;
+the installer creates and labels its ext4 filesystem inside the guest. Once
+installed, the site does not attach the live EROFS image and mounts only that
+`LOWLAND_ROOT` ext4 disk directly. A `?live=1` recovery boot does not attach an
+existing installed disk, because exposing it alongside the live image would
+create two roots with the canonical label. The private agent filesystem is
+attached in both cases and is never copied into the installed system.
 
 EROFS is the canonical immutable-image format. SquashFS remains enabled in the
 kernel for other embedders, but the canonical packages do not produce or ship

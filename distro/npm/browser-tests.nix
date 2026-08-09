@@ -97,14 +97,29 @@ let
     '';
 
   siteSuite = pkgs.runCommand "site-browser-tests" { } ''
-    mkdir -p $out/node_modules/@playwright $out/tests
-    cp ${source}/playwright.config.js $out/playwright.config.js
-    cp ${source}/server.js $out/server.js
-    cp ${source}/tests/site-live.spec.js $out/tests/site-live.spec.js
-    cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
-    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
-    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
-    cp -rL ${site.package}/. $out/
+      mkdir -p $out/node_modules/@playwright $out/tests
+      cp ${source}/playwright.config.js $out/playwright.config.js
+      cp ${source}/server.js $out/server.js
+      cp ${source}/tests/site-live.spec.js $out/tests/site-live.spec.js
+      cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
+      cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
+      cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
+      cp -rL ${site.package}/. $out/
+      # Production and previews fetch the independently published repository.
+      # The integration test vendors the exact candidate repository so it can
+      # validate an install before those packages have reached production.
+      cp -rL ${site.repository} $out/apk
+      # After installation the service worker controls the page, so Playwright's
+      # page-level route cannot intercept guest fetches. Route only this test
+      # artifact's package requests to the vendored candidate repository; the
+      # production worker continues to fetch assets.low.land directly.
+      substituteInPlace $out/service-worker.js \
+        --replace-fail '  const { request } = event;' '  let { request } = event;' \
+        --replace-fail '  const url = new URL(request.url);' '  let url = new URL(request.url);
+    if (url.hostname === "assets.low.land" && url.pathname.startsWith("/apk/")) {
+      request = new Request(new URL(url.pathname + url.search, location.origin), request);
+      url = new URL(request.url);
+    }'
   '';
 
   serviceWorkerSuite = pkgs.runCommand "service-worker-browser-tests" { } ''

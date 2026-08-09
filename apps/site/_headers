@@ -9,9 +9,6 @@
 /rootfs-*.erofs
   Cache-Control: public, max-age=31556952, immutable
 
-/install-*.ext4.gz
-  Cache-Control: public, max-age=31556952, immutable
-
 /service-worker.js
   Cache-Control: no-cache
 

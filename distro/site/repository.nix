@@ -9,6 +9,7 @@
   bootFiles ? null,
   busybox,
   curl,
+  e2fsprogs,
   file,
   git,
   jq,
@@ -24,6 +25,7 @@ let
         apk-tools
         busybox
         curl
+        e2fsprogs
         file
         git
         jq

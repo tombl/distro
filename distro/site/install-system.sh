@@ -5,7 +5,8 @@ target=/mnt
 repository=http://assets.low.land/apk/wasm32/Packages.adb
 
 mkdir -p "$target"
-mount -t ext4 LABEL=LOWLAND_INSTALL "$target"
+mke2fs -q -t ext4 -F -L LOWLAND_ROOT -m 0 /dev/vdb
+mount -t ext4 /dev/vdb "$target"
 mkdir -p \
   "$target/boot" \
   "$target/dev" \
@@ -31,6 +32,7 @@ apk \
   add --initdb \
   apk-tools \
   busybox \
+  e2fsprogs \
   lowland-boot
 
 cp /sbin/site-init "$target/init"

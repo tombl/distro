@@ -231,38 +231,32 @@
         };
       }
 
-      async function openInstallDisk(root) {
+      async function openInstallDisk({ requireFilesystem }) {
         const directory = await navigator.storage.getDirectory();
         const handle = await directory.getFileHandle("root.ext4", { create: true });
-        const file = await handle.getFile();
-        let disk;
-        if (file.size === 0) {
-          const manifest = await fetch("install-disk.json").then((response) => response.json());
-          const response = await fetch(`install-${manifest.sha}.ext4.gz`);
-          if (!response.ok) throw new Error(`failed to fetch install disk: ${response.status}`);
-          disk = new Uint8Array(
-            await new Response(
-              response.body.pipeThrough(new DecompressionStream("gzip")),
-            ).arrayBuffer(),
-          );
-          if (disk.byteLength !== manifest.size) throw new Error("install disk has the wrong size");
+        let file = await handle.getFile();
+        if (file.size === 0 && !requireFilesystem) {
+          // The browser owns only the persistent block device's capacity. The
+          // live guest owns its filesystem format and label, exactly as an
+          // installer does for a blank physical disk.
           const writable = await handle.createWritable();
-          await writable.write(disk);
+          await writable.truncate(64 * 1024 * 1024);
           await writable.close();
-        } else {
-          disk = new Uint8Array(await file.arrayBuffer());
+          file = await handle.getFile();
         }
+
+        const disk = new Uint8Array(await file.arrayBuffer());
 
         const superblock = 1024;
         const magicOffset = superblock + 56;
-        const labelOffset = superblock + 120;
-        if (
-          disk.byteLength < labelOffset + 16 ||
-          disk[magicOffset] !== 0x53 ||
-          disk[magicOffset + 1] !== 0xef
-        ) {
+        const hasFilesystem =
+          disk.byteLength >= magicOffset + 2 &&
+          disk[magicOffset] === 0x53 &&
+          disk[magicOffset + 1] === 0xef;
+        if (requireFilesystem && !hasFilesystem) {
           throw new Error("persistent disk is not a valid ext4 image");
         }
+        if (!requireFilesystem && hasFilesystem) return undefined;
 
         const BLOCK = 4096;
         const dirty = new Set();
@@ -294,40 +288,23 @@
           },
         };
 
-        // The site, rather than the general-purpose agent, ensures that only
-        // the disk selected for this boot carries the canonical root label.
-        const label = new TextEncoder().encode(root ? "LOWLAND_ROOT" : "LOWLAND_INSTALL");
-        const encoded = new Uint8Array(16);
-        encoded.set(label);
-        if (
-          !disk
-            .subarray(labelOffset, labelOffset + encoded.length)
-            .every((v, i) => v === encoded[i])
-        ) {
-          storage.write(labelOffset, encoded);
-          await storage.flush();
-        }
         return storage;
       }
 
-      // The page's network: guest HTTP/1 becomes HTTPS via the browser's
-      // fetch, which is exactly what `apk add` needs to reach the served repo.
-      const network = createNetwork(
-        hostFetchNetwork({
-          fetch: (request) => {
-            const url = new URL(request.url);
-            if (url.hostname === "assets.low.land") {
-              return fetch(
-                new Request(new URL(url.pathname + url.search, location.origin), request),
-              );
-            }
-            return fetch(request);
-          },
-        }),
-      );
+      // The host adapter upgrades the guest's plaintext HTTP request to HTTPS.
+      // Keep destination selection in the guest repository configuration; the
+      // page must not silently redirect one package server to another.
+      const network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
 
-      const disk = bootMode === "live" ? await openLiveDisk() : await openInstallDisk(true);
-      const installDisk = bootMode === "live" ? await openInstallDisk(false) : undefined;
+      const disk =
+        bootMode === "live"
+          ? await openLiveDisk()
+          : await openInstallDisk({ requireFilesystem: true });
+      // A ?live=1 recovery boot alongside an existing installation must not
+      // expose two LOWLAND_ROOT disks to the general-purpose agent. Only an
+      // unformatted device is attached to a live installer.
+      const installDisk =
+        bootMode === "live" ? await openInstallDisk({ requireFilesystem: false }) : undefined;
       const opfs = await navigator.storage.getDirectory();
       const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({

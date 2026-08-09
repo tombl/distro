@@ -12,7 +12,7 @@ async function waitForGuest(page) {
   return { input, terminal };
 }
 
-test("boots, persists its install disk, and installs the canonical system", async ({ page }) => {
+test("boots and formats a blank persistent disk into the canonical system", async ({ page }) => {
   test.setTimeout(300_000);
   const rootfsRequests = [];
   page.on("pageerror", (error) => console.log(`browser error: ${error.stack ?? error}`));
@@ -20,6 +20,12 @@ test("boots, persists its install disk, and installs the canonical system", asyn
     if (/\/rootfs-[^/]+\.erofs$/.test(new URL(request.url()).pathname)) {
       rootfsRequests.push(request.headers());
     }
+  });
+  await page.route("https://assets.low.land/apk/**", async (route) => {
+    const requested = new URL(route.request().url());
+    const local = new URL(requested.pathname + requested.search, page.url());
+    const response = await page.request.get(local.href);
+    await route.fulfill({ response });
   });
 
   await page.goto("/?webgl=0");
@@ -35,23 +41,14 @@ test("boots, persists its install disk, and installs the canonical system", asyn
   await expect(terminal).toContainText("on / type overlay");
 
   await input.pressSequentially(
-    "mkdir -p /mnt; mount -t ext4 LABEL=LOWLAND_INSTALL /mnt; echo opfs-persisted > /mnt/probe; sync; umount /mnt; printf 'disk-%s\\n' flushed",
+    "magic=$(dd if=/dev/vdb bs=1 skip=1080 count=2 2>/dev/null | od -An -tx1 | tr -d ' \\n'); test -b /dev/vdb && test \"$magic\" != 53ef && printf 'install-disk-%s\\n' blank",
   );
   await input.press("Enter");
-  await expect(terminal).toContainText("disk-flushed", { timeout: 15_000 });
+  await expect(terminal).toContainText("install-disk-blank");
 
-  await page.reload();
-  const { input: reloadedInput, terminal: reloadedTerminal } = await waitForGuest(page);
-  await reloadedInput.pressSequentially(
-    "mkdir -p /mnt; mount -t ext4 LABEL=LOWLAND_INSTALL /mnt; cat /mnt/probe; umount /mnt; printf 'remount-%s\\n' ready",
-  );
-  await reloadedInput.press("Enter");
-  await expect(reloadedTerminal).toContainText("opfs-persisted");
-  await expect(reloadedTerminal).toContainText("remount-ready");
-
-  await reloadedInput.pressSequentially("install-lowland");
-  await reloadedInput.press("Enter");
-  await expect(reloadedTerminal).toContainText("Installation complete.", { timeout: 120_000 });
+  await input.pressSequentially("install-lowland");
+  await input.press("Enter");
+  await expect(terminal).toContainText("Installation complete.", { timeout: 120_000 });
 
   const liveRootfsRequests = rootfsRequests.length;
   await page.reload();

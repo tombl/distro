@@ -4,6 +4,7 @@
   apk,
   apk-tools,
   busybox,
+  e2fsprogs,
   image,
   pkgs,
   repository,
@@ -16,6 +17,7 @@ let
     packages = [
       busybox
       apk-tools
+      e2fsprogs
     ];
     files = {
       "/init" = {
