@@ -34,10 +34,19 @@ test("serves an installed boot tree from OPFS and otherwise falls back", async (
       '<!doctype html><body>local boot<script src="/assets-v1/boot.js"></script>',
     );
     await indexWriter.close();
+
+    const docs = await boot.getDirectoryHandle("docs", { create: true });
+    const docsIndex = await docs.getFileHandle("index.html", { create: true });
+    const docsWriter = await docsIndex.createWritable();
+    await docsWriter.write("nested index");
+    await docsWriter.close();
   });
 
   await page.reload();
   await expect(page.locator("body")).toHaveText("local boot");
   await expect(page.locator("body")).toHaveAttribute("data-booted", "local");
   expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
+  expect(await page.evaluate(() => fetch("/docs/").then((response) => response.text()))).toBe(
+    "nested index",
+  );
 });

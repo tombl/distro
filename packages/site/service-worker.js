@@ -15,7 +15,8 @@ function contentType(name) {
 }
 
 async function bootFile(pathname) {
-  const parts = (pathname === "/" ? "index.html" : pathname.slice(1)).split("/");
+  const path = pathname.endsWith("/") ? `${pathname}index.html` : pathname;
+  const parts = path.slice(1).split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return undefined;
 
   let directory = await navigator.storage.getDirectory();

@@ -27,7 +27,11 @@ export interface SpawnGuestOptions extends Omit<
   network?: Network;
   /** Extra kernel command line arguments, appended to the defaults. */
   cmdline?: string;
-  /** Set false when the guest configures its attached network device itself. */
+  /**
+   * Set false when the guest configures its attached network device itself.
+   * TODO(javascript-first): remove this temporary escape hatch when the
+   * JavaScript-first migration lands and network setup has a single owner.
+   */
   configureNetwork?: boolean;
   /** Receives kernel output emitted before the guest's regular console is ready. */
   bootConsole?: WritableStream<Uint8Array>;
