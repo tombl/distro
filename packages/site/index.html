@@ -327,7 +327,6 @@
       );
       await guest.fs.mkdir("/boot", { recursive: true });
       await guest.mount("boot", "/boot", { type: "virtiofs" });
-      document.documentElement.dataset.guestReady = "true";
     </script>
   </body>
 </html>

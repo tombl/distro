@@ -48,9 +48,7 @@ await guest.fs.mkdir("/workspace/host");
 await guest.mount("host", "/workspace/host", { type: "virtiofs" });
 ```
 
-`guest.mount()` and `guest.unmount()` invoke the guest syscalls directly, so
-mounting a device does not require a shell or a `mount` executable in the
-image. Pass `MountFlags.BIND` as `flags` to bind mount an existing guest path.
+Pass `MountFlags.BIND` as `flags` to bind mount an existing guest path.
 
 Pass `{ readOnly: true }` to reject writable opens and every mutating backend
 operation. This must be set on the backend even when the guest mount also uses
