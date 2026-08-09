@@ -107,9 +107,9 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     guest-agent = callPackage ./guest-agent/package.nix { };
     ltp = callPackage ./ltp/package.nix { };
     kselftests = callPackage ./kselftests/package.nix { };
-    node-workspace = callPackage ./node-workspace.nix { };
-    linux-guest = callPackage ./linux-guest { };
-    runner = callPackage ./runner { };
-    browser-tests = callPackage ./browser-tests/package.nix { };
+    node-workspace = callPackage ./npm/node-workspace.nix { };
+    linux-guest = callPackage ./npm/linux-guest { };
+    runner = callPackage ./npm/runner { };
+    browser-tests = callPackage ./npm/browser-tests.nix { };
   }
 )

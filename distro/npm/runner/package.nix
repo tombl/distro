@@ -22,11 +22,11 @@ let
       packages = [ busybox ];
       files = {
         "/init" = {
-          source = ../linux-guest/tests/lifecycle-init.sh;
+          source = ../../guest-tests/lifecycle-init.sh;
           mode = "0755";
         };
         "/vm-test-setup-dev-fd" = {
-          source = ../vm-test/setup-dev-fd.sh;
+          source = ../../vm-test/setup-dev-fd.sh;
           mode = "0755";
         };
       };
@@ -35,14 +35,14 @@ let
 
   console-initramfs = vm-test.mkInitramfs {
     name = "linux-runner-console";
-    init = ./tests/console-init.sh;
+    init = ../../runner/console-init.sh;
     contents = [ busybox ];
   };
 
   app = pkgs.stdenvNoCC.mkDerivation {
     pname = "runner-app";
     version = "0.0.0";
-    src = ../..;
+    src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
@@ -99,7 +99,7 @@ let
   integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-runner-integration-test";
     version = "0.0.0";
-    src = ../..;
+    src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-site_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(git rev-parse --show-toplevel)
+site_dir="$repo_dir/apps/site"
 
 xterm_version=6
 esbuild_specs=(

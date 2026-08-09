@@ -119,7 +119,7 @@ jobs:
           RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{secrets.R2_SECRET_ACCESS_KEY}}
           RCLONE_CONFIG_R2_ENDPOINT: "https://7d87194d9d4af2959fb81de343dd63d9.r2.cloudflarestorage.com"
         run: |
-          packages/site/scripts/publish-apk-repo.sh
+          distro/site/scripts/publish-apk-repo.sh
       - name: Deploy production
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:

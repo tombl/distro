@@ -19,7 +19,7 @@ in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "site";
   version = "0.0.0";
-  src = ./.;
+  src = ../../apps/site;
 
   installPhase = ''
     runHook preInstall

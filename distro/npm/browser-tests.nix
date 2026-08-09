@@ -7,7 +7,8 @@
 }:
 
 let
-  packageJson = builtins.fromJSON (builtins.readFile ./package.json);
+  source = ../../packages/browser-tests;
+  packageJson = builtins.fromJSON (builtins.readFile (source + "/package.json"));
   playwrightVersion = packageJson.devDependencies."@playwright/test";
   driverVersion = pkgs.playwright-driver.version;
 
@@ -21,14 +22,14 @@ let
           $out/node_modules/@playwright \
           $out/node_modules/@tombl/linux \
           $out/node_modules/@tombl/linux-guest
-        cp ${./app.js} $out/app.js
-        cp ${./index.html} $out/index.html
-        cp ${./playwright.config.js} $out/playwright.config.js
+        cp ${source}/app.js $out/app.js
+        cp ${source}/index.html $out/index.html
+        cp ${source}/playwright.config.js $out/playwright.config.js
         cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
         cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
-        cp ${./server.js} $out/server.js
+        cp ${source}/server.js $out/server.js
         cp ${linux-guest.package.checks.tests.assets}/rootfs.squashfs $out/rootfs.squashfs
-        cp -r ${./tests} $out/tests
+        cp -r ${source}/tests $out/tests
         cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
         cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
         cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core

@@ -42,7 +42,7 @@ let
         dropbear
       ];
       files."/init" = {
-        source = ./rootfs-init.sh;
+        source = ../../runner/rootfs-init.sh;
         mode = "0755";
       };
       # A real copy, not a link: the wasm kernel cannot exec (or even stat -x)
@@ -57,7 +57,7 @@ package
     name = "runner-rootfs-mount";
     initramfs = vm-test.mkInitramfs {
       name = "runner-rootfs-mount";
-      init = ./rootfs-smoke-test.sh;
+      init = ../../runner/rootfs-smoke-test.sh;
       contents = [ busybox ];
     };
     disk = package;

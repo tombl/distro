@@ -89,7 +89,7 @@ fatal to the whole session.
 fact the host uses: syscall numbers, `O_*`/`AT_*`/`S_IF*`/`DT_*`/errno/
 signal constants, wait-status bit math, and the byte layouts of
 `struct stat64` and `struct dirent64` for wasm32-musl. Each entry carries
-the C expression it mirrors so `packages/guest-agent/gen-abi-check.ts` can
+the C expression it mirrors so `distro/guest-agent/gen-abi-check.ts` can
 emit a `_Static_assert` per entry; that file is compiled (never run) with
 the guest toolchain, turning any drift into a build failure. Per-syscall
 semantics (argument shapes, 64-bit splitting, which argument is the path)

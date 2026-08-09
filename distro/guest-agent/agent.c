@@ -13,7 +13,7 @@
  * PID 1 then kills and reaps the remaining descendants before accepting the
  * next session.
  *
- * See packages/guest-agent/protocol.md for the frozen contract.
+ * See distro/guest-agent/protocol.md for the frozen contract.
  */
 
 #define _GNU_SOURCE

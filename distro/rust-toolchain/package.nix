@@ -117,7 +117,7 @@ let
   #   cp -rL $(nix build --print-out-paths .#rust-toolchain.toolchain)/lib/rustlib/src/rust/library lib
   #   chmod -R u+w lib && cd lib
   #   sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = '$PWD/../checkouts/libc' }|" Cargo.toml
-  #   cargo update -p libc && cp Cargo.lock ../packages/rust-toolchain/Cargo.lock
+  #   cargo update -p libc && cp Cargo.lock ../distro/rust-toolchain/Cargo.lock
   vendoredDeps = pkgs.rustPlatform.importCargoLock { lockFile = ./Cargo.lock; };
 
   mkRustcWrapper =

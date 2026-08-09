@@ -170,7 +170,7 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ pkgs.pkg-config ];
 
   # Port the tst_test (new API) library off fork() and MAP_SHARED memory. See
-  # the patch header and packages/ltp/wasm-compat.h for the full rationale.
+  # the patch header and distro/ltp/wasm-compat.h for the full rationale.
   patches = [ ./forkless-library.patch ];
 
   # The library references the mmap family and fork()/vfork() from many sources

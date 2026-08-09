@@ -24,13 +24,13 @@ let
         cp ${name} $out/bin/
       '';
     };
-  network-test = test-program "network-test" ./tests/network-test.c;
-  user-trap = test-program "user-trap" ./tests/user-trap.c;
-  getdents-inode = test-program "getdents-inode" ./tests/getdents-inode.c;
+  network-test = test-program "network-test" ../../guest-tests/network-test.c;
+  user-trap = test-program "user-trap" ../../guest-tests/user-trap.c;
+  getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
 
   lifecycle-initramfs = vm-test.mkInitramfs {
     name = "linux-guest-lifecycle";
-    init = ./tests/lifecycle-init.sh;
+    init = ../../guest-tests/lifecycle-init.sh;
     contents = [ busybox ];
   };
 
@@ -46,8 +46,8 @@ let
 
   package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
-    inherit ((builtins.fromJSON (builtins.readFile ./package.json))) version;
-    src = ../..;
+    inherit ((builtins.fromJSON (builtins.readFile ../../../packages/linux-guest/package.json))) version;
+    src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
@@ -85,7 +85,7 @@ let
   integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest-integration-test";
     version = "0.0.0";
-    src = ../..;
+    src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [

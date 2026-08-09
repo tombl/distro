@@ -8,7 +8,7 @@ in
   deps = pkgs.fetchPnpmDeps {
     pname = "distro-pnpm-deps";
     version = "0.0.0";
-    src = ../.;
+    src = ../..;
     inherit pnpm;
     fetcherVersion = 4;
     hash = "sha256-FYk0WGWXqFNchDMPQ1NlccLXnO51iqniDAl2zAWyS9g=";

@@ -5,7 +5,7 @@
 // 32-bit ILP32 architecture (`__BITS_PER_LONG == 32`), NOT musl values.
 // Derived from the vendored kernel sources under `checkouts/linux`; each
 // group cites the header it mirrors. Every entry also carries the C
-// expression it mirrors so `packages/guest-agent/gen-abi-check.ts` can emit
+// expression it mirrors so `distro/guest-agent/gen-abi-check.ts` can emit
 // one `_Static_assert` per fact and the guest toolchain verifies the schema
 // at build time. There is exactly one copy of every number: the ergonomic
 // exports (`NR`, `O`, `AT`, `E`, `SIG`, ...) are derived from the same

@@ -38,7 +38,7 @@ let
     buildPhase = ''
       runHook preBuild
       mkdir -p node_modules/@tombl/linux
-      cp ${../linux-guest/src/abi.ts} abi.ts
+      cp ${../../packages/linux-guest/src/abi.ts} abi.ts
       tar -xzf ${linux}/linux.tgz --strip-components=1 \
         -C node_modules/@tombl/linux
       echo '{"type":"module","dependencies":{"@tombl/linux":"*"}}' > package.json

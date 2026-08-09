@@ -39,7 +39,7 @@
       # The package scope is the product. It contains owner-oriented package
       # sets and non-derivation helpers, hence legacyPackages rather than only
       # the flat packages output.
-      legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs; });
+      legacyPackages = eachSystem ({ pkgs, ... }: import ./distro { inherit pkgs; });
 
       # legacyPackages preserves the owner-oriented package sets. The packages
       # output projects each set's primary derivation back to the conventional
@@ -115,7 +115,7 @@
             cp -rL ${wasmpkgs.site.package} deploy
             chmod -R u+w deploy
             exec ${pkgs.wrangler}/bin/wrangler \
-              "$@" --config packages/site/wrangler.toml
+              "$@" --config distro/site/wrangler.toml
           '';
         in
         {
