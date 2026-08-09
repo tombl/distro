@@ -1,4 +1,4 @@
-import { consoleDevice, MachinePanicError, spawnMachine } from "@tombl/linux";
+import { consoleDevice, MachinePanicError, spawnMachine } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { lifecycle_assets } from "./assets.ts";

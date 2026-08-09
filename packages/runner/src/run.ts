@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
+import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@lowland/kernel";
 import { closeSync, fstatSync, fsync, openSync, readSync, writeSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";

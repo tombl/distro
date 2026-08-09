@@ -7,7 +7,7 @@ import {
   FSError,
   type FSSetAttributes,
   fileSystemDevice,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 import { SeekMode } from "../src/index.ts";
 import { getdents_inode } from "./assets.ts";
 import { guest_test } from "./fixture.ts";

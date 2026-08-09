@@ -8,6 +8,7 @@
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
+    "@lowland/kernel": "workspace:*",
     "@tombl/linux-guest": "workspace:*"
   },
   "devDependencies": {

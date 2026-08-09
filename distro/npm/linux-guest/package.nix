@@ -2,7 +2,7 @@
   busybox,
   pkgs,
   rootfs,
-  linux,
+  kernel,
   node-workspace,
   stdenv,
   vm-test,
@@ -59,8 +59,8 @@ let
     buildPhase = ''
       runHook preBuild
 
-      mkdir -p checkouts/linux/tools/wasm
-      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+      cp -r ${kernel}/dist packages/kernel/dist
       pnpm --filter=@tombl/linux-guest check
       pnpm --filter=@tombl/linux-guest build
 
@@ -97,8 +97,8 @@ let
     buildPhase = ''
       runHook preBuild
 
-      mkdir -p checkouts/linux/tools/wasm
-      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+      cp -r ${kernel}/dist packages/kernel/dist
       pnpm --filter=@tombl/linux-guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \

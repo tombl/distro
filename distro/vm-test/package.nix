@@ -5,7 +5,7 @@
   pkgs,
   lib,
   image,
-  linux,
+  kernel,
 }:
 
 let
@@ -60,7 +60,7 @@ let
         set +e
         timeout --kill-after=5 300 node ${runner}/run-test.js \
           --cpus ${toString cpus} \
-          ${linux}/dist/index.js \
+          ${kernel}/dist/index.js \
           ${initramfs} \
           ${lib.optionalString (disk != null) "disk.img"} \
           2>&1

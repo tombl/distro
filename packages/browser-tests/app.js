@@ -1,4 +1,4 @@
-import { blockDevice, consoleDevice, spawnMachine, fileSystemDevice } from "@tombl/linux";
+import { blockDevice, consoleDevice, spawnMachine, fileSystemDevice } from "@lowland/kernel";
 import { spawnGuest } from "@tombl/linux-guest";
 import { BrowserFS } from "@tombl/linux-guest/browser";
 

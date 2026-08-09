@@ -1,4 +1,4 @@
-import { consoleDevice, spawnMachine } from "@tombl/linux";
+import { consoleDevice, spawnMachine } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";

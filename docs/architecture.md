@@ -4,7 +4,7 @@ This repository builds the userspace and opinionated SDK for WebAssembly Linux. 
 
 ## Package boundary
 
-`@tombl/linux`, published from the Linux repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. It remains useful without this distro and exposes devices as the extension point.
+`@lowland/kernel`, published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The package remains useful without this distro and exposes devices as the extension point.
 
 The SDK published from this repository owns the guest agent and its host client, the supported root filesystem contract, and the opinionated API for running commands and moving data across the guest boundary. The CLI and demo site are consumers of this SDK, not alternative integration layers.
 
@@ -18,7 +18,7 @@ WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn
 
 ## Networking
 
-`@tombl/linux` provides a virtio-net NIC and a small learning Ethernet switch.
+`@lowland/kernel` provides a virtio-net NIC and a small learning Ethernet switch.
 The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 

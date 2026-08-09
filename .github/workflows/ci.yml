@@ -84,10 +84,10 @@ jobs:
           exit "$build_status"
       - name: Build npm packages
         run: |
-          nix build .#linux --out-link result-linux --print-build-logs
+          nix build .#kernel --out-link result-kernel --print-build-logs
           nix build .#linux-guest --out-link result-linux-guest --print-build-logs
           mkdir npm-packages
-          cp -L result-linux/linux.tgz npm-packages/linux.tgz
+          cp -L result-kernel/kernel.tgz npm-packages/kernel.tgz
           cp -L result-linux-guest/linux-guest.tgz npm-packages/linux-guest.tgz
       - uses: actions/upload-artifact@v4
         with:
@@ -162,5 +162,5 @@ jobs:
         env:
           NPM_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
         run: |
-          npm stage publish ./npm-packages/linux.tgz --access public --tag "$NPM_TAG"
+          npm stage publish ./npm-packages/kernel.tgz --access public --tag "$NPM_TAG"
           npm stage publish ./npm-packages/linux-guest.tgz --access public --tag "$NPM_TAG"

@@ -1,4 +1,4 @@
-import { type VirtioDevice, fileSystemDevice } from "@tombl/linux";
+import { type VirtioDevice, fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "@tombl/linux-guest/node";
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";

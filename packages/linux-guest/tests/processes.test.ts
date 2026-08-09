@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnMachine, vsockDevice } from "@tombl/linux";
+import { spawnMachine, vsockDevice } from "@lowland/kernel";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { SystemError } from "../src/index.ts";

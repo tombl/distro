@@ -119,6 +119,23 @@
           '';
         in
         {
+          artifacts = {
+            type = "app";
+            program = lib.getExe (
+              pkgs.writeShellApplication {
+                name = "materialize-artifacts";
+                runtimeInputs = [ pkgs.coreutils ];
+                text = ''
+                  if [[ ! -f package.json || ! -d packages/kernel ]]; then
+                    echo "artifacts must be materialized from the repository root" >&2
+                    exit 1
+                  fi
+                  install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+                '';
+              }
+            );
+          };
+
           runner = {
             type = "app";
             program = lib.getExe wasmpkgs.runner.package;

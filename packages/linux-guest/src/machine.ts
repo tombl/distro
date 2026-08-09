@@ -4,7 +4,7 @@ import {
   spawnMachine,
   type SpawnMachineOptions,
   type VirtioDevice,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 import {
   create_guest_client,
   type Exec,
@@ -19,7 +19,7 @@ export interface SpawnGuestOptions extends Omit<
 > {
   /** Root block device. It is attached as /dev/vda and booted directly. */
   root: VirtioDevice;
-  /** Extra virtio devices to boot with — a console or entropy device from `@tombl/linux`, say. */
+  /** Extra virtio devices to boot with — a console or entropy device from `@lowland/kernel`, say. */
   devices?: readonly VirtioDevice[];
   /** Guests attached to the same network can connect to each other. */
   network?: Network;
@@ -35,7 +35,7 @@ export interface SpawnGuestOptions extends Omit<
  * spawned with one.
  */
 export interface Guest {
-  /** The underlying `@tombl/linux` machine. `machine.close()` shuts the guest down. */
+  /** The underlying `@lowland/kernel` machine. `machine.close()` shuts the guest down. */
   readonly machine: Machine;
   /** File operations in the guest. */
   readonly fs: FileSystem;

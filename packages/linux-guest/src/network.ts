@@ -4,8 +4,8 @@ import {
   type EthernetDevice,
   type EthernetPort,
   type MacAddress,
-} from "@tombl/linux";
-import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@tombl/linux/bytes";
+} from "@lowland/kernel";
+import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/kernel/bytes";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);

@@ -5,7 +5,7 @@
 ## Installation
 
 ```sh
-npm install @tombl/linux @tombl/linux-guest
+npm install @lowland/kernel @tombl/linux-guest
 ```
 
 ## Usage

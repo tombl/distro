@@ -3,7 +3,7 @@
   busybox,
   pkgs,
   lib,
-  linux,
+  kernel,
   linux-guest,
   node-workspace,
   image,
@@ -54,8 +54,8 @@ let
     buildPhase = ''
       runHook preBuild
 
-      mkdir -p checkouts/linux/tools/wasm
-      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+      cp -r ${kernel}/dist packages/kernel/dist
       rm packages/runner/node_modules/@tombl/linux-guest
       ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
       pnpm --filter=@tombl/linux-runner check
@@ -66,11 +66,11 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p $out/node_modules/@tombl
+      mkdir -p $out/node_modules/@lowland $out/node_modules/@tombl
       cp packages/runner/src/run.ts $out/run.ts
       cp packages/runner/src/shares.ts $out/shares.ts
       cp packages/runner/package.json $out/package.json
-      cp -RL node_modules/@tombl/linux $out/node_modules/@tombl/linux
+      cp -RL node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
       mkdir $out/node_modules/@tombl/linux-guest
       cp ${linux-guest.package}/package.json $out/node_modules/@tombl/linux-guest/package.json
       cp -r ${linux-guest.package}/dist $out/node_modules/@tombl/linux-guest/dist
@@ -111,8 +111,8 @@ let
     buildPhase = ''
       runHook preBuild
 
-      mkdir -p checkouts/linux/tools/wasm
-      tar -xzf ${linux}/linux.tgz --strip-components=1 -C checkouts/linux/tools/wasm
+      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+      cp -r ${kernel}/dist packages/kernel/dist
       rm packages/runner/node_modules/@tombl/linux-guest
       ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
       pnpm --filter=@tombl/linux-runner check

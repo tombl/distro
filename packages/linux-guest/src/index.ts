@@ -19,7 +19,7 @@ export {
   type FSTimestamp,
   type VsockConnection,
   type VsockDevice,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 export { ProtocolError, SystemError } from "./abi.ts";
 export { type Exec, type ExecOptions, type FileData, type FileSystem } from "./client.ts";
 export {

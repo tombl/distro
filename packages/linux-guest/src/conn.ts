@@ -13,9 +13,9 @@
 // agent parks a dedicated thread on it, and either side closing it tears the
 // session down (agent side: kill and reap every child).
 
-import type { VsockConnection, VsockDevice } from "@tombl/linux";
+import type { VsockConnection, VsockDevice } from "@lowland/kernel";
 import { ProtocolError } from "./abi.ts";
-import { Bytes, Struct, U16LE, U32LE } from "@tombl/linux/bytes";
+import { Bytes, Struct, U16LE, U32LE } from "@lowland/kernel/bytes";
 
 const SESSION_PORT = 1024;
 const LANE_PORT = 1025;

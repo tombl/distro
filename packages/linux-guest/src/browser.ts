@@ -8,7 +8,7 @@ import {
   FSError,
   type FSSetAttributes,
   type FSTimestamp,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 
 const FileType = {
   directory: 0o040000,
