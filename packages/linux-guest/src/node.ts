@@ -8,7 +8,7 @@ import {
   FSError,
   type FSSetAttributes,
   type FSStat,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 import { constants, type BigIntStats } from "node:fs";
 import {
   access,

@@ -19,9 +19,17 @@ export {
   type FSTimestamp,
   type VsockConnection,
   type VsockDevice,
-} from "@tombl/linux";
-export { ProtocolError, SystemError } from "./abi.ts";
-export { type Exec, type ExecOptions, type FileData, type FileSystem } from "./client.ts";
+} from "@lowland/kernel";
+export { MountFlags, ProtocolError, SystemError, UnmountFlags } from "./abi.ts";
+export {
+  type Exec,
+  type ExecOptions,
+  type FileData,
+  type FileSystem,
+  type Mount,
+  type MountOptions,
+  type Unmount,
+} from "./client.ts";
 export {
   type DirEntry,
   type FileInfo,

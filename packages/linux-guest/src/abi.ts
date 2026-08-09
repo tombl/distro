@@ -3,16 +3,16 @@
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
 // 32-bit ILP32 architecture (`__BITS_PER_LONG == 32`), NOT musl values.
-// Derived from the vendored kernel sources under `checkouts/linux`; each
+// Derived from the corresponding files in the Linux source tree; each
 // group cites the header it mirrors. Every entry also carries the C
-// expression it mirrors so `packages/guest-agent/gen-abi-check.ts` can emit
+// expression it mirrors so `distro/guest-agent/gen-abi-check.ts` can emit
 // one `_Static_assert` per fact and the guest toolchain verifies the schema
 // at build time. There is exactly one copy of every number: the ergonomic
 // exports (`NR`, `O`, `AT`, `E`, `SIG`, ...) are derived from the same
 // check tables, and the error types that carry errnos to consumers live
 // here so their name table cannot drift from the checked numbers.
 
-import { I32LE, Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@tombl/linux/bytes";
+import { I32LE, Struct, type Type, U8, U16LE, U32LE, U64LE, I64LE } from "@lowland/bytes";
 
 // ---------------------------------------------------------------------------
 // Check tables. gen-abi-check.ts walks these.
@@ -78,7 +78,7 @@ function define_struct<T extends object>(
 
 // ---------------------------------------------------------------------------
 // Syscall numbers.
-// checkouts/linux/include/uapi/asm-generic/unistd.h
+// include/uapi/asm-generic/unistd.h
 // wasm includes it verbatim (arch/wasm/include/uapi/asm/unistd.h). On this
 // 32-bit arch the __NR3264_* aliases resolve to the 64-suffixed variants:
 // __NR_llseek=62, __NR_fstatat64=79, __NR_ftruncate64=46. renameat (38) is
@@ -86,6 +86,8 @@ function define_struct<T extends object>(
 // ---------------------------------------------------------------------------
 
 const nr = scalar_group("__NR_", {
+  umount2: 39,
+  mount: 40,
   openat: 56,
   close: 57,
   read: 63,
@@ -111,8 +113,8 @@ export const NR = nr.values;
 
 // ---------------------------------------------------------------------------
 // Open flags and *at() flags.
-// O_* : checkouts/linux/include/uapi/asm-generic/fcntl.h (octal literals).
-// AT_*: checkouts/linux/include/uapi/linux/fcntl.h.
+// O_* : include/uapi/asm-generic/fcntl.h (octal literals).
+// AT_*: include/uapi/linux/fcntl.h.
 // ---------------------------------------------------------------------------
 
 const o = scalar_group("O_", {
@@ -141,9 +143,26 @@ const at = scalar_group("AT_", {
 /** *at() flags, e.g. `AT.FDCWD === -100`. */
 export const AT = at.values;
 
+const mount_flags = scalar_group("MS_", {
+  RDONLY: 1,
+  BIND: 4096,
+  REC: 16384,
+});
+
+/** Linux mount flags accepted by {@link Guest.mount}. */
+export const MountFlags = mount_flags.values;
+
+const unmount_flags = scalar_group("MNT_", {
+  FORCE: 1,
+  DETACH: 2,
+});
+
+/** Linux unmount flags accepted by {@link Guest.unmount}. */
+export const UnmountFlags = unmount_flags.values;
+
 // ---------------------------------------------------------------------------
 // File-mode type bits (for st_mode decoding).
-// checkouts/linux/include/uapi/linux/stat.h (octal literals).
+// include/uapi/linux/stat.h (octal literals).
 // ---------------------------------------------------------------------------
 
 const s_if = scalar_group("S_IF", {
@@ -172,7 +191,7 @@ export const DT = dt.values;
 
 // ---------------------------------------------------------------------------
 // Errno numbers.
-// checkouts/linux/include/uapi/asm-generic/errno-base.h and errno.h (the
+// include/uapi/asm-generic/errno-base.h and errno.h (the
 // guest musl <errno.h> forwards to them). Consumers branch on `E.*` for
 // control flow; SystemError below derives its human-readable code from this
 // same table, so the names can never drift from the checked numbers.
@@ -217,7 +236,7 @@ const errno_names = new Map<number, `E${keyof typeof E}`>(
 
 // ---------------------------------------------------------------------------
 // Signal numbers.
-// checkouts/linux/include/uapi/asm-generic/signal.h (guest musl <signal.h>
+// include/uapi/asm-generic/signal.h (guest musl <signal.h>
 // forwards to them). Only the signals the public `Signal` type names.
 // ---------------------------------------------------------------------------
 
@@ -278,7 +297,7 @@ export class ProtocolError extends Error {
 
 // ---------------------------------------------------------------------------
 // struct stat64 — the layout fstatat64 (__NR_fstatat64 = 79) fills on this
-// ILP32 arch. Confirmed via checkouts/linux/fs/stat.c: SYSCALL_DEFINE4(
+// ILP32 arch. Confirmed via fs/stat.c: SYSCALL_DEFINE4(
 // fstatat64, ...) -> cp_new_stat64() -> struct stat64. Layout from
 // arch/wasm/include/generated/uapi/asm/stat.h -> asm-generic/stat.h (the
 // __BITS_PER_LONG != 64 || __ARCH_WANT_STAT64 branch). No padding beyond the
@@ -341,7 +360,7 @@ export const stat_size = stat.size;
 
 // ---------------------------------------------------------------------------
 // struct linux_dirent64 — the record getdents64 (__NR_getdents64 = 61) writes.
-// checkouts/linux/include/linux/dirent.h:
+// include/linux/dirent.h:
 //   u64 d_ino; s64 d_off; unsigned short d_reclen; unsigned char d_type;
 //   char d_name[] (NUL-terminated).
 // linux_dirent64 is not in an installed uapi header, but musl's `struct
@@ -448,6 +467,7 @@ export const abi_checks: {
     "#include <stddef.h>", // offsetof
     "#include <asm/unistd.h>", // __NR_*
     "#include <linux/fcntl.h>", // O_*, AT_*
+    "#include <sys/mount.h>", // MS_*, MNT_*
     "#include <asm/stat.h>", // struct stat64
     "#include <linux/stat.h>", // S_IF*
     "#include <dirent.h>", // struct dirent (== linux_dirent64 header), DT_*
@@ -459,6 +479,8 @@ export const abi_checks: {
     ...nr.checks,
     ...o.checks,
     ...at.checks,
+    ...mount_flags.checks,
+    ...unmount_flags.checks,
     ...s_if.checks,
     ...dt.checks,
     ...e.checks,

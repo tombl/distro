@@ -39,7 +39,13 @@
       # The package scope is the product. It contains owner-oriented package
       # sets and non-derivation helpers, hence legacyPackages rather than only
       # the flat packages output.
-      legacyPackages = eachSystem ({ pkgs, ... }: import ./packages { inherit pkgs; });
+      legacyPackages = eachSystem (
+        { pkgs, ... }:
+        import ./distro {
+          inherit pkgs;
+          sourceVersion = toString self.lastModified;
+        }
+      );
 
       # legacyPackages preserves the owner-oriented package sets. The packages
       # output projects each set's primary derivation back to the conventional
@@ -115,10 +121,29 @@
             cp -rL ${wasmpkgs.site.package} deploy
             chmod -R u+w deploy
             exec ${pkgs.wrangler}/bin/wrangler \
-              "$@" --config packages/site/wrangler.toml
+              "$@" --config distro/site/wrangler.toml
           '';
         in
         {
+          artifacts = {
+            type = "app";
+            program = lib.getExe (
+              pkgs.writeShellApplication {
+                name = "materialize-artifacts";
+                runtimeInputs = [ pkgs.coreutils ];
+                text = ''
+                  if [[ ! -f package.json || ! -d packages/kernel ]]; then
+                    echo "artifacts must be materialized from the repository root" >&2
+                    exit 1
+                  fi
+                  install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+                  install -Dm0644 ${wasmpkgs.linux-guest.package.checks.tests.assets}/agent.erofs \
+                    packages/linux-guest/agent.erofs
+                '';
+              }
+            );
+          };
+
           runner = {
             type = "app";
             program = lib.getExe wasmpkgs.runner.package;

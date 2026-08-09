@@ -1,4 +1,4 @@
-import { blockDevice, consoleDevice, spawnMachine, fileSystemDevice } from "@tombl/linux";
+import { blockDevice, bootMachine, consoleDevice, fileSystemDevice } from "@lowland/kernel";
 import { spawnGuest } from "@tombl/linux-guest";
 import { BrowserFS } from "@tombl/linux-guest/browser";
 
@@ -11,7 +11,7 @@ async function collectProcess(child) {
   return { status, stdout, stderr };
 }
 
-const rootfs = fetch("/rootfs.squashfs").then(async (response) => {
+const rootfs = fetch("/rootfs.erofs").then(async (response) => {
   if (!response.ok) throw new Error(`failed to load rootfs: ${response.status}`);
   return new Uint8Array(await response.arrayBuffer());
 });
@@ -29,7 +29,7 @@ async function rootDevice() {
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
 async function withGuest(scenario, options) {
-  const guest = await spawnGuest({ root: await rootDevice(), ...options });
+  const guest = await spawnGuest({ cpus: 1, root: await rootDevice(), ...options });
   try {
     return await scenario(guest);
   } finally {
@@ -142,9 +142,9 @@ async function runInitramfs(path, cpus) {
     },
   });
 
-  const machine = await spawnMachine({
+  const machine = await bootMachine({
     cpus,
-    devices: [consoleDevice(input, outputStream())],
+    plugins: [consoleDevice(input, outputStream())],
     initcpio,
   });
   void machine.bootConsole.pipeTo(outputStream()).catch(reject);
@@ -295,16 +295,16 @@ globalThis.opfsVirtioFileSystem = async () => {
     0n,
     new TextEncoder().encode("destination"),
   );
-  await filesystem
-    .rename(filesystem.root, "rename-source", filesystem.root, "rename-destination")
-    .catch(() => {});
-  const renameDestinationData = await filesystem.read(
-    renameDestination.node,
-    renameDestination.handle,
-    0n,
-    11,
+  await filesystem.rename(filesystem.root, "rename-source", filesystem.root, "rename-destination");
+  const renamed = await filesystem.lookup(filesystem.root, "rename-destination");
+  const renamedHandle = await filesystem.open(renamed, 0);
+  const renameDestinationData = await filesystem.read(renamed, renamedHandle, 0n, 6);
+  const renameSourceMissing =
+    (await filesystem.lookup(filesystem.root, "rename-source")) === undefined;
+  const replacedHandleStale = await filesystem.getattr(renameDestination.node).then(
+    () => false,
+    () => true,
   );
-  await filesystem.unlink(filesystem.root, "rename-source");
   await filesystem.unlink(filesystem.root, "rename-destination");
   return {
     concurrent: new TextDecoder().decode(concurrentData),
@@ -317,6 +317,8 @@ globalThis.opfsVirtioFileSystem = async () => {
     output: new TextDecoder().decode(output),
     persisted: new TextDecoder().decode(persisted),
     renameDestination: new TextDecoder().decode(renameDestinationData),
+    renameSourceMissing,
+    replacedHandleStale,
     replacement: new TextDecoder().decode(replacementData),
   };
 };
@@ -335,12 +337,12 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
         await guest.exec([
           "sh",
           "-c",
-          "mkdir -p /workspace/shared && mount -t virtiofs browser-test /workspace/shared",
+          "mkdir -p /tmp/shared && mount -t virtiofs browser-test /tmp/shared",
         ]),
       );
       if (!mount.status.success) throw new Error(`mount failed: ${mount.stderr}`);
-      await guest.fs.writeFile("/workspace/shared/persistent", input);
-      const output = await guest.fs.readFile("/workspace/shared/persistent");
+      await guest.fs.writeFile("/tmp/shared/persistent", input);
+      const output = await guest.fs.readFile("/tmp/shared/persistent");
       return {
         size: output.byteLength,
         first: output[0],

@@ -1,25 +1,28 @@
 import {
+  blockDevice,
+  bootMachine,
+  type BootMachineOptions,
   vsockDevice,
   type Machine,
-  spawnMachine,
-  type SpawnMachineOptions,
   type VirtioDevice,
-} from "@tombl/linux";
+} from "@lowland/kernel";
 import {
   create_guest_client,
   type Exec,
   type FileSystem,
   type GuestClientCapabilities,
+  type Mount,
+  type Unmount,
 } from "./client.ts";
 import { attach_guest, type GuestNetwork, type Network } from "./network.ts";
 
 export interface SpawnGuestOptions extends Omit<
-  SpawnMachineOptions,
-  "devices" | "initcpio" | "cmdline"
+  BootMachineOptions,
+  "plugins" | "initcpio" | "args"
 > {
-  /** Root block device. It is attached as /dev/vda and booted directly. */
+  /** EROFS or ext4 system image labeled LOWLAND_ROOT. Device order is not significant. */
   root: VirtioDevice;
-  /** Extra virtio devices to boot with — a console or entropy device from `@tombl/linux`, say. */
+  /** Extra virtio devices to boot with — a console or entropy device from `@lowland/kernel`, say. */
   devices?: readonly VirtioDevice[];
   /** Guests attached to the same network can connect to each other. */
   network?: Network;
@@ -29,18 +32,49 @@ export interface SpawnGuestOptions extends Omit<
   bootConsole?: WritableStream<Uint8Array>;
 }
 
+interface NodeProcess {
+  getBuiltinModule?: (id: "node:fs/promises") => {
+    readFile(path: URL): Promise<Uint8Array<ArrayBuffer>>;
+  };
+}
+
+const agent_image = (async () => {
+  const url = new URL("../agent.erofs", import.meta.url);
+  const process = (globalThis as { process?: NodeProcess }).process;
+  if (process?.getBuiltinModule) {
+    return process.getBuiltinModule("node:fs/promises").readFile(url);
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`failed to load guest agent image: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+})();
+
+async function agent_device() {
+  const bytes = await agent_image;
+  return blockDevice({
+    capacity: bytes.byteLength,
+    read(offset, length) {
+      return bytes.subarray(offset, offset + length);
+    },
+  });
+}
+
 /**
  * A booted Linux guest: the machine itself plus the guest agent's
  * capabilities — `exec` for processes, `fs` for files, and `network` when
  * spawned with one.
  */
 export interface Guest {
-  /** The underlying `@tombl/linux` machine. `machine.close()` shuts the guest down. */
+  /** The underlying `@lowland/kernel` machine. `machine.close()` shuts the guest down. */
   readonly machine: Machine;
   /** File operations in the guest. */
   readonly fs: FileSystem;
   /** Runs programs in the guest. */
   readonly exec: Exec;
+  /** Mounts a filesystem in the guest without spawning a helper process. */
+  readonly mount: Mount;
+  /** Unmounts a filesystem in the guest without spawning a helper process. */
+  readonly unmount: Unmount;
   /** The guest's network attachment; `undefined` unless spawned with `network`. */
   readonly network: GuestNetwork | undefined;
 }
@@ -108,20 +142,19 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
   }
   if (failure) throw new Error("guest network device did not appear", { cause: failure });
 
-  // Bring loopback up: the kernel creates lo but leaves it down, so anything
-  // binding or connecting to 127.0.0.1 (a local server, ssh to localhost)
-  // fails until it is up. It has no dependency on eth0 appearing.
-  await run_network_command(exec, ["/sbin/ifconfig", "lo", "up"]);
-
+  // Each agent exec requires a WebAssembly process-memory handoff. Run the
+  // related setup as one single-threaded guest job so a routine boot does not
+  // repeatedly snapshot the multithreaded agent merely to configure one NIC.
+  // Loopback must be included because Linux creates it down by default.
   await run_network_command(exec, [
-    "/sbin/ifconfig",
-    "eth0",
-    address,
-    "netmask",
-    "255.255.255.0",
-    "up",
+    "/bin/sh",
+    "-c",
+    [
+      "/sbin/ifconfig lo up",
+      `/sbin/ifconfig eth0 ${address} netmask 255.255.255.0 up`,
+      `/sbin/route add default gw ${gateway} eth0`,
+    ].join(" && "),
   ]);
-  await run_network_command(exec, ["/sbin/route", "add", "default", "gw", gateway, "eth0"]);
 }
 
 /**
@@ -135,7 +168,7 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  *
  * @example Boot a guest and run a command
  * ```ts
- * const guest = await spawnGuest({ root: blockDevice(storage) });
+ * const guest = await spawnGuest({ cpus: 1, root: blockDevice(storage) });
  * const process = await guest.exec(["uname", "-a"]);
  * console.log(await new Response(process.stdout).text());
  * guest.machine.close();
@@ -144,8 +177,8 @@ async function configure_network(exec: Exec, fs: FileSystem, address: string, ga
  * @example Put two guests on one network
  * ```ts
  * const network = createNetwork({ connectTcp, resolveDns });
- * const a = await spawnGuest({ root: blockDevice(aStorage), network });
- * const b = await spawnGuest({ root: blockDevice(bStorage), network });
+ * const a = await spawnGuest({ cpus: 1, root: blockDevice(aStorage), network });
+ * const b = await spawnGuest({ cpus: 1, root: blockDevice(bStorage), network });
  * const ping = await b.exec(["ping", "-c", "1", a.network.address]);
  * console.log(await new Response(ping.stdout).text());
  * ```
@@ -159,12 +192,15 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
   const attached = network ? attach_guest(network) : undefined;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
+  const agent = await agent_device();
   let machine: Machine;
   try {
-    machine = await spawnMachine({
+    machine = await bootMachine({
       ...machine_options,
-      cmdline: ["root=/dev/vda rootwait init=/init", cmdline].filter(Boolean).join(" "),
-      devices: [root, vsock, ...(attached ? [attached.attachment.device] : []), ...devices],
+      args: ["root=/dev/vda", "rootfstype=erofs", "ro", "rootwait", "init=/init", cmdline].filter(
+        Boolean,
+      ),
+      plugins: [agent, ...devices, root, vsock, ...(attached ? [attached.attachment.device] : [])],
     });
     if (bootConsole) {
       void machine.bootConsole.pipeTo(bootConsole).catch(() => {});
@@ -173,7 +209,9 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
     attached?.attachment.close();
     throw error;
   }
-  void machine.closed
+  // Network ownership follows the NIC itself. This also covers plugin
+  // configuration/boot failures without adding an Ethernet-specific hook.
+  void attached?.attachment.device.closed
     .finally(() => {
       attached?.attachment.close();
     })
@@ -189,7 +227,14 @@ export async function spawnGuest(options: SpawnGuestOptions): Promise<Guest> {
         network!.gateway,
       );
     }
-    return { machine, fs: client.fs, exec: client.exec, network: attached?.guest_network };
+    return {
+      machine,
+      fs: client.fs,
+      exec: client.exec,
+      mount: client.mount,
+      unmount: client.unmount,
+      network: attached?.guest_network,
+    };
   } catch (error) {
     machine.close();
     throw error;

@@ -1,4 +1,5 @@
-import { consoleDevice, MachinePanicError, spawnMachine } from "@tombl/linux";
+import { bootMachine, consoleDevice, MachinePanicError } from "@lowland/kernel";
+import type { MachinePlugin } from "@lowland/kernel/plugin";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { lifecycle_assets } from "./assets.ts";
@@ -18,10 +19,10 @@ function output_sink(output: { text: string }) {
 
 async function run_machine(mode: string) {
   const output = { text: "" };
-  const machine = await spawnMachine({
-    cmdline: `lifecycle=${mode}`,
+  const machine = await bootMachine({
+    args: [`lifecycle=${mode}`],
     cpus: 1,
-    devices: [consoleDevice(closed_input(), output_sink(output))],
+    plugins: [consoleDevice(closed_input(), output_sink(output))],
     initcpio: lifecycle_assets.initramfs,
   });
   void machine.bootConsole.pipeTo(output_sink(output)).catch(() => {});
@@ -39,4 +40,27 @@ test("guest lifecycle terminates the host", async (t) => {
     await assert.rejects(machine.closed, MachinePanicError);
     assert.match(output.text, /Kernel panic - not syncing/);
   });
+});
+
+test("a booted hook failure closes the machine before bootMachine rejects", async () => {
+  const failure = new Error("booted hook failed");
+  let machine_closed: Promise<void> | undefined;
+  const plugin: MachinePlugin = {
+    configure() {},
+    booted(machine) {
+      machine_closed = machine.closed;
+      throw failure;
+    },
+  };
+
+  await assert.rejects(
+    bootMachine({
+      cpus: 1,
+      initcpio: lifecycle_assets.initramfs,
+      plugins: [plugin],
+    }),
+    (error) => error === failure,
+  );
+  assert(machine_closed);
+  await machine_closed;
 });

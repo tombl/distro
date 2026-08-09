@@ -4,7 +4,7 @@ This repository builds the userspace and opinionated SDK for WebAssembly Linux. 
 
 ## Package boundary
 
-`@tombl/linux`, published from the Linux repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. It remains useful without this distro and exposes devices as the extension point.
+`@lowland/kernel`, published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The package remains useful without this distro and exposes devices as the extension point.
 
 The SDK published from this repository owns the guest agent and its host client, the supported root filesystem contract, and the opinionated API for running commands and moving data across the guest boundary. The CLI and demo site are consumers of this SDK, not alternative integration layers.
 
@@ -12,13 +12,13 @@ The SDK published from this repository owns the guest agent and its host client,
 
 Target packages are built for `wasm32-unknown-linux-musl`; host packages build the toolchain, images, SDK, tests, and applications which embed the machine. The package set should make this distinction explicit without leaking cross-compilation mechanics into each package.
 
-The wasm stdenv keeps the usual single-output derivations; Nix remains the build language and dependency solver for the build itself. Packages become runtime artifacts at the repository boundary: `apk.mkPackage` turns an ordinary derivation into a native v3 binary APK (metadata is optional and lives on the derivation's `passthru.apk`), `apk.mkRepository` indexes those artifacts, and `apk.mkSystem` asks host apk to solve and install a package selection into a conventional FHS tree with a real package database. The published repository is the runtime contract: the same index a booted guest installs from, and the same solver that built the images, so build-time and runtime installs cannot diverge. Product configuration is layered onto `mkSystem` results as `files` and `links`, and `image.mkFilesystem` only encodes that installed tree. It produces an immutable squashfs image by default; `format = "ext4"` instead produces a persistent read-write filesystem. Product disks remain owned by their consumers as `site.rootfs` and `runner.rootfs`, and are booted directly as block devices without a shared initramfs bundle. The guest SDK accepts a block device from its caller and does not publish a root filesystem of its own.
+The wasm stdenv keeps the usual single-output derivations; Nix remains the build language and dependency solver for the build itself. It compiles FHS paths into target packages, stages installation under each Nix output, and strips wasm debug data during fixup. Packages become runtime artifacts at the repository boundary: `apk.mkPackage` turns an ordinary derivation into a native v3 binary APK (metadata is optional and lives on the derivation's `passthru.apk`), but does not rewrite its payload. Instead, packaging fails on every remaining Nix store reference so the producing package or standard environment must be corrected. `apk.mkRepository` indexes those artifacts, and `apk.mkSystem` asks host apk to solve and install a package selection into a conventional FHS tree with a real package database. The published repository is the runtime contract: the same index a booted guest installs from, and the same solver that built the images, so build-time and runtime installs cannot diverge. Product configuration is layered onto `mkSystem` results as `files` and `links`, and `image.mkFilesystem` only encodes that installed tree. It produces an immutable labeled EROFS image by default; `format = "ext4"` remains available for the later persistent installation path. Product disks remain owned by their consumers as `site.rootfs` and `runner.rootfs`, and are booted directly as block devices without a shared initramfs bundle. The guest SDK accepts a block device from its caller and does not publish a system root filesystem of its own.
 
 WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn children through an explicit `clone()` entry point followed by `execve()`, normally exposed as `posix_spawn()`. Ports should replace private allocation or file-reading uses of `mmap()` with the operation they require rather than provide an incomplete mmap emulation.
 
 ## Networking
 
-`@tombl/linux` provides a virtio-net NIC and a small learning Ethernet switch.
+`@lowland/kernel` provides a virtio-net NIC and a small learning Ethernet switch.
 The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 
