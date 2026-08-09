@@ -2,6 +2,7 @@
   pkgs,
   linux,
   linux-guest,
+  sourceVersion,
 }:
 
 let
@@ -12,9 +13,11 @@ let
 in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "lowland-boot";
-  # Deliberately bump this when publishing a new boot package. The immutable
-  # asset directory remains content-derived independently of the APK version.
-  version = "0.1.0";
+  # APK upgrades require versions to increase, which a content hash cannot
+  # guarantee. The flake source's commit timestamp is reproducible for a
+  # commit and monotonic across published builds; immutable asset paths remain
+  # content-derived independently below.
+  version = "0.${sourceVersion}";
   dontUnpack = true;
 
   installPhase = ''

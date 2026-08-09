@@ -44,7 +44,7 @@ test("the site boots a lazily streamed writable live system", async ({ page }) =
   await expect(reloadedTerminal).toContainText("opfs-persisted");
   await expect(reloadedTerminal).toContainText("remount-ready");
 
-  await reloadedInput.pressSequentially("sh /sbin/install-lowland");
+  await reloadedInput.pressSequentially("install-lowland");
   await reloadedInput.press("Enter");
   await expect(reloadedTerminal).toContainText("Installation complete.", { timeout: 120_000 });
 
@@ -57,7 +57,7 @@ test("the site boots a lazily streamed writable live system", async ({ page }) =
   });
   const installedInput = page.locator(".xterm-helper-textarea");
   await installedInput.pressSequentially(
-    "while read d p t o rest; do [ \"$p\" = / ] && echo root-$d-$t-$o; done < /proc/mounts",
+    'while read d p t o rest; do [ "$p" = / ] && echo root-$d-$t-$o; done < /proc/mounts',
   );
   await installedInput.press("Enter");
   await expect(installedTerminal).toContainText("root-/dev/root-ext4-rw");

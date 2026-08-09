@@ -291,7 +291,9 @@
           fetch: (request) => {
             const url = new URL(request.url);
             if (url.hostname === "site.lowland.invalid") {
-              return fetch(new Request(new URL(url.pathname + url.search, location.origin), request));
+              return fetch(
+                new Request(new URL(url.pathname + url.search, location.origin), request),
+              );
             }
             return fetch(request);
           },

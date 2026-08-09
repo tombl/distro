@@ -31,6 +31,7 @@ cp /sbin/site-init "$target/init"
 mkdir -p "$target/etc/apk/keys"
 cp /etc/apk/keys/site.rsa.pub "$target/etc/apk/keys/site.rsa.pub"
 cp /etc/apk/repositories "$target/etc/apk/repositories"
+cp /etc/resolv.conf "$target/etc/resolv.conf"
 sync
 cleanup
 trap - EXIT

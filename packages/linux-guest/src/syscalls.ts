@@ -302,11 +302,7 @@ export async function mount(
   );
 }
 
-export async function umount2(
-  session: GuestSession,
-  target: string,
-  flags: number,
-): Promise<void> {
+export async function umount2(session: GuestSession, target: string, flags: number): Promise<void> {
   await syscall(session, NR.umount2, c_string(target), flags);
 }
 

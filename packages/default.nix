@@ -10,6 +10,7 @@
 {
   pkgs,
   debug ? false,
+  sourceVersion ? "0",
 }:
 
 let
@@ -23,7 +24,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     baseRepository = callPackage ./repository.nix { };
   in
   {
-    inherit debug;
+    inherit debug sourceVersion;
     platform = callPackage ./platform.nix { };
     apk-tools-src = callPackage ./apk-tools/source.nix { };
     apk-tools-host = pkgs.apk-tools.overrideAttrs (_old: {

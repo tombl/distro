@@ -39,6 +39,8 @@ printf '%-14s%s\n' ' (|     | )' "${label}memory${reset}   $((mem_total - mem_av
 printf '%-14s%s\n' "/'\\_   _/\`\\" "${label}shell${reset}    sh"
 printf '%-14s%s\n' '\___)=(___/' "${label}apk${reset}      add curl jq sqlite3, and more"
 echo
+echo "Run ${bold}install-lowland${reset} to install this machine locally."
+echo
 
 # The host uses the guest package to own machine and network setup. Start it
 # after the MOTD helpers finish: wasm process creation is serialized, so this
