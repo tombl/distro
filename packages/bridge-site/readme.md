@@ -41,7 +41,7 @@ No deploy needed: `*.bridge.localhost` resolves to 127.0.0.1 natively in
 Chrome and Firefox (not Safari).
 
 ```
-bash scripts/prepare-assets.sh   # once, or whenever guest assets change
+pnpm artifacts            # once, or whenever guest assets change (run from the repository root)
 node server.js
 ```
 
@@ -52,7 +52,8 @@ serving busybox httpd on 8080 the first time an origin is demanded, so
 ports bind too, but nothing listens on them inside the guest.
 `http://main.bridge.localhost:4181/` is the same wiring with a stub echo handler
 instead of a guest, keyed on the demanded port. `pnpm test` runs the whole flow
-headlessly.
+headlessly; its `pretest` step materializes the artifacts and builds the
+workspace dependencies first.
 
 The VM page, the hub, and the guest origins must all be **same-site** — that is
 why the recipe uses `main.bridge.localhost`, not `127.0.0.1`: browsers partition

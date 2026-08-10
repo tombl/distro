@@ -7,7 +7,7 @@
   },
   "scripts": {
     "check": "playwright test --list",
-    "pretest": "bash scripts/prepare-assets.sh",
+    "pretest": "pnpm --dir ../.. artifacts && pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/kernel build && pnpm --filter=@tombl/linux-guest build",
     "test": "playwright test"
   },
   "dependencies": {

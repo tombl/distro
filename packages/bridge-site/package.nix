@@ -31,7 +31,6 @@ let
 
   suite = pkgs.runCommand "bridge-site-tests" { } ''
     mkdir -p \
-      $out/.assets \
       $out/node_modules/@lowland/bytes \
       $out/node_modules/@lowland/kernel \
       $out/node_modules/@playwright \
@@ -41,7 +40,6 @@ let
     cp ${./server.js} $out/server.js
     cp -r ${./public} $out/public
     cp -r ${./tests} $out/tests
-    cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/.assets/rootfs.erofs
     cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
     cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
     cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
@@ -49,6 +47,8 @@ let
     tar -xzf ${kernel}/kernel.tgz --strip-components=1 -C $out/node_modules/@lowland/kernel
     tar -xzf ${linux-guest.package}/linux-guest.tgz \
       --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+    cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs \
+      $out/node_modules/@tombl/linux-guest/rootfs.erofs
   '';
 
   check =

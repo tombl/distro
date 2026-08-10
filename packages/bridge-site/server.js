@@ -95,9 +95,10 @@ const mainPage = `<!doctype html>
 `;
 
 // The guest.spec.js page: boots a real VM, so it also needs the built packages
-// and the nix-built guest images (scripts/prepare-assets.sh populates .assets).
+// and the guest images that `pnpm artifacts` materializes into their owning
+// packages (here, @tombl/linux-guest's rootfs.erofs).
 const vmPage = readFileSync(join(here, "tests", "vm.html"));
-const assetsDir = join(here, ".assets");
+const guestRootfs = join(here, "node_modules/@tombl/linux-guest/rootfs.erofs");
 
 const main = createServer((request, response) => {
   const headers = {
@@ -115,7 +116,7 @@ const main = createServer((request, response) => {
   }
   const path =
     pathname === "/rootfs.erofs"
-      ? join(assetsDir, pathname.slice(1))
+      ? guestRootfs
       : pathname.startsWith("/node_modules/")
         ? join(here, normalize(pathname.slice(1)))
         : null;
