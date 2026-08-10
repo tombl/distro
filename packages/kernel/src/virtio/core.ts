@@ -314,12 +314,7 @@ export interface VirtioDriver {
 export interface ConnectedVirtioDevice {
   set_features(features: bigint): void;
   setup(config_irq: number, config_address: number, config_length: number): void;
-  enable_queue(
-    vq: number,
-    size: number,
-    descriptor_address: number,
-    irq: number,
-  ): void;
+  enable_queue(vq: number, size: number, descriptor_address: number, irq: number): void;
   disable_queue(vq: number): void;
   notify(vq: number): void;
   reset(): void;
@@ -332,11 +327,7 @@ export interface VirtioConnectionContext {
   // A remote connection replaces only publication. Queue traversal and the
   // driver remain unchanged, while the main thread retains the final writes
   // to guest memory. Local connections omit these hooks.
-  publish_completion?(
-    vq: number,
-    irq: number,
-    completion: VirtqueueCompletion,
-  ): void;
+  publish_completion?(vq: number, irq: number, completion: VirtqueueCompletion): void;
   queue_is_current?(vq: number): boolean;
   config_target?(length: number): Uint8Array;
   publish_config?(irq: number, config: Uint8Array, interrupt: boolean): void;
@@ -459,10 +450,7 @@ export class VirtioController {
             const completion = Promise.withResolvers<void>();
             active.add(completion.promise);
             try {
-              Promise.resolve(handler(queue, this)).then(
-                completion.resolve,
-                completion.reject,
-              );
+              Promise.resolve(handler(queue, this)).then(completion.resolve, completion.reject);
             } catch (error) {
               completion.reject(error);
             }
@@ -618,10 +606,7 @@ export function virtio_device_description(device: VirtioDevice) {
   };
 }
 
-export function connect_virtio_device(
-  device: VirtioDevice,
-  context: VirtioConnectionContext,
-) {
+export function connect_virtio_device(device: VirtioDevice, context: VirtioConnectionContext) {
   return device[transport_device].connect(context);
 }
 

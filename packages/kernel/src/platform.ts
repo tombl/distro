@@ -4,12 +4,7 @@
 // Selected at runtime by the presence of process.getBuiltinModule, so bundlers
 // only ever see the web path and never try to resolve node builtins.
 
-import {
-  listen_endpoint,
-  post_endpoint,
-  type EmitterEndpoint,
-  type Endpoint,
-} from "./endpoint.ts";
+import { listen_endpoint, post_endpoint, type EmitterEndpoint, type Endpoint } from "./endpoint.ts";
 import { assert } from "./util.ts";
 
 export interface WorkerHandle {

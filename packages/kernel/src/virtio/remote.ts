@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { assert } from "../util.ts";
-import {
-  listen_endpoint,
-  post_endpoint,
-  type Endpoint,
-} from "../endpoint.ts";
+import { listen_endpoint, post_endpoint, type Endpoint } from "../endpoint.ts";
 export type { Endpoint } from "../endpoint.ts";
 import {
   close_virtio_device,
@@ -225,7 +221,8 @@ function connect_remote_device(
           !enabled[message.vq] ||
           Atomics.load(control, 0) !== message.device_epoch ||
           Atomics.load(control, 1 + message.vq) !== message.queue_epoch
-        ) return;
+        )
+          return;
         publish_virtqueue_completion(context.memory, message.completion);
         context.trigger_irq(message.irq);
         return;
@@ -322,10 +319,10 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
   let closing = false;
 
   const send_error = (error: unknown) =>
-    post_endpoint(
-      endpoint,
-      { type: "error", error: serialize_error(error) } satisfies WorkerMessage,
-    );
+    post_endpoint(endpoint, {
+      type: "error",
+      error: serialize_error(error),
+    } satisfies WorkerMessage);
 
   let stop_listening = () => {};
   const on_message = (value: unknown) => {
@@ -355,7 +352,8 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
               if (
                 Atomics.load(control!, 0) !== device_epoch ||
                 Atomics.load(control!, 1 + vq) !== queue_epochs[vq]
-              ) return;
+              )
+                return;
               const transfer = completion.outputs.map(({ data }) => data.buffer);
               post_endpoint(
                 endpoint,
@@ -408,13 +406,10 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
             },
             (error) => {
               stop_listening();
-              post_endpoint(
-                endpoint,
-                {
-                  type: "closed",
-                  error: serialize_error(error),
-                } satisfies WorkerMessage,
-              );
+              post_endpoint(endpoint, {
+                type: "closed",
+                error: serialize_error(error),
+              } satisfies WorkerMessage);
             },
           );
           return;

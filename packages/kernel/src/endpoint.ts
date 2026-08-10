@@ -77,10 +77,6 @@ export function listen_endpoint(endpoint: Endpoint, handlers: EndpointHandlers) 
 }
 
 /** @internal */
-export function post_endpoint(
-  endpoint: Endpoint,
-  message: unknown,
-  transfer?: Transferable[],
-) {
+export function post_endpoint(endpoint: Endpoint, message: unknown, transfer?: Transferable[]) {
   endpoint.postMessage(message, transfer);
 }
