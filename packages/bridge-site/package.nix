@@ -1,11 +1,8 @@
 {
-  apk,
-  busybox,
-  guest-agent,
-  image,
+  bytes,
   lib,
-  linux,
   linux-guest,
+  kernel,
   pkgs,
 }:
 
@@ -13,32 +10,6 @@ let
   packageJson = builtins.fromJSON (builtins.readFile ./package.json);
   playwrightVersion = packageJson.devDependencies."@playwright/test";
   driverVersion = pkgs.playwright-driver.version;
-
-  testRepository = apk.mkRepository {
-    name = "bridge-site-test";
-    packages = {
-      inherit busybox guest-agent;
-    };
-  };
-
-  testRootfs = image.mkFilesystem {
-    name = "bridge-site-test-rootfs";
-    root = apk.mkSystem {
-      name = "bridge-site-test";
-      repositories = [ testRepository ];
-      packages = [
-        busybox
-        guest-agent
-      ];
-      files = {
-        "/init" = {
-          source = ./tests/init.sh;
-          mode = "0755";
-        };
-        "/bin/linux-guest-agent" = "${guest-agent}/bin/linux-guest-agent";
-      };
-    };
-  };
 
   projects = [
     "chromium"
@@ -61,19 +32,21 @@ let
   suite = pkgs.runCommand "bridge-site-tests" { } ''
     mkdir -p \
       $out/.assets \
+      $out/node_modules/@lowland/bytes \
+      $out/node_modules/@lowland/kernel \
       $out/node_modules/@playwright \
-      $out/node_modules/@tombl/linux \
       $out/node_modules/@tombl/linux-guest
     cp ${./client.js} $out/client.js
     cp ${./playwright.config.js} $out/playwright.config.js
     cp ${./server.js} $out/server.js
     cp -r ${./public} $out/public
     cp -r ${./tests} $out/tests
-    cp ${testRootfs} $out/.assets/rootfs.squashfs
+    cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/.assets/rootfs.erofs
     cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
     cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
     cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
-    tar -xzf ${linux}/linux.tgz --strip-components=1 -C $out/node_modules/@tombl/linux
+    cp -r ${bytes}/dist $out/node_modules/@lowland/bytes/dist
+    tar -xzf ${kernel}/kernel.tgz --strip-components=1 -C $out/node_modules/@lowland/kernel
     tar -xzf ${linux-guest.package}/linux-guest.tgz \
       --strip-components=1 -C $out/node_modules/@tombl/linux-guest
   '';

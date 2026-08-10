@@ -1,4 +1,4 @@
-import { consoleDevice, spawnMachine } from "@tombl/linux";
+import { bootMachine, consoleDevice } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -31,9 +31,9 @@ test("console preserves input queued before boot", { timeout: 45_000 }, async (t
       controller.close();
     },
   });
-  const machine = await spawnMachine({
+  const machine = await bootMachine({
     cpus: 1,
-    devices: [consoleDevice(input, output_sink(output))],
+    plugins: [consoleDevice(input, output_sink(output))],
     initcpio: readFile(initramfs),
   });
   t.after(() => machine.close());

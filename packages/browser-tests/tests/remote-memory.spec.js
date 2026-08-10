@@ -71,10 +71,18 @@ test("reclaims process workers after remote-memory churn", async ({ page }) => {
 
   try {
     await page.evaluate(() => globalThis.startRemoteMemoryLifecycle());
-    // The first guest command lazily creates persistent guest-agent lane
-    // workers. Warm those up before measuring process-worker reclamation.
-    const warmup = await page.evaluate(() => globalThis.runRemoteMemoryLifecycleBatch("warmup", 1));
-    expect(warmup.status).toEqual({ code: 0, signal: null, success: true });
+    // Linux may retain a workqueue worker that it creates lazily under load.
+    // Take the baseline only after exercising the measured workload so that
+    // legitimate workqueue growth is not reported as a process-worker leak.
+    for (let batch = 0; batch < 4; batch++) {
+      const warmup = await page.evaluate(
+        ({ batch }) => globalThis.runRemoteMemoryLifecycleBatch(`warmup-${batch}`, 8),
+        { batch },
+      );
+      expect(warmup.stderr).toBe("");
+      expect(warmup.status).toEqual({ code: 0, signal: null, success: true });
+      await settledWorkerCount();
+    }
     const machineBaseline = await settledWorkerCount();
     expect(machineBaseline).toBeGreaterThan(pageBaseline);
 

@@ -4,8 +4,8 @@ import {
   type EthernetDevice,
   type EthernetPort,
   type MacAddress,
-} from "@tombl/linux";
-import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@tombl/linux/bytes";
+} from "@lowland/kernel";
+import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);
@@ -559,7 +559,7 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *   resolveDns: resolve4,
  * });
  *
- * const guest = await spawnGuest({ network });
+ * const guest = await spawnGuest({ cpus: 1, root, network });
  * // Guests can now reach whatever the host process can:
  * const process = await guest.exec(["wget", "-qO-", "http://example.com"]);
  * ```

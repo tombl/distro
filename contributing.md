@@ -80,6 +80,6 @@ incremental state in your checkout.
 
 - Enable DWARF debugging information for a single package with
   `wasmpkgs.busybox.override { stdenv = wasmpkgs.stdenvDebug; }`, or for the
-  whole scope by importing `./packages` with `debug = true`.
+  whole scope by importing `./distro` with `debug = true`.
 - Use Chrome DevTools with the
   [DWARF debug extension](https://goo.gle/wasm-debugging-extension)

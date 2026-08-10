@@ -2,7 +2,7 @@
 // Every operation here reads like the C it replaces; errno-based control
 // flow catches SystemError, because exceptions are the errno channel.
 
-import type { VsockDevice } from "@tombl/linux";
+import type { VsockDevice } from "@lowland/kernel";
 import { AT, DT, E, O, parse_dirents, SystemError } from "./abi.ts";
 import { GuestSession } from "./conn.ts";
 import {
@@ -15,6 +15,7 @@ import {
   getpid,
   type GuestFd,
   mkdirat,
+  mount,
   openat,
   read,
   readlinkat,
@@ -22,6 +23,7 @@ import {
   spawn,
   symlinkat,
   unlinkat,
+  umount2,
   write,
 } from "./syscalls.ts";
 import {
@@ -40,11 +42,11 @@ import { ChildProcess } from "./process.ts";
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
 
 export interface ExecOptions {
-  /** Working directory for the process. Defaults to `/workspace`. */
+  /** Working directory for the process. Defaults to `/tmp`. */
   cwd?: string;
   /**
    * Environment for the process, merged over the defaults of
-   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/workspace`, and
+   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/root`, and
    * `TMPDIR=/tmp`. Only the variables being changed need to be set.
    */
   env?: Readonly<Record<string, string>>;
@@ -70,7 +72,7 @@ export interface ExecOptions {
  * File operations in the guest, available as `guest.fs`.
  *
  * Paths are guest paths. The packaged root image mounts writable space at
- * `/tmp` and `/workspace`; the system directories are read-only. A failed
+ * `/tmp`; the system directories are read-only. A failed
  * operation rejects with a `SystemError` carrying the errno code — for
  * example `"ENOENT"` when a path does not exist.
  */
@@ -213,10 +215,29 @@ export interface FileSystem {
  */
 export type Exec = (argv: readonly string[], options?: ExecOptions) => Promise<ChildProcess>;
 
+export interface MountOptions {
+  /** Filesystem type, such as `virtiofs`, `ext4`, or `tmpfs`. Omit for bind mounts. */
+  type?: string;
+  /** Linux mount flags. */
+  flags?: number;
+  /** Optional filesystem-specific mount data. */
+  data?: string;
+}
+
+export type Mount = (
+  source: string | null,
+  target: string,
+  options?: MountOptions,
+) => Promise<void>;
+
+export type Unmount = (target: string, options?: { flags?: number }) => Promise<void>;
+
 export interface GuestClientCapabilities {
   ping(timeoutMs?: number): Promise<void>;
   readonly fs: FileSystem;
   readonly exec: Exec;
+  readonly mount: Mount;
+  readonly unmount: Unmount;
 }
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
@@ -289,6 +310,21 @@ class GuestClient {
 
   async ping(timeoutMs = 5000) {
     await getpid(await this.#connect(timeoutMs));
+  }
+
+  async mount(source: string | null, target: string, options: MountOptions = {}) {
+    await mount(
+      await this.#connect(),
+      source,
+      target,
+      options.type ?? null,
+      options.flags ?? 0,
+      options.data ?? null,
+    );
+  }
+
+  async unmount(target: string, options: { flags?: number } = {}) {
+    await umount2(await this.#connect(), target, options.flags ?? 0);
   }
 
   async readFile(path: string, options: { signal?: AbortSignal } = {}) {
@@ -526,14 +562,14 @@ class GuestClient {
     options.signal?.throwIfAborted();
     const environment = {
       PATH: "/bin:/usr/bin:/sbin:/usr/sbin",
-      HOME: "/workspace",
+      HOME: "/root",
       TMPDIR: "/tmp",
       ...options.env,
     };
     const env = Object.entries(environment).map(([key, value]) => `${key}=${value}`);
     const release = await this.#acquire_process_slot();
     try {
-      const spawned = await spawn(session, argv, options.cwd ?? "/workspace", env);
+      const spawned = await spawn(session, argv, options.cwd ?? "/tmp", env);
       return new ChildProcess({
         session,
         ...spawned,
@@ -572,5 +608,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
       open: client.open.bind(client),
     },
     exec: client.exec.bind(client),
+    mount: client.mount.bind(client),
+    unmount: client.unmount.bind(client),
   };
 }

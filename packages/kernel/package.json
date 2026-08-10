@@ -1,0 +1,42 @@
+{
+  "name": "@lowland/kernel",
+  "version": "0.0.0",
+  "description": "Low-level Linux virtual machine and virtio device primitives for JavaScript.",
+  "homepage": "https://linux.tombl.dev/reference/kernel/",
+  "license": "MIT AND (GPL-2.0-only WITH Linux-syscall-note)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombl/distro.git",
+    "directory": "packages/kernel"
+  },
+  "files": [
+    "dist",
+    "vmlinux.wasm"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "default": "./dist/plugin.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit && tsc -p test",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@lowland/bytes": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "typescript": "^7"
+  },
+  "bundledDependencies": [
+    "@lowland/bytes"
+  ]
+}

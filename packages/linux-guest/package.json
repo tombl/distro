@@ -10,6 +10,7 @@
     "directory": "packages/linux-guest"
   },
   "files": [
+    "agent.erofs",
     "dist"
   ],
   "type": "module",
@@ -31,11 +32,17 @@
     "build": "tsc",
     "check": "tsc --noEmit"
   },
+  "dependencies": {
+    "@lowland/bytes": "0.0.0"
+  },
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@tombl/linux": "0.0.0"
-  }
+    "@lowland/kernel": "0.0.0"
+  },
+  "bundledDependencies": [
+    "@lowland/bytes"
+  ]
 }

@@ -114,7 +114,7 @@ const main = createServer((request, response) => {
     return;
   }
   const path =
-    pathname === "/rootfs.squashfs"
+    pathname === "/rootfs.erofs"
       ? join(assetsDir, pathname.slice(1))
       : pathname.startsWith("/node_modules/")
         ? join(here, normalize(pathname.slice(1)))

@@ -4,8 +4,8 @@
 <script type="importmap">
   {
     "imports": {
-      "@tombl/linux": "/node_modules/@tombl/linux/dist/index.js",
-      "@tombl/linux/bytes": "/node_modules/@tombl/linux/dist/bytes.js",
+      "@lowland/bytes": "/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
       "@tombl/linux-guest": "/node_modules/@tombl/linux-guest/dist/index.js"
     }
   }
@@ -52,7 +52,7 @@
       },
       resolveDns: async () => [],
     });
-    const rootfs = await bytes("/rootfs.squashfs");
+    const rootfs = await bytes("/rootfs.erofs");
     const root = blockDevice({
       capacity: rootfs.byteLength,
       read(offset, length) {

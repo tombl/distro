@@ -17,7 +17,7 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(devices?: readonly VirtioDevice[]): Promise<NetworkedGuest>;
+  spawn(devices?: readonly VirtioDevice[], options?: { cmdline?: string }): Promise<NetworkedGuest>;
 }
 
 export function guest_test(
@@ -44,9 +44,13 @@ export function guest_test(
     const guests: NetworkedGuest[] = [];
     const consoles: Promise<void>[] = [];
 
-    async function spawn(extra_devices: readonly VirtioDevice[] = []) {
+    async function spawn(
+      extra_devices: readonly VirtioDevice[] = [],
+      options: { cmdline?: string } = {},
+    ) {
       const guest = await spawnGuest({
         cpus: 1,
+        ...options,
         network,
         root: root_device(),
         devices: [
@@ -57,10 +61,10 @@ export function guest_test(
       });
       guests.push(guest);
       consoles.push(guest.machine.bootConsole.pipeTo(console_output()));
-      await guest.fs.writeFile("/workspace/network-test", network_test);
-      await guest.fs.chmod("/workspace/network-test", 0o755);
-      await guest.fs.writeFile("/workspace/user-trap", user_trap);
-      await guest.fs.chmod("/workspace/user-trap", 0o755);
+      await guest.fs.writeFile("/tmp/network-test", network_test);
+      await guest.fs.chmod("/tmp/network-test", 0o755);
+      await guest.fs.writeFile("/tmp/user-trap", user_trap);
+      await guest.fs.chmod("/tmp/user-trap", 0o755);
       return guest;
     }
 

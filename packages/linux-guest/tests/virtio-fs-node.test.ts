@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { FSError } from "@tombl/linux";
+import { FSError } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 
 // Virtio-fs carries Linux ABI flags even when this test runs on another host.

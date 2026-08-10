@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { blockDevice, consoleDevice, entropyDevice, spawnMachine } from "@tombl/linux";
+import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import { closeSync, fstatSync, fsync, openSync, readSync, writeSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
@@ -178,12 +178,10 @@ for (const disk of args.disk) {
   );
 }
 
-const machine = await spawnMachine({
-  cmdline: ["root=/dev/vda rootwait init=/init", args.cmdline, shares.cmdline]
-    .filter(Boolean)
-    .join(" "),
+const machine = await bootMachine({
+  args: ["root=/dev/vda", "rootwait", "init=/init", args.cmdline, shares.cmdline].filter(Boolean),
   cpus: parseInt(args.cpus, 10),
-  devices,
+  plugins: devices,
 });
 
 const bootConsole = machine.bootConsole

@@ -5,7 +5,7 @@
 ## Installation
 
 ```sh
-npm install @tombl/linux @tombl/linux-guest
+npm install @lowland/kernel @tombl/linux-guest
 ```
 
 ## Usage
@@ -13,17 +13,29 @@ npm install @tombl/linux @tombl/linux-guest
 ```js
 import { blockDevice, spawnGuest } from "@tombl/linux-guest";
 
-const rootfs = new Uint8Array(await fetch("/rootfs.squashfs").then((r) => r.arrayBuffer()));
+const rootfs = new Uint8Array(await fetch("/rootfs.erofs").then((r) => r.arrayBuffer()));
 const root = blockDevice({
   capacity: rootfs.byteLength,
   read: (offset, length) => rootfs.subarray(offset, offset + length),
 });
-const guest = await spawnGuest({ root });
+const guest = await spawnGuest({ cpus: 1, root });
 const process = await guest.exec(["uname", "-a"]);
 
 console.log(await new Response(process.stdout).text());
 guest.machine.close();
 ```
+
+Exactly one attached EROFS or ext4 filesystem must have the native volume label
+`LOWLAND_ROOT`. Device order is deliberately not part of the boot contract:
+the private agent scans attached block devices for that label, pivots into the
+matching image, and unmounts its own boot filesystem before guest processes
+run. It rejects missing and duplicate root labels. Images built by this
+repository set the label automatically.
+
+By default, EROFS is mounted read-only and ext4 is mounted read-write. Pass
+`cmdline: "lowland.root.overlay=tmpfs"` to mount either image read-only beneath
+a temporary writable OverlayFS. The overlay is discarded when the machine
+stops; durable storage remains the embedding application's responsibility.
 
 ## Share a host directory
 
@@ -35,6 +47,7 @@ import { NodeFS } from "@tombl/linux-guest/node";
 
 const shared = new NodeFS("/srv/guest-share");
 const guest = await spawnGuest({
+  cpus: 1,
   root,
   devices: [
     fileSystemDevice(shared, {
@@ -44,13 +57,13 @@ const guest = await spawnGuest({
   ],
 });
 
-await guest.fs.mkdir("/workspace/host");
+await guest.fs.mkdir("/tmp/host");
 const mount = await guest.exec([
   "mount",
   "-t",
   "virtiofs",
   "host",
-  "/workspace/host",
+  "/tmp/host",
 ]);
 if (!(await mount.status).success) throw new Error("mount failed");
 ```
@@ -84,6 +97,7 @@ const shared = new BrowserFS(
   await opfs.getDirectoryHandle("guest", { create: true }),
 );
 const guest = await spawnGuest({
+  cpus: 1,
   root,
   devices: [
     fileSystemDevice(shared, {
@@ -137,7 +151,7 @@ be repeated and require an absolute guest path:
 
 ```sh
 wasm-linux-runner \
-  --share ./project:/workspace/project \
+  --share ./project:/tmp/project \
   --share-ro ./toolchain:/opt/toolchain
 ```
 

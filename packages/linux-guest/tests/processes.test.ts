@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import { spawnMachine, vsockDevice } from "@tombl/linux";
+import { bootMachine, vsockDevice } from "@lowland/kernel";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { SystemError } from "../src/index.ts";
 import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
-import { root_device } from "./assets.ts";
+import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
 
 guest_test("processes", async (t, fixture) => {
   const guest = await fixture.spawn();
-  const directory = "/workspace/processes";
+  const directory = "/tmp/processes";
   await guest.fs.mkdir(directory);
   try {
     const large = pattern_bytes(256 * 1024);
@@ -76,7 +76,7 @@ guest_test("processes", async (t, fixture) => {
     await t.test("isolates user module traps to the offending process", async () => {
       const survivor = await guest.exec(["cat"]);
       const survivor_output = collect(survivor.stdout);
-      const crashed = await guest.exec(["/workspace/user-trap"]);
+      const crashed = await guest.exec(["/tmp/user-trap"]);
       assert.deepEqual(await crashed.status, {
         success: false,
         code: 0,
@@ -199,9 +199,10 @@ guest_test("session teardown", async (t) => {
   await t.test("cleans resources before accepting a fresh session", async () => {
     const vsock = vsockDevice();
     const root = root_device();
-    const machine = await spawnMachine({
-      devices: [root, vsock],
-      cmdline: "root=/dev/vda rootwait init=/init",
+    const machine = await bootMachine({
+      cpus: 1,
+      args: ["root=/dev/vda", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
+      plugins: [agent_device(), root, vsock],
     });
     try {
       let first: GuestSession | undefined;
@@ -214,19 +215,19 @@ guest_test("session teardown", async (t) => {
         }
       }
 
-      const fifoPath = "/workspace/session-teardown-fifo";
-      const created = await spawn(first, ["mkfifo", fifoPath], "/workspace", [
+      const fifoPath = "/tmp/session-teardown-fifo";
+      const created = await spawn(first, ["mkfifo", fifoPath], "/tmp", [
         "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
       ]);
       await created.stdin.close();
       assert.equal(await reap(first, created.pid), 0);
       await Promise.all([created.stdout.close(), created.stderr.close()]);
 
-      const abandoned = await openat(first, "/workspace", O.RDONLY, 0);
+      const abandoned = await openat(first, "/tmp", O.RDONLY, 0);
       const child = await spawn(
         first,
         ["sh", "-c", "sleep 30 </dev/null >/dev/null 2>&1 & echo $!"],
-        "/workspace",
+        "/tmp",
         ["PATH=/bin:/usr/bin:/sbin:/usr/sbin"],
       );
       await child.stdin.close();
@@ -242,7 +243,7 @@ guest_test("session teardown", async (t) => {
 
       const second = await GuestSession.connect(vsock);
       try {
-        const replacement = await openat(second, "/workspace", O.RDONLY, 0);
+        const replacement = await openat(second, "/tmp", O.RDONLY, 0);
         // Lane sockets also consume descriptors, so their exact allocation
         // order may differ. Re-entering the old descriptor range proves the
         // abandoned session-owned file was closed.
