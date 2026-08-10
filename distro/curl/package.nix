@@ -21,6 +21,14 @@ stdenv.mkDerivation (finalAttrs: {
     zlib
   ];
 
+  # curl's configure resolves OpenSSL through pkg-config whenever the staged
+  # openssl.pc is reachable, and falls back to --with-openssl path probing when
+  # pkg-config is absent. Those two paths embed different locations into the
+  # installed metadata, so pkg-config's presence is part of the build contract:
+  # declare it to make the resolution -- and therefore the produced metadata --
+  # deterministic regardless of the build environment.
+  nativeBuildInputs = [ pkgs.pkg-config ];
+
   # Static-only, OpenSSL backend, zlib for content encoding. Everything that
   # would pull in an unavailable transport or a library we do not ship is
   # turned off explicitly so the cross configure cannot latch onto a stray
@@ -56,19 +64,28 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-ca-embed"
   ];
 
+  # Configure must find the Nix-staged OpenSSL and zlib while cross-building,
+  # but the installed metadata (curl-config, libcurl.la, libcurl.pc) describes
+  # the guest runtime. The build-time prefixes leak in through --with-openssl
+  # and --with-zlib: curl-config echoes the full configure line, zlib's
+  # detection records -L$prefix/lib, and OpenSSL's pkg-config metadata may or
+  # may not have been used. Rewrite the two known build roots to the guest FHS
+  # root wherever they appear. --replace-quiet, not --replace-fail, is
+  # deliberate: pkg-config already yields guest paths for a file in some
+  # configurations, and the build must not depend on which resolution path
+  # configure took.
   postFixup = ''
-    # Configure must find the Nix-staged OpenSSL and zlib while cross-building,
-    # but curl-config and the development metadata describe the guest runtime.
-    # Translate those two known build roots to / so downstream guest builds do
-    # not claim that their Nix locations will exist after APK installation.
-    substituteInPlace "$out/bin/curl-config" \
-      --replace-fail ${openssl} / \
-      --replace-fail ${zlib} /
-    substituteInPlace "$out/lib/libcurl.la" \
-      --replace-fail ${openssl} / \
-      --replace-fail ${zlib} /
+    substituteInPlace "$out/bin/curl-config" "$out/lib/libcurl.la" \
+      --replace-quiet "${openssl}/lib" /lib \
+      --replace-quiet "${openssl}/include" /include \
+      --replace-quiet "${zlib}/lib" /lib \
+      --replace-quiet "${zlib}/include" /include \
+      --replace-quiet ${openssl} / \
+      --replace-quiet ${zlib} /
     substituteInPlace "$out/lib/pkgconfig/libcurl.pc" \
-      --replace-fail ${openssl} /
+      --replace-quiet "${openssl}/lib" /lib \
+      --replace-quiet "${openssl}/include" /include \
+      --replace-quiet ${openssl} /
   '';
 
   passthru.checks = {
