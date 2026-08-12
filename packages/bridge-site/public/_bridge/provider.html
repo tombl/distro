@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>bridge provider</title>
+<script>
+  // Embedded hidden by the VM page (serveGuest). Same-site with the guest family,
+  // so the rendezvous BroadcastChannel is unpartitioned and reaches the requester
+  // frames on cold guest tabs. Relays each "this origin is wanted" demand up to
+  // the VM page, which binds the origin lazily.
+  const channel = new BroadcastChannel("linux-bridge-rendezvous-v1");
+
+  // The embedder (VM page) origin, learned from its first message. Demands go
+  // only to it, never to "*", so no other same-site page can eavesdrop.
+  let embedder = null;
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    embedder = event.origin;
+    // Re-announce now that we can forward: any requester already waiting demands
+    // again immediately instead of on its slow interval.
+    channel.postMessage({ version: 1, type: "provider-ready" });
+  });
+
+  channel.onmessage = ({ data }) => {
+    if (data?.version !== 1 || data.type !== "demand" || embedder === null) return;
+    window.parent.postMessage({ version: 1, type: "demand", origin: data.origin }, embedder);
+  };
+
+  // Announce on load so requesters waiting on a provider re-demand immediately.
+  channel.postMessage({ version: 1, type: "provider-ready" });
+</script>

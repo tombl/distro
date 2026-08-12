@@ -99,6 +99,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     image = callPackage ./image { };
 
     site = callPackage ./site { };
+    bridge-site = callPackage ../packages/bridge-site { };
 
     apk-checks = callPackage ./apk/checks.nix { };
     repository = baseRepository // {
@@ -112,6 +113,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     ltp = callPackage ./ltp/package.nix { };
     kselftests = callPackage ./kselftests/package.nix { };
     node-workspace = callPackage ./npm/node-workspace.nix { };
+    playwright = callPackage ./npm/playwright.nix { };
     linux-guest = callPackage ./npm/linux-guest { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };

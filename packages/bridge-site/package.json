@@ -1,0 +1,21 @@
+{
+  "name": "@tombl/bridge-site",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./client.js"
+  },
+  "scripts": {
+    "check": "playwright test --list",
+    "pretest": "pnpm --dir ../.. artifacts && pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/kernel build && pnpm --filter=@tombl/linux-guest build",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@lowland/bytes": "workspace:*",
+    "@lowland/kernel": "workspace:*",
+    "@tombl/linux-guest": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

@@ -74,10 +74,10 @@
     <script type="importmap">
       {
         "imports": {
-          "@lowland/bytes": "./static/__ASSETS__/bytes/index.js",
-          "@lowland/kernel": "./static/__ASSETS__/dist/index.js",
-          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js",
-          "@tombl/linux-guest/browser": "./static/__ASSETS__/guest/browser.js"
+          "@lowland/bytes": "./static/__ASSET_DIRECTORY__/bytes/index.js",
+          "@lowland/kernel": "./static/__ASSET_DIRECTORY__/dist/index.js",
+          "@tombl/linux-guest": "./static/__ASSET_DIRECTORY__/guest/index.js",
+          "@tombl/linux-guest/browser": "./static/__ASSET_DIRECTORY__/guest/browser.js"
         }
       }
     </script>
@@ -88,11 +88,13 @@
         createNetwork,
         entropyDevice,
         fileSystemDevice,
+        guestFetchHandler,
         hostFetchNetwork,
         blockDevice,
         spawnGuest,
       } from "@tombl/linux-guest";
       import { BrowserFS } from "@tombl/linux-guest/browser";
+      import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
       const bootMode = "__BOOT_MODE__";
       if (
@@ -324,6 +326,15 @@
       });
       await guest.fs.mkdir("/boot", { recursive: true });
       await guest.mount("boot", "/boot", { type: "virtiofs" });
+
+      // Service-worker and BroadcastChannel state is partitioned by site, so
+      // only production low.land can provide its sibling guest-origin family.
+      if (location.origin === "https://low.land") {
+        serveGuest({
+          hub: "https://hub.localhost.low.land",
+          fetch: (port) => guestFetchHandler(guest.network, { port }),
+        });
+      }
     </script>
   </body>
 </html>

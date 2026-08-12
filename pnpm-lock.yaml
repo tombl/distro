@@ -8,6 +8,22 @@ importers:
 
   .: {}
 
+  packages/bridge-site:
+    dependencies:
+      '@lowland/bytes':
+        specifier: workspace:*
+        version: link:../bytes
+      '@lowland/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+      '@tombl/linux-guest':
+        specifier: workspace:*
+        version: link:../linux-guest
+    devDependencies:
+      '@playwright/test':
+        specifier: 1.61.1
+        version: 1.61.1
+
   packages/browser-tests:
     dependencies:
       '@lowland/bytes':

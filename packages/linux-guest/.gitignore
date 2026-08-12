@@ -1,2 +1,9 @@
 dist/
 /agent.erofs
+/getdents-inode
+/lifecycle-initramfs.cpio
+/network-test
+/rootfs.erofs
+/rootfs.ext4
+/user-trap
+/wrong-root.erofs

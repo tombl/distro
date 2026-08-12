@@ -136,9 +136,11 @@
                     echo "artifacts must be materialized from the repository root" >&2
                     exit 1
                   fi
+                  test_assets=${wasmpkgs.linux-guest.package.checks.tests.assets}
                   install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
-                  install -Dm0644 ${wasmpkgs.linux-guest.package.checks.tests.assets}/agent.erofs \
-                    packages/linux-guest/agent.erofs
+                  for asset in "$test_assets"/*; do
+                    install -Dm0644 "$asset" "packages/linux-guest/$(basename "$asset")"
+                  done
                 '';
               }
             );
