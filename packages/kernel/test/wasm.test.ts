@@ -191,6 +191,48 @@ test("virtio-net preserves pending frames but drops receive chains on reset", as
   network.close();
 });
 
+test("virtio block reports a short caller-buffer read as IOERR", async () => {
+  const block_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const device = blockDevice({
+    capacity: 512,
+    read(_offset, target) {
+      target.fill(0xaa);
+      return target.byteLength - 1;
+    },
+  });
+  const interrupted = Promise.withResolvers<void>();
+  const imports = virtio_imports({
+    memory: block_memory,
+    devices: [device],
+    trigger_irq() {
+      interrupted.resolve();
+    },
+    on_error(error) {
+      interrupted.reject(error);
+    },
+  });
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    const view = new DataView(block_memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, length, true);
+    view.setUint16(14, flags, true);
+  };
+  const available = 1 << 7;
+  const next = 1;
+  const writable = 1 << 1;
+  descriptor(0, 128, 16, available | next);
+  descriptor(1, 256, 512, available | next | writable);
+  descriptor(2, 1024, 1, available | writable);
+  new Uint8Array(block_memory.buffer, 1024, 1)[0] = 0xff;
+
+  imports.enable_vring(0, 0, 4, 0, 1);
+  imports.notify(0, 0);
+  await interrupted.promise;
+
+  assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 1);
+  await close_virtio_device(device);
+});
+
 test("console input is held until the guest opens its port", async () => {
   const console_memory = new WebAssembly.Memory({
     initial: 1,

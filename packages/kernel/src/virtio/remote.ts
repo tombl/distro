@@ -90,7 +90,8 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
  * The endpoint may instead be a MessagePort. That form is useful when the
  * caller needs to initialize a worker with other data, or serve several
  * devices from one worker. Closing the device closes this protocol and its
- * driver; ownership of the Worker or MessagePort remains with the caller.
+ * driver; ownership of the Worker or MessagePort remains with the caller. The
+ * caller must keep that endpoint alive until `device.closed` settles.
  *
  * @example
  * ```ts

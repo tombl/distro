@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { blockDevice, bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
-import { closeSync, fstatSync, fsync, openSync, readSync, writeSync } from "node:fs";
+import { bootMachine, consoleDevice, entropyDevice, workerDevice } from "@lowland/kernel";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
+import { Worker } from "node:worker_threads";
 import { configureShares, type ShareArgument } from "./shares.ts";
 
 function assert(cond: unknown, message = "Assertion failed"): asserts cond {
@@ -136,45 +136,17 @@ if (args.entropy) {
 }
 
 for (const disk of args.disk) {
-  let readonly = false;
-  let file: number;
+  const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), {
+    workerData: { path: disk },
+  });
   try {
-    file = openSync(disk, "r+");
-  } catch {
-    readonly = true;
-    file = openSync(disk, "r");
+    const device = await workerDevice(worker);
+    void device.closed.finally(() => worker.terminate()).catch(() => {});
+    devices.push(device);
+  } catch (error) {
+    await worker.terminate();
+    throw error;
   }
-  const { size } = fstatSync(file);
-
-  process.on("exit", () => closeSync(file));
-
-  devices.push(
-    blockDevice({
-      read: async (offset, array) => {
-        let n = 0;
-        while (n < array.byteLength) {
-          const read = readSync(file, array, n, array.byteLength - n, offset + n);
-          if (read === 0) break;
-          n += read;
-        }
-        return n;
-      },
-      write: readonly
-        ? undefined
-        : async (offset, data) => {
-            let n = 0;
-            while (n < data.byteLength) {
-              n += writeSync(file, data, n, data.byteLength - n, offset + n);
-            }
-            return n;
-          },
-      flush: () =>
-        new Promise<void>((resolve, reject) => {
-          fsync(file, (error) => (error ? reject(error) : resolve()));
-        }),
-      capacity: size,
-    }),
-  );
 }
 
 const machine = await bootMachine({

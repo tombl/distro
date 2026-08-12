@@ -97,7 +97,7 @@ export class MachinePanicError extends Error {
   }
 }
 
-const resources = (async () => {
+async function read_resources() {
   const { bytes, module: vmlinux } = await platform.load_wasm(
     new URL("../vmlinux.wasm", import.meta.url),
   );
@@ -133,7 +133,10 @@ const resources = (async () => {
     sections,
     initramfs,
   };
-})();
+}
+
+let resources: ReturnType<typeof read_resources> | undefined;
+const load_resources = () => (resources ??= read_resources());
 
 const PAGE_SIZE = 0x10000;
 // Leave the final wasm32 page out so the physical-memory size fits in u32.
@@ -230,7 +233,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   const close = () => void finish();
 
   try {
-    const { sections, vmlinux, initramfs, memory: memory_type } = await resources;
+    const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
     const initcpio = options.initcpio ? await options.initcpio : undefined;
     const module_pages = Number(memory_type.minimum);
     const initcpio_addr = module_pages * PAGE_SIZE;
