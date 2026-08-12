@@ -58,8 +58,9 @@
     const rootfs = await bytes("/rootfs.erofs");
     const root = blockDevice({
       capacity: rootfs.byteLength,
-      read(offset, length) {
-        return rootfs.subarray(offset, offset + length);
+      read(offset, target) {
+        target.set(rootfs.subarray(offset, offset + target.byteLength));
+        return target.byteLength;
       },
     });
     const guest = await spawnGuest({
