@@ -106,7 +106,7 @@ globalThis.opfsWorkerDiskRoundTrip = async () => {
     );
     return { marker, write, read };
   } finally {
-    await directory.removeEntry(name).catch(() => {});
+    await directory.removeEntry(name);
   }
 };
 

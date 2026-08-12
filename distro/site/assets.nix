@@ -4,6 +4,7 @@
   pkgs,
   kernel,
   linux-guest,
+  opfsDiskWorker,
 }:
 
 pkgs.runCommand "site-assets" { } ''
@@ -16,4 +17,5 @@ pkgs.runCommand "site-assets" { } ''
   cp -rL ${linux-guest.package}/dist $out/guest
   cp -L ${linux-guest.package}/agent.erofs $out/agent.erofs
   cp ${bridge-site.package.client} $out/bridge-client.js
+  cp ${opfsDiskWorker}/opfs-disk-worker.js $out/opfs-disk-worker.js
 ''
