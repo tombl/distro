@@ -150,15 +150,14 @@ for (const disk of args.disk) {
 
   devices.push(
     blockDevice({
-      read: async (offset, length) => {
-        const array = new Uint8Array(length);
+      read: async (offset, array) => {
         let n = 0;
         while (n < array.byteLength) {
           const read = readSync(file, array, n, array.byteLength - n, offset + n);
           if (read === 0) break;
           n += read;
         }
-        return array.subarray(0, n);
+        return n;
       },
       write: readonly
         ? undefined

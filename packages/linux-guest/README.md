@@ -16,7 +16,11 @@ import { blockDevice, spawnGuest } from "@tombl/linux-guest";
 const rootfs = new Uint8Array(await fetch("/rootfs.erofs").then((r) => r.arrayBuffer()));
 const root = blockDevice({
   capacity: rootfs.byteLength,
-  read: (offset, length) => rootfs.subarray(offset, offset + length),
+  read(offset, target) {
+    const source = rootfs.subarray(offset, offset + target.byteLength);
+    target.set(source);
+    return source.byteLength;
+  },
 });
 const guest = await spawnGuest({ cpus: 1, root });
 const process = await guest.exec(["uname", "-a"]);

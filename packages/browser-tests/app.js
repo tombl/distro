@@ -20,8 +20,10 @@ async function rootDevice() {
   const bytes = await rootfs;
   return blockDevice({
     capacity: bytes.byteLength,
-    read(offset, length) {
-      return bytes.subarray(offset, offset + length);
+    read(offset, target) {
+      const source = bytes.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
   });
 }

@@ -210,25 +210,28 @@
 
         return {
           capacity: size,
-          async read(offset, length) {
+          async read(offset, target) {
+            const length = target.byteLength;
             if (offset < 0 || length < 0 || offset + length > size) {
               throw new RangeError("rootfs read is outside the disk");
             }
-            if (whole) return whole.slice(offset, offset + length);
+            if (whole) {
+              target.set(whole.subarray(offset, offset + length));
+              return length;
+            }
             const first = Math.floor(offset / CHUNK);
             const last = Math.floor((offset + length - 1) / CHUNK);
             const loaded = await Promise.all(
               Array.from({ length: last - first + 1 }, (_, index) => loadChunk(first + index)),
             );
-            const result = new Uint8Array(length);
             for (let index = 0; index < loaded.length; index++) {
               const chunkIndex = first + index;
               const chunkStart = chunkIndex * CHUNK;
               const from = Math.max(offset, chunkStart);
               const to = Math.min(offset + length, chunkStart + loaded[index].byteLength);
-              result.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
+              target.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
             }
-            return result;
+            return length;
           },
         };
       }
@@ -264,8 +267,10 @@
         const dirty = new Set();
         const storage = {
           capacity: disk.byteLength,
-          read(offset, length) {
-            return disk.slice(offset, offset + length);
+          read(offset, target) {
+            const source = disk.subarray(offset, offset + target.byteLength);
+            target.set(source);
+            return source.byteLength;
           },
           write(offset, data) {
             disk.set(data, offset);

@@ -151,15 +151,14 @@ if (diskPath) {
   devices.push(
     blockDevice({
       capacity: size,
-      read: async (offset, length) => {
-        const data = new Uint8Array(length);
+      read: async (offset, data) => {
         let read = 0;
         while (read < data.length) {
           const length = readSync(disk, data, read, data.length - read, offset + read);
           if (length === 0) break;
           read += length;
         }
-        return data.subarray(0, read);
+        return read;
       },
       write: async (offset, data) => {
         let written = 0;

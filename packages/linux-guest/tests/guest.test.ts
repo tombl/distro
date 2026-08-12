@@ -113,8 +113,10 @@ test("rejects a system disk without a label", async () => {
       cpus: 1,
       root: blockDevice({
         capacity: empty.byteLength,
-        read(offset, length) {
-          return empty.subarray(offset, offset + length);
+        read(offset, target) {
+          const source = empty.subarray(offset, offset + target.byteLength);
+          target.set(source);
+          return source.byteLength;
         },
       }),
     }),

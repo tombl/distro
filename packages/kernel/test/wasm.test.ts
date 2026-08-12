@@ -512,7 +512,7 @@ test("an unattached remote virtio device can be closed", async () => {
   let closes = 0;
   const served = blockDevice({
     capacity: 512,
-    read: (_offset, length) => new Uint8Array(length),
+    read: (_offset, target) => target.byteLength,
     close() {
       closes += 1;
     },
@@ -530,7 +530,7 @@ test("an unattached remote virtio device can be closed", async () => {
 test("a worker-device failure after ready is observed before attachment", async () => {
   const served = blockDevice({
     capacity: 512,
-    read: (_offset, length) => new Uint8Array(length),
+    read: (_offset, target) => target.byteLength,
   });
   const channel = new MessageChannel();
   serveDevice(channel.port1, served);
