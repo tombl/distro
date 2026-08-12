@@ -74,10 +74,10 @@
     <script type="importmap">
       {
         "imports": {
-          "@lowland/bytes": "./static/__ASSETS__/bytes/index.js",
-          "@lowland/kernel": "./static/__ASSETS__/dist/index.js",
-          "@tombl/linux-guest": "./static/__ASSETS__/guest/index.js",
-          "@tombl/linux-guest/browser": "./static/__ASSETS__/guest/browser.js"
+          "@lowland/bytes": "./static/__ASSET_DIRECTORY__/bytes/index.js",
+          "@lowland/kernel": "./static/__ASSET_DIRECTORY__/dist/index.js",
+          "@tombl/linux-guest": "./static/__ASSET_DIRECTORY__/guest/index.js",
+          "@tombl/linux-guest/browser": "./static/__ASSET_DIRECTORY__/guest/browser.js"
         }
       }
     </script>
@@ -94,7 +94,7 @@
         spawnGuest,
       } from "@tombl/linux-guest";
       import { BrowserFS } from "@tombl/linux-guest/browser";
-      import { serveGuest } from "./static/__ASSETS__/bridge-client.js";
+      import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
       const bootMode = "__BOOT_MODE__";
       if (
