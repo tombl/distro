@@ -2,7 +2,13 @@ import { expect, test } from "@playwright/test";
 
 // Each guest origin names a TCP port in its first label; nothing pre-declares
 // them. A distinct port per test keeps the per-context service workers apart.
-const origin = (port) => `http://${port}.bridge.localhost:4180`;
+const origin = (hub, port) => {
+  const url = new URL(hub);
+  url.hostname = `${port}.bridge.localhost`;
+  return url.origin;
+};
+
+const hubFor = (page) => page.evaluate(() => globalThis.bridgeOrigin);
 
 function trace(page) {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
@@ -27,12 +33,13 @@ async function bodyReaches(page, url, needle) {
 test("binds an origin nothing pre-declared on a cold navigation", async ({ context, page }) => {
   trace(page);
   await page.goto("/");
+  const hub = await hubFor(page);
 
   // A port nothing ever mentioned: the fallback installs the worker, demands a
   // VM through the hub, the VM binds it lazily, and the page reloads to content.
   const guest = await context.newPage();
   trace(guest);
-  await bodyReaches(guest, `${origin(18080)}/some/path?q=1`, "::chunk::");
+  await bodyReaches(guest, `${origin(hub, 18080)}/some/path?q=1`, "::chunk::");
 
   const body = await guest.locator("body").innerText();
   expect(body).toContain("/some/path?q=1");
@@ -43,26 +50,34 @@ test("binds an origin nothing pre-declared on a cold navigation", async ({ conte
 test("echoes a posted request body", async ({ context, page }) => {
   trace(page);
   await page.goto("/");
+  const hub = await hubFor(page);
 
   const guest = await context.newPage();
   trace(guest);
-  await bodyReaches(guest, `${origin(28080)}/warmup`, "::chunk::");
+  await bodyReaches(guest, `${origin(hub, 28080)}/warmup`, "::chunk::");
 
-  const echoed = await guest.evaluate(async (base) => {
-    const response = await fetch(`${base}/submit`, { method: "POST", body: "hello=world" });
-    return response.text();
-  }, origin(28080));
+  const echoed = await guest.evaluate(
+    async (base) => {
+      const response = await fetch(`${base}/submit`, { method: "POST", body: "hello=world" });
+      return response.text();
+    },
+    origin(hub, 28080),
+  );
   expect(echoed).toContain("POST");
   expect(echoed).toContain("/submit");
   expect(echoed).toContain("hello=world");
 });
 
-test("rejects a non-port origin without a VM", async ({ context }) => {
+test("rejects a non-port origin without a VM", async ({ context, page }) => {
   // A non-numeric label names no guest port: the fallback renders the terminal
   // BAD_PORT page and never registers a worker. No VM page needed.
   const guest = await context.newPage();
   trace(guest);
-  await guest.goto("http://x.bridge.localhost:4180/some/path");
+  await page.goto("/");
+  const invalid = new URL(await hubFor(page));
+  invalid.hostname = "x.bridge.localhost";
+  invalid.pathname = "/some/path";
+  await guest.goto(invalid.href);
   await expect(guest.locator("#bridge-code")).toHaveText("BRIDGE_BAD_PORT");
 });
 
@@ -70,15 +85,16 @@ test("returns to the connecting page when the VM vanishes", async ({ context, pa
   test.setTimeout(120_000);
   trace(page);
   await page.goto("/");
+  const hub = await hubFor(page);
 
   const guest = await context.newPage();
   trace(guest);
-  await bodyReaches(guest, `${origin(38080)}/warmup`, "::chunk::");
+  await bodyReaches(guest, `${origin(hub, 38080)}/warmup`, "::chunk::");
 
   // Kill the VM page's end of the port: the worker's next relay times out (15s),
   // drops the presumed-dead port, and returns to the connecting page.
   await page.evaluate(() => globalThis.closeBridge());
-  const response = await guest.goto(`${origin(38080)}/some/path`);
+  const response = await guest.goto(`${origin(hub, 38080)}/some/path`);
   expect(response?.status()).toBe(503);
   await expect(guest.locator("#bridge-code")).toHaveText("BRIDGE_CONNECTING");
 });
@@ -86,14 +102,15 @@ test("returns to the connecting page when the VM vanishes", async ({ context, pa
 test("returns guest handler errors as plain text", async ({ context, page }) => {
   trace(page);
   await page.goto("/");
+  const hub = await hubFor(page);
 
   const guest = await context.newPage();
   trace(guest);
-  await bodyReaches(guest, `${origin(48080)}/warmup`, "::chunk::");
+  await bodyReaches(guest, `${origin(hub, 48080)}/warmup`, "::chunk::");
 
   // The stub throws for /boom: the worker returns the handler's message as a
   // plain-text 502 instead of maintaining a second error-page application.
-  const response = await guest.goto(`${origin(48080)}/boom`);
+  const response = await guest.goto(`${origin(hub, 48080)}/boom`);
   expect(response?.status()).toBe(502);
   await expect(guest.locator("body")).toContainText("nothing listening on guest port 48080");
 });

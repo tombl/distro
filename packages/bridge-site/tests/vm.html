@@ -22,6 +22,9 @@
   } from "@tombl/linux-guest";
   import { serveGuest } from "/client.js";
 
+  const hubOrigin = "__HUB_ORIGIN__";
+  globalThis.bridgeOrigin = hubOrigin;
+
   const status = document.querySelector("#status");
   const log = document.querySelector("#log");
   const decoder = new TextDecoder();
@@ -78,10 +81,10 @@
     }
 
     serveGuest({
-      hub: "http://hub.bridge.localhost:4180",
+      hub: hubOrigin,
       fetch: (port) => guestFetchHandler(guest.network, { port }),
     });
-    status.textContent = "serving — open any <port>.bridge.localhost:4180 (httpd is on 8080)";
+    status.textContent = `serving — open any <port>.bridge.localhost:${new URL(hubOrigin).port} (httpd is on 8080)`;
   })().catch((error) => {
     status.textContent = String(error);
     throw error;

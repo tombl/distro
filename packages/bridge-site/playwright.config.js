@@ -5,16 +5,14 @@ export default defineConfig({
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? "./test-results",
   timeout: 60_000,
   workers: 1,
-  use: {
-    // Same-site with the *.bridge.localhost:4180 bridge origins: browsers
-    // partition a cross-site iframe's service-worker registration, so the
-    // main page must share the bridge's site, in tests as in production.
-    baseURL: "http://main.bridge.localhost:4181",
-  },
   webServer: {
     command: "node server.js",
-    port: 4181,
-    reuseExistingServer: !process.env.CI,
+    // The main URL must be same-site with the dynamically allocated
+    // *.bridge.localhost origins. Playwright captures it as baseURL.
+    wait: {
+      stdout: /Listening on (?<playwright_test_base_url>http:\/\/main\.bridge\.localhost:\d+)/,
+    },
+    reuseExistingServer: false,
   },
   // WebKit doesn't resolve *.localhost subdomains, so the bridge origin is
   // unreachable there; chromium and firefox both do.

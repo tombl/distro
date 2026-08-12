@@ -45,15 +45,15 @@ pnpm artifacts            # once, or whenever guest assets change (run from the 
 node server.js
 ```
 
-Then open <http://main.bridge.localhost:4181/vm.html> and, in another tab,
-navigate to any `<port>.bridge.localhost:4180`. The VM page boots a real guest
-serving busybox httpd on 8080 the first time an origin is demanded, so
-`http://8080.bridge.localhost:4180/` reaches it (boot log on the VM page). Other
-ports bind too, but nothing listens on them inside the guest.
-`http://main.bridge.localhost:4181/` is the same wiring with a stub echo handler
-instead of a guest, keyed on the demanded port. `pnpm test` runs the whole flow
-headlessly; its `pretest` step materializes the artifacts and builds the
-workspace dependencies first.
+The server prints its dynamically allocated main and bridge ports. Open the
+printed `main.bridge.localhost` URL with `/vm.html` appended and, in another
+tab, replace `hub` in the printed bridge URL with a guest port. The VM page
+boots a real guest serving busybox httpd on 8080, so replacing `hub` with
+`8080` reaches it (boot log on the VM page). Other ports bind too, but nothing
+listens on them inside the guest. The main URL without `/vm.html` is the same
+wiring with a stub echo handler, keyed on the demanded port. `pnpm test` runs
+the whole flow headlessly; its `pretest` step materializes the artifacts and
+builds the workspace dependencies first.
 
 The VM page, the hub, and the guest origins must all be **same-site** — that is
 why the recipe uses `main.bridge.localhost`, not `127.0.0.1`: browsers partition

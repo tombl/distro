@@ -1,8 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-// busybox httpd inside the guest listens on 8080, so its origin is port 8080.
-const GUEST_ORIGIN = "http://8080.bridge.localhost:4180";
-
 function trace(page) {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
@@ -13,12 +10,17 @@ test("serves a page from busybox httpd inside a real guest", async ({ context, p
   trace(page);
   // vm.html declares no origins; the guest boots lazily on the first demand.
   await page.goto("/vm.html");
+  const guestOrigin = await page.evaluate(() => {
+    const url = new URL(globalThis.bridgeOrigin);
+    url.hostname = "8080.bridge.localhost";
+    return url.origin;
+  });
 
   const guest = await context.newPage();
   trace(guest);
   // The cold navigation installs the worker, demands a VM, and boots the guest.
   // The page self-reloads once bound, so poll on the served content.
-  await guest.goto(`${GUEST_ORIGIN}/`);
+  await guest.goto(`${guestOrigin}/`);
   await expect
     .poll(
       () =>

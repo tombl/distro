@@ -7,12 +7,6 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(here, "public");
 
-const MAIN_PORT = 4181;
-const BRIDGE_PORT = 4180;
-// The rendezvous hub origin the VM page derives its guest family from. Guests
-// are this origin with the "hub" label swapped for a port.
-const HUB_ORIGIN = `http://hub.bridge.localhost:${BRIDGE_PORT}`;
-
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -23,8 +17,9 @@ const types = {
 // Bridge origin: the static files from public/. The frame documents need CORP
 // so the COEP main page can embed them; production hosts must set the same
 // headers described in readme.md.
+let hubOrigin;
 const bridge = createServer((request, response) => {
-  const pathname = decodeURIComponent(new URL(request.url, HUB_ORIGIN).pathname);
+  const pathname = decodeURIComponent(new URL(request.url, hubOrigin).pathname);
   let relative = normalize(pathname === "/" ? "index.html" : pathname.slice(1));
   let path = join(publicDir, relative);
   if (!path.startsWith(`${publicDir}/`)) return void response.writeHead(403).end();
@@ -51,7 +46,22 @@ const bridge = createServer((request, response) => {
   response.writeHead(200, headers);
   createReadStream(path).pipe(response);
 });
-bridge.listen(BRIDGE_PORT, "127.0.0.1");
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(server.address().port);
+    });
+  });
+}
+
+const bridgePort = await listen(bridge);
+// The rendezvous hub origin the VM page derives its guest family from. Guests
+// are this origin with the "hub" label swapped for a port.
+hubOrigin = `http://hub.bridge.localhost:${bridgePort}`;
+console.log(`Bridge listening on ${hubOrigin}`);
 
 // Main origin: the cross-origin-isolated page that hosts the VM. It embeds the
 // bridge with a stub handler that echoes the request and streams its body back.
@@ -64,7 +74,7 @@ const mainPage = `<!doctype html>
   // One VM page, every guest origin in the family bound lazily on first demand.
   // The stub echoes the demanded port so tests can assert the origin->port map.
   const bridge = serveGuest({
-    hub: ${JSON.stringify(HUB_ORIGIN)},
+    hub: ${JSON.stringify(hubOrigin)},
     fetch: (port) => async (request) => {
       const url = new URL(request.url);
       // A magic path the guest-error test hits: throwing is how a real guest
@@ -90,6 +100,7 @@ const mainPage = `<!doctype html>
     },
   });
   globalThis.closeBridge = () => bridge.close();
+  globalThis.bridgeOrigin = ${JSON.stringify(hubOrigin)};
   globalThis.iframeCount = () => document.querySelectorAll("iframe").length;
 </script>
 `;
@@ -97,7 +108,10 @@ const mainPage = `<!doctype html>
 // The guest.spec.js page: boots a real VM, so it also needs the built packages
 // and the guest images that `pnpm artifacts` materializes into their owning
 // packages (here, @tombl/linux-guest's rootfs.erofs).
-const vmPage = readFileSync(join(here, "tests", "vm.html"));
+const vmPage = readFileSync(join(here, "tests", "vm.html"), "utf8").replaceAll(
+  "__HUB_ORIGIN__",
+  hubOrigin,
+);
 const guestRootfs = join(here, "node_modules/@tombl/linux-guest/rootfs.erofs");
 
 const main = createServer((request, response) => {
@@ -136,4 +150,5 @@ const main = createServer((request, response) => {
   }
   response.writeHead(200, { ...headers, "Content-Type": types[".html"] }).end(mainPage);
 });
-main.listen(MAIN_PORT, "127.0.0.1");
+const mainPort = await listen(main);
+console.log(`Listening on http://main.bridge.localhost:${mainPort}`);
