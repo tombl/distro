@@ -1,37 +1,26 @@
 {
-  bridge-site,
-  bytes,
+  assets,
   pkgs,
-  kernel,
-  linux-guest,
   sourceVersion,
 }:
 
 let
-  sourceHash = builtins.hashFile "sha256" ../../apps/site/index.html;
-  ver = builtins.substring 0 16 (
-    builtins.hashString "sha256" "${bridge-site.package.client}${bytes}${kernel}${linux-guest.package}${sourceHash}"
-  );
+  assetVersion = "v${builtins.substring 0 32 (builtins.baseNameOf assets)}";
 in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "lowland-boot";
-  # APK upgrades need monotonic versions. Immutable heavy assets retain their
-  # content-derived directory independently of this package version.
+  # APK upgrades need monotonic versions. Immutable assets retain their
+  # derivation-addressed directory independently of this package version.
   version = "0.${sourceVersion}";
   dontUnpack = true;
 
   installPhase = ''
-    mkdir -p $out/boot/static/v${ver} $out/boot/vendor $out/etc/apk/protected_paths.d
-    cp -rL ${kernel}/dist $out/boot/static/v${ver}/dist
-    cp -L ${kernel}/vmlinux.wasm $out/boot/static/v${ver}/vmlinux.wasm
-    cp -rL ${bytes}/dist $out/boot/static/v${ver}/bytes
-    cp -rL ${linux-guest.package}/dist $out/boot/static/v${ver}/guest
-    cp -L ${linux-guest.package}/agent.erofs $out/boot/static/v${ver}/agent.erofs
-    cp ${bridge-site.package.client} $out/boot/bridge-client.js
+    mkdir -p $out/boot/static/${assetVersion} $out/boot/vendor $out/etc/apk/protected_paths.d
+    cp -rL ${assets}/. $out/boot/static/${assetVersion}/
     cp -r ${../../apps/site/vendor}/. $out/boot/vendor/
     cp ${../../apps/site/index.html} $out/boot/index.html
     substituteInPlace $out/boot/index.html \
-      --replace-fail __ASSETS__ v${ver} \
+      --replace-fail __ASSETS__ ${assetVersion} \
       --replace-fail __BOOT_MODE__ installed
     # apk applies protection rules at directory granularity when deciding
     # whether a package file is locally modified. Protect the boot tree so a

@@ -1,23 +1,13 @@
 {
-  bridge-site,
-  bytes,
+  assets,
   pkgs,
-  kernel,
-  linux-guest,
   rootfs,
 }:
 
 let
-  # The kernel assets are content-stable per build but served under fixed
-  # names, so they are cached immutable under a build-versioned directory:
-  # a new build changes the version and every URL, so browsers never revalidate
-  # the heavy kernel libraries across the guest's many workers. The version
-  # tracks the kernel, the guest SDK, and the rootfs.
-  ver = builtins.substring 0 16 (
-    builtins.hashString "sha256" "${bytes}${kernel}${linux-guest.package}${rootfs}"
-  );
+  # The Nix store hash covers the bundle's builder and all referenced inputs.
+  assetVersion = "v${builtins.substring 0 32 (builtins.baseNameOf assets)}";
 in
-
 pkgs.stdenvNoCC.mkDerivation {
   pname = "site";
   version = "0.0.0";
@@ -26,19 +16,10 @@ pkgs.stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    # The kernel assets sit under a fixed /static/ prefix with a per-build
-    # version directory, so a single _headers splat (/* is greedy across
-    # slashes, and only one splat is allowed per rule) can mark them immutable.
-    mkdir -p $out/static/v${ver}
-    # dist/index.js loads vmlinux.wasm relative to itself (../vmlinux.wasm),
-    # so the kernel library and kernel sit as siblings inside the versioned
-    # directory, exactly as the kernel package lays them out.
-    cp -rL ${kernel}/dist $out/static/v${ver}/dist
-    cp -L ${kernel}/vmlinux.wasm $out/static/v${ver}/vmlinux.wasm
-    cp -rL ${bytes}/dist $out/static/v${ver}/bytes
-    cp -rL ${linux-guest.package}/dist $out/static/v${ver}/guest
-    cp ${bridge-site.package.client} $out/bridge-client.js
-    cp -L ${linux-guest.package}/agent.erofs $out/static/v${ver}/agent.erofs
+    # A single _headers splat (/* is greedy across slashes, and only one splat
+    # is allowed per rule) can mark the derivation-addressed bundle immutable.
+    mkdir -p $out/static/${assetVersion}
+    cp -rL ${assets}/. $out/static/${assetVersion}/
 
     # The EROFS image is immutable and served under its content hash. Its
     # manifest lets the browser range-stream it into the block device.
@@ -49,7 +30,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
     mkdir -p $out
     substituteInPlace index.html \
-      --replace-fail __ASSETS__ v${ver} \
+      --replace-fail __ASSETS__ ${assetVersion} \
       --replace-fail __BOOT_MODE__ live
     cp index.html $out/index.html
     cp service-worker.js $out/service-worker.js
