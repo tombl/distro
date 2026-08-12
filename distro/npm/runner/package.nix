@@ -70,6 +70,7 @@ let
 
       mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@tombl
       cp packages/runner/src/run.ts $out/run.ts
+      cp packages/runner/src/disk-worker.ts $out/disk-worker.ts
       cp packages/runner/src/shares.ts $out/shares.ts
       cp packages/runner/package.json $out/package.json
       cp -RL ${bytes}/. $out/node_modules/@lowland/bytes/
@@ -123,6 +124,7 @@ let
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
         LINUX_RUNNER_TEST_CONSOLE_INITRAMFS=${console-initramfs} \
         LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
+        LINUX_RUNNER_TEST_ROOT_DISK=${rootfs} \
         timeout --kill-after=5 300 pnpm --filter=@tombl/linux-runner test
 
       runHook postBuild

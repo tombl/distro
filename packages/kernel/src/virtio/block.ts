@@ -34,12 +34,14 @@ type MaybePromise<T> = T | Promise<T>;
 
 /** The storage behind a block device. */
 export interface BlockDeviceStorage {
-  /** Returns `length` bytes at `offset`. */
-  read(offset: number, length: number): MaybePromise<Uint8Array>;
+  /** Reads into `target` at `offset`, returning the bytes read. */
+  read(offset: number, target: Uint8Array): MaybePromise<number>;
   /** Writes `data` at `offset`, returning the bytes written. Without it the device is read-only. */
   write?(offset: number, data: Uint8Array): MaybePromise<number>;
   /** Flushes completed writes. Its presence advertises the flush feature. */
   flush?(): MaybePromise<void>;
+  /** Releases storage resources when the device closes. */
+  close?(): MaybePromise<void>;
   /** Total size in bytes. */
   capacity: number;
 }
@@ -51,7 +53,11 @@ export interface BlockDeviceStorage {
  * ```ts
  * blockDevice({
  *   capacity: rootfs.byteLength,
- *   read: (offset, length) => rootfs.subarray(offset, offset + length),
+ *   read(offset, target) {
+ *     const source = rootfs.subarray(offset, offset + target.byteLength);
+ *     target.set(source);
+ *     return source.byteLength;
+ *   },
  * })
  * ```
  */
@@ -88,14 +94,18 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
       let offset = Number(request.sector) * 512;
       switch (request.type) {
         case BlockDeviceRequestType.IN: {
+          let ok = true;
           for (const desc of data) {
             assert(desc.writable, "data must be writable when IN");
-            const arr = await storage.read(offset, desc.array.byteLength);
-            desc.array.set(arr);
-            n += arr.byteLength;
-            offset += arr.byteLength;
+            const read = await storage.read(offset, desc.array);
+            if (read !== desc.array.byteLength) {
+              ok = false;
+              break;
+            }
+            n += read;
+            offset += read;
           }
-          set_status(BlockDeviceStatus.OK);
+          set_status(ok ? BlockDeviceStatus.OK : BlockDeviceStatus.IOERR);
           break;
         }
         case BlockDeviceRequestType.OUT: {
@@ -140,5 +150,8 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
     }
   }
 
-  return new VirtioController({ deviceId: 2, features, config }, { queues: [notify] }).device;
+  return new VirtioController(
+    { deviceId: 2, features, config },
+    { queues: [notify], close: () => storage.close?.() },
+  ).device;
 }

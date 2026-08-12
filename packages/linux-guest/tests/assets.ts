@@ -33,8 +33,10 @@ export const wrong_rootfs = await readFile(join(directory, "wrong-root.erofs"));
 export function root_device() {
   return blockDevice({
     capacity: rootfs.byteLength,
-    read(offset, length) {
-      return rootfs.subarray(offset, offset + length);
+    read(offset, target) {
+      const source = rootfs.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
   });
 }
@@ -43,8 +45,10 @@ export function ext4_root_device() {
   const disk = new Uint8Array(ext4_rootfs);
   return blockDevice({
     capacity: disk.byteLength,
-    read(offset, length) {
-      return disk.slice(offset, offset + length);
+    read(offset, target) {
+      const source = disk.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
     write(offset, data) {
       disk.set(data, offset);
@@ -57,8 +61,10 @@ export function ext4_root_device() {
 export function agent_device() {
   return blockDevice({
     capacity: agentfs.byteLength,
-    read(offset, length) {
-      return agentfs.subarray(offset, offset + length);
+    read(offset, target) {
+      const source = agentfs.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
   });
 }
@@ -66,8 +72,10 @@ export function agent_device() {
 export function wrong_root_device() {
   return blockDevice({
     capacity: wrong_rootfs.byteLength,
-    read(offset, length) {
-      return wrong_rootfs.subarray(offset, offset + length);
+    read(offset, target) {
+      const source = wrong_rootfs.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
   });
 }

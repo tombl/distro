@@ -1,7 +1,8 @@
 { callPackage }:
 
 rec {
-  assets = callPackage ./assets.nix { };
+  opfsDiskWorker = callPackage ./opfs-disk-worker.nix { };
+  assets = callPackage ./assets.nix { inherit opfsDiskWorker; };
   liveFiles = callPackage ./files.nix {
     inherit assets;
     bootMode = "live";

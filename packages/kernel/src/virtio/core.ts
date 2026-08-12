@@ -55,32 +55,34 @@ export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
 export interface Virtqueue extends Iterable<VirtqueueChain> {}
 
 class Chain implements VirtqueueChain {
-  #buffers: Array<VirtqueueBuffer & { target?: Uint8Array }>;
-  #release: (written: number, commit: () => void) => void;
+  #buffers: Array<VirtqueueBuffer & { address?: number }>;
+  #release: (written: number, outputs: VirtqueueOutput[]) => void;
 
   constructor(
     memory: WebAssembly.Memory,
     desc: Descriptor[],
-    release: (written: number, commit: () => void) => void,
+    release: (written: number, outputs: VirtqueueOutput[]) => void,
   ) {
     this.#buffers = desc.map((descriptor) => {
-      const target = new Uint8Array(memory.buffer, Number(descriptor.addr), descriptor.len);
+      const address = Number(descriptor.addr);
+      const target = new Uint8Array(memory.buffer, address, descriptor.len);
       const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
       // Device work may outlive the queue generation across an await. Keep
       // guest memory isolated until release proves the chain is still valid.
       return writable
-        ? { array: target.slice(), writable, target }
+        ? { array: target.slice(), writable, address }
         : { array: target.slice(), writable };
     });
     this.#release = release;
   }
 
   release(written: number) {
-    this.#release(written, () => {
-      for (const buffer of this.#buffers) {
-        if (buffer.target) buffer.target.set(buffer.array);
-      }
-    });
+    this.#release(
+      written,
+      this.#buffers.flatMap(({ address, array }) =>
+        address === undefined ? [] : [{ address, data: array }],
+      ),
+    );
   }
 
   *[Symbol.iterator]() {
@@ -88,23 +90,62 @@ class Chain implements VirtqueueChain {
   }
 }
 
+export interface VirtqueueOutput {
+  address: number;
+  data: Uint8Array;
+}
+
+export interface VirtqueueCompletion {
+  descriptor_address: number;
+  id: number;
+  written: number;
+  flags: number;
+  outputs: VirtqueueOutput[];
+}
+
+export function publish_virtqueue_completion(
+  memory: WebAssembly.Memory,
+  completion: VirtqueueCompletion,
+) {
+  for (const { address, data } of completion.outputs) {
+    new Uint8Array(memory.buffer, address, data.byteLength).set(data);
+  }
+
+  const descriptor = VirtqDescriptor.get(
+    new DataView(memory.buffer),
+    completion.descriptor_address,
+  );
+  descriptor.id = completion.id;
+  descriptor.len = completion.written;
+  // The flags make the descriptor visible to the guest, so publish them last.
+  descriptor.flags = completion.flags;
+}
+
 class PackedVirtqueue implements Virtqueue {
   #memory: WebAssembly.Memory;
   #size: number;
   #desc_addr: number;
-  #on_release: () => void;
+  #publish: (completion: VirtqueueCompletion) => void;
+  #is_current: () => boolean;
   #avail_wrap = true;
   #used_wrap = true;
   #used_idx = 0;
   #avail_idx = 0;
   #valid = true;
 
-  constructor(memory: WebAssembly.Memory, size: number, desc_addr: number, on_release: () => void) {
+  constructor(
+    memory: WebAssembly.Memory,
+    size: number,
+    desc_addr: number,
+    publish: (completion: VirtqueueCompletion) => void,
+    is_current: () => boolean = () => true,
+  ) {
     assert(size !== 0);
     this.#memory = memory;
     this.#size = size;
     this.#desc_addr = desc_addr;
-    this.#on_release = on_release;
+    this.#publish = publish;
+    this.#is_current = is_current;
   }
 
   invalidate() {
@@ -165,14 +206,18 @@ class PackedVirtqueue implements Virtqueue {
       chain_desc = this.#indirect_descriptors(Number(desc.addr), desc.len / VirtqDescriptor.size);
     }
 
-    return new Chain(this.#memory, chain_desc, (written, commit) =>
-      this.#release(id, skip, written, commit),
+    const chain = new Chain(this.#memory, chain_desc, (written, outputs) =>
+      this.#release(id, skip, written, outputs),
     );
+    // A remote reset can revoke this queue while its descriptors are being
+    // copied. Never expose a mixture of the old and replacement queue to the
+    // device; advancing the stale cursor is harmless because reset replaces it.
+    return this.#is_current() ? chain : null;
   }
 
   *[Symbol.iterator]() {
     let chain;
-    while (this.#valid && (chain = this.#pop())) yield chain;
+    while (this.#valid && this.#is_current() && (chain = this.#pop())) yield chain;
   }
 
   #advance() {
@@ -191,8 +236,8 @@ class PackedVirtqueue implements Virtqueue {
     return index;
   }
 
-  #release(id: number, skip: number, written: number, commit: () => void) {
-    if (!this.#valid) return;
+  #release(id: number, skip: number, written: number, outputs: VirtqueueOutput[]) {
+    if (!this.#valid || !this.#is_current()) return;
 
     const desc = VirtqDescriptor.get(
       new DataView(this.#memory.buffer),
@@ -204,15 +249,17 @@ class PackedVirtqueue implements Virtqueue {
       throw new Error("ring full");
     }
 
-    commit();
-
     let flags = 0;
     if (this.#used_wrap) flags |= DescriptorFlags.AVAIL | DescriptorFlags.USED;
     if (written > 0) flags |= DescriptorFlags.WRITE;
 
-    desc.id = id;
-    desc.len = written;
-    desc.flags = flags;
+    const completion: VirtqueueCompletion = {
+      descriptor_address: this.#desc_addr + VirtqDescriptor.size * this.#used_idx,
+      id,
+      written,
+      flags,
+      outputs,
+    };
 
     this.#used_idx += skip;
     if (this.#used_idx >= this.#size) {
@@ -220,7 +267,7 @@ class PackedVirtqueue implements Virtqueue {
       this.#used_wrap = !this.#used_wrap;
     }
 
-    this.#on_release();
+    this.#publish(completion);
   }
 }
 
@@ -264,13 +311,35 @@ export interface VirtioDriver {
   close?(controller: VirtioController): void | PromiseLike<void>;
 }
 
-interface TransportDevice {
+export interface ConnectedVirtioDevice {
+  set_features(features: bigint): void;
+  setup(config_irq: number, config_address: number, config_length: number): void;
+  enable_queue(vq: number, size: number, descriptor_address: number, irq: number): void;
+  disable_queue(vq: number): void;
+  notify(vq: number): void;
+  reset(): void;
+}
+
+export interface VirtioConnectionContext {
+  memory: WebAssembly.Memory;
+  trigger_irq(irq: number): void;
+  on_error(error: unknown): void;
+  // A remote connection replaces only publication. Queue traversal and the
+  // driver remain unchanged, while the main thread retains the final writes
+  // to guest memory. Local connections omit these hooks.
+  publish_completion?(vq: number, irq: number, completion: VirtqueueCompletion): void;
+  queue_is_current?(vq: number): boolean;
+  config_target?(length: number): Uint8Array;
+  publish_config?(irq: number, config: Uint8Array, interrupt: boolean): void;
+}
+
+export interface TransportDevice {
   readonly device_id: number;
   readonly features: bigint;
   readonly config: Uint8Array;
-  attach(get_config: () => Uint8Array, raise_config: RaiseConfigInterrupt): void;
-  notify(vq: number, queue: Virtqueue): void | PromiseLike<void>;
-  reset(): void;
+  readonly queues: number;
+  readonly closed: Promise<void>;
+  connect(context: VirtioConnectionContext): ConnectedVirtioDevice;
   close(): Promise<void>;
 }
 
@@ -281,6 +350,19 @@ export interface VirtioDevice extends MachinePluginProvider {
   /** Settles after the device has stopped handling queues and finished cleanup. */
   readonly closed: Promise<void>;
   readonly [transport_device]: TransportDevice;
+}
+
+export function create_virtio_device(endpoint: TransportDevice): VirtioDevice {
+  const device = {} as VirtioDevice;
+  const plugin: MachinePlugin = {
+    configure(setup) {
+      setup.devices.add(device);
+    },
+  };
+  Object.defineProperty(device, transport_device, { value: endpoint });
+  Object.defineProperty(device, getMachinePlugin, { value: () => plugin });
+  Object.defineProperty(device, "closed", { value: endpoint.closed, enumerable: true });
+  return device;
 }
 
 /**
@@ -335,58 +417,55 @@ export class VirtioController {
       return close_completion.promise;
     };
 
+    const features =
+      TransportFeatures.VERSION_1 |
+      TransportFeatures.RING_PACKED |
+      TransportFeatures.INDIRECT_DESC |
+      (options.features ?? 0n);
     const endpoint: TransportDevice = {
       device_id: options.deviceId,
-      features:
-        TransportFeatures.VERSION_1 |
-        TransportFeatures.RING_PACKED |
-        TransportFeatures.INDIRECT_DESC |
-        (options.features ?? 0n),
+      features,
       config,
-
-      attach: (next_get_config, next_raise_config) => {
-        assert(!closed, "cannot attach a closed virtio device");
-        assert(!get_guest_config, "virtio device is already attached");
-        next_get_config().set(config);
-        get_guest_config = next_get_config;
-        raise_config = next_raise_config;
-        if (config_pending) {
-          config_pending = false;
-          raise_config();
-        }
-      },
-
-      notify: (vq, queue) => {
-        if (closed) return;
-        const handler = driver.queues[vq];
-        assert(handler, `virtio device has no queue ${vq}`);
-        const completion = Promise.withResolvers<void>();
-        active.add(completion.promise);
-        try {
-          Promise.resolve(handler(queue, this)).then(completion.resolve, completion.reject);
-        } catch (error) {
-          completion.reject(error);
-        }
-        void completion.promise.finally(() => active.delete(completion.promise)).catch(() => {});
-        return completion.promise;
-      },
-
-      reset: () => {
-        if (!closed) driver.reset?.();
-      },
-
+      queues: driver.queues.length,
+      closed: close_completion.promise,
+      connect: (context) =>
+        connect_local_virtio_device(context, {
+          features,
+          config,
+          attach: (next_get_config, next_raise_config) => {
+            assert(!closed, "cannot attach a closed virtio device");
+            assert(!get_guest_config, "virtio device is already attached");
+            next_get_config().set(config);
+            get_guest_config = next_get_config;
+            raise_config = next_raise_config;
+            if (config_pending) {
+              config_pending = false;
+              raise_config();
+            }
+          },
+          notify: (vq, queue) => {
+            if (closed) return;
+            const handler = driver.queues[vq];
+            assert(handler, `virtio device has no queue ${vq}`);
+            const completion = Promise.withResolvers<void>();
+            active.add(completion.promise);
+            try {
+              Promise.resolve(handler(queue, this)).then(completion.resolve, completion.reject);
+            } catch (error) {
+              completion.reject(error);
+            }
+            void completion.promise
+              .finally(() => active.delete(completion.promise))
+              .catch(() => {});
+            return completion.promise;
+          },
+          reset: () => {
+            if (!closed) driver.reset?.();
+          },
+        }),
       close: start_close,
     };
-    const device = {} as VirtioDevice;
-    const plugin: MachinePlugin = {
-      configure(setup) {
-        setup.devices.add(device);
-      },
-    };
-    Object.defineProperty(device, transport_device, { value: endpoint });
-    Object.defineProperty(device, getMachinePlugin, { value: () => plugin });
-    Object.defineProperty(device, "closed", { value: close_completion.promise, enumerable: true });
-    this.device = device;
+    this.device = create_virtio_device(endpoint);
 
     this.updateConfig = (next_config) => {
       assert(next_config.byteLength === config.byteLength, "virtio config size cannot change");
@@ -401,8 +480,8 @@ export class VirtioController {
     this.expose = <API extends object>(api: API) => {
       assert(!exposed, "virtio device API is already exposed");
       exposed = true;
-      Object.defineProperties(device, Object.getOwnPropertyDescriptors(api));
-      return device as VirtioDevice & API;
+      Object.defineProperties(this.device, Object.getOwnPropertyDescriptors(api));
+      return this.device as VirtioDevice & API;
     };
   }
 }
@@ -414,9 +493,107 @@ interface VirtqueueState {
   notifying: boolean;
 }
 
-interface TransportState {
-  device: TransportDevice;
-  queues: VirtqueueState[];
+interface LocalVirtioDevice {
+  features: bigint;
+  config: Uint8Array;
+  attach(get_config: () => Uint8Array, raise_config: RaiseConfigInterrupt): void;
+  notify(vq: number, queue: Virtqueue): void | PromiseLike<void>;
+  reset(): void;
+}
+
+function connect_local_virtio_device(
+  context: VirtioConnectionContext,
+  device: LocalVirtioDevice,
+): ConnectedVirtioDevice {
+  const queues: VirtqueueState[] = [];
+
+  const queue_state = (vq: number) =>
+    (queues[vq] ??= { queue: undefined, pending: false, notifying: false });
+
+  const drain_notifications = async (vq: number) => {
+    const state = queue_state(vq);
+    if (state.notifying || !state.queue) return;
+    state.notifying = true;
+    try {
+      do {
+        state.pending = false;
+        await device.notify(vq, state.queue);
+      } while (state.pending && state.queue);
+    } catch (error) {
+      context.on_error(error);
+    } finally {
+      state.notifying = false;
+    }
+  };
+
+  return {
+    set_features(features) {
+      assert(
+        device.features === features,
+        "the kernel should accept every feature we offer, and no more",
+      );
+    },
+    setup(config_irq, _config_address, config_length) {
+      assert(config_length >= device.config.byteLength, "config space too small");
+      const config = context.config_target
+        ? context.config_target(config_length)
+        : new Uint8Array(context.memory.buffer, _config_address, config_length);
+      device.attach(
+        () => config,
+        () => {
+          if (context.publish_config) context.publish_config(config_irq, config.slice(), true);
+          else context.trigger_irq(config_irq);
+        },
+      );
+      context.publish_config?.(config_irq, config.slice(), false);
+    },
+    enable_queue(vq, size, descriptor_address, irq) {
+      const state = queue_state(vq);
+      state.queue?.invalidate();
+      let armed = false;
+      const queue = new PackedVirtqueue(
+        context.memory,
+        size,
+        descriptor_address,
+        (completion) => {
+          if (context.publish_completion) {
+            context.publish_completion(vq, irq, completion);
+            return;
+          }
+          publish_virtqueue_completion(context.memory, completion);
+          if (armed) return;
+          armed = true;
+          queueMicrotask(() => {
+            armed = false;
+            if (state.queue === queue) context.trigger_irq(irq);
+          });
+        },
+        () => state.queue === queue && (context.queue_is_current?.(vq) ?? true),
+      );
+      state.queue = queue;
+      if (state.pending) void drain_notifications(vq);
+    },
+    disable_queue(vq) {
+      const state = queues[vq];
+      state?.queue?.invalidate();
+      if (!state) return;
+      state.queue = undefined;
+      state.pending = false;
+    },
+    notify(vq) {
+      queue_state(vq).pending = true;
+      void drain_notifications(vq);
+    },
+    reset() {
+      for (const state of queues) {
+        if (!state) continue;
+        state.queue?.invalidate();
+        state.queue = undefined;
+        state.pending = false;
+      }
+      device.reset();
+    },
+  };
 }
 
 export function virtio_device_description(device: VirtioDevice) {
@@ -425,7 +602,12 @@ export function virtio_device_description(device: VirtioDevice) {
     device_id: transport.device_id,
     features: transport.features,
     config: transport.config,
+    queues: transport.queues,
   };
+}
+
+export function connect_virtio_device(device: VirtioDevice, context: VirtioConnectionContext) {
+  return device[transport_device].connect(context);
 }
 
 export function close_virtio_device(device: VirtioDevice) {
@@ -443,102 +625,45 @@ export function virtio_imports({
   trigger_irq: (irq: number) => void;
   on_error: (error: unknown) => void;
 }): Imports["virtio"] {
-  const states: TransportState[] = devices.map((device) => ({
-    device: device[transport_device],
-    queues: [],
-  }));
-
-  function queue_state(device: TransportState, vq: number) {
-    return (device.queues[vq] ??= {
-      queue: undefined,
-      pending: false,
-      notifying: false,
-    });
-  }
-
-  const drain_notifications = async (device: TransportState, vq: number) => {
-    const state = queue_state(device, vq);
-    if (state.notifying || !state.queue) return;
-
-    state.notifying = true;
-    try {
-      do {
-        state.pending = false;
-        await device.device.notify(vq, state.queue);
-      } while (state.pending && state.queue);
-    } catch (error) {
-      on_error(error);
-    } finally {
-      state.notifying = false;
-    }
-  };
+  const connected = devices.map((device) =>
+    device[transport_device].connect({ memory, trigger_irq, on_error }),
+  );
 
   return {
     set_features(dev, features) {
-      const device = states[dev]?.device;
+      const device = connected[dev];
       assert(device);
-      assert(
-        device.features === features,
-        "the kernel should accept every feature we offer, and no more",
-      );
+      device.set_features(features);
     },
 
     enable_vring(dev, vq, size, desc_addr, irq) {
-      const device = states[dev];
+      const device = connected[dev];
       assert(device);
-      const state = queue_state(device, vq);
-      state.queue?.invalidate();
-      // Interrupt once per synchronous batch of released chains.
-      let armed = false;
-      const queue: PackedVirtqueue = new PackedVirtqueue(memory, size, desc_addr >>> 0, () => {
-        if (armed) return;
-        armed = true;
-        queueMicrotask(() => {
-          armed = false;
-          if (state.queue === queue) trigger_irq(irq);
-        });
-      });
-      state.queue = queue;
-      if (state.pending) void drain_notifications(device, vq);
+      device.enable_queue(vq, size, desc_addr >>> 0, irq);
     },
     disable_vring(dev, vq) {
-      const device = states[dev];
+      const device = connected[dev];
       assert(device);
-      const state = device.queues[vq];
-      state?.queue?.invalidate();
-      if (!state) return;
-      state.queue = undefined;
-      state.pending = false;
+      device.disable_queue(vq);
     },
     reset(dev) {
-      const device = states[dev];
+      const device = connected[dev];
       assert(device);
-      for (const state of device.queues) {
-        if (!state) continue;
-        state.queue?.invalidate();
-        state.queue = undefined;
-        state.pending = false;
-      }
-      device.device.reset();
+      device.reset();
     },
 
     setup(dev, config_irq, config_addr, config_len) {
       const address = config_addr >>> 0;
       const length = config_len >>> 0;
-      const device = states[dev]?.device;
+      const device = connected[dev];
       assert(device);
-      assert(length >= device.config.byteLength, "config space too small");
-      device.attach(
-        () => new Uint8Array(memory.buffer, address, length),
-        () => trigger_irq(config_irq),
-      );
+      device.setup(config_irq, address, length);
     },
 
     notify(dev, vq) {
-      const device = states[dev];
+      const device = connected[dev];
       assert(device);
-      queue_state(device, vq).pending = true;
-      void drain_notifications(device, vq);
+      device.notify(vq);
     },
   };
 }

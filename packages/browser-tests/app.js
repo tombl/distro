@@ -1,4 +1,10 @@
-import { blockDevice, bootMachine, consoleDevice, fileSystemDevice } from "@lowland/kernel";
+import {
+  blockDevice,
+  bootMachine,
+  consoleDevice,
+  fileSystemDevice,
+  workerDevice,
+} from "@lowland/kernel";
 import { spawnGuest } from "@tombl/linux-guest";
 import { BrowserFS } from "@tombl/linux-guest/browser";
 
@@ -20,10 +26,29 @@ async function rootDevice() {
   const bytes = await rootfs;
   return blockDevice({
     capacity: bytes.byteLength,
-    read(offset, length) {
-      return bytes.subarray(offset, offset + length);
+    read(offset, target) {
+      const source = bytes.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
     },
   });
+}
+
+async function opfsDiskDevice(handle, capacity) {
+  const worker = new Worker("/opfs-disk-worker.js", { type: "module" });
+  const devicePromise = workerDevice(worker);
+  worker.postMessage({
+    handle,
+    capacity,
+  });
+  try {
+    const device = await devicePromise;
+    void device.closed.finally(() => worker.terminate()).catch(() => {});
+    return device;
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
 }
 
 // Boots a guest, runs the scenario, and always shuts the machine down.
@@ -43,6 +68,47 @@ globalThis.bootSmoke = () =>
     const result = await collectProcess(await guest.exec(["uname", "-a"]));
     return { ...result, machineClosed: true };
   });
+
+globalThis.opfsWorkerDiskRoundTrip = async () => {
+  const directory = await navigator.storage.getDirectory();
+  const name = "virtio-worker-round-trip.img";
+  await directory.removeEntry(name).catch((error) => {
+    if (error.name !== "NotFoundError") throw error;
+  });
+  const handle = await directory.getFileHandle(name, { create: true });
+  const marker = "opfs-worker-virtio-round-trip";
+
+  try {
+    const first = await opfsDiskDevice(handle, 1024 * 1024);
+    const write = await withGuest(
+      async (guest) =>
+        collectProcess(
+          await guest.exec([
+            "sh",
+            "-c",
+            `until [ -b /dev/vdb ]; do sleep 0.1; done; printf '%s\\n' '${marker}' | dd of=/dev/vdb bs=512 conv=fsync 2>/dev/null`,
+          ]),
+        ),
+      { devices: [first] },
+    );
+
+    const second = await opfsDiskDevice(handle);
+    const read = await withGuest(
+      async (guest) =>
+        collectProcess(
+          await guest.exec([
+            "sh",
+            "-c",
+            "until [ -b /dev/vdb ]; do sleep 0.1; done; dd if=/dev/vdb bs=512 count=1 2>/dev/null | head -n 1",
+          ]),
+        ),
+      { devices: [second] },
+    );
+    return { marker, write, read };
+  } finally {
+    await directory.removeEntry(name);
+  }
+};
 
 globalThis.spawnStress = () =>
   withGuest(async (guest) => {

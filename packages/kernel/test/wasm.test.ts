@@ -4,10 +4,12 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
+import { blockDevice } from "../src/virtio/block.ts";
 import { consoleDevice } from "../src/virtio/console.ts";
 import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
 import { VirtioController, close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
+import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
 import {
   allocate_shared_memory,
   memory_bytes,
@@ -187,6 +189,48 @@ test("virtio-net preserves pending frames but drops receive chains on reset", as
   sender.close();
   await close_virtio_device(device);
   network.close();
+});
+
+test("virtio block reports a short caller-buffer read as IOERR", async () => {
+  const block_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const device = blockDevice({
+    capacity: 512,
+    read(_offset, target) {
+      target.fill(0xaa);
+      return target.byteLength - 1;
+    },
+  });
+  const interrupted = Promise.withResolvers<void>();
+  const imports = virtio_imports({
+    memory: block_memory,
+    devices: [device],
+    trigger_irq() {
+      interrupted.resolve();
+    },
+    on_error(error) {
+      interrupted.reject(error);
+    },
+  });
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    const view = new DataView(block_memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, length, true);
+    view.setUint16(14, flags, true);
+  };
+  const available = 1 << 7;
+  const next = 1;
+  const writable = 1 << 1;
+  descriptor(0, 128, 16, available | next);
+  descriptor(1, 256, 512, available | next | writable);
+  descriptor(2, 1024, 1, available | writable);
+  new Uint8Array(block_memory.buffer, 1024, 1)[0] = 0xff;
+
+  imports.enable_vring(0, 0, 4, 0, 1);
+  imports.notify(0, 0);
+  await interrupted.promise;
+
+  assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 1);
+  await close_virtio_device(device);
 });
 
 test("console input is held until the guest opens its port", async () => {
@@ -402,6 +446,173 @@ test("virtio reset invalidates stale chains and pending notifications", async ()
   assert.notEqual(restored_descriptor.getUint16(14, true) & (1 << 15), 0);
   await Promise.resolve();
   assert.equal(interrupts, 1);
+});
+
+test("a remote virtio worker owns chains but the main thread publishes completions", async () => {
+  const remote_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const first_chain = Promise.withResolvers<{
+    array: Uint8Array;
+    release(written: number): void;
+  }>();
+  const stale_chain = Promise.withResolvers<{
+    array: Uint8Array;
+    release(written: number): void;
+  }>();
+  let notifications = 0;
+  let resets = 0;
+  let closes = 0;
+  const controller = new VirtioController(
+    { deviceId: 2, config: Uint8Array.of(7) },
+    {
+      queues: [
+        (queue) => {
+          const [chain] = queue;
+          assert(chain);
+          const [buffer] = chain;
+          assert(buffer?.writable);
+          notifications += 1;
+          (notifications === 1 ? first_chain : stale_chain).resolve({
+            array: buffer.array,
+            release: (written) => chain.release(written),
+          });
+        },
+      ],
+      reset() {
+        resets += 1;
+      },
+      close() {
+        closes += 1;
+      },
+    },
+  );
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, controller.device);
+  const device = await workerDevice(channel.port2);
+  const interrupts: number[] = [];
+  const errors: unknown[] = [];
+  const imports = virtio_imports({
+    memory: remote_memory,
+    devices: [device],
+    trigger_irq: (irq) => interrupts.push(irq),
+    on_error: (error) => errors.push(error),
+  });
+  const queue_descriptor = (ring: number, address: number) => {
+    const descriptor = new DataView(remote_memory.buffer, ring, 16);
+    descriptor.setBigUint64(0, BigInt(address), true);
+    descriptor.setUint32(8, 1, true);
+    descriptor.setUint16(12, 0, true);
+    descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
+    return descriptor;
+  };
+
+  const config_address = 256;
+  imports.setup(0, 3, config_address, 1);
+  assert.equal(new Uint8Array(remote_memory.buffer, config_address, 1)[0], 7);
+
+  const descriptor = queue_descriptor(0, 64);
+  imports.enable_vring(0, 0, 1, 0, 5);
+  imports.notify(0, 0);
+  const first = await first_chain.promise;
+  first.array[0] = 0xaa;
+  first.release(1);
+  await new Promise<void>((resolve) => {
+    const check = () => (interrupts.length ? resolve() : setTimeout(check, 0));
+    check();
+  });
+  assert.equal(new Uint8Array(remote_memory.buffer, 64, 1)[0], 0xaa);
+  assert.equal(descriptor.getUint32(8, true), 1);
+  assert.equal(descriptor.getUint16(14, true), (1 << 15) | (1 << 7) | (1 << 1));
+  assert.deepEqual(interrupts, [5]);
+
+  controller.updateConfig(Uint8Array.of(9));
+  await new Promise<void>((resolve) => {
+    const check = () => (interrupts.includes(3) ? resolve() : setTimeout(check, 0));
+    check();
+  });
+  assert.equal(new Uint8Array(remote_memory.buffer, config_address, 1)[0], 9);
+
+  queue_descriptor(128, 192);
+  imports.enable_vring(0, 0, 1, 128, 6);
+  imports.notify(0, 0);
+  const stale = await stale_chain.promise;
+  imports.reset(0);
+  stale.array[0] = 0xbb;
+  stale.release(1);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(new Uint8Array(remote_memory.buffer, 192, 1)[0], 0);
+  assert.deepEqual(interrupts, [5, 3]);
+  assert.equal(resets, 1);
+  assert.deepEqual(errors, []);
+
+  await close_virtio_device(device);
+  assert.equal(closes, 1);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("an unattached remote virtio device can be closed", async () => {
+  let closes = 0;
+  const served = blockDevice({
+    capacity: 512,
+    read: (_offset, target) => target.byteLength,
+    close() {
+      closes += 1;
+    },
+  });
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, served);
+  const device = await workerDevice(channel.port2);
+
+  await close_virtio_device(device);
+  assert.equal(closes, 1);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("a worker-device failure after ready is observed before attachment", async () => {
+  const served = blockDevice({
+    capacity: 512,
+    read: (_offset, target) => target.byteLength,
+  });
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, served);
+  const device = await workerDevice(channel.port2);
+
+  channel.port1.postMessage({
+    type: "error",
+    error: { name: "Error", message: "worker failed after ready" },
+  });
+  await assert.rejects(device.closed, /worker failed after ready/);
+  await assert.rejects(close_virtio_device(device), /worker failed after ready/);
+
+  await close_virtio_device(served);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("workerDevice accepts a Node Worker endpoint", async () => {
+  const worker = new Worker(
+    `
+      const { parentPort } = require("node:worker_threads");
+      parentPort.postMessage({
+        type: "ready",
+        device_id: 4,
+        features: 0n,
+        config: new Uint8Array(),
+        queues: 0,
+      });
+      parentPort.on("message", (message) => {
+        if (message.type === "close") parentPort.postMessage({ type: "closed" });
+      });
+    `,
+    { eval: true },
+  );
+  try {
+    const device = await workerDevice(worker);
+    await close_virtio_device(device);
+  } finally {
+    await worker.terminate();
+  }
 });
 
 test("virtio close drains active queue work before one-time cleanup", async () => {

@@ -93,6 +93,7 @@
         blockDevice,
         spawnGuest,
       } from "@tombl/linux-guest";
+      import { workerDevice } from "@lowland/kernel";
       import { BrowserFS } from "@tombl/linux-guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
@@ -210,25 +211,28 @@
 
         return {
           capacity: size,
-          async read(offset, length) {
+          async read(offset, target) {
+            const length = target.byteLength;
             if (offset < 0 || length < 0 || offset + length > size) {
               throw new RangeError("rootfs read is outside the disk");
             }
-            if (whole) return whole.slice(offset, offset + length);
+            if (whole) {
+              target.set(whole.subarray(offset, offset + length));
+              return length;
+            }
             const first = Math.floor(offset / CHUNK);
             const last = Math.floor((offset + length - 1) / CHUNK);
             const loaded = await Promise.all(
               Array.from({ length: last - first + 1 }, (_, index) => loadChunk(first + index)),
             );
-            const result = new Uint8Array(length);
             for (let index = 0; index < loaded.length; index++) {
               const chunkIndex = first + index;
               const chunkStart = chunkIndex * CHUNK;
               const from = Math.max(offset, chunkStart);
               const to = Math.min(offset + length, chunkStart + loaded[index].byteLength);
-              result.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
+              target.set(loaded[index].subarray(from - chunkStart, to - chunkStart), from - offset);
             }
-            return result;
+            return length;
           },
         };
       }
@@ -236,61 +240,35 @@
       async function openInstallDisk({ requireFilesystem }) {
         const directory = await navigator.storage.getDirectory();
         const handle = await directory.getFileHandle("root.ext4", { create: true });
-        let file = await handle.getFile();
-        if (file.size === 0 && !requireFilesystem) {
-          // The browser owns only the persistent block device's capacity. The
-          // live guest owns its filesystem format and label, exactly as an
-          // installer does for a blank physical disk.
-          const writable = await handle.createWritable();
-          await writable.truncate(64 * 1024 * 1024);
-          await writable.close();
-          file = await handle.getFile();
-        }
-
-        const disk = new Uint8Array(await file.arrayBuffer());
-
+        const file = await handle.getFile();
         const superblock = 1024;
         const magicOffset = superblock + 56;
+        const magic = new Uint8Array(await file.slice(magicOffset, magicOffset + 2).arrayBuffer());
         const hasFilesystem =
-          disk.byteLength >= magicOffset + 2 &&
-          disk[magicOffset] === 0x53 &&
-          disk[magicOffset + 1] === 0xef;
+          file.size >= magicOffset + 2 && magic[0] === 0x53 && magic[1] === 0xef;
         if (requireFilesystem && !hasFilesystem) {
           throw new Error("persistent disk is not a valid ext4 image");
         }
         if (!requireFilesystem && hasFilesystem) return undefined;
 
-        const BLOCK = 4096;
-        const dirty = new Set();
-        const storage = {
-          capacity: disk.byteLength,
-          read(offset, length) {
-            return disk.slice(offset, offset + length);
-          },
-          write(offset, data) {
-            disk.set(data, offset);
-            const first = Math.floor(offset / BLOCK);
-            const last = Math.floor((offset + data.byteLength - 1) / BLOCK);
-            for (let block = first; block <= last; block++) dirty.add(block);
-            return data.byteLength;
-          },
-          async flush() {
-            if (dirty.size === 0) return;
-            const writable = await handle.createWritable({ keepExistingData: true });
-            for (const block of dirty) {
-              const offset = block * BLOCK;
-              await writable.write({
-                type: "write",
-                position: offset,
-                data: disk.slice(offset, offset + Math.min(BLOCK, disk.byteLength - offset)),
-              });
-            }
-            await writable.close();
-            dirty.clear();
-          },
-        };
-
-        return storage;
+        const worker = new Worker("./static/__ASSET_DIRECTORY__/opfs-disk-worker.js", {
+          type: "module",
+        });
+        const devicePromise = workerDevice(worker);
+        worker.postMessage({
+          handle,
+          // The host supplies capacity for a new physical disk; the guest
+          // installer remains solely responsible for its filesystem contents.
+          capacity: file.size === 0 ? 64 * 1024 * 1024 : undefined,
+        });
+        try {
+          const device = await devicePromise;
+          void device.closed.finally(() => worker.terminate()).catch(() => {});
+          return device;
+        } catch (error) {
+          worker.terminate();
+          throw error;
+        }
       }
 
       // The host adapter upgrades the guest's plaintext HTTP request to HTTPS.
@@ -310,7 +288,7 @@
       const opfs = await navigator.storage.getDirectory();
       const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
       const guest = await spawnGuest({
-        root: blockDevice(disk),
+        root: bootMode === "live" ? blockDevice(disk) : disk,
         bootConsole: bootOut,
         // One CPU is the supported architecture until SMP is ready to become
         // part of the facade contract.
@@ -319,7 +297,7 @@
         cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${cmdline.replace(/\+/g, " ")}`,
         devices: [
           ttyConsole,
-          ...(installDisk ? [blockDevice(installDisk)] : []),
+          ...(installDisk ? [installDisk] : []),
           entropyDevice(),
           fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
         ],

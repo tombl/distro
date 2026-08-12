@@ -4,6 +4,7 @@
 // Selected at runtime by the presence of process.getBuiltinModule, so bundlers
 // only ever see the web path and never try to resolve node builtins.
 
+import { listen_endpoint, post_endpoint, type EmitterEndpoint, type Endpoint } from "./endpoint.ts";
 import { assert } from "./util.ts";
 
 export interface WorkerHandle {
@@ -16,20 +17,32 @@ export interface WorkerHandlers {
   on_error(error: Error): void;
 }
 
-/** A worker's connection back to the thread that spawned it. */
-export interface WorkerChannel {
-  post(message: unknown, transfer?: Transferable[]): void;
-  on_message(handler: (message: unknown) => void): void;
-}
-
 interface Platform {
   load_wasm(url: URL): Promise<{
     bytes: Uint8Array<ArrayBuffer>;
     module: WebAssembly.Module;
   }>;
   spawn_worker(name: string, handlers: WorkerHandlers): WorkerHandle;
-  worker_channel(): WorkerChannel;
+  worker_endpoint(): Endpoint;
   quit(): void;
+}
+
+function worker_handle(
+  endpoint: Endpoint,
+  terminate: () => void | Promise<unknown>,
+  handlers: WorkerHandlers,
+): WorkerHandle {
+  const stop_listening = listen_endpoint(endpoint, {
+    message: handlers.on_message,
+    error: handlers.on_error,
+  });
+  return {
+    post: (message, transfer) => post_endpoint(endpoint, message, transfer),
+    terminate: async () => {
+      stop_listening();
+      await terminate();
+    },
+  };
 }
 
 const web: Platform = {
@@ -45,27 +58,10 @@ const web: Platform = {
       type: "module",
       name,
     });
-    worker.onmessage = (event) => handlers.on_message(event.data);
-    worker.onerror = (event) => {
-      event.preventDefault();
-      handlers.on_error(
-        event.error instanceof Error
-          ? event.error
-          : new Error(event.message || "machine worker failed"),
-      );
-    };
-    return {
-      post: (message, transfer) => worker.postMessage(message, transfer ?? []),
-      terminate: async () => worker.terminate(),
-    };
+    return worker_handle(worker, () => worker.terminate(), handlers);
   },
-  worker_channel() {
-    return {
-      post: (message, transfer) => self.postMessage(message, transfer ?? []),
-      on_message: (handler) => {
-        self.onmessage = (event) => handler(event.data);
-      },
-    };
+  worker_endpoint() {
+    return self;
   },
   quit() {
     self.close();
@@ -74,16 +70,8 @@ const web: Platform = {
 
 // Hand-written types for the slices of the node builtins we use, so that
 // @types/node doesn't leak into a web-first package.
-interface NodeWorker {
-  postMessage(message: unknown, transfer?: Transferable[]): void;
+interface NodeWorker extends EmitterEndpoint {
   terminate(): Promise<number>;
-  on(event: "message", handler: (message: unknown) => void): this;
-  on(event: "error", handler: (error: Error) => void): this;
-}
-
-interface NodeParentPort {
-  postMessage(message: unknown, transfer?: Transferable[]): void;
-  on(event: "message", handler: (message: unknown) => void): this;
 }
 
 interface GetBuiltinModule {
@@ -92,7 +80,7 @@ interface GetBuiltinModule {
   };
   (id: "node:worker_threads"): {
     Worker: new (filename: URL, options: { name: string }) => NodeWorker;
-    parentPort: NodeParentPort | null;
+    parentPort: Endpoint | null;
   };
 }
 
@@ -113,19 +101,11 @@ function node(getBuiltinModule: GetBuiltinModule, process: NodeProcess): Platfor
       const worker = new Worker(new URL("./worker.js", import.meta.url), {
         name,
       });
-      worker.on("message", handlers.on_message);
-      worker.on("error", handlers.on_error);
-      return {
-        post: (message, transfer) => worker.postMessage(message, transfer),
-        terminate: async () => void (await worker.terminate()),
-      };
+      return worker_handle(worker, () => worker.terminate(), handlers);
     },
-    worker_channel() {
+    worker_endpoint() {
       assert(parentPort, "not in a worker");
-      return {
-        post: (message, transfer) => parentPort.postMessage(message, transfer),
-        on_message: (handler) => parentPort.on("message", handler),
-      };
+      return parentPort;
     },
     quit() {
       process.exit(0);
