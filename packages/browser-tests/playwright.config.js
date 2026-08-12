@@ -10,6 +10,7 @@ export default defineConfig({
     wait: {
       stdout: /Listening on (?<playwright_test_base_url>http:\/\/127\.0\.0\.1:\d+)/,
     },
+    reuseExistingServer: false,
   },
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
