@@ -48,7 +48,8 @@ jobs:
           nix eval --json '.#ciJobs.x86_64-linux' --apply '
             jobs:
             let
-              describe = builtins.mapAttrs (
+              describeBuilds = builtins.mapAttrs (_: derivation: { drv = derivation.drvPath; });
+              describeChecks = builtins.mapAttrs (
                 _: derivation:
                 {
                   drv = derivation.drvPath;
@@ -57,8 +58,8 @@ jobs:
               );
             in
             {
-              builds = describe jobs.builds;
-              checks = describe jobs.checks;
+              builds = describeBuilds jobs.builds;
+              checks = describeChecks jobs.checks;
             }
           ' > "$checks_file"
 
