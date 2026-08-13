@@ -101,6 +101,7 @@ let
   integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest-integration-test";
     version = "0.0.0";
+    passthru.ci.heavy = true;
     src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;

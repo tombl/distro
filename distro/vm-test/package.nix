@@ -47,10 +47,12 @@ let
       initramfs,
       disk ? null,
       cpus ? 1,
+      heavy ? false,
     }:
     pkgs.runCommand "vm-test-${name}"
       {
         nativeBuildInputs = [ pkgs.nodejs ];
+        passthru.ci.heavy = heavy;
       }
       ''
         ${lib.optionalString (disk != null) ''

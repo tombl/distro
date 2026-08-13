@@ -73,6 +73,23 @@
         }
       );
 
+      # All validations remain conventional flake checks. This view only gives
+      # CI enough semantic information to isolate scheduler-sensitive checks;
+      # derivations opt in with passthru.ci.heavy rather than naming conventions.
+      ciJobs = eachSystem (
+        { pkgs, ... }:
+        let
+          system = pkgs.stdenv.hostPlatform.system;
+          checks = self.checks.${system};
+          isHeavy = _name: check: check.ci.heavy or false;
+        in
+        {
+          builds = self.packages.${system};
+          checks = lib.filterAttrs (name: check: !(isHeavy name check)) checks;
+          heavyChecks = lib.filterAttrs isHeavy checks;
+        }
+      );
+
       formatter = eachSystem ({ pkgs, ... }: import ./formatter.nix { inherit pkgs; });
 
       devShells = eachSystem (
