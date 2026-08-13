@@ -4,7 +4,7 @@
 }:
 
 let
-  agentDisk = callPackage ./agent-disk.nix { };
+  agentDisk = callPackage ./agent-disk.nix { inherit repository; };
   rootfs = callPackage ./rootfs.nix { inherit repository; };
   ext4Root = callPackage ./rootfs.nix {
     inherit repository;
