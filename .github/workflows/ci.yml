@@ -156,6 +156,11 @@ jobs:
       - heavy-check
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-site-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
@@ -190,9 +195,59 @@ jobs:
           output=$(nix run .#wrangler-preview -- \
             --preview-alias "pr-${{ github.event.pull_request.number }}" \
             --message "PR #${{ github.event.pull_request.number }} at ${GITHUB_SHA}" 2>&1 | tee /dev/stderr)
+          preview_url=$(printf '%s\n' "$output" | grep -Eo \
+            'https://pr-${{ github.event.pull_request.number }}-linux\.[[:alnum:]-]+\.workers\.dev' | tail -1)
+          if [ -z "$preview_url" ]; then
+            echo "Wrangler did not return the expected site preview URL" >&2
+            exit 1
+          fi
           {
             echo "### Site preview"
-            printf '%s\n' "$output" | grep -Eo 'https://[^[:space:]]+' | tail -1
+            printf '[Open the site preview](%s)\n' "$preview_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-docs:
+    name: Deploy docs
+    needs:
+      - build
+      - heavy-check
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-docs-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Deploy production
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+        run: |
+          nix run .#docs-wrangler-deploy
+      - name: Deploy preview
+        if: github.event_name == 'pull_request'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+        run: |
+          output=$(nix run .#docs-wrangler-preview -- \
+            --preview-alias "docs-pr-${{ github.event.pull_request.number }}" \
+            --message "Docs for PR #${{ github.event.pull_request.number }} at ${GITHUB_SHA}" 2>&1 | tee /dev/stderr)
+          preview_url=$(printf '%s\n' "$output" | grep -Eo \
+            'https://docs-pr-${{ github.event.pull_request.number }}-lowland-docs\.[[:alnum:]-]+\.workers\.dev' | tail -1)
+          if [ -z "$preview_url" ]; then
+            echo "Wrangler did not return the expected docs preview URL" >&2
+            exit 1
+          fi
+          {
+            echo "### Docs preview"
+            printf '[Open the docs preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-release:

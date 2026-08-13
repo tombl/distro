@@ -22,8 +22,6 @@ pkgs.stdenvNoCC.mkDerivation {
     size=$(wc -c < ${rootfs})
     printf '{"sha":"%s","size":%s}' "$sha" "$size" > $out/rootfs.erofs.json
 
-    cp ${../../apps/site/service-worker.js} $out/service-worker.js
-    cp ${../../apps/site/_headers} $out/_headers
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.erofs)
     if [ "$rootfs_bytes" -gt 25000000 ]; then

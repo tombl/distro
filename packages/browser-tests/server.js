@@ -8,10 +8,15 @@ import { promisify } from "node:util";
 const root = process.cwd();
 const types = {
   ".cpio": "application/octet-stream",
+  ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".erofs": "application/octet-stream",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
   ".wasm": "application/wasm",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
 };
 
 // The guest root disk and the scheduler-handoff initramfs are nix build

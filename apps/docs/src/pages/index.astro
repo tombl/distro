@@ -1,0 +1,136 @@
+---
+import Docs from "../layouts/Docs.astro";
+---
+
+<Docs
+  title="Documentation"
+  description="Learn how to run and control Lowland Linux machines in browsers and Node.js."
+  current=""
+  headings={[]}
+>
+  <article class="docs-home">
+    <p class="eyebrow">Lowland documentation</p>
+    <h1>Run Linux from JavaScript.</h1>
+    <p class="lede">
+      Lowland compiles Linux for wasm32. It boots a complete system in a browser or Node.js. Use
+      the guest API to run processes, move files, attach devices, and connect machines.
+    </p>
+
+    <section class="first-step">
+      <div>
+        <h2>Start with a working machine</h2>
+        <p>
+          The tutorial starts with an empty page. It adds the required headers, boots a guest, and
+          runs a command.
+        </p>
+        <a class="strong-link" href="/getting-started/">Run Linux in your browser →</a>
+      </div>
+      <pre><code>npm install @lowland/guest</code></pre>
+    </section>
+
+    <section class="next-steps">
+      <h2>Go further</h2>
+      <ul>
+        <li>
+          <a href="/attach-a-terminal/">Attach a terminal</a>
+          <span>Connect a guest shell to xterm.js.</span>
+        </li>
+        <li>
+          <a href="/reference/linux-guest/"><code>@lowland/guest</code></a>
+          <span>Run processes, transfer files, and manage a prepared system.</span>
+        </li>
+        <li>
+          <a href="/reference/kernel/"><code>@lowland/kernel</code></a>
+          <span>Build a machine from memory, CPUs, and virtio devices.</span>
+        </li>
+      </ul>
+    </section>
+  </article>
+
+</Docs>
+
+<style>
+  .eyebrow {
+    margin-block: 0 0.75rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .docs-home h1 {
+    max-width: 18ch;
+    margin-block-start: 0;
+    font-size: clamp(2.25rem, 5vw, 3.75rem);
+    letter-spacing: -0.04em;
+  }
+
+  .lede {
+    max-width: 60ch;
+    font-size: 1.0625rem;
+  }
+
+  .first-step {
+    margin-block-start: 3.5rem;
+    padding-block: 1.5rem;
+    border-block: 1px solid var(--hairline);
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  .first-step h2,
+  .next-steps h2 {
+    margin-block-start: 0;
+  }
+
+  .first-step pre {
+    margin: 0;
+    align-self: center;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    font-size: 0.875rem;
+  }
+
+  .strong-link {
+    color: var(--code-foreground);
+    font-weight: 600;
+  }
+
+  .next-steps {
+    margin-block-start: 3rem;
+  }
+
+  .next-steps ul {
+    list-style: none;
+    padding: 0;
+    border-block-start: 1px solid var(--hairline);
+  }
+
+  .next-steps li {
+    margin: 0;
+    padding-block: 0.7rem;
+    border-block-end: 1px solid var(--hairline);
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.7fr) 1fr;
+    gap: 1rem;
+  }
+
+  .next-steps li > :last-child {
+    color: var(--muted);
+  }
+
+  @media (min-width: 42rem) {
+    .first-step {
+      grid-template-columns: 1fr auto;
+      align-items: start;
+    }
+  }
+
+  @media (max-width: 32rem) {
+    .next-steps li {
+      grid-template-columns: 1fr;
+      gap: 0.2rem;
+    }
+  }
+</style>
