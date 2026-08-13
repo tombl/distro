@@ -56,12 +56,14 @@ const server = createServer(async (request, response) => {
         const directory =
           process.env.LINUX_GUEST_TEST_ASSETS ?? (await build("linux-guest.checks.tests.assets"));
         path = join(directory, relative);
-      } else if (relative === "scheduler-handoff.cpio") {
-        path = await build("basic-init.schedulerHandoffInitramfs");
-      } else if (relative === "remote-vm.cpio") {
-        path = await build("basic-init.remoteMemoryInitramfs");
-      } else if (relative === "posix-spawn-stress.cpio") {
-        path = await build("basic-init.posixSpawnStressInitramfs");
+      } else if (relative === "boot.cpio") {
+        path = await build("image.bootInitramfs");
+      } else if (relative === "scheduler-handoff.erofs") {
+        path = await build("basic-init.schedulerHandoffDisk");
+      } else if (relative === "remote-vm.erofs") {
+        path = await build("basic-init.remoteMemoryDisk");
+      } else if (relative === "posix-spawn-stress.erofs") {
+        path = await build("basic-init.posixSpawnStressDisk");
       }
     } catch (error) {
       console.error(`failed to build ${relative}:`, error.stderr ?? error);

@@ -21,7 +21,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
   self:
   let
     inherit (self) callPackage;
-    baseRepository = callPackage ./repository.nix { };
+    # Images embedded by lowland-boot cannot install from the final repository:
+    # that repository contains lowland-boot itself. This private index is the
+    # acyclic package-only input used to construct those images.
+    bootstrapRepository = callPackage ./repository.nix { };
   in
   {
     inherit debug sourceVersion;
@@ -72,21 +75,31 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
+    ca-certificates = callPackage ./ca-certificates/package.nix { };
+    coreutils = callPackage ./coreutils/package.nix { };
     curl = callPackage ./curl/package.nix { };
+    diffutils = callPackage ./diffutils/package.nix { };
     dropbear = callPackage ./dropbear/package.nix { };
     e2fsprogs = callPackage ./e2fsprogs/package.nix { };
     file = callPackage ./file/package.nix { };
+    findutils = callPackage ./findutils/package.nix { };
+    gawk = callPackage ./gawk/package.nix { };
     git = callPackage ./git/package.nix { };
+    grep = callPackage ./grep/package.nix { };
     jq = callPackage ./jq/package.nix { };
+    less = callPackage ./less/package.nix { };
     lua = callPackage ./lua/package.nix { };
     make = callPackage ./make/package.nix { };
     ncurses = callPackage ./ncurses/package.nix { };
     openssl = callPackage ./openssl/package.nix { };
+    patch = callPackage ./patch/package.nix { };
     python = callPackage ./python/package.nix { };
     quickjs = callPackage ./quickjs/package.nix { };
     readline = callPackage ./readline/package.nix { };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
+    sed = callPackage ./sed/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
+    vim = callPackage ./vim/package.nix { };
     xz = callPackage ./xz/package.nix { };
     zlib = callPackage ./zlib/package.nix { };
     zstd = callPackage ./zstd/package.nix { };
@@ -99,13 +112,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # owned by their consumer packages.
     image = callPackage ./image { };
 
-    site = callPackage ./site { };
+    site = callPackage ./site { repository = bootstrapRepository; };
     bridge-site = callPackage ../packages/bridge-site { };
 
     apk-checks = callPackage ./apk/checks.nix { };
-    repository = baseRepository // {
+    repository = (callPackage ./repository.nix { bootFiles = self.site.bootFiles; }) // {
       checks = {
-        inherit (self.apk-checks) install store-references;
+        inherit (self.apk-checks) install store-references userland;
       };
     };
 
@@ -115,7 +128,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     kselftests = callPackage ./kselftests/package.nix { };
     node-workspace = callPackage ./npm/node-workspace.nix { };
     playwright = callPackage ./npm/playwright.nix { };
-    linux-guest = callPackage ./npm/linux-guest { };
+    linux-guest = callPackage ./npm/linux-guest { repository = bootstrapRepository; };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
   }

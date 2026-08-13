@@ -32,7 +32,7 @@ let
         source = ./install-system.sh;
         mode = "0755";
       };
-      "/etc/apk/keys/site.rsa.pub" = repository.publicKey;
+      "/etc/apk/keys/site.rsa.pub" = ./keys/site.rsa.pub;
       "/etc/apk/repositories" = pkgs.writeText "site-apk-repositories" ''
         http://assets.low.land/apk/wasm32/Packages.adb
       '';

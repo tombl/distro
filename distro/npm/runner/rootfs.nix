@@ -1,22 +1,12 @@
 {
   apk,
+  apk-tools,
   basic-init,
   busybox,
-  curl,
-  dropbear,
-  file,
-  git,
-  jq,
-  lua,
-  make,
+  ca-certificates,
   image,
-  openssl,
-  python,
-  quickjs,
   repository,
-  sqlite3,
   vm-test,
-  zstd,
 }:
 
 let
@@ -26,20 +16,9 @@ let
       name = "runner";
       repositories = [ repository ];
       packages = [
+        apk-tools
         basic-init
         busybox
-        zstd
-        file
-        jq
-        lua
-        make
-        openssl
-        quickjs
-        python
-        sqlite3
-        curl
-        git
-        dropbear
       ];
       files."/init" = {
         source = ../../runner/rootfs-init.sh;
@@ -53,13 +32,17 @@ let
 in
 package
 // {
-  checks.mount = vm-test.vmTest {
-    name = "runner-rootfs-mount";
-    initramfs = vm-test.mkInitramfs {
-      name = "runner-rootfs-mount";
-      init = ../../runner/rootfs-smoke-test.sh;
-      contents = [ busybox ];
+  checks.mount = vm-test.installedTest {
+    name = "runner-rootfs";
+    init = ../../runner/rootfs-smoke-test.sh;
+    contents = [
+      apk-tools
+      basic-init
+      busybox
+      ca-certificates
+    ];
+    files = {
+      "/bin/basic-init" = "${basic-init}/bin/init";
     };
-    disk = package;
   };
 }

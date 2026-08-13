@@ -22,15 +22,9 @@ for (let index = 0; index < args.length; index++) {
     positional.push(args[index]);
   }
 }
-const [linuxPath, initramfsPath, diskPath] = positional;
-if (
-  !linuxPath ||
-  !initramfsPath ||
-  positional.length > 3 ||
-  !Number.isSafeInteger(cpus) ||
-  cpus < 1
-) {
-  throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk]");
+const [linuxPath, initramfsPath, ...diskPaths] = positional;
+if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
+  throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk ...]");
 }
 
 const { blockDevice, bootMachine, consoleDevice, entropyDevice } = await import(
@@ -144,9 +138,10 @@ const devices = [
   entropyDevice(),
 ];
 
-let disk;
-if (diskPath) {
-  disk = openSync(diskPath, "r+");
+const disks = [];
+for (const diskPath of diskPaths) {
+  const disk = openSync(diskPath, "r+");
+  disks.push(disk);
   const { size } = fstatSync(disk);
   devices.push(
     blockDevice({
@@ -192,7 +187,7 @@ void machine?.closed.catch((error) => {
 
 const outcome = await result;
 machine?.close();
-if (disk !== undefined) closeSync(disk);
+for (const disk of disks) closeSync(disk);
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);
 process.exitCode = outcome.passed ? 0 : 1;

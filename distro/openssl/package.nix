@@ -7,6 +7,7 @@
   },
   vm-test,
   busybox,
+  ca-certificates,
 }:
 
 stdenv.mkDerivation (finalAttrs: {
@@ -88,12 +89,10 @@ stdenv.mkDerivation (finalAttrs: {
   ];
   installFlags = [ "DESTDIR=$(out)" ];
 
-  postInstall = ''
-    # X509_get_default_cert_file() resolves this guest path. Keep the bundle
-    # beside openssl.cnf in the staged OPENSSLDIR so CLI and library
-    # consumers can verify with their defaults after the slice is overlaid.
-    cp ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt $out/etc/ssl/cert.pem
-  '';
+  # X509_get_default_cert_file() resolves /etc/ssl/cert.pem in the guest. The
+  # shared trust bundle is packaged separately because apk-tools uses the same
+  # path for HTTPS repositories.
+  passthru.apk.depends = [ "ca-certificates" ];
 
   passthru.checks =
     let
@@ -121,6 +120,7 @@ stdenv.mkDerivation (finalAttrs: {
         init = ./tests/cli-test.sh;
         contents = [
           busybox
+          ca-certificates
           finalAttrs.finalPackage
           handshake
         ];

@@ -1,9 +1,15 @@
 {
   apk,
   apk-tools,
+  bash,
   busybox,
+  ca-certificates,
+  coreutils,
+  file,
   jq,
   lua,
+  ncurses,
+  openssl,
   pkgs,
   vm-test,
 }:
@@ -27,6 +33,20 @@ let
       inherit lua;
     };
   };
+  userlandRepository = apk.mkRepository {
+    name = "apk-userland-targets";
+    packages = {
+      inherit
+        bash
+        ca-certificates
+        busybox
+        coreutils
+        file
+        ncurses
+        openssl
+        ;
+    };
+  };
   repositoryPayload = pkgs.runCommand "apk-install-repository-payload" { } ''
     mkdir -p $out/repo
     cp -R ${installRepository}/. $out/repo/
@@ -34,6 +54,15 @@ let
   repositoryPackage = apk.mkPackage {
     payload = repositoryPayload;
     name = "apk-install-repository";
+    version = "1-r0";
+  };
+  userlandRepositoryPayload = pkgs.runCommand "apk-userland-repository-payload" { } ''
+    mkdir -p $out/repo
+    cp -R ${userlandRepository}/. $out/repo/
+  '';
+  userlandRepositoryPackage = apk.mkPackage {
+    payload = userlandRepositoryPayload;
+    name = "apk-userland-repository";
     version = "1-r0";
   };
   storeReferences = pkgs.runCommand "apk-store-reference-check" { } ''
@@ -57,7 +86,18 @@ in
     contents = [
       apk-tools
       busybox
+      ca-certificates
       repositoryPackage
+    ];
+  };
+  userland = vm-test.installedTest {
+    name = "apk-userland";
+    init = ./userland-test.sh;
+    contents = [
+      apk-tools
+      busybox
+      ca-certificates
+      userlandRepositoryPackage
     ];
   };
   store-references = storeReferences;

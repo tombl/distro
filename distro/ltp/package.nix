@@ -240,27 +240,22 @@ stdenv.mkDerivation (finalAttrs: {
       '';
       deviceMarker = pkgs.writeText "ltp-device" "";
     in
-    vm-test.vmTest {
+    vm-test.installedTest {
       name = "ltp-${name}";
-      inherit (suite) disk;
-      initramfs = vm-test.mkInitramfs {
-        name = "ltp-${name}";
-        init = ./test.sh;
-        # Fragment-contract exception: LTP deliberately relies on the test
-        # image's BusyBox for helpers such as mkfs.ext2.
-        contents = [
-          busybox
-          suiteBin
-        ];
-        files = {
-          "/etc/group" = group;
-          "/etc/passwd" = passwd;
-          "/ltp-tests" = manifest;
-        }
-        // lib.optionalAttrs (suite.disk != null) {
-          "/ltp-device" = deviceMarker;
-        };
+      init = ./test.sh;
+      contents = [
+        busybox
+        suiteBin
+      ];
+      files = {
+        "/etc/group" = group;
+        "/etc/passwd" = passwd;
+        "/ltp-tests" = manifest;
+      }
+      // lib.optionalAttrs (suite.disk != null) {
+        "/ltp-device" = deviceMarker;
       };
+      disks = lib.optional (suite.disk != null) suite.disk;
     }
   ) suites;
 })

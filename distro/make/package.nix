@@ -13,7 +13,10 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "make";
   version = "4.4.1";
   inherit src;
-  passthru.apk.replaces = [ "busybox" ];
+  passthru.apk = {
+    depends = [ "busybox" ];
+    replaces = [ "busybox" ];
+  };
 
   # make runs every recipe through a child process. On wasm there is no
   # fork()/vfork(), only posix_spawn (clone+execve); make already has a full

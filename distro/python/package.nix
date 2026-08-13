@@ -15,6 +15,7 @@
   llvm-toolchain,
   vm-test,
   busybox,
+  ca-certificates,
 }:
 
 let
@@ -22,7 +23,10 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
-    passthru.apk.depends = [ "ncurses" ];
+    passthru.apk.depends = [
+      "ncurses"
+      "openssl"
+    ];
 
     # Cross-compiling CPython needs a host interpreter of the *same* minor
     # version to run the freeze/regen steps; --with-build-python below points
@@ -164,6 +168,7 @@ let
         # skew) and no PEM fixture has to be baked into the image.
         contents = [
           busybox
+          ca-certificates
           ncurses
           openssl
           finalAttrs.finalPackage

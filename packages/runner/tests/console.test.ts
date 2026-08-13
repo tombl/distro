@@ -1,4 +1,4 @@
-import { bootMachine, consoleDevice } from "@lowland/kernel";
+import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -9,7 +9,8 @@ function required_environment(name: string): string {
   return value;
 }
 
-const initramfs = required_environment("LINUX_RUNNER_TEST_CONSOLE_INITRAMFS");
+const initramfs = required_environment("LINUX_RUNNER_TEST_BOOT_INITRAMFS");
+const disk_path = required_environment("LINUX_RUNNER_TEST_CONSOLE_DISK");
 
 function output_sink(output: { text: string }) {
   const decoder = new TextDecoder();
@@ -24,6 +25,15 @@ function output_sink(output: { text: string }) {
 }
 
 test("console preserves input queued before boot", { timeout: 45_000 }, async (t) => {
+  const disk = await readFile(disk_path);
+  const root = blockDevice({
+    capacity: disk.byteLength,
+    read(offset, target) {
+      const source = disk.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+  });
   const output = { text: "" };
   const input = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -33,7 +43,7 @@ test("console preserves input queued before boot", { timeout: 45_000 }, async (t
   });
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [consoleDevice(input, output_sink(output))],
+    plugins: [root, consoleDevice(input, output_sink(output))],
     initcpio: readFile(initramfs),
   });
   t.after(() => machine.close());

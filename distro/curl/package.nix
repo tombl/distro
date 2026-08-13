@@ -6,6 +6,7 @@
     hash = "sha256-nrvbU5C6oeCMAecrEqYE3CNPyFVsTEqaqhhCoLe5fMo=";
   },
   openssl,
+  ca-certificates,
   zlib,
   vm-test,
   busybox,
@@ -88,6 +89,11 @@ stdenv.mkDerivation (finalAttrs: {
       --replace-quiet ${openssl} /
   '';
 
+  passthru.apk.depends = [
+    "busybox"
+    "ca-certificates"
+  ];
+
   passthru.checks = {
     transfers = vm-test.installedTest {
       name = "curl-transfers";
@@ -96,6 +102,7 @@ stdenv.mkDerivation (finalAttrs: {
         # curl-config and wcurl are shell scripts. Runnable distro images
         # always install BusyBox as their /bin/sh provider.
         busybox
+        ca-certificates
         finalAttrs.finalPackage
       ];
     };

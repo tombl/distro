@@ -1,25 +1,40 @@
 {
   apk,
+  lib,
+  bootFiles ? null,
   apk-tools,
   basic-init,
+  bash,
   busybox,
   bzip2,
+  ca-certificates,
+  coreutils,
   curl,
+  diffutils,
   dropbear,
+  e2fsprogs,
   file,
+  findutils,
+  gawk,
   git,
   guest-agent,
+  grep,
   jq,
   kselftests,
+  less,
   ltp,
   lua,
   make,
   ncurses,
   openssl,
+  patch,
   python,
   quickjs,
   readline,
+  rust-smoke,
+  sed,
   sqlite3,
+  vim,
   xz,
   zlib,
   zstd,
@@ -34,27 +49,41 @@ apk.mkRepository {
     inherit
       apk-tools
       basic-init
+      bash
       busybox
       bzip2
+      ca-certificates
+      coreutils
       curl
+      diffutils
       dropbear
+      e2fsprogs
       file
+      findutils
+      gawk
       git
       guest-agent
+      grep
       jq
       kselftests
+      less
       ltp
       lua
       make
       ncurses
       openssl
+      patch
       python
       quickjs
       readline
+      rust-smoke
+      sed
       sqlite3
+      vim
       xz
       zlib
       zstd
       ;
-  };
+  }
+  // lib.optionalAttrs (bootFiles != null) { inherit bootFiles; };
 }

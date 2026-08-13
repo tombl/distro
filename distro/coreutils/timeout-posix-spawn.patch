@@ -1,0 +1,79 @@
+wasm has no fork(); launch the monitored command through posix_spawn. The
+child's pre-exec signal setup (restore mask, default SIGTTIN/SIGTTOU) maps onto
+POSIX_SPAWN_SETSIGMASK and POSIX_SPAWN_SETSIGDEF. Timeout enforcement retains
+the upstream setitimer/SIGALRM path.
+
+--- a/src/timeout.c
++++ b/src/timeout.c
+@@ -47,6 +47,7 @@
+ #include <config.h>
+ #include <getopt.h>
+ #include <stdio.h>
++#include <spawn.h>
+ #include <sys/types.h>
+ #include <signal.h>
+ #if HAVE_PRCTL
+@@ -548,33 +549,37 @@
+   sigset_t orig_set;
+   block_cleanup_and_chld (term_signal, &orig_set);
+ 
+-  monitored_pid = fork ();
+-  if (monitored_pid == -1)
+-    {
+-      error (0, errno, _("fork system call failed"));
+-      return EXIT_CANCELED;
+-    }
+-  else if (monitored_pid == 0)  /* child */
+-    {
+-      /* Restore signal mask for child.  */
+-      if (sigprocmask (SIG_SETMASK, &orig_set, nullptr) != 0)
+-        {
+-          error (0, errno, _("child failed to reset signal mask"));
+-          return EXIT_CANCELED;
+-        }
++  /* This platform has no fork(); posix_spawn (clone+exec) launches the
++     command.  The setup a forked child would run before exec maps onto spawn
++     attributes: restoring the original signal mask becomes
++     POSIX_SPAWN_SETSIGMASK, and resetting SIGTTIN/SIGTTOU from SIG_IGN to
++     SIG_DFL becomes POSIX_SPAWN_SETSIGDEF.  */
++  {
++    posix_spawnattr_t attr;
++    sigset_t sigdefault;
++    sigemptyset (&sigdefault);
++    sigaddset (&sigdefault, SIGTTIN);
++    sigaddset (&sigdefault, SIGTTOU);
++    int err = posix_spawnattr_init (&attr);
++    if (!err)
++      err = posix_spawnattr_setsigmask (&attr, &orig_set);
++    if (!err)
++      err = posix_spawnattr_setsigdefault (&attr, &sigdefault);
++    if (!err)
++      err = posix_spawnattr_setflags (&attr, POSIX_SPAWN_SETSIGMASK
++                                             | POSIX_SPAWN_SETSIGDEF);
++    if (!err)
++      err = posix_spawnp (&monitored_pid, argv[0], nullptr, &attr,
++                          argv, environ);
++    posix_spawnattr_destroy (&attr);
++    if (err)
++      {
++        /* exit like sh, env, nohup, ...  */
++        error (0, err, _("failed to run command %s"), quote (command));
++        return err == ENOENT ? EXIT_ENOENT : EXIT_CANNOT_INVOKE;
++      }
++  }
+ 
+-      /* exec doesn't reset SIG_IGN -> SIG_DFL.  */
+-      signal (SIGTTIN, SIG_DFL);
+-      signal (SIGTTOU, SIG_DFL);
+-
+-      execvp (argv[0], argv);
+-
+-      /* exit like sh, env, nohup, ...  */
+-      int exit_status = errno == ENOENT ? EXIT_ENOENT : EXIT_CANNOT_INVOKE;
+-      error (0, errno, _("failed to run command %s"), quote (command));
+-      return exit_status;
+-    }
+-  else
+     {
+       pid_t wait_result;
+       int status;

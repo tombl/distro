@@ -9,6 +9,7 @@
   zlib,
   curl,
   openssl,
+  ca-certificates,
   vm-test,
 }:
 
@@ -151,6 +152,11 @@ stdenv.mkDerivation (finalAttrs: {
   installTargets = [ "install" ];
   installFlags = [ "DESTDIR=${placeholder "out"}" ];
 
+  passthru.apk.depends = [
+    "busybox"
+    "ca-certificates"
+  ];
+
   passthru.checks =
     let
       check =
@@ -162,6 +168,7 @@ stdenv.mkDerivation (finalAttrs: {
           # cat (the pager), and the coreutils the test drives.
           contents = [
             busybox
+            ca-certificates
             finalAttrs.finalPackage
           ];
         };

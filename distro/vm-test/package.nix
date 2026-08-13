@@ -30,41 +30,41 @@ let
         '';
   };
 
-  mkTestInitramfs =
-    args:
-    image.mkInitramfs (
-      args
-      // {
-        files = (args.files or { }) // {
-          "/vm-test-setup-dev-fd" = ./setup-dev-fd.sh;
-        };
-      }
-    );
-
-  vmTest =
+  # Low-level boot runner. It is deliberately private: callers construct an
+  # APK-installed root with installedTest/installedDisk instead of supplying
+  # an ad-hoc userspace image.
+  bootInstalledSystem =
     {
       name,
       initramfs,
       disk ? null,
+      disks ? [ ],
       cpus ? 1,
       heavy ? false,
     }:
+    let
+      allDisks = lib.optional (disk != null) disk ++ disks;
+      diskCopies = lib.imap0 (index: source: {
+        inherit index source;
+        name = "disk-${toString index}.img";
+      }) allDisks;
+    in
     pkgs.runCommand "vm-test-${name}"
       {
         nativeBuildInputs = [ pkgs.nodejs ];
         passthru.ci.heavy = heavy;
       }
       ''
-        ${lib.optionalString (disk != null) ''
-          cp ${disk} disk.img
-          chmod u+w disk.img
-        ''}
+        ${lib.concatMapStringsSep "\n" (diskCopy: ''
+          cp ${diskCopy.source} ${diskCopy.name}
+          chmod u+w ${diskCopy.name}
+        '') diskCopies}
         set +e
         timeout --kill-after=5 300 node ${runner}/run-test.js \
           --cpus ${toString cpus} \
           ${kernel}/dist/index.js \
           ${initramfs} \
-          ${lib.optionalString (disk != null) "disk.img"} \
+          ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
           2>&1
         status=$?
         set -e
@@ -75,19 +75,19 @@ let
         mkdir $out
       '';
 
-  installedTest =
+  installedDisk =
     {
       name,
       init,
       contents ? [ ],
       files ? { },
-      cpus ? 1,
+      format ? "erofs",
     }:
     let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
       packages = map apk.packageFrom contents;
       repository = apk.mkRepository {
-        name = "${fixtureName}-test";
+        name = "${fixtureName}-system";
         packages = lib.listToAttrs (
           map (p: {
             inherit (p) name;
@@ -96,7 +96,7 @@ let
         );
       };
       system = apk.mkSystem {
-        name = "${fixtureName}-test";
+        name = "${fixtureName}-system";
         repositories = [ repository ];
         inherit packages;
         files = files // {
@@ -110,26 +110,53 @@ let
           };
         };
       };
-      disk = image.mkFilesystem {
+    in
+    assert lib.assertMsg (contents != [ ]) "installedDisk requires at least one APK package";
+    assert lib.assertMsg (!(files ? "/init")) "installedDisk files cannot define /init; use init";
+    assert lib.assertMsg (
+      !(files ? "/vm-test-setup-dev-fd")
+    ) "installedDisk files cannot override /vm-test-setup-dev-fd";
+    image.mkFilesystem {
+      name = "${fixtureName}-system";
+      root = system;
+      inherit format;
+    };
+
+  installedTest =
+    {
+      name,
+      init,
+      contents ? [ ],
+      files ? { },
+      cpus ? 1,
+      # Every installed test boots a VM and needs an isolated CI runner. The
+      # aggregate builder can otherwise start enough guests concurrently to
+      # starve unrelated tests and produce misleading failures.
+      heavy ? true,
+      disks ? [ ],
+    }:
+    let
+      fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
+      rootDisk = installedDisk {
         name = "${fixtureName}-test";
-        root = system;
+        inherit contents files init;
         # Package checks are disposable machines and commonly exercise writes
         # to /etc, /root, and /var. Keep production image policy separate from
         # this mutable test fixture.
         format = "ext4";
       };
     in
-    assert lib.assertMsg (!(files ? "/init")) "installedTest files cannot define /init; use init";
-    assert lib.assertMsg (
-      !(files ? "/vm-test-setup-dev-fd")
-    ) "installedTest files cannot override /vm-test-setup-dev-fd";
-    vmTest {
-      inherit cpus name disk;
+    bootInstalledSystem {
+      inherit cpus heavy name;
+      disks = [ rootDisk ] ++ disks;
       initramfs = image.bootInitramfs;
     };
 in
 {
-  mkInitramfs = mkTestInitramfs;
-  inherit installedTest runner vmTest;
+  inherit
+    installedDisk
+    installedTest
+    runner
+    ;
   recurseForDerivations = true;
 }

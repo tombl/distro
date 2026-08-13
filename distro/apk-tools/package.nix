@@ -52,10 +52,8 @@ stdenv.mkDerivation {
       --replace-fail ' -Wl,--end-group' ' '
   '';
 
-  postInstall = ''
-    # The executable is statically linked, but libfetch still needs the default
-    # trust store for HTTPS repositories at runtime.
-    mkdir -p $out/etc/ssl
-    cp ${openssl}/etc/ssl/cert.pem $out/etc/ssl/cert.pem
-  '';
+  # The executable is statically linked, but libfetch still needs the default
+  # trust store for HTTPS repositories at runtime. Keep that shared payload in
+  # its own APK so OpenSSL and apk-tools never contend for file ownership.
+  passthru.apk.depends = [ "ca-certificates" ];
 }

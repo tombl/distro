@@ -5,7 +5,7 @@
 # only ever touches a temporary file in the runner, never the nix store.
 set -euo pipefail
 
-repo=$(nix build --no-link --print-out-paths .#site.repository)
+repo=$(nix build --no-link --print-out-paths .#repository)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

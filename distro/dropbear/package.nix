@@ -57,6 +57,8 @@ stdenv.mkDerivation (finalAttrs: {
   # dropbear in sbin and the client tools in bin.
   installTargets = [ "install" ];
 
+  passthru.apk.depends = [ "busybox" ];
+
   passthru.checks =
     let
       tcpSpawn = stdenv.mkDerivation {

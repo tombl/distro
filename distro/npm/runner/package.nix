@@ -1,5 +1,4 @@
 {
-  apk,
   bytes,
   busybox,
   pkgs,
@@ -8,33 +7,19 @@
   linux-guest,
   node-workspace,
   image,
-  repository,
   rootfs,
   vm-test,
 }:
 
 let
-  lifecycle-rootfs = image.mkFilesystem {
+  lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-runner-lifecycle";
     format = "ext4";
-    root = apk.mkSystem {
-      name = "linux-runner-lifecycle";
-      repositories = [ repository ];
-      packages = [ busybox ];
-      files = {
-        "/init" = {
-          source = ../../guest-tests/lifecycle-init.sh;
-          mode = "0755";
-        };
-        "/vm-test-setup-dev-fd" = {
-          source = ../../vm-test/setup-dev-fd.sh;
-          mode = "0755";
-        };
-      };
-    };
+    init = ../../guest-tests/lifecycle-init.sh;
+    contents = [ busybox ];
   };
 
-  console-initramfs = vm-test.mkInitramfs {
+  console-rootfs = vm-test.installedDisk {
     name = "linux-runner-console";
     init = ../../runner/console-init.sh;
     contents = [ busybox ];
@@ -123,7 +108,8 @@ let
       ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
       pnpm --filter=@lowland/linux-runner check
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
-        LINUX_RUNNER_TEST_CONSOLE_INITRAMFS=${console-initramfs} \
+        LINUX_RUNNER_TEST_BOOT_INITRAMFS=${image.bootInitramfs} \
+        LINUX_RUNNER_TEST_CONSOLE_DISK=${console-rootfs} \
         LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
         LINUX_RUNNER_TEST_ROOT_DISK=${rootfs} \
         timeout --kill-after=5 300 pnpm --filter=@lowland/linux-runner test

@@ -81,6 +81,8 @@ stdenv.mkDerivation (finalAttrs: {
     cp misc/tabset/* $out/share/tabset/
   '';
 
+  passthru.apk.depends = [ "busybox" ];
+
   passthru.checks =
     let
       # A wasm test binary needs a stack larger than the toolchain's tiny

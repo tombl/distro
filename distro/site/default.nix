@@ -1,4 +1,7 @@
-{ callPackage }:
+{
+  callPackage,
+  repository,
+}:
 
 rec {
   opfsDiskWorker = callPackage ./opfs-disk-worker.nix { };
@@ -11,10 +14,8 @@ rec {
     inherit assets;
     bootMode = "installed";
   };
-  bootstrapRepository = callPackage ./repository.nix { };
-  rootfs = callPackage ./rootfs.nix { repository = bootstrapRepository; };
+  rootfs = callPackage ./rootfs.nix { inherit repository; };
   bootFiles = callPackage ./boot-files.nix { inherit installedFiles; };
-  repository = callPackage ./repository.nix { inherit bootFiles; };
   package = callPackage ./package.nix { inherit liveFiles rootfs; };
   recurseForDerivations = true;
 }

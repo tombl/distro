@@ -16,7 +16,10 @@ let
     pname = "sqlite3";
     version = "3.51.0";
     inherit src;
-    passthru.apk.replaces = [ "busybox" ];
+    passthru.apk = {
+      depends = [ "ncurses" ];
+      replaces = [ "busybox" ];
+    };
 
     # sqlite's configure builds a code generator with the build compiler.
     depsBuildBuild = [ pkgs.stdenv.cc ];

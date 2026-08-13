@@ -1,11 +1,13 @@
 {
   basic-init,
   bytes,
+  image,
   lib,
   kernel,
   linux-guest,
   pkgs,
   playwright,
+  repository,
   site,
 }:
 
@@ -22,9 +24,10 @@ let
     cp ${source}/index.html $out/index.html
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${site.package}/static/*/opfs-disk-worker.js $out/opfs-disk-worker.js
-    cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
-    cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
-    cp ${basic-init.posixSpawnStressInitramfs} $out/posix-spawn-stress.cpio
+    cp ${image.bootInitramfs} $out/boot.cpio
+    cp ${basic-init.schedulerHandoffDisk} $out/scheduler-handoff.erofs
+    cp ${basic-init.remoteMemoryDisk} $out/remote-vm.erofs
+    cp ${basic-init.posixSpawnStressDisk} $out/posix-spawn-stress.erofs
     cp ${source}/server.js $out/server.js
     cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
     mkdir $out/tests
@@ -73,7 +76,7 @@ let
       # Production and previews fetch the independently published repository.
       # The integration test vendors the exact candidate repository so it can
       # validate an install before those packages have reached production.
-      cp -rL ${site.repository} $out/apk
+      cp -rL ${repository} $out/apk
       # After installation the service worker controls the page, so Playwright's
       # page-level route cannot intercept guest fetches. Route only this test
       # artifact's package requests to the vendored candidate repository; the

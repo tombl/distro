@@ -17,7 +17,7 @@ mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
 [ -f /share/terminfo/x/xterm ] ||
-  fail "Bash fragment did not ship xterm terminfo"
+  fail "ncurses did not provide xterm terminfo"
 
 {
   printf '%s\n' 'case $- in *i*) printf "%s\n" interactive >/tmp/interactive ;; *) printf "%s\n" noninteractive >/tmp/interactive ;; esac'
