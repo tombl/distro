@@ -24,11 +24,13 @@ let
     cp ${site.package}/static/*/opfs-disk-worker.js $out/opfs-disk-worker.js
     cp ${basic-init.schedulerHandoffInitramfs} $out/scheduler-handoff.cpio
     cp ${basic-init.remoteMemoryInitramfs} $out/remote-vm.cpio
+    cp ${basic-init.posixSpawnStressInitramfs} $out/posix-spawn-stress.cpio
     cp ${source}/server.js $out/server.js
     cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
     mkdir $out/tests
     cp ${source}/tests/boot.spec.js $out/tests/
     cp ${source}/tests/opfs-disk.spec.js $out/tests/
+    cp ${source}/tests/posix-spawn-stress.spec.js $out/tests/
     cp ${source}/tests/remote-memory.spec.js $out/tests/
     cp ${source}/tests/spawn-stress.spec.js $out/tests/
     cp ${source}/tests/virtio-fs.spec.js $out/tests/

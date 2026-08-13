@@ -392,6 +392,12 @@ function start({
   user: initial_user_context,
   user_copy_status,
 }: InitMessage) {
+  // This worker may register after another isolate has grown the shared user
+  // memory. V8 can retain the fixed-length buffer wrapper captured in the
+  // InitMessage until its asynchronous refresh runs; grow(0) refreshes it
+  // synchronously before any user-memory view is constructed.
+  initial_user_context?.memory.grow(0);
+
   let user_context = initial_user_context;
   if (user_copy_status) {
     assert(user_context);

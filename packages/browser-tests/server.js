@@ -60,6 +60,8 @@ const server = createServer(async (request, response) => {
         path = await build("basic-init.schedulerHandoffInitramfs");
       } else if (relative === "remote-vm.cpio") {
         path = await build("basic-init.remoteMemoryInitramfs");
+      } else if (relative === "posix-spawn-stress.cpio") {
+        path = await build("basic-init.posixSpawnStressInitramfs");
       }
     } catch (error) {
       console.error(`failed to build ${relative}:`, error.stderr ?? error);

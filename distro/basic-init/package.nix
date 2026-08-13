@@ -60,6 +60,17 @@ let
     cpus = 2;
   };
 
+  posixSpawnStressInitramfs = vm-test.mkInitramfs {
+    name = "basic-init-posix-spawn-stress";
+    init = "${buildInit "basic-init-posix-spawn-stress" "tests/posix-spawn-stress.c"}/bin/init";
+  };
+
+  posixSpawnStressCheck = vm-test.vmTest {
+    name = "basic-init-posix-spawn-stress";
+    initramfs = posixSpawnStressInitramfs;
+    heavy = true;
+  };
+
   namedSemaphoreCheck = vm-test.vmTest {
     name = "basic-init-named-semaphore";
     heavy = true;
@@ -156,7 +167,7 @@ let
 in
 (buildInitWith "basic-init" "init.c" "").overrideAttrs (old: {
   passthru = (old.passthru or { }) // {
-    inherit remoteMemoryInitramfs schedulerHandoffInitramfs;
+    inherit posixSpawnStressInitramfs remoteMemoryInitramfs schedulerHandoffInitramfs;
     checks = {
       auxv = check "auxv";
       boot = check "boot";
@@ -189,6 +200,7 @@ in
       memory-abi = memoryAbiCheck;
       named-semaphore = namedSemaphoreCheck;
       proc-self-mem = check "proc-self-mem";
+      posix-spawn-stress = posixSpawnStressCheck;
       pty = check "pty";
       remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
