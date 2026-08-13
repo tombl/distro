@@ -149,7 +149,11 @@ jobs:
         run: |
           installable=".#ciJobs.x86_64-linux.heavyChecks.${{ matrix.check }}"
           nix build --dry-run "$installable"
-          nix build --no-link --print-build-logs "$installable"
+          # Materialize a cached result first because Nix cannot --rebuild an
+          # output it has never registered, then execute this check regardless
+          # of whether a previous workflow attempt cached its success marker.
+          nix build --no-link "$installable"
+          nix build --rebuild --no-link --print-build-logs "$installable"
 
   deploy-site:
     name: Deploy site
