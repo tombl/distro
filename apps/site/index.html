@@ -300,9 +300,7 @@
       const guest = await spawnGuest({
         root: bootMode === "live" ? blockDevice(disk) : disk,
         bootConsole: bootOut,
-        // One CPU is the supported architecture until SMP is ready to become
-        // part of the facade contract.
-        cpus: 1,
+        cpus: navigator.hardwareConcurrency,
         network,
         cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${installDisk ? "lowland.install=1 " : ""}${cmdline.replace(/\+/g, " ")}`,
         devices: [
