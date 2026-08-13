@@ -62,6 +62,7 @@ let
 
   namedSemaphoreCheck = vm-test.vmTest {
     name = "basic-init-named-semaphore";
+    heavy = true;
     initramfs = vm-test.mkInitramfs {
       name = "basic-init-named-semaphore";
       init = "${buildInit "basic-init-named-semaphore" "tests/named-semaphore.c"}/bin/init";

@@ -128,10 +128,14 @@ globalThis.remoteMemoryMetadata = () =>
         "MARKER=remote-vm-environ sleep 30 &",
         "pid=$!",
         "attempt=0",
-        "while [ $attempt -lt 100 ]; do",
+        "while [ $attempt -lt 500 ]; do",
         "  cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
         '  [ "$cmdline" = "sleep 30 " ] && break',
         "  attempt=$((attempt+1))",
+        // Reading /proc does not block. Yield the single guest CPU so the
+        // background child can reach execve instead of exhausting a retry
+        // count while it still has the parent shell's command line.
+        "  sleep 0.01",
         "done",
         "environ=$(tr '\\000' '\\n' < /proc/$pid/environ)",
         "auxv_size=$(wc -c < /proc/$pid/auxv)",
@@ -159,10 +163,14 @@ globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
     `  MARKER=remote-vm-lifecycle-${batch}-$i sleep 30 &`,
     "  pid=$!",
     "  attempt=0",
-    "  while [ $attempt -lt 100 ]; do",
+    "  while [ $attempt -lt 500 ]; do",
     "    cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
     '    [ "$cmdline" = "sleep 30 " ] && break',
     "    attempt=$((attempt+1))",
+    // This is a readiness wait, not a throughput assertion. Without a
+    // blocking operation the observer can win every timeslice and consume
+    // all retries before the child changes its /proc identity at execve.
+    "    sleep 0.01",
     "  done",
     "  environ=$(tr '\\000' '\\n' < /proc/$pid/environ | grep '^MARKER=')",
     "  auxv_size=$(wc -c < /proc/$pid/auxv)",

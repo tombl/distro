@@ -8,7 +8,27 @@ on:
       - published
 
 jobs:
+  plan:
+    name: Plan checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      heavy-checks: ${{ steps.plan.outputs.heavy-checks }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - id: plan
+        name: Discover heavy checks
+        run: |
+          checks=$(nix eval --json '.#ciJobs.x86_64-linux.heavyChecks' \
+            --apply 'checks: builtins.attrNames checks')
+          echo "heavy-checks=$(jq --compact-output '{check: .}' <<< "$checks")" \
+            >> "$GITHUB_OUTPUT"
+
   build:
+    name: Build packages and checks
+    needs: plan
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -25,15 +45,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           checks_file="$RUNNER_TEMP/checks.json"
-          nix eval --json '.#checks.x86_64-linux' --apply '
-            checks:
-            builtins.mapAttrs (
-              _: check:
-              {
-                drv = check.drvPath;
-                outputs = map (output: (builtins.getAttr output check).outPath) check.outputs;
-              }
-            ) checks
+          nix eval --json '.#ciJobs.x86_64-linux' --apply '
+            jobs:
+            let
+              describeBuilds = builtins.mapAttrs (_: derivation: { drv = derivation.drvPath; });
+              describeChecks = builtins.mapAttrs (
+                _: derivation:
+                {
+                  drv = derivation.drvPath;
+                  outputs = map (output: (builtins.getAttr output derivation).outPath) derivation.outputs;
+                }
+              );
+            in
+            {
+              builds = describeBuilds jobs.builds;
+              checks = describeChecks jobs.checks;
+            }
           ' > "$checks_file"
 
           status() {
@@ -47,11 +74,16 @@ jobs:
               >/dev/null
           }
 
-          mapfile -t checks < <(jq --raw-output 'keys[]' "$checks_file")
+          mapfile -t builds < <(jq --raw-output '.builds | keys[]' "$checks_file")
+          mapfile -t checks < <(jq --raw-output '.checks | keys[]' "$checks_file")
           installables=()
+          for build in "${builds[@]}"; do
+            drv=$(jq --raw-output --arg build "$build" '.builds[$build].drv' "$checks_file")
+            installables+=("$drv^*")
+          done
           for check in "${checks[@]}"; do
             status "$check" pending "Build in progress"
-            drv=$(jq --raw-output --arg check "$check" '.[$check].drv' "$checks_file")
+            drv=$(jq --raw-output --arg check "$check" '.checks[$check].drv' "$checks_file")
             installables+=("$drv^*")
           done
 
@@ -67,7 +99,7 @@ jobs:
 
           for check in "${checks[@]}"; do
             mapfile -t outputs < <(
-              jq --raw-output --arg check "$check" '.[$check].outputs[]' "$checks_file"
+              jq --raw-output --arg check "$check" '.checks[$check].outputs[]' "$checks_file"
             )
             state=success
             description="Build passed"
@@ -95,9 +127,34 @@ jobs:
           path: npm-packages/*.tgz
           if-no-files-found: error
 
+  heavy-check:
+    name: Heavy check / ${{ matrix.check }}
+    needs:
+      - plan
+      - build
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.heavy-checks) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Build isolated check
+        run: |
+          installable=".#ciJobs.x86_64-linux.heavyChecks.${{ matrix.check }}"
+          nix build --no-link --print-build-logs "$installable"
+
   deploy-site:
     name: Deploy site
-    needs: build
+    needs:
+      - build
+      - heavy-check
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
     runs-on: ubuntu-24.04
     steps:
@@ -141,7 +198,9 @@ jobs:
 
   stage-npm:
     name: Stage packages on npm
-    needs: build
+    needs:
+      - build
+      - heavy-check
     if: github.event_name == 'release' && github.repository == 'tombl/distro'
     runs-on: ubuntu-24.04
     permissions:

@@ -103,6 +103,7 @@ let
   integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-runner-integration-test";
     version = "0.0.0";
+    passthru.ci.heavy = true;
     src = ../../..;
     env.CI = "true";
     pnpmDeps = node-workspace.deps;

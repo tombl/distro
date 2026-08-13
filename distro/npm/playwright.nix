@@ -46,25 +46,30 @@ in
       project,
       suite,
     }:
-    pkgs.runCommand name { nativeBuildInputs = [ pkgs.nodejs ]; } ''
-      export TMPDIR="$NIX_BUILD_TOP/tmp"
-      export HOME="$TMPDIR/home"
-      export XDG_CACHE_HOME="$TMPDIR/cache"
-      export XDG_CONFIG_HOME="$TMPDIR/config"
-      mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
+    pkgs.runCommand name
+      {
+        nativeBuildInputs = [ pkgs.nodejs ];
+        passthru.ci.heavy = true;
+      }
+      ''
+        export TMPDIR="$NIX_BUILD_TOP/tmp"
+        export HOME="$TMPDIR/home"
+        export XDG_CACHE_HOME="$TMPDIR/cache"
+        export XDG_CONFIG_HOME="$TMPDIR/config"
+        mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
 
-      export __EGL_VENDOR_LIBRARY_FILENAMES=${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
-      export FONTCONFIG_FILE=${fontconfig}
-      export LIBGL_ALWAYS_SOFTWARE=1
-      export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
-      export PLAYWRIGHT_BROWSERS_PATH=${browsersFor project}
-      export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu-24.04
-      export PLAYWRIGHT_OUTPUT_DIR="$TMPDIR/test-results"
-      export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
-      export WEBKIT_DISABLE_DMABUF_RENDERER=1
+        export __EGL_VENDOR_LIBRARY_FILENAMES=${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
+        export FONTCONFIG_FILE=${fontconfig}
+        export LIBGL_ALWAYS_SOFTWARE=1
+        export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
+        export PLAYWRIGHT_BROWSERS_PATH=${browsersFor project}
+        export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu-24.04
+        export PLAYWRIGHT_OUTPUT_DIR="$TMPDIR/test-results"
+        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+        export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
-      cd ${suite}
-      node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
-      touch $out
-    '';
+        cd ${suite}
+        node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
+        touch $out
+      '';
 }
