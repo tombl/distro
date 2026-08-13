@@ -6,8 +6,14 @@ packages:
   - packages/linux-guest
   - packages/linux-guest/tests
   - packages/runner
+  - apps/docs
+  - apps/site
+  - packages/web-ui
 
 linkWorkspacePackages: true
 
 allowBuilds:
   esbuild: true
+
+patchedDependencies:
+  '@jsr/deno__doc@0.202.0': patches/@jsr__deno__doc@0.202.0.patch

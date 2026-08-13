@@ -1,0 +1,338 @@
+---
+import type {
+  ClassDef,
+  Declaration,
+  Document,
+  FunctionDef,
+  InterfaceDef,
+  JsDoc,
+  ParamDef,
+  TsTypeDef,
+  TsTypeParamDef,
+} from "@deno/doc";
+
+import CodeBlock from "./CodeBlock.astro";
+import { referenceSymbolId } from "../lib/reference-packages";
+
+interface Props {
+  name: string;
+  description: string;
+  npm: string;
+  document: Document;
+}
+
+const { name, description, npm, document } = Astro.props;
+
+function typeParams(params: TsTypeParamDef[] | undefined): string {
+  if (!params?.length) return "";
+  return `<${params
+    .map(({ name, constraint, default: defaultType }) => {
+      const constrained = constraint ? `${name} extends ${typeText(constraint)}` : name;
+      return defaultType ? `${constrained} = ${typeText(defaultType)}` : constrained;
+    })
+    .join(", ")}>`;
+}
+
+function typeArgs(types: TsTypeDef[] | undefined): string {
+  return types?.length ? `<${types.map(typeText).join(", ")}>` : "";
+}
+
+function typeText(type: TsTypeDef | undefined): string {
+  if (!type) return "unknown";
+
+  switch (type.kind) {
+    case "typeRef":
+      return `${type.value.typeName}${typeArgs(type.value.typeParams)}`;
+    case "union":
+      return type.value.map(typeText).join(" | ");
+    case "intersection":
+      return type.value.map(typeText).join(" & ");
+    case "array":
+      return `${typeText(type.value)}[]`;
+    case "tuple":
+      return `[${type.value.map(typeText).join(", ")}]`;
+    case "typeOperator":
+      return `${type.value.operator} ${typeText(type.value.tsType)}`;
+    case "parenthesized":
+      return `(${typeText(type.value)})`;
+    case "rest":
+      return `...${typeText(type.value)}`;
+    case "optional":
+      return `${typeText(type.value)}?`;
+    case "typeQuery":
+      return `typeof ${type.value}`;
+    case "this":
+      return "this";
+    case "fnOrConstructor":
+      return `${type.value.constructor ? "new " : ""}(${type.value.params.map(paramText).join(", ")}) => ${typeText(type.value.tsType)}`;
+    case "conditional":
+      return `${typeText(type.value.checkType)} extends ${typeText(type.value.extendsType)} ? ${typeText(type.value.trueType)} : ${typeText(type.value.falseType)}`;
+    case "indexedAccess":
+      return `${typeText(type.value.objType)}[${typeText(type.value.indexType)}]`;
+    case "importType":
+      return `import(${JSON.stringify(type.value.specifier)})${type.value.qualifier ? `.${type.value.qualifier}` : ""}`;
+    case "infer":
+      return `infer ${type.value.typeParam.name}`;
+    case "mapped":
+    case "typeLiteral":
+      return "{ … }";
+    case "typePredicate":
+      return `${type.value.asserts ? "asserts " : ""}${type.value.param.type === "this" ? "this" : type.value.param.name}${type.value.type ? ` is ${typeText(type.value.type)}` : ""}`;
+    case "keyword":
+      return type.value;
+    case "literal":
+      if (type.value.kind === "string") return JSON.stringify(type.value.string);
+      if (type.value.kind === "template") return `\`${type.repr ?? ""}\``;
+      return type.repr ?? "literal";
+  }
+}
+
+function paramText(param: ParamDef): string {
+  if (param.kind === "assign") return `${paramText(param.left)} = ${param.right}`;
+  if (param.kind === "rest") return `...${paramText(param.arg)}`;
+
+  let name: string;
+  if (param.kind === "identifier") name = param.name;
+  else if (param.kind === "array") name = `[${param.elements.map((item) => (item ? paramText(item) : "")).join(", ")}]`;
+  else name = `{ ${param.props.map((prop) => ("key" in prop ? prop.key : "…")).join(", ")} }`;
+
+  return `${name}${param.optional ? "?" : ""}: ${typeText(param.tsType)}`;
+}
+
+function functionText(name: string, def: FunctionDef): string {
+  return `${def.isAsync ? "async " : ""}function ${name}${typeParams(def.typeParams)}(${def.params.map(paramText).join(", ")}): ${typeText(def.returnType)}`;
+}
+
+interface DocExample {
+  description: string;
+  code: string;
+  language: string;
+}
+
+// @example tags carry one description line followed by a fenced code block,
+// matching the Deno standard library convention.
+function parseExamples(jsDoc: JsDoc | undefined): DocExample[] {
+  const examples: DocExample[] = [];
+  for (const tag of jsDoc?.tags ?? []) {
+    if (tag.kind !== "example") continue;
+    const fence = /```(\w*)\n([\s\S]*?)```/;
+    const match = tag.doc.match(fence);
+    if (match) {
+      examples.push({
+        description: tag.doc.replace(fence, "").trim(),
+        language: match[1] || "ts",
+        code: match[2].trim(),
+      });
+    } else {
+      examples.push({ description: "", code: tag.doc.trim(), language: "ts" });
+    }
+  }
+  return examples;
+}
+
+interface Member {
+  signature: string;
+  doc?: string;
+  examples: DocExample[];
+}
+
+function interfaceMembers(def: InterfaceDef): Member[] {
+  return [
+    ...(def.properties ?? []).map((property) => ({
+      signature: `${property.readonly ? "readonly " : ""}${property.name}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
+      doc: property.jsDoc?.doc,
+      examples: parseExamples(property.jsDoc),
+    })),
+    ...(def.methods ?? []).map((method) => ({
+      signature: `${method.name}${typeParams(method.typeParams)}(${method.params.map(paramText).join(", ")}): ${typeText(method.returnType)}`,
+      doc: method.jsDoc?.doc,
+      examples: parseExamples(method.jsDoc),
+    })),
+  ];
+}
+
+function classMembers(def: ClassDef): Member[] {
+  return [
+    ...(def.constructors ?? []).map((constructor) => ({
+      signature: `constructor(${constructor.params.map(paramText).join(", ")})`,
+      doc: undefined,
+      examples: [],
+    })),
+    ...(def.properties ?? []).map((property) => ({
+      signature: `${property.isStatic ? "static " : ""}${property.readonly ? "readonly " : ""}${property.name}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
+      doc: property.jsDoc?.doc,
+      examples: parseExamples(property.jsDoc),
+    })),
+    ...(def.methods ?? []).map((method) => {
+      // 0.202 emits `functionDef`; its published type still calls this `def`.
+      const functionDef =
+        (method as unknown as { functionDef?: FunctionDef }).functionDef ?? method.def;
+      return {
+        signature: `${method.isStatic ? "static " : ""}${method.name}${typeParams(functionDef.typeParams)}(${functionDef.params.map(paramText).join(", ")}): ${typeText(functionDef.returnType)}`,
+        doc: method.jsDoc?.doc,
+        examples: parseExamples(method.jsDoc),
+      };
+    }),
+  ];
+}
+
+function declarationText(name: string, declaration: Declaration): string {
+  switch (declaration.kind) {
+    case "function":
+      return functionText(name, declaration.def);
+    case "variable":
+      return `${declaration.def.kind} ${name}: ${typeText(declaration.def.tsType)}`;
+    case "typeAlias":
+      return `type ${name}${typeParams(declaration.def.typeParams)} = ${typeText(declaration.def.tsType)}`;
+    case "interface":
+      return `interface ${name}${typeParams(declaration.def.typeParams)}${declaration.def.extends?.length ? ` extends ${declaration.def.extends.map(typeText).join(", ")}` : ""}`;
+    case "class":
+      return `class ${name}${typeParams(declaration.def.typeParams)}${declaration.def.extends ? ` extends ${declaration.def.extends}` : ""}`;
+    case "enum":
+      return `enum ${name}`;
+    case "namespace":
+      return `namespace ${name}`;
+    case "reference":
+      return name;
+  }
+}
+
+function declarationMembers(declaration: Declaration): Member[] {
+  switch (declaration.kind) {
+    case "interface":
+      return interfaceMembers(declaration.def);
+    case "class":
+      return classMembers(declaration.def);
+    case "enum":
+      return declaration.enumDef.members.map(({ name }) => ({
+        signature: name,
+        doc: undefined,
+        examples: [],
+      }));
+    case "namespace":
+      return declaration.def.elements.map(({ name }) => ({
+        signature: name,
+        doc: undefined,
+        examples: [],
+      }));
+    default:
+      return [];
+  }
+}
+
+function kindLabel(declaration: Declaration): string {
+  return declaration.kind === "typeAlias" ? "type alias" : declaration.kind;
+}
+---
+
+<header class="reference-header">
+  <p class="eyebrow">Reference</p>
+  <h1><code>{name}</code></h1>
+  <p class="description">{description}</p>
+  <p class="package-links"><a href={npm} target="_blank">npm</a></p>
+</header>
+
+<div class="symbols">
+  {document.symbols.map((symbol) => (
+    <section>
+      <h2 id={referenceSymbolId(symbol.name)}><code>{symbol.name}</code></h2>
+      {symbol.declarations.map((declaration) => {
+        const members = declarationMembers(declaration);
+        const examples = parseExamples(declaration.jsDoc);
+        return (
+          <div class="declaration">
+            <p class="kind">{kindLabel(declaration)}</p>
+            <pre><code>{declarationText(symbol.name, declaration)}</code></pre>
+            {declaration.jsDoc?.doc && <p class="documentation">{declaration.jsDoc.doc}</p>}
+            {examples.map((example) => (
+              <div class="example">
+                {example.description && <p class="example-description">{example.description}</p>}
+                <CodeBlock code={example.code} language={example.language} />
+              </div>
+            ))}
+            {members.length > 0 && (
+              <ul class="members">
+                {members.map((member) => (
+                  <li>
+                    <code>{member.signature}</code>
+                    {member.doc && <p class="documentation">{member.doc}</p>}
+                    {member.examples.map((example) => (
+                      <div class="example">
+                        {example.description && <p class="example-description">{example.description}</p>}
+                        <CodeBlock code={example.code} language={example.language} />
+                      </div>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  ))}
+</div>
+
+<style>
+  .description,
+  .documentation {
+    color: var(--prose);
+    white-space: pre-line;
+  }
+
+  .eyebrow,
+  .kind {
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+
+  .package-links {
+    margin-block-start: 0.75rem;
+  }
+
+  .reference-header h1 code,
+  section h2 code {
+    font-size: inherit;
+  }
+
+  .symbols section {
+    padding-block-start: 0.01rem;
+  }
+
+  .declaration + .declaration {
+    margin-block-start: 1.5rem;
+  }
+
+  pre,
+  .members {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+
+  pre {
+    font-size: 0.875rem;
+  }
+
+  .members {
+    list-style: none;
+    overflow-x: auto;
+  }
+
+  .members li + li {
+    margin-block-start: 0.5rem;
+  }
+
+  .example {
+    margin-block-start: 0.5rem;
+  }
+
+  .example-description {
+    color: var(--prose);
+    margin-block-end: 0.25rem;
+  }
+
+  .members .example-description {
+    font-size: 0.875rem;
+  }
+</style>

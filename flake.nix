@@ -140,6 +140,17 @@
             exec ${pkgs.wrangler}/bin/wrangler \
               "$@" --config distro/site/wrangler.toml
           '';
+          docsDeploy = pkgs.writeShellScript "docs-deploy" ''
+            set -euo pipefail
+            root="$(git rev-parse --show-toplevel)"
+            cd "$root"
+            chmod -R u+w docs-deploy 2>/dev/null || true
+            rm -rf docs-deploy
+            cp -rL ${wasmpkgs.docs.package} docs-deploy
+            chmod -R u+w docs-deploy
+            exec ${pkgs.wrangler}/bin/wrangler \
+              "$@" --config apps/docs/wrangler.toml
+          '';
         in
         {
           artifacts = {
@@ -179,6 +190,20 @@
             type = "app";
             program = "${pkgs.writeShellScript "wrangler-preview" ''
               exec ${siteDeploy} versions upload "$@"
+            ''}";
+          };
+
+          docs-wrangler-deploy = {
+            type = "app";
+            program = "${pkgs.writeShellScript "docs-wrangler-deploy" ''
+              exec ${docsDeploy} deploy "$@"
+            ''}";
+          };
+
+          docs-wrangler-preview = {
+            type = "app";
+            program = "${pkgs.writeShellScript "docs-wrangler-preview" ''
+              exec ${docsDeploy} versions upload "$@"
             ''}";
           };
 

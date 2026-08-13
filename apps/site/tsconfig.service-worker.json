@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "WebWorker", "WebWorker.Iterable", "WebWorker.AsyncIterable"],
+    "types": [],
+    "rootDir": "src/scripts",
+    "outDir": "public"
+  },
+  "include": ["src/scripts/service-worker.ts"]
+}

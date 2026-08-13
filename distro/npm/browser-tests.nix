@@ -23,7 +23,7 @@ let
     cp ${source}/app.js $out/app.js
     cp ${source}/index.html $out/index.html
     cp ${source}/playwright.config.js $out/playwright.config.js
-    cp ${site.package}/static/*/opfs-disk-worker.js $out/opfs-disk-worker.js
+    cp ${site.package}/_astro/opfs-disk-worker-*.js $out/opfs-disk-worker.js
     cp ${image.bootInitramfs} $out/boot.cpio
     cp ${basic-init.schedulerHandoffDisk} $out/scheduler-handoff.erofs
     cp ${basic-init.remoteMemoryDisk} $out/remote-vm.erofs
@@ -46,7 +46,8 @@ let
     checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
       (lib.genAttrs projects check)
       // {
-        site-live = siteCheck;
+        site-live = siteCheck "chromium";
+        site-live-firefox = siteCheck "firefox";
         service-worker = serviceWorkerCheck;
       }
     );
@@ -98,14 +99,16 @@ let
     cp ${source}/app.js $out/app.js
     cp ${source}/tests/service-worker.spec.js $out/tests/service-worker.spec.js
     cp ${source}/index.html $out/index.html
-    cp ${../../apps/site/service-worker.js} $out/service-worker.js
+    cp ${site.package}/service-worker.js $out/service-worker.js
   '';
 
-  siteCheck = playwright.mkCheck {
-    name = "browser-tests-site-live";
-    project = "chromium";
-    suite = siteSuite;
-  };
+  siteCheck =
+    project:
+    playwright.mkCheck {
+      name = "browser-tests-site-live-${project}";
+      inherit project;
+      suite = siteSuite;
+    };
   serviceWorkerCheck = playwright.mkCheck {
     name = "browser-tests-service-worker";
     project = "chromium";
