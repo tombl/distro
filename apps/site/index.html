@@ -97,7 +97,7 @@
       import { BrowserFS } from "@tombl/linux-guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
-      const bootMode = "__BOOT_MODE__";
+      let bootMode = "__BOOT_MODE__";
       if (
         "serviceWorker" in navigator &&
         (bootMode === "live" || !navigator.serviceWorker.controller)
@@ -126,6 +126,14 @@
 
       if (!window.crossOriginIsolated) {
         term.write("Error: not cross origin isolated\n");
+      }
+
+      let opfs;
+      try {
+        opfs = await navigator.storage.getDirectory();
+      } catch (error) {
+        console.warn("Persistent storage is unavailable; continuing in live-only mode", error);
+        bootMode = "live";
       }
 
       const { cmdline = "" } = parameters;
@@ -237,8 +245,7 @@
         };
       }
 
-      async function openInstallDisk({ requireFilesystem }) {
-        const directory = await navigator.storage.getDirectory();
+      async function openInstallDisk({ directory, requireFilesystem }) {
         const handle = await directory.getFileHandle("root.ext4", { create: true });
         const file = await handle.getFile();
         const superblock = 1024;
@@ -279,14 +286,17 @@
       const disk =
         bootMode === "live"
           ? await openLiveDisk()
-          : await openInstallDisk({ requireFilesystem: true });
+          : await openInstallDisk({ directory: opfs, requireFilesystem: true });
       // A ?live=1 recovery boot alongside an existing installation must not
       // expose two LOWLAND_ROOT disks to the general-purpose agent. Only an
       // unformatted device is attached to a live installer.
       const installDisk =
-        bootMode === "live" ? await openInstallDisk({ requireFilesystem: false }) : undefined;
-      const opfs = await navigator.storage.getDirectory();
-      const bootDirectory = await opfs.getDirectoryHandle("boot", { create: true });
+        bootMode === "live" && opfs
+          ? await openInstallDisk({ directory: opfs, requireFilesystem: false })
+          : undefined;
+      const bootDirectory = opfs
+        ? await opfs.getDirectoryHandle("boot", { create: true })
+        : undefined;
       const guest = await spawnGuest({
         root: bootMode === "live" ? blockDevice(disk) : disk,
         bootConsole: bootOut,
@@ -294,16 +304,20 @@
         // part of the facade contract.
         cpus: 1,
         network,
-        cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${cmdline.replace(/\+/g, " ")}`,
+        cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${installDisk ? "lowland.install=1 " : ""}${cmdline.replace(/\+/g, " ")}`,
         devices: [
           ttyConsole,
           ...(installDisk ? [installDisk] : []),
           entropyDevice(),
-          fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }),
+          ...(bootDirectory
+            ? [fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false })]
+            : []),
         ],
       });
-      await guest.fs.mkdir("/boot", { recursive: true });
-      await guest.mount("boot", "/boot", { type: "virtiofs" });
+      if (bootDirectory) {
+        await guest.fs.mkdir("/boot", { recursive: true });
+        await guest.mount("boot", "/boot", { type: "virtiofs" });
+      }
 
       // Service-worker and BroadcastChannel state is partitioned by site, so
       // only production low.land can provide its sibling guest-origin family.

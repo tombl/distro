@@ -30,6 +30,7 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
 
   await page.goto("/?webgl=0");
   const { input, terminal } = await waitForGuest(page);
+  await expect(terminal).toContainText("Run install-lowland to install this machine locally.");
   await input.pressSequentially(
     "printf 'overlay-%s\\n' write-ok > /live-write-test; cat /live-write-test",
   );
@@ -68,4 +69,34 @@ test("boots and formats a blank persistent disk into the canonical system", asyn
 
   expect(rootfsRequests).toHaveLength(liveRootfsRequests);
   expect(rootfsRequests.some((headers) => headers.range?.startsWith("bytes="))).toBe(true);
+});
+
+test("falls back to live-only mode when persistent storage is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(StorageManager.prototype, "getDirectory", {
+      configurable: true,
+      value: async () => {
+        throw new DOMException("Security error when calling GetDirectory", "SecurityError");
+      },
+    });
+  });
+
+  const dialogs = [];
+  page.on("dialog", async (dialog) => {
+    dialogs.push(dialog.message());
+    await dialog.dismiss();
+  });
+  await page.goto("/?webgl=0");
+
+  const terminal = page.locator(".xterm-rows");
+  await expect(terminal).toContainText("root@lowland", { timeout: 30_000 });
+  await expect(terminal).not.toContainText("install-lowland");
+
+  const input = page.locator(".xterm-helper-textarea");
+  await input.pressSequentially(
+    "! grep -qw 'lowland.install=1' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
+  );
+  await input.press("Enter");
+  await expect(terminal).toContainText("live-only-ready");
+  expect(dialogs).toEqual([]);
 });

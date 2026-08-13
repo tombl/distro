@@ -57,14 +57,8 @@ async function serve(event) {
         "Cross-Origin-Resource-Policy": "same-origin",
       },
     });
-  } catch (error) {
-    if (
-      error instanceof DOMException &&
-      ["NotFoundError", "TypeMismatchError"].includes(error.name)
-    ) {
-      return fetch(request);
-    }
-    throw error;
+  } catch {
+    return fetch(request);
   }
 }
 

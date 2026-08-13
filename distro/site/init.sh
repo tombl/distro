@@ -28,7 +28,7 @@ printf '%-14s%s\n' "/'\\_   _/\`\\" "${label}shell${reset}    sh"
 printf '%-14s%s\n' '\___)=(___/' "${label}apk${reset}      add curl jq sqlite3, and more"
 echo
 
-if [ ! -e /etc/lowland-installed ]; then
+if [ ! -e /etc/lowland-installed ] && grep -qw 'lowland.install=1' /proc/cmdline; then
   echo "Run ${bold}install-lowland${reset} to install this machine locally."
   echo
 fi
