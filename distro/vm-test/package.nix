@@ -129,7 +129,10 @@ let
       contents ? [ ],
       files ? { },
       cpus ? 1,
-      heavy ? false,
+      # Every installed test boots a VM and needs an isolated CI runner. The
+      # aggregate builder can otherwise start enough guests concurrently to
+      # starve unrelated tests and produce misleading failures.
+      heavy ? true,
       disks ? [ ],
     }:
     let

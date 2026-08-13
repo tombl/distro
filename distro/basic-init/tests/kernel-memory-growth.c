@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 #define CHUNK_SIZE (64 * 1024)
-#define FILE_SIZE (8 * 1024 * 1024)
+#define FILE_SIZE (64 * 1024 * 1024)
 
 struct file {
 	const char *path;
@@ -93,7 +93,7 @@ int main(void)
 	pthread_t threads[2];
 
 	wait_for_host("::kernel-memory::ready");
-	if (mount("tmpfs", "/tmp", "tmpfs", 0, "size=64m") == -1)
+	if (mount("tmpfs", "/tmp", "tmpfs", 0, "size=256m") == -1)
 		test_perror("mounting tmpfs");
 
 	write_file(&sequential);

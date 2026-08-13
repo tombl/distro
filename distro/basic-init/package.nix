@@ -35,7 +35,7 @@ let
       extraFlags ? "",
       contents ? [ ],
       cpus ? 1,
-      heavy ? false,
+      heavy ? true,
     }:
     let
       initPackage = buildInitWith "basic-init-${name}" source extraFlags;

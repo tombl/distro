@@ -13,6 +13,7 @@ export GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@example.com
 
 # git opens the runtime's /dev/null and spawns /bin/sh for hooks and its pager.
+mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mkdir -p /root /tmp
 cd /tmp || fail "cd /tmp failed"
 
