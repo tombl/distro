@@ -1,8 +1,6 @@
 #!/bin/sh
-# Assert that the complete installed suite is present. The guest contains no
-# BusyBox, so one version check establishes the provenance of the derivation;
-# launching all 107 static wasm binaries would only retest identical version
-# plumbing while retaining each process's emulator memory.
+# Assert that the complete installed suite is present. One version check
+# establishes that coreutils, rather than BusyBox, owns the overlapping paths.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -10,7 +8,7 @@ fail() {
   while :; do :; done
 }
 
-export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 programs='
 [ arch b2sum base32 base64 basename basenc cat chcon chgrp chmod chown
@@ -25,10 +23,10 @@ whoami yes
 '
 
 for program in $programs; do
-  [ -x "/gnu/bin/$program" ] || fail "$program is missing"
+  [ -x "/bin/$program" ] || fail "$program is missing"
 done
 
-version=$(/gnu/bin/ls --version) || fail "ls --version failed"
+version=$(/bin/ls --version) || fail "ls --version failed"
 case "$version" in
 *"GNU coreutils"*) ;;
 *) fail "suite did not identify as GNU coreutils: $version" ;;

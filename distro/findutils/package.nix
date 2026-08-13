@@ -44,18 +44,19 @@ stdenv.mkDerivation (finalAttrs: {
     ! grep -F "$out" $out/bin/locate
   '';
 
+  passthru.apk = {
+    depends = [ "busybox" ];
+    replaces = [ "busybox" ];
+  };
+
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "findutils-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "findutils-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, findutils last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

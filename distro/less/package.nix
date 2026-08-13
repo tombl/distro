@@ -33,27 +33,20 @@ stdenv.mkDerivation (finalAttrs: {
     "--with-regex=posix"
   ];
 
-  # Package outputs are FHS filesystem fragments. ncurses is statically linked,
-  # but less still needs its terminfo database at runtime, so install less over
-  # the ncurses fragment and make that runtime dependency part of this output.
-  preInstall = ''
-    mkdir -p $out
-    cp -a ${ncurses}/. $out/
-    chmod -R u+w $out
-  '';
+  passthru.apk = {
+    depends = [ "ncurses" ];
+    replaces = [ "busybox" ];
+  };
 
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "less-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "less-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, less last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        ncurses
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

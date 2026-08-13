@@ -7,6 +7,22 @@
 }:
 
 let
+  licenseName =
+    license:
+    if builtins.isString license then
+      license
+    else if builtins.isAttrs license then
+      license.spdxId or license.shortName or license.fullName or "unknown"
+    else
+      "unknown";
+
+  normalizeLicense =
+    license:
+    if builtins.isList license then
+      lib.concatStringsSep " OR " (map licenseName license)
+    else
+      licenseName license;
+
   mkPackage =
     {
       payload,
@@ -67,10 +83,15 @@ let
           isApk = true;
           inherit
             arch
+            depends
+            description
             filename
+            license
             name
             origin
             payload
+            provides
+            replaces
             version
             ;
         };
@@ -114,6 +135,9 @@ let
       payload = drv;
       name = meta.name or drv.pname or parsed.name;
       version = meta.version or (if version == "" then "0-r0" else "${version}-r0");
+      description = meta.description or drv.meta.description or drv.pname or parsed.name;
+      license = meta.license or (normalizeLicense (drv.meta.license or null));
+      origin = meta.origin or meta.name or drv.pname or parsed.name;
       depends = meta.depends or [ ];
       provides = meta.provides or [ ];
       replaces = meta.replaces or [ ];

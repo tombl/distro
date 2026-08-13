@@ -22,7 +22,7 @@ async function run_machine(mode: string) {
   const machine = await bootMachine({
     args: [`lifecycle=${mode}`],
     cpus: 1,
-    plugins: [consoleDevice(closed_input(), output_sink(output))],
+    plugins: [lifecycle_assets.root(), consoleDevice(closed_input(), output_sink(output))],
     initcpio: lifecycle_assets.initramfs,
   });
   void machine.bootConsole.pipeTo(output_sink(output)).catch(() => {});
@@ -57,7 +57,7 @@ test("a booted hook failure closes the machine before bootMachine rejects", asyn
     bootMachine({
       cpus: 1,
       initcpio: lifecycle_assets.initramfs,
-      plugins: [plugin],
+      plugins: [lifecycle_assets.root(), plugin],
     }),
     (error) => error === failure,
   );

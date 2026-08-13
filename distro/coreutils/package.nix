@@ -5,8 +5,7 @@
     url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
     hash = "sha256-TFDtvw5E4y9UPfMyOV+KiMnIeSum54fXSOIbT7qRsXA=";
   },
-  bash,
-  util-linux,
+  busybox,
   vm-test,
 }:
 
@@ -58,36 +57,19 @@ stdenv.mkDerivation (finalAttrs: {
   # here, and po is dead weight with NLS disabled. Build and install just ".".
   makeFlags = [ "SUBDIRS=." ];
 
+  passthru.apk.replaces = [ "busybox" ];
+
   passthru.checks =
     let
-      bashBin = pkgs.runCommand "bash-bin" { } ''
-        mkdir -p $out/bin
-        cp -a ${bash}/bin/bash ${bash}/bin/sh $out/bin/
-      '';
-      # coreutils and util-linux both own /bin/kill. Keep GNU coreutils in a
-      # distinct prefix so the image contains both real suites without path
-      # ownership depending on composition order.
-      coreutilsGnu = pkgs.runCommand "coreutils-gnu-bin" { } ''
-        mkdir -p $out/gnu/bin
-        cp -a ${finalAttrs.finalPackage}/bin/* $out/gnu/bin/
-      '';
-      utilLinuxCommands = pkgs.runCommand "util-linux-commands" { } ''
-        mkdir -p $out
-        cp -a ${util-linux}/bin ${util-linux}/sbin $out/
-      '';
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "coreutils-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "coreutils-${name}";
-            inherit init;
-            contents = [
-              bashBin
-              utilLinuxCommands
-              coreutilsGnu
-            ];
-          };
+          inherit init;
+          contents = [
+            busybox
+            finalAttrs.finalPackage
+          ];
         };
     in
     {

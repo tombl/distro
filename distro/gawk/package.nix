@@ -41,18 +41,19 @@ stdenv.mkDerivation (finalAttrs: {
     ! grep -R -F "$out" $out/bin/gawk $out/usr/share/awk
   '';
 
+  passthru.apk = {
+    depends = [ "busybox" ];
+    replaces = [ "busybox" ];
+  };
+
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "gawk-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "gawk-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, gawk last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

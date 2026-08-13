@@ -19,7 +19,7 @@ contains() {
   esac
 }
 
-export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"

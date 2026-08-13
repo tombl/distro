@@ -21,7 +21,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
   self:
   let
     inherit (self) callPackage;
-    baseRepository = callPackage ./repository.nix { };
+    # Images embedded by lowland-boot cannot install from the final repository:
+    # that repository contains lowland-boot itself. This private index is the
+    # acyclic package-only input used to construct those images.
+    bootstrapRepository = callPackage ./repository.nix { };
   in
   {
     inherit debug sourceVersion;
@@ -110,13 +113,13 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # owned by their consumer packages.
     image = callPackage ./image { };
 
-    site = callPackage ./site { };
+    site = callPackage ./site { repository = bootstrapRepository; };
     bridge-site = callPackage ../packages/bridge-site { };
 
     apk-checks = callPackage ./apk/checks.nix { };
-    repository = baseRepository // {
+    repository = (callPackage ./repository.nix { bootFiles = self.site.bootFiles; }) // {
       checks = {
-        inherit (self.apk-checks) install store-references;
+        inherit (self.apk-checks) install store-references userland;
       };
     };
 
@@ -126,7 +129,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     kselftests = callPackage ./kselftests/package.nix { };
     node-workspace = callPackage ./npm/node-workspace.nix { };
     playwright = callPackage ./npm/playwright.nix { };
-    linux-guest = callPackage ./npm/linux-guest { };
+    linux-guest = callPackage ./npm/linux-guest { repository = bootstrapRepository; };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
   }

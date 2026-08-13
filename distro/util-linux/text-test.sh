@@ -16,7 +16,7 @@ contains() {
   esac
 }
 
-export PATH=/bin:/sbin:/gnu/bin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 # look() and namei() read from the filesystem; nothing here needs /dev, but
 # mount it anyway so a stray tool that opens /dev/null does not trip.

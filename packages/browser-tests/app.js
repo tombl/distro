@@ -200,10 +200,24 @@ globalThis.closeRemoteMemoryLifecycle = async () => {
   await machine.closed;
 };
 
-async function runInitramfs(path, cpus) {
+async function fetchBytes(path) {
   const response = await fetch(path);
   if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
-  const initcpio = new Uint8Array(await response.arrayBuffer());
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+const bootInitramfs = fetchBytes("/boot.cpio");
+
+async function runInstalledSystem(path, cpus) {
+  const [initcpio, disk] = await Promise.all([bootInitramfs, fetchBytes(path)]);
+  const root = blockDevice({
+    capacity: disk.byteLength,
+    read(offset, target) {
+      const source = disk.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+  });
 
   let resolve;
   let reject;
@@ -234,7 +248,7 @@ async function runInitramfs(path, cpus) {
 
   const machine = await bootMachine({
     cpus,
-    plugins: [consoleDevice(input, outputStream())],
+    plugins: [root, consoleDevice(input, outputStream())],
     initcpio,
   });
   void machine.bootConsole.pipeTo(outputStream()).catch(reject);
@@ -251,11 +265,11 @@ async function runInitramfs(path, cpus) {
   }
 }
 
-globalThis.schedulerHandoffStress = () => runInitramfs("/scheduler-handoff.cpio", 2);
+globalThis.schedulerHandoffStress = () => runInstalledSystem("/scheduler-handoff.erofs", 2);
 
-globalThis.remoteMemoryProtocol = () => runInitramfs("/remote-vm.cpio", 2);
+globalThis.remoteMemoryProtocol = () => runInstalledSystem("/remote-vm.erofs", 2);
 
-globalThis.posixSpawnHandoffStress = () => runInitramfs("/posix-spawn-stress.cpio", 1);
+globalThis.posixSpawnHandoffStress = () => runInstalledSystem("/posix-spawn-stress.erofs", 1);
 
 globalThis.opfsVirtioFileSystem = async () => {
   const storage = await navigator.storage.getDirectory();

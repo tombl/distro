@@ -89,6 +89,17 @@ export const user_trap = await readFile(join(directory, "user-trap"));
 /** A static guest executable that compares raw getdents64 and held-directory inode numbers. */
 export const getdents_inode = await readFile(join(directory, "getdents-inode"));
 
+const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
+
 export const lifecycle_assets = {
-  initramfs: await readFile(join(directory, "lifecycle-initramfs.cpio")),
+  initramfs: await readFile(join(directory, "boot-initramfs.cpio")),
+  root: () =>
+    blockDevice({
+      capacity: lifecycle_rootfs.byteLength,
+      read(offset, target) {
+        const source = lifecycle_rootfs.subarray(offset, offset + target.byteLength);
+        target.set(source);
+        return source.byteLength;
+      },
+    }),
 };

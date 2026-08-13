@@ -1,5 +1,7 @@
 {
   apk,
+  lib,
+  bootFiles ? null,
   apk-tools,
   basic-init,
   bash,
@@ -9,6 +11,7 @@
   curl,
   diffutils,
   dropbear,
+  e2fsprogs,
   file,
   findutils,
   gawk,
@@ -27,6 +30,7 @@
   python,
   quickjs,
   readline,
+  rust-smoke,
   sed,
   sqlite3,
   tar,
@@ -53,6 +57,7 @@ apk.mkRepository {
       curl
       diffutils
       dropbear
+      e2fsprogs
       file
       findutils
       gawk
@@ -71,6 +76,7 @@ apk.mkRepository {
       python
       quickjs
       readline
+      rust-smoke
       sed
       sqlite3
       tar
@@ -80,5 +86,6 @@ apk.mkRepository {
       zlib
       zstd
       ;
-  };
+  }
+  // lib.optionalAttrs (bootFiles != null) { inherit bootFiles; };
 }

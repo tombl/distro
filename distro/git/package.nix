@@ -151,6 +151,8 @@ stdenv.mkDerivation (finalAttrs: {
   installTargets = [ "install" ];
   installFlags = [ "DESTDIR=${placeholder "out"}" ];
 
+  passthru.apk.depends = [ "busybox" ];
+
   passthru.checks =
     let
       check =

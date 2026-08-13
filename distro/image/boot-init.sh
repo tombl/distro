@@ -29,5 +29,9 @@ if [ "$immutable" -eq 1 ]; then
   mount -t tmpfs tmpfs /newroot/tmp || exec sh
 fi
 chmod 01777 /newroot/tmp
-mount --move /dev /newroot/dev || exec sh
+# devtmpfs is needed here only to discover and mount the root block device.
+# The installed PID 1 owns its virtual-filesystem setup, just as it does when
+# booted by the product agent, so do not leak the loader's /dev mount across
+# switch_root.
+umount /dev || exec sh
 exec /bin/busybox switch_root /newroot /init

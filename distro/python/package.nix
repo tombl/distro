@@ -22,7 +22,10 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
-    passthru.apk.depends = [ "ncurses" ];
+    passthru.apk.depends = [
+      "ncurses"
+      "openssl"
+    ];
 
     # Cross-compiling CPython needs a host interpreter of the *same* minor
     # version to run the freeze/regen steps; --with-build-python below points

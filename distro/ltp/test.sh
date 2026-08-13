@@ -23,12 +23,12 @@ mount -t sysfs sysfs /sys || fail "mounting sysfs failed"
 
 if [ -e /ltp-device ]; then
   i=0
-  while [ ! -b /dev/vda ]; do
+  while [ ! -b /dev/vdb ]; do
     [ "$i" -lt 100 ] || fail "timed out waiting for LTP test device"
     i=$((i + 1))
     sleep 0.1
   done
-  export LTP_DEV=/dev/vda
+  export LTP_DEV=/dev/vdb
   export LTP_DEV_FS_TYPE=ext2
 fi
 

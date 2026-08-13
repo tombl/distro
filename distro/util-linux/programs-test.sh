@@ -1,8 +1,7 @@
 #!/bin/sh
 # Keep the shipped suite explicit and exercise representative libmount,
-# libblkid, and ncurses-backed behavior. The guest contains no BusyBox,
-# so a single version check establishes provenance without launching every
-# static wasm binary just to repeat identical version plumbing.
+# libblkid, and ncurses-backed behavior. A version check establishes that
+# util-linux owns its overlapping paths rather than BusyBox.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -17,7 +16,7 @@ contains() {
   esac
 }
 
-export PATH=/bin:/sbin:/gnu/bin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export TERM=linux
 
 mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"

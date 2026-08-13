@@ -88,6 +88,8 @@ stdenv.mkDerivation (finalAttrs: {
       --replace-quiet ${openssl} /
   '';
 
+  passthru.apk.depends = [ "busybox" ];
+
   passthru.checks = {
     transfers = vm-test.installedTest {
       name = "curl-transfers";

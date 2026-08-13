@@ -13,7 +13,7 @@ contains() {
   esac
 }
 
-export PATH=/bin:/sbin:/gnu/bin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mkdir -p /dev/pts || fail "create /dev/pts"

@@ -1,7 +1,6 @@
 #!/bin/sh
 
-# Text processing, checksums, and the small self-contained utilities, against
-# the GNU coreutils binaries installed under /gnu/bin.
+# Text processing, checksums, and the small self-contained GNU utilities.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -16,7 +15,7 @@ contains() {
   esac
 }
 
-export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 contains "$(sort --version)" "GNU coreutils" || fail "sort is not GNU coreutils"
 contains "$(arch --version)" "GNU coreutils" || fail "arch is not GNU coreutils"

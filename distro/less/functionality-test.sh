@@ -9,9 +9,8 @@ fail() {
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export TERM=xterm
 
-# less owns its runtime closure: its package output must carry ncurses' data,
-# found through the default FHS path compiled into the library.
-[ -f /share/terminfo/x/xterm ] || fail "less did not ship xterm terminfo"
+# ncurses owns the shared terminal database required by less.
+[ -f /share/terminfo/x/xterm ] || fail "ncurses did not provide xterm terminfo"
 
 # Prove the GNU less shadows busybox's less applet.
 less --version | grep -q '^less ' || fail "not running GNU less"

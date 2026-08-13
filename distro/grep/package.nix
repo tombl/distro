@@ -35,18 +35,24 @@ stdenv.mkDerivation (finalAttrs: {
     sed -i 's~^#if defined __linux__ || defined __ANDROID__~#if !defined __wasm__ \&\& defined __linux__ || defined __ANDROID__~' lib/stackvma.c
   '';
 
+  postFixup = ''
+    # The obsolescent egrep/fgrep compatibility wrappers are installed scripts;
+    # the generic fixup points them at the build shell, which cannot exist in
+    # an APK-installed guest.
+    substituteInPlace "$out/bin/egrep" "$out/bin/fgrep" \
+      --replace-fail ${pkgs.bashNonInteractive}/bin/bash /bin/sh
+  '';
+
+  passthru.apk.replaces = [ "busybox" ];
+
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "grep-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "grep-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, grep last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

@@ -22,18 +22,16 @@ stdenv.mkDerivation (finalAttrs: {
   # its only child-spawn path (running an `ed` script, via systemic() ->
   # system()) goes through musl's system(), which is built on posix_spawn.
 
+  passthru.apk.replaces = [ "busybox" ];
+
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "patch-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "patch-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, patch last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

@@ -1,7 +1,6 @@
 #!/bin/sh
 
-# File and metadata operations, exercised against the GNU coreutils binaries
-# (installed under /gnu/bin, ahead of the util-linux command directory).
+# File and metadata operations, exercised against the installed GNU coreutils.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -22,7 +21,7 @@ same_file() {
   [ "${first_sum%% *}" = "${second_sum%% *}" ]
 }
 
-export PATH=/gnu/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"

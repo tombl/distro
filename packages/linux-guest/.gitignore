@@ -1,7 +1,8 @@
 dist/
 /agent.img
 /getdents-inode
-/lifecycle-initramfs.cpio
+/boot-initramfs.cpio
+/lifecycle-rootfs.erofs
 /network-test
 /rootfs.erofs
 /rootfs.ext4

@@ -6,6 +6,7 @@
     hash = "sha256-R6LYAfi/lcZ+zK9SZJ5aUzYarq/VguvJbEZbWZmmnY0=";
   },
   busybox,
+  coreutils,
   vm-test,
 }:
 
@@ -17,6 +18,10 @@ stdenv.mkDerivation (finalAttrs: {
   configureFlags = [
     "--disable-nls"
   ];
+
+  # diff --paginate executes the configured pr program. Cross configure would
+  # otherwise capture the build platform's Nix-store path.
+  env.PR_PROGRAM = "/bin/pr";
 
   # diff3, sdiff, and diff --paginate use fork+exec under HAVE_WORKING_FORK and
   # fall back to popen/system otherwise. The stdenv CONFIG_SITE supplies the
@@ -40,18 +45,20 @@ stdenv.mkDerivation (finalAttrs: {
     sed -i 's~^#if defined __linux__ || defined __ANDROID__~#if !defined __wasm__ \&\& defined __linux__ || defined __ANDROID__~' lib/stackvma.c
   '';
 
+  passthru.apk = {
+    depends = [ "coreutils" ];
+    replaces = [ "busybox" ];
+  };
+
   passthru.checks = {
-    functionality = vm-test.vmTest {
+    functionality = vm-test.installedTest {
       name = "diffutils-functionality";
-      initramfs = vm-test.mkInitramfs {
-        name = "diffutils-functionality";
-        init = ./functionality-test.sh;
-        # busybox first, diffutils last: the GNU binary must shadow busybox's applet.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./functionality-test.sh;
+      contents = [
+        busybox
+        coreutils
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

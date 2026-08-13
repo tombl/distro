@@ -3,6 +3,7 @@
   bytes,
   busybox,
   ext4Root,
+  image,
   pkgs,
   rootfs,
   wrongRoot,
@@ -32,7 +33,7 @@ let
   user-trap = test-program "user-trap" ../../guest-tests/user-trap.c;
   getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
 
-  lifecycle-initramfs = vm-test.mkInitramfs {
+  lifecycle-rootfs = vm-test.installedDisk {
     name = "linux-guest-lifecycle";
     init = ../../guest-tests/lifecycle-init.sh;
     contents = [ busybox ];
@@ -43,7 +44,8 @@ let
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
     "agent.img" = agentDisk;
     "rootfs.ext4" = ext4Root;
-    "lifecycle-initramfs.cpio" = lifecycle-initramfs;
+    "boot-initramfs.cpio" = image.bootInitramfs;
+    "lifecycle-rootfs.erofs" = lifecycle-rootfs;
     "rootfs.erofs" = rootfs;
     "wrong-root.erofs" = wrongRoot;
     "network-test" = "${network-test}/bin/network-test";

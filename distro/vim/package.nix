@@ -154,25 +154,31 @@ stdenv.mkDerivation (finalAttrs: {
     mkdir -p $out/usr/share
     mv $out/share/vim $out/usr/share/vim
 
-    # libncurses is linked statically, but terminal initialization still reads
-    # the compiled database at runtime. Make Vim's fragment self-contained.
-    mkdir -p $out/share
-    cp -r ${ncurses}/share/terminfo $out/share/terminfo
+    # installtools discovers the build host's awk and records its absolute
+    # path in this optional runtime helper. The guest interface is /bin/awk,
+    # provided by BusyBox.
+    substituteInPlace $out/usr/share/vim/vim91/tools/mve.awk \
+      --replace-fail '#!${pkgs.gawk}/bin/gawk -f' '#!/bin/awk -f'
+
   '';
 
+  passthru.apk = {
+    depends = [
+      "busybox"
+      "ncurses"
+    ];
+    replaces = [ "busybox" ];
+  };
+
   passthru.checks = {
-    editing = vm-test.vmTest {
+    editing = vm-test.installedTest {
       name = "vim-editing";
-      initramfs = vm-test.mkInitramfs {
-        name = "vim-editing";
-        init = ./editing-test.sh;
-        # busybox first supplies sh (vim's system() execs /bin/sh), the coreutils
-        # the script drives, and tr/echo for the filter shell-out; vim last.
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./editing-test.sh;
+      contents = [
+        busybox
+        ncurses
+        finalAttrs.finalPackage
+      ];
     };
   };
 })

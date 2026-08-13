@@ -45,6 +45,7 @@ let
         passthru = {
           isApkRepository = true;
           inherit arch name;
+          packageSet = packages;
           packages = sortedPackages;
         };
       }

@@ -28,56 +28,64 @@ let
 
   buildInit = name: source: buildInitWith name source "";
 
-  check =
-    name:
-    vm-test.vmTest {
+  installedCheck =
+    {
+      name,
+      source ? "tests/${name}.c",
+      extraFlags ? "",
+      contents ? [ ],
+      cpus ? 1,
+      heavy ? false,
+    }:
+    let
+      initPackage = buildInitWith "basic-init-${name}" source extraFlags;
+    in
+    vm-test.installedTest {
       name = "basic-init-${name}";
-      initramfs = vm-test.mkInitramfs {
-        name = "basic-init-${name}";
-        init = "${buildInit "basic-init-${name}" "tests/${name}.c"}/bin/init";
-      };
+      init = "${initPackage}/bin/init";
+      contents = [ initPackage ] ++ contents;
+      inherit cpus heavy;
     };
 
-  schedulerHandoffInitramfs = vm-test.mkInitramfs {
+  schedulerHandoffPackage = buildInit "basic-init-scheduler-handoff" "tests/scheduler-handoff.c";
+  schedulerHandoffDisk = vm-test.installedDisk {
     name = "basic-init-scheduler-handoff";
-    init = "${buildInit "basic-init-scheduler-handoff" "tests/scheduler-handoff.c"}/bin/init";
+    init = "${schedulerHandoffPackage}/bin/init";
+    contents = [ schedulerHandoffPackage ];
   };
 
-  schedulerHandoffCheck = vm-test.vmTest {
-    name = "basic-init-scheduler-handoff";
-    initramfs = schedulerHandoffInitramfs;
+  schedulerHandoffCheck = installedCheck {
+    name = "scheduler-handoff";
     cpus = 2;
   };
 
-  remoteMemoryInitramfs = vm-test.mkInitramfs {
+  remoteMemoryPackage = buildInit "basic-init-remote-memory" "tests/remote-memory.c";
+  remoteMemoryDisk = vm-test.installedDisk {
     name = "basic-init-remote-memory";
-    init = "${buildInit "basic-init-remote-memory" "tests/remote-memory.c"}/bin/init";
+    init = "${remoteMemoryPackage}/bin/init";
+    contents = [ remoteMemoryPackage ];
   };
 
-  remoteMemoryCheck = vm-test.vmTest {
-    name = "basic-init-remote-memory";
-    initramfs = remoteMemoryInitramfs;
+  remoteMemoryCheck = installedCheck {
+    name = "remote-memory";
     cpus = 2;
   };
 
-  posixSpawnStressInitramfs = vm-test.mkInitramfs {
+  posixSpawnStressPackage = buildInit "basic-init-posix-spawn-stress" "tests/posix-spawn-stress.c";
+  posixSpawnStressDisk = vm-test.installedDisk {
     name = "basic-init-posix-spawn-stress";
-    init = "${buildInit "basic-init-posix-spawn-stress" "tests/posix-spawn-stress.c"}/bin/init";
+    init = "${posixSpawnStressPackage}/bin/init";
+    contents = [ posixSpawnStressPackage ];
   };
 
-  posixSpawnStressCheck = vm-test.vmTest {
-    name = "basic-init-posix-spawn-stress";
-    initramfs = posixSpawnStressInitramfs;
+  posixSpawnStressCheck = installedCheck {
+    name = "posix-spawn-stress";
     heavy = true;
   };
 
-  namedSemaphoreCheck = vm-test.vmTest {
-    name = "basic-init-named-semaphore";
+  namedSemaphoreCheck = installedCheck {
+    name = "named-semaphore";
     heavy = true;
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-named-semaphore";
-      init = "${buildInit "basic-init-named-semaphore" "tests/named-semaphore.c"}/bin/init";
-    };
     cpus = 2;
   };
 
@@ -92,13 +100,9 @@ let
         chmod 0755 $out/bin/module-defined-memory
       '';
 
-  memoryAbiCheck = vm-test.vmTest {
-    name = "basic-init-memory-abi";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-memory-abi";
-      init = "${buildInit "basic-init-memory-abi" "tests/memory-abi.c"}/bin/init";
-      contents = [ moduleDefinedMemory ];
-    };
+  memoryAbiCheck = installedCheck {
+    name = "memory-abi";
+    contents = [ moduleDefinedMemory ];
   };
 
   initcpioPayload = pkgs.runCommand "basic-init-initcpio-payload" { } ''
@@ -109,115 +113,85 @@ let
     printf 'end-of-payload' | dd of=$out/payload bs=1 seek=3145712 conv=notrunc status=none
   '';
 
-  initcpioCheck = vm-test.vmTest {
-    name = "basic-init-initcpio";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-initcpio";
-      init = "${buildInit "basic-init-initcpio" "tests/initcpio.c"}/bin/init";
-      contents = [ initcpioPayload ];
-    };
+  initcpioCheck = installedCheck {
+    name = "initcpio";
+    contents = [ initcpioPayload ];
   };
 
   # This exercises musl's __wasm_setjmp/__wasm_longjmp helpers and proves the
   # platform compiler flags lower ordinary consumer call sites.
-  setjmpCheck = vm-test.vmTest {
-    name = "basic-init-setjmp";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-setjmp";
-      init = "${buildInit "basic-init-setjmp" "tests/setjmp.c"}/bin/init";
-    };
-  };
+  setjmpCheck = installedCheck { name = "setjmp"; };
 
-  sigsetjmpCheck = vm-test.vmTest {
-    name = "basic-init-sigsetjmp";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-sigsetjmp";
-      init = "${buildInit "basic-init-sigsetjmp" "tests/sigsetjmp.c"}/bin/init";
-    };
-  };
+  sigsetjmpCheck = installedCheck { name = "sigsetjmp"; };
 
-  sigsetjmpHandlerCheck = vm-test.vmTest {
-    name = "basic-init-sigsetjmp-handler";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-sigsetjmp-handler";
-      init = "${buildInit "basic-init-sigsetjmp-handler" "tests/sigsetjmp-handler.c"}/bin/init";
-    };
-  };
+  sigsetjmpHandlerCheck = installedCheck { name = "sigsetjmp-handler"; };
 
   signalSyscallReturnCheck =
     name: extraFlags:
-    vm-test.vmTest {
-      name = "basic-init-signal-syscall-return-${name}";
-      initramfs = vm-test.mkInitramfs {
-        name = "basic-init-signal-syscall-return-${name}";
-        init = "${
-          buildInitWith "basic-init-signal-syscall-return-${name}" "tests/signal-syscall-return.c" extraFlags
-        }/bin/init";
-      };
+    installedCheck {
+      name = "signal-syscall-return-${name}";
+      source = "tests/signal-syscall-return.c";
+      inherit extraFlags;
     };
 
-  kernelMemoryGrowthCheck = vm-test.vmTest {
-    name = "basic-init-kernel-memory-growth";
-    initramfs = vm-test.mkInitramfs {
-      name = "basic-init-kernel-memory-growth";
-      init = "${buildInit "basic-init-kernel-memory-growth" "tests/kernel-memory-growth.c"}/bin/init";
-    };
+  kernelMemoryGrowthCheck = installedCheck {
+    name = "kernel-memory-growth";
     cpus = 2;
   };
 in
 (buildInitWith "basic-init" "init.c" "").overrideAttrs (old: {
   passthru = (old.passthru or { }) // {
-    inherit posixSpawnStressInitramfs remoteMemoryInitramfs schedulerHandoffInitramfs;
+    inherit posixSpawnStressDisk remoteMemoryDisk schedulerHandoffDisk;
     checks = {
-      auxv = check "auxv";
-      boot = check "boot";
-      brk = check "brk";
-      cancellation = check "cancellation";
-      clone = check "clone";
-      clone-fd = check "clone-fd";
-      clone-job-control = check "clone-job-control";
-      clone-latency = check "clone-latency";
-      clone-multithreaded-no-vm = check "clone-multithreaded-no-vm";
-      clone-memory-limit = check "clone-memory-limit";
-      clone-nested = check "clone-nested";
-      clone-no-vm = check "clone-no-vm";
-      clone-return = check "clone-return";
-      clone-signal-handler = check "clone-signal-handler";
-      clone-signals = check "clone-signals";
-      clone-tid = check "clone-tid";
-      clone-tls = check "clone-tls";
-      credentials = check "credentials";
-      cwd = check "cwd";
-      eventfd-unix = check "eventfd-unix";
-      exec-args = check "exec-args";
-      futex = check "futex";
+      auxv = installedCheck { name = "auxv"; };
+      boot = installedCheck { name = "boot"; };
+      brk = installedCheck { name = "brk"; };
+      cancellation = installedCheck { name = "cancellation"; };
+      clone = installedCheck { name = "clone"; };
+      clone-fd = installedCheck { name = "clone-fd"; };
+      clone-job-control = installedCheck { name = "clone-job-control"; };
+      clone-latency = installedCheck { name = "clone-latency"; };
+      clone-multithreaded-no-vm = installedCheck { name = "clone-multithreaded-no-vm"; };
+      clone-memory-limit = installedCheck { name = "clone-memory-limit"; };
+      clone-nested = installedCheck { name = "clone-nested"; };
+      clone-no-vm = installedCheck { name = "clone-no-vm"; };
+      clone-return = installedCheck { name = "clone-return"; };
+      clone-signal-handler = installedCheck { name = "clone-signal-handler"; };
+      clone-signals = installedCheck { name = "clone-signals"; };
+      clone-tid = installedCheck { name = "clone-tid"; };
+      clone-tls = installedCheck { name = "clone-tls"; };
+      credentials = installedCheck { name = "credentials"; };
+      cwd = installedCheck { name = "cwd"; };
+      eventfd-unix = installedCheck { name = "eventfd-unix"; };
+      exec-args = installedCheck { name = "exec-args"; };
+      futex = installedCheck { name = "futex"; };
       initcpio = initcpioCheck;
       kernel-memory-growth = kernelMemoryGrowthCheck;
-      large-executable = check "large-executable";
-      malloc = check "malloc";
-      malloc-failure = check "malloc-failure";
-      malloc-thread = check "malloc-thread";
+      large-executable = installedCheck { name = "large-executable"; };
+      malloc = installedCheck { name = "malloc"; };
+      malloc-failure = installedCheck { name = "malloc-failure"; };
+      malloc-thread = installedCheck { name = "malloc-thread"; };
       memory-abi = memoryAbiCheck;
       named-semaphore = namedSemaphoreCheck;
-      proc-self-mem = check "proc-self-mem";
+      proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;
-      pty = check "pty";
+      pty = installedCheck { name = "pty"; };
       remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
       setjmp = setjmpCheck;
       signal-syscall-return = signalSyscallReturnCheck "plain" "";
       signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ";
-      signal-correctness = check "signal-correctness";
+      signal-correctness = installedCheck { name = "signal-correctness"; };
       sigsetjmp = sigsetjmpCheck;
       sigsetjmp-handler = sigsetjmpHandlerCheck;
-      pthread-no-tls = check "pthread-no-tls";
-      thread-local = check "thread-local";
-      threads = check "threads";
-      timer = check "timer";
-      tls = check "tls";
-      user-memory-growth = check "user-memory-growth";
-      user-memory-rlimit = check "user-memory-rlimit";
-      wallclock = check "wallclock";
+      pthread-no-tls = installedCheck { name = "pthread-no-tls"; };
+      thread-local = installedCheck { name = "thread-local"; };
+      threads = installedCheck { name = "threads"; };
+      timer = installedCheck { name = "timer"; };
+      tls = installedCheck { name = "tls"; };
+      user-memory-growth = installedCheck { name = "user-memory-growth"; };
+      user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
+      wallclock = installedCheck { name = "wallclock"; };
     };
   };
 })

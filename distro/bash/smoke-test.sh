@@ -12,6 +12,9 @@ mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
+[ "$(readlink /bin/sh)" = busybox ] ||
+  fail "/bin/sh is not owned by BusyBox: $(readlink /bin/sh)"
+
 bash --version >/tmp/bash-version 2>&1 ||
   fail "bash --version failed: $(cat /tmp/bash-version)"
 grep -q 'GNU bash, version 5\.3' /tmp/bash-version ||

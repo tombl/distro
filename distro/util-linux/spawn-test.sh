@@ -10,7 +10,7 @@ fail() {
   while :; do :; done
 }
 
-export PATH=/bin:/sbin:/gnu/bin:/usr/bin:/usr/sbin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 # posix_spawn'd children run /bin/sh, which needs a working /dev; setsid's
 # assertion reads the child's /proc entry.

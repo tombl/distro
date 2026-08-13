@@ -5,8 +5,7 @@
     url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz";
     hash = "sha256-aQeFM9uPhJTbKX0cKAY5bTXwgDoFzuKwWhGkBZ/TvQQ=";
   },
-  bash,
-  coreutils,
+  busybox,
   file,
   ncurses,
   readline,
@@ -152,49 +151,32 @@ stdenv.mkDerivation (finalAttrs: {
     "--enable-libsmartcols"
   ];
 
-  postInstall = ''
-    # cfdisk, ul and setterm resolve the terminfo database at this FHS path.
-    mkdir -p $out/share
-    cp -r ${ncurses}/share/terminfo $out/share/
-    mkdir -p $out/usr/share
-    cp -r ${file}/usr/share/misc $out/usr/share/
-  '';
+  passthru.apk = {
+    depends = [
+      "busybox"
+      "file"
+      "ncurses"
+    ];
+    # util-linux intentionally owns kill when installed alongside coreutils.
+    replaces = [
+      "busybox"
+      "coreutils"
+    ];
+  };
 
   passthru.checks =
     let
-      # Ship only the binaries into the initramfs, dropping the unused
-      # lib/include/share weight.
-      utilLinuxBin = pkgs.runCommand "util-linux-bin" { } ''
-        mkdir -p $out
-        cp -a ${finalAttrs.finalPackage}/bin ${finalAttrs.finalPackage}/sbin $out/
-        mkdir -p $out/share
-        cp -a ${finalAttrs.finalPackage}/share/terminfo $out/share/
-        mkdir -p $out/usr/share
-        cp -a ${finalAttrs.finalPackage}/usr/share/misc $out/usr/share/
-      '';
-      bashBin = pkgs.runCommand "bash-bin" { } ''
-        mkdir -p $out/bin
-        cp -a ${bash}/bin/bash ${bash}/bin/sh $out/bin/
-      '';
-      coreutilsGnu = pkgs.runCommand "coreutils-gnu-bin" { } ''
-        mkdir -p $out/gnu/bin
-        cp -a ${coreutils}/bin/* $out/gnu/bin/
-      '';
       check =
         name: init:
-        vm-test.vmTest {
+        vm-test.installedTest {
           name = "util-linux-${name}";
-          initramfs = vm-test.mkInitramfs {
-            name = "util-linux-${name}";
-            inherit init;
-            # Keep coreutils in a separate prefix because both suites own kill.
-            # The guest intentionally contains no BusyBox applets.
-            contents = [
-              bashBin
-              coreutilsGnu
-              utilLinuxBin
-            ];
-          };
+          inherit init;
+          contents = [
+            busybox
+            file
+            ncurses
+            finalAttrs.finalPackage
+          ];
         };
     in
     {

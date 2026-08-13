@@ -164,51 +164,50 @@ stdenv.mkDerivation (finalAttrs: {
   enableParallelBuilding = true;
 
   postInstall = ''
-    # Readline is statically linked, but it still loads terminal descriptions
-    # at runtime. Keep the Bash filesystem fragment self-contained instead of
-    # requiring callers to add a separate ncurses slice.
-    mkdir -p "$out/share"
-    cp -r ${ncurses}/share/terminfo "$out/share/terminfo"
+    # /bin/sh remains BusyBox. Bash is an optional full shell and deliberately
+    # installs only /bin/bash so the two packages have no shell-path conflict.
+    test ! -e "$out/bin/sh"
   '';
 
+  passthru.apk = {
+    depends = [
+      "busybox"
+      "ncurses"
+    ];
+  };
+
   passthru.checks = {
-    smoke = vm-test.vmTest {
+    smoke = vm-test.installedTest {
       name = "bash-smoke";
-      initramfs = vm-test.mkInitramfs {
-        name = "bash-smoke";
-        init = ./smoke-test.sh;
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-          testScripts
-        ];
-      };
+      init = ./smoke-test.sh;
+      contents = [
+        busybox
+        ncurses
+        finalAttrs.finalPackage
+        testScripts
+      ];
     };
 
-    repo-script = vm-test.vmTest {
+    repo-script = vm-test.installedTest {
       name = "bash-repo-script";
-      initramfs = vm-test.mkInitramfs {
-        name = "bash-repo-script";
-        init = ./repo-test-init.sh;
-        contents = [
-          busybox
-          bzip2
-          finalAttrs.finalPackage
-          testScripts
-        ];
-      };
+      init = ./repo-test-init.sh;
+      contents = [
+        busybox
+        bzip2
+        ncurses
+        finalAttrs.finalPackage
+        testScripts
+      ];
     };
 
-    interactive = vm-test.vmTest {
+    interactive = vm-test.installedTest {
       name = "bash-interactive";
-      initramfs = vm-test.mkInitramfs {
-        name = "bash-interactive";
-        init = ./interactive-test.sh;
-        contents = [
-          busybox
-          finalAttrs.finalPackage
-        ];
-      };
+      init = ./interactive-test.sh;
+      contents = [
+        busybox
+        ncurses
+        finalAttrs.finalPackage
+      ];
     };
   };
 })
