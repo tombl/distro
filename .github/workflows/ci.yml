@@ -118,8 +118,8 @@ jobs:
           nix build .#kernel --out-link result-kernel --print-build-logs
           nix build .#linux-guest --out-link result-linux-guest --print-build-logs
           mkdir npm-packages
-          cp -L result-kernel/kernel.tgz npm-packages/kernel.tgz
-          cp -L result-linux-guest/linux-guest.tgz npm-packages/linux-guest.tgz
+          cp -L result-kernel/package.tgz npm-packages/kernel.tgz
+          cp -L result-linux-guest/package.tgz npm-packages/linux-guest.tgz
       - uses: actions/upload-artifact@v4
         with:
           name: npm-packages

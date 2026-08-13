@@ -28,10 +28,8 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preInstall
 
     mkdir -p $out
-    cp packages/bytes/package.json $out/package.json
-    cp packages/bytes/README.md $out/README.md
-    cp packages/bytes/LICENSE $out/LICENSE
-    cp -r packages/bytes/dist $out/dist
+    node scripts/pack-package.mjs packages/bytes --out $out/package.tgz
+    tar -xzf $out/package.tgz --strip-components=1 -C $out
 
     runHook postInstall
   '';

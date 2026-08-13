@@ -101,12 +101,22 @@
       import { BrowserFS } from "@lowland/guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
-      let bootMode = "__BOOT_MODE__";
-      if (
-        "serviceWorker" in navigator &&
-        (bootMode === "live" || !navigator.serviceWorker.controller)
-      ) {
-        await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+      // Firefox cannot currently run service workers in the COOP+COEP process
+      // used by our module workers, and controlling those workers prevents them
+      // from starting. Keep Firefox live-only until Mozilla fixes bug 1613912.
+      // https://bugzilla.mozilla.org/show_bug.cgi?id=1613912
+      const persistentInstallSupported = !navigator.userAgent.includes("Firefox/");
+      let bootMode = persistentInstallSupported ? "__BOOT_MODE__" : "live";
+      if ("serviceWorker" in navigator) {
+        if (!persistentInstallSupported) {
+          await (await navigator.serviceWorker.getRegistration("/"))?.unregister();
+          if (navigator.serviceWorker.controller) {
+            location.reload();
+            await new Promise(() => {});
+          }
+        } else if (bootMode === "live" || !navigator.serviceWorker.controller) {
+          await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+        }
       }
 
       const parameters = Object.fromEntries(new URLSearchParams(location.search));
