@@ -1,6 +1,6 @@
 # Browser tests
 
-This package boots the packaged `@tombl/linux-guest` runtime in Playwright's
+This package boots the packaged `@lowland/guest` runtime in Playwright's
 Chromium, Firefox, and WebKit builds. The server supplies the COOP and COEP
 headers required by shared WebAssembly memory. Browser binaries, fonts, npm
 packages, rootfs, initramfs, and kernel assets all come from Nix store paths;

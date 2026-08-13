@@ -6,7 +6,7 @@
     "imports": {
       "@lowland/bytes": "/node_modules/@lowland/bytes/dist/index.js",
       "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
-      "@tombl/linux-guest": "/node_modules/@tombl/linux-guest/dist/index.js"
+      "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js"
     }
   }
 </script>
@@ -19,7 +19,7 @@
     createNetwork,
     guestFetchHandler,
     spawnGuest,
-  } from "@tombl/linux-guest";
+  } from "@lowland/guest";
   import { serveGuest } from "/client.js";
 
   const hubOrigin = "__HUB_ORIGIN__";

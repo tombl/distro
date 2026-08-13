@@ -1,5 +1,5 @@
 {
-  "name": "@tombl/linux-guest",
+  "name": "@lowland/guest",
   "version": "0.0.0",
   "description": "A bootable Linux guest for JavaScript with processes, files, and networking.",
   "homepage": "https://linux.tombl.dev/reference/linux-guest/",
@@ -33,14 +33,14 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@lowland/bytes": "0.0.0"
+    "@lowland/bytes": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@lowland/kernel": "0.0.0"
+    "@lowland/kernel": "workspace:^"
   },
   "bundledDependencies": [
     "@lowland/bytes"

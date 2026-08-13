@@ -58,9 +58,9 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
-      rm packages/runner/node_modules/@tombl/linux-guest
-      ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
-      pnpm --filter=@tombl/linux-runner check
+      rm packages/runner/node_modules/@lowland/guest
+      ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
+      pnpm --filter=@lowland/linux-runner check
 
       runHook postBuild
     '';
@@ -75,9 +75,9 @@ let
       cp packages/runner/package.json $out/package.json
       cp -RL ${bytes}/. $out/node_modules/@lowland/bytes/
       cp -RL packages/runner/node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
-      mkdir $out/node_modules/@tombl/linux-guest
-      cp ${linux-guest.package}/package.json $out/node_modules/@tombl/linux-guest/package.json
-      cp -r ${linux-guest.package}/dist $out/node_modules/@tombl/linux-guest/dist
+      mkdir $out/node_modules/@lowland/guest
+      cp ${linux-guest.package}/package.json $out/node_modules/@lowland/guest/package.json
+      cp -r ${linux-guest.package}/dist $out/node_modules/@lowland/guest/dist
 
       runHook postInstall
     '';
@@ -119,14 +119,14 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
-      rm packages/runner/node_modules/@tombl/linux-guest
-      ln -s ${linux-guest.package} packages/runner/node_modules/@tombl/linux-guest
-      pnpm --filter=@tombl/linux-runner check
+      rm packages/runner/node_modules/@lowland/guest
+      ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
+      pnpm --filter=@lowland/linux-runner check
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
         LINUX_RUNNER_TEST_CONSOLE_INITRAMFS=${console-initramfs} \
         LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
         LINUX_RUNNER_TEST_ROOT_DISK=${rootfs} \
-        timeout --kill-after=5 300 pnpm --filter=@tombl/linux-runner test
+        timeout --kill-after=5 300 pnpm --filter=@lowland/linux-runner test
 
       runHook postBuild
     '';

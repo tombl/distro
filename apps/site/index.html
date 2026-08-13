@@ -76,8 +76,8 @@
         "imports": {
           "@lowland/bytes": "./static/__ASSET_DIRECTORY__/bytes/index.js",
           "@lowland/kernel": "./static/__ASSET_DIRECTORY__/dist/index.js",
-          "@tombl/linux-guest": "./static/__ASSET_DIRECTORY__/guest/index.js",
-          "@tombl/linux-guest/browser": "./static/__ASSET_DIRECTORY__/guest/browser.js"
+          "@lowland/guest": "./static/__ASSET_DIRECTORY__/guest/index.js",
+          "@lowland/guest/browser": "./static/__ASSET_DIRECTORY__/guest/browser.js"
         }
       }
     </script>
@@ -92,9 +92,9 @@
         hostFetchNetwork,
         blockDevice,
         spawnGuest,
-      } from "@tombl/linux-guest";
+      } from "@lowland/guest";
       import { workerDevice } from "@lowland/kernel";
-      import { BrowserFS } from "@tombl/linux-guest/browser";
+      import { BrowserFS } from "@lowland/guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
       // Firefox cannot currently run service workers in the COOP+COEP process

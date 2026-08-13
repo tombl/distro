@@ -17,7 +17,7 @@ let
     mkdir -p \
       $out/node_modules/@lowland/bytes \
       $out/node_modules/@lowland/kernel \
-      $out/node_modules/@tombl/linux-guest
+      $out/node_modules/@lowland/guest
     ${playwright.linkRuntime "$out"}
     cp ${./client.js} $out/client.js
     cp ${./playwright.config.js} $out/playwright.config.js
@@ -27,9 +27,9 @@ let
     cp -r ${bytes}/dist $out/node_modules/@lowland/bytes/dist
     tar -xzf ${kernel}/kernel.tgz --strip-components=1 -C $out/node_modules/@lowland/kernel
     tar -xzf ${linux-guest.package}/linux-guest.tgz \
-      --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+      --strip-components=1 -C $out/node_modules/@lowland/guest
     cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs \
-      $out/node_modules/@tombl/linux-guest/rootfs.erofs
+      $out/node_modules/@lowland/guest/rootfs.erofs
   '';
 
   check =

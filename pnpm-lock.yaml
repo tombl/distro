@@ -13,12 +13,12 @@ importers:
       '@lowland/bytes':
         specifier: workspace:*
         version: link:../bytes
+      '@lowland/guest':
+        specifier: workspace:*
+        version: link:../linux-guest
       '@lowland/kernel':
         specifier: workspace:*
         version: link:../kernel
-      '@tombl/linux-guest':
-        specifier: workspace:*
-        version: link:../linux-guest
     devDependencies:
       '@playwright/test':
         specifier: 1.61.1
@@ -29,12 +29,12 @@ importers:
       '@lowland/bytes':
         specifier: workspace:*
         version: link:../bytes
+      '@lowland/guest':
+        specifier: workspace:*
+        version: link:../linux-guest
       '@lowland/kernel':
         specifier: workspace:*
         version: link:../kernel
-      '@tombl/linux-guest':
-        specifier: workspace:*
-        version: link:../linux-guest
     devDependencies:
       '@playwright/test':
         specifier: 1.61.1
@@ -49,7 +49,7 @@ importers:
   packages/kernel:
     dependencies:
       '@lowland/bytes':
-        specifier: 0.0.0
+        specifier: workspace:*
         version: link:../bytes
     devDependencies:
       '@types/node':
@@ -62,10 +62,10 @@ importers:
   packages/linux-guest:
     dependencies:
       '@lowland/bytes':
-        specifier: 0.0.0
+        specifier: workspace:*
         version: link:../bytes
       '@lowland/kernel':
-        specifier: 0.0.0
+        specifier: workspace:^
         version: link:../kernel
     devDependencies:
       '@types/node':
@@ -96,12 +96,12 @@ importers:
       '@lowland/bytes':
         specifier: workspace:*
         version: link:../bytes
+      '@lowland/guest':
+        specifier: workspace:*
+        version: link:../linux-guest
       '@lowland/kernel':
         specifier: workspace:*
         version: link:../kernel
-      '@tombl/linux-guest':
-        specifier: workspace:*
-        version: link:../linux-guest
     devDependencies:
       '@types/node':
         specifier: ^25.9.5

@@ -30,7 +30,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@lowland/bytes": "0.0.0"
+    "@lowland/bytes": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26",

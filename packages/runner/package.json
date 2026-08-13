@@ -1,5 +1,5 @@
 {
-  "name": "@tombl/linux-runner",
+  "name": "@lowland/linux-runner",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   "dependencies": {
     "@lowland/bytes": "workspace:*",
     "@lowland/kernel": "workspace:*",
-    "@tombl/linux-guest": "workspace:*"
+    "@lowland/guest": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.9.5",

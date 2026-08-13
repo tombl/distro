@@ -69,11 +69,11 @@ let
       runHook preBuild
 
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -r ${kernel}/dist packages/kernel/dist
-      cp -r ${bytes}/dist packages/bytes/dist
+      cp -rT ${kernel}/dist packages/kernel/dist
+      cp -rT ${bytes}/dist packages/bytes/dist
       cp ${agentfs} packages/linux-guest/agent.erofs
-      pnpm --filter=@tombl/linux-guest check
-      pnpm --filter=@tombl/linux-guest build
+      pnpm --filter=@lowland/guest check
+      pnpm --filter=@lowland/guest build
 
       runHook postBuild
     '';
@@ -81,18 +81,13 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p $out/node_modules/@lowland/bytes
+      mkdir -p $out
       cp packages/linux-guest/package.json $out/package.json
       cp packages/linux-guest/README.md $out/README.md
       cp packages/linux-guest/LICENSE $out/LICENSE
       cp packages/linux-guest/agent.erofs $out/agent.erofs
       cp -r packages/linux-guest/dist $out/dist
-      cp packages/bytes/package.json $out/node_modules/@lowland/bytes/package.json
-      cp packages/bytes/README.md $out/node_modules/@lowland/bytes/README.md
-      cp packages/bytes/LICENSE $out/node_modules/@lowland/bytes/LICENSE
-      cp -r packages/bytes/dist $out/node_modules/@lowland/bytes/dist
-      npm pack ./packages/linux-guest --pack-destination $out
-      mv $out/tombl-linux-guest-*.tgz $out/linux-guest.tgz
+      node scripts/pack-package.mjs packages/linux-guest --out $out/linux-guest.tgz
 
       runHook postInstall
     '';
@@ -118,10 +113,10 @@ let
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
       cp ${agentfs} packages/linux-guest/agent.erofs
-      pnpm --filter=@tombl/linux-guest-tests check
+      pnpm --filter=@lowland/guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \
-        timeout --kill-after=5 300 pnpm --filter=@tombl/linux-guest-tests test
+        timeout --kill-after=5 300 pnpm --filter=@lowland/guest-tests test
 
       runHook postBuild
     '';

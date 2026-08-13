@@ -5,8 +5,8 @@ import {
   fileSystemDevice,
   workerDevice,
 } from "@lowland/kernel";
-import { spawnGuest } from "@tombl/linux-guest";
-import { BrowserFS } from "@tombl/linux-guest/browser";
+import { spawnGuest } from "@lowland/guest";
+import { BrowserFS } from "@lowland/guest/browser";
 
 async function collectProcess(child) {
   const [status, stdout, stderr] = await Promise.all([

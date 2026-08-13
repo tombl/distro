@@ -22,7 +22,7 @@ WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn
 The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 
-`@tombl/linux-guest` builds an opinionated IPv4 network on that primitive.
+`@lowland/guest` builds an opinionated IPv4 network on that primitive.
 `spawnGuest()` attaches a NIC, assigns a static address in `192.0.2.0/24`, and
 configures the kernel's address and default route. Its JavaScript endpoint
 implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses outside

@@ -107,12 +107,12 @@ const mainPage = `<!doctype html>
 
 // The guest.spec.js page: boots a real VM, so it also needs the built packages
 // and the guest images that `pnpm artifacts` materializes into their owning
-// packages (here, @tombl/linux-guest's rootfs.erofs).
+// packages (here, @lowland/guest's rootfs.erofs).
 const vmPage = readFileSync(join(here, "tests", "vm.html"), "utf8").replaceAll(
   "__HUB_ORIGIN__",
   hubOrigin,
 );
-const guestRootfs = join(here, "node_modules/@tombl/linux-guest/rootfs.erofs");
+const guestRootfs = join(here, "node_modules/@lowland/guest/rootfs.erofs");
 
 const main = createServer((request, response) => {
   const headers = {

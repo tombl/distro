@@ -1,5 +1,5 @@
 {
-  "name": "@tombl/linux-guest-tests",
+  "name": "@lowland/guest-tests",
   "private": true,
   "type": "module",
   "scripts": {

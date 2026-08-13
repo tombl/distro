@@ -16,7 +16,7 @@ let
     mkdir -p \
       $out/node_modules/@lowland/bytes \
       $out/node_modules/@lowland/kernel \
-      $out/node_modules/@tombl/linux-guest
+      $out/node_modules/@lowland/guest
     ${playwright.linkRuntime "$out"}
     cp ${source}/app.js $out/app.js
     cp ${source}/index.html $out/index.html
@@ -36,7 +36,7 @@ let
     cp ${source}/tests/virtio-fs.spec.js $out/tests/
     cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
     cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
-    tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@tombl/linux-guest
+    tar -xzf ${linux-guest.package}/linux-guest.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
   '';
 
   suite = baseSuite // {

@@ -1,17 +1,17 @@
-# `@tombl/linux-guest`
+# `@lowland/guest`
 
-`@tombl/linux-guest` provides a bootable Linux guest for JavaScript, with APIs for processes, files, and networking.
+`@lowland/guest` provides a bootable Linux guest for JavaScript, with APIs for processes, files, and networking.
 
 ## Installation
 
 ```sh
-npm install @lowland/kernel @tombl/linux-guest
+npm install @lowland/kernel @lowland/guest
 ```
 
 ## Usage
 
 ```js
-import { blockDevice, spawnGuest } from "@tombl/linux-guest";
+import { blockDevice, spawnGuest } from "@lowland/guest";
 
 const rootfs = new Uint8Array(await fetch("/rootfs.erofs").then((r) => r.arrayBuffer()));
 const root = blockDevice({
@@ -43,11 +43,11 @@ stops; durable storage remains the embedding application's responsibility.
 
 ## Share a host directory
 
-`@tombl/linux-guest/node` adapts a host directory to virtio-fs:
+`@lowland/guest/node` adapts a host directory to virtio-fs:
 
 ```js
-import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
-import { NodeFS } from "@tombl/linux-guest/node";
+import { spawnGuest, fileSystemDevice } from "@lowland/guest";
+import { NodeFS } from "@lowland/guest/node";
 
 const shared = new NodeFS("/srv/guest-share");
 const guest = await spawnGuest({
@@ -93,8 +93,8 @@ In a browser, the adapter accepts any writable `FileSystemDirectoryHandle`.
 Use OPFS for storage private to the site:
 
 ```js
-import { spawnGuest, fileSystemDevice } from "@tombl/linux-guest";
-import { BrowserFS } from "@tombl/linux-guest/browser";
+import { spawnGuest, fileSystemDevice } from "@lowland/guest";
+import { BrowserFS } from "@lowland/guest/browser";
 
 const opfs = await navigator.storage.getDirectory();
 const shared = new BrowserFS(
@@ -172,7 +172,7 @@ See [linux.tombl.dev](https://linux.tombl.dev/getting-started/).
 
 ## API
 
-See the [`@tombl/linux-guest` reference](https://linux.tombl.dev/reference/linux-guest/).
+See the [`@lowland/guest` reference](https://linux.tombl.dev/reference/linux-guest/).
 
 ## License
 
