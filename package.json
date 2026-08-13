@@ -5,6 +5,7 @@
     "artifacts": "nix run .#artifacts",
     "pack:guest": "pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/guest build && node scripts/pack-package.mjs packages/linux-guest --out result-packages/guest.tgz",
     "pack:kernel": "pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/kernel build && node scripts/pack-package.mjs packages/kernel --out result-packages/kernel.tgz",
+    "release": "node scripts/release.mjs",
     "typecheck": "pnpm --filter=@lowland/bytes build && pnpm --filter=@lowland/kernel build && pnpm --filter=@lowland/guest build && pnpm --recursive check"
   },
   "packageManager": "pnpm@11.13.1"

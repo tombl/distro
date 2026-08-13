@@ -2,10 +2,9 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   pull_request:
-  release:
-    types:
-      - published
 
 jobs:
   plan:
@@ -196,17 +195,18 @@ jobs:
             printf '%s\n' "$output" | grep -Eo 'https://[^[:space:]]+' | tail -1
           } >> "$GITHUB_STEP_SUMMARY"
 
-  stage-npm:
-    name: Stage packages on npm
+  publish-release:
+    name: Publish npm packages and GitHub release
     needs:
       - build
       - heavy-check
-    if: github.event_name == 'release' && github.repository == 'tombl/distro'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'tombl/distro'
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v4
         with:
           name: npm-packages
@@ -216,10 +216,43 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - run: npm install --global npm@latest
-      - name: Stage package
-        env:
-          NPM_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
+      - run: npm install --global npm@11.16.0
+      - name: Validate release metadata
         run: |
-          npm stage publish ./npm-packages/kernel.tgz --access public --tag "$NPM_TAG"
-          npm stage publish ./npm-packages/linux-guest.tgz --access public --tag "$NPM_TAG"
+          version="${GITHUB_REF_NAME#v}"
+          test "$(jq --raw-output .version packages/bytes/package.json)" = "$version"
+          test "$(jq --raw-output .version packages/kernel/package.json)" = "$version"
+          test "$(jq --raw-output .version packages/linux-guest/package.json)" = "$version"
+          test "$(jq --raw-output .version packages/runner/package.json)" = "$version"
+          node scripts/release-notes.mjs "$version" > release-notes.md
+      - name: Publish packages
+        env:
+          NPM_CONFIG_PROVENANCE: true
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          publish() {
+            package="$1"
+            archive="$2"
+            if npm view "${package}@${version}" version >/dev/null 2>&1; then
+              echo "${package}@${version} is already published"
+            else
+              npm publish "$archive" --access public
+            fi
+          }
+
+          publish @lowland/kernel ./npm-packages/kernel.tgz
+          publish @lowland/guest ./npm-packages/linux-guest.tgz
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "$GITHUB_REF_NAME already has a GitHub release"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          fi
