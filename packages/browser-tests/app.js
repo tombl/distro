@@ -5,7 +5,7 @@ import {
   fileSystemDevice,
   workerDevice,
 } from "@lowland/kernel";
-import { spawnGuest } from "@lowland/guest";
+import { guestAgent } from "@lowland/guest";
 import { BrowserFS } from "@lowland/guest/browser";
 
 async function collectProcess(child) {
@@ -54,12 +54,16 @@ async function opfsDiskDevice(handle, capacity) {
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
 async function withGuest(scenario, options) {
-  const guest = await spawnGuest({ cpus: 1, root: await rootDevice(), ...options });
+  const agent = guestAgent();
+  const machine = await bootMachine({
+    cpus: options?.cpus ?? 1,
+    plugins: [agent, ...(options?.devices ?? []), await rootDevice()],
+  });
   try {
-    return await scenario(guest);
+    return await scenario(agent);
   } finally {
-    guest.machine.close();
-    await guest.machine.closed;
+    machine.close();
+    await machine.closed;
   }
 }
 
@@ -152,7 +156,9 @@ let lifecycleGuest;
 
 globalThis.startRemoteMemoryLifecycle = async () => {
   if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
-  lifecycleGuest = await spawnGuest({ root: await rootDevice(), cpus: 1 });
+  const agent = guestAgent();
+  const machine = await bootMachine({ cpus: 1, plugins: [agent, await rootDevice()] });
+  lifecycleGuest = { agent, machine };
 };
 
 globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
@@ -183,15 +189,15 @@ globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
     "done",
     "printf 'batch=%s processes=%s\\n' \"" + batch + '" "$i"',
   ].join("\n");
-  return collectProcess(await lifecycleGuest.exec(["sh", "-c", script]));
+  return collectProcess(await lifecycleGuest.agent.exec(["sh", "-c", script]));
 };
 
 globalThis.closeRemoteMemoryLifecycle = async () => {
   if (!lifecycleGuest) return;
-  const guest = lifecycleGuest;
+  const { machine } = lifecycleGuest;
   lifecycleGuest = undefined;
-  guest.machine.close();
-  await guest.machine.closed;
+  machine.close();
+  await machine.closed;
 };
 
 async function runInitramfs(path, cpus) {

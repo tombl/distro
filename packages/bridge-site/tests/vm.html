@@ -6,6 +6,7 @@
     "imports": {
       "@lowland/bytes": "/node_modules/@lowland/bytes/dist/index.js",
       "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js",
       "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js"
     }
   }
@@ -13,13 +14,8 @@
 <p id="status">booting…</p>
 <pre id="log"></pre>
 <script type="module">
-  import {
-    blockDevice,
-    consoleDevice,
-    createNetwork,
-    guestFetchHandler,
-    spawnGuest,
-  } from "@lowland/guest";
+  import { createNetwork, guestAgent, guestFetchHandler } from "@lowland/guest";
+  import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
   import { serveGuest } from "/client.js";
 
   const hubOrigin = "__HUB_ORIGIN__";
@@ -63,15 +59,16 @@
         return target.byteLength;
       },
     });
-    const guest = await spawnGuest({
-      network,
-      root,
-      devices: [boot_console],
+    const guest = guestAgent();
+    const attachment = network.attach(guest);
+    await bootMachine({
+      cpus: 1,
+      plugins: [root, guest, boot_console, attachment],
     });
     await guest.fs.mkdir("/tmp/www");
     await guest.fs.writeTextFile("/tmp/www/index.html", "<h1>hello from the guest</h1>\n");
     await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
-    const httpd = guestFetchHandler(guest.network, { port: 8080 });
+    const httpd = guestFetchHandler(attachment, { port: 8080 });
     for (;;) {
       try {
         await (await httpd(new Request("http://localhost/"))).arrayBuffer();
@@ -83,7 +80,7 @@
 
     serveGuest({
       hub: hubOrigin,
-      fetch: (port) => guestFetchHandler(guest.network, { port }),
+      fetch: (port) => guestFetchHandler(attachment, { port }),
     });
     status.textContent = `serving — open any <port>.bridge.localhost:${new URL(hubOrigin).port} (httpd is on 8080)`;
   })().catch((error) => {

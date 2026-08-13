@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { guestFetchHandler } from "../src/guest-fetch-handler.ts";
-import type { GuestNetwork, NetworkedGuest, TcpConnection } from "../src/index.ts";
-import { guest_test } from "./fixture.ts";
+import type { NetworkAttachment, TcpConnection } from "../src/index.ts";
+import { guest_test, type TestGuest } from "./fixture.ts";
 import { connect_with_retry } from "./helpers.ts";
 
 const encoder = new TextEncoder();
@@ -10,7 +10,7 @@ const encoder = new TextEncoder();
 // tcpsvd hands the socket to the program as stdin and stdout. Draining the
 // request to EOF before replying avoids a close-with-unread-data RST that
 // would race the canned response.
-function serve(guest: NetworkedGuest, port: number, script: string) {
+function serve(guest: TestGuest, port: number, script: string) {
   return guest.exec(["tcpsvd", "-c", "2", "0.0.0.0", String(port), "sh", "-c", script]);
 }
 
@@ -279,7 +279,7 @@ test("guestFetchHandler abort cancels a stalled request body", async () => {
       if (options.signal?.aborted) abort();
       return Promise.resolve(connection);
     },
-  } as unknown as GuestNetwork;
+  } as unknown as NetworkAttachment;
 
   const controller = new AbortController();
   const init = { method: "POST", body, duplex: "half", signal: controller.signal } as RequestInit;

@@ -200,7 +200,7 @@ export function ethernetDevice(
     flush_receive();
   }
 
-  async function transmit(queue: Virtqueue, controller: VirtioController) {
+  async function transmit(queue: Virtqueue, _controller: VirtioController) {
     for (const chain of queue) {
       const chunks: Uint8Array[] = [];
       let length = 0;

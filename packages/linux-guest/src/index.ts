@@ -1,26 +1,5 @@
-export {
-  type BlockDeviceStorage,
-  blockDevice,
-  consoleDevice,
-  entropyDevice,
-  fileSystemDevice,
-  vsockDevice,
-  type DeviceTreeNode,
-  type VirtioDevice,
-  type FS,
-  type FSAttributes,
-  type FSCreateContext,
-  type FSDirectoryEntry,
-  type FSDeviceOptions,
-  FSError,
-  type FSErrorCode,
-  type FSSetAttributes,
-  type FSStat,
-  type FSTimestamp,
-  type VsockConnection,
-  type VsockDevice,
-} from "@lowland/kernel";
 export { MountFlags, ProtocolError, SystemError, UnmountFlags } from "./abi.ts";
+export { guestAgent, type GuestAgent, type RunResult } from "./agent.ts";
 export {
   type Exec,
   type ExecOptions,
@@ -41,12 +20,11 @@ export {
 } from "./file.ts";
 export { guestFetchHandler } from "./guest-fetch-handler.ts";
 export { hostFetchNetwork } from "./host-fetch-network.ts";
-export { type Guest, type NetworkedGuest, spawnGuest, type SpawnGuestOptions } from "./machine.ts";
 export {
   createNetwork,
-  type GuestNetwork,
   type Network,
   type NetworkAddress,
+  type NetworkAttachment,
   type NetworkOptions,
   type TcpConnection,
   type TcpConnectOptions,

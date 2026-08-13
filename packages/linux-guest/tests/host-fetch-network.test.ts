@@ -3,13 +3,13 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { type AddressInfo } from "node:net";
 import { test } from "node:test";
+import { bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
 import {
-  consoleDevice,
   createNetwork,
-  entropyDevice,
-  type NetworkedGuest,
+  guestAgent,
+  type GuestAgent,
   type NetworkOptions,
-  spawnGuest,
+  type NetworkAttachment,
   type TcpSession,
 } from "../src/index.ts";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
@@ -37,21 +37,30 @@ function loopback_fetch(port: number): (request: Request) => Promise<Response> {
   };
 }
 
-async function with_guest(options: NetworkOptions, fn: (guest: NetworkedGuest) => Promise<void>) {
+type NetworkedAgent = GuestAgent & { readonly network: NetworkAttachment };
+
+async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) => Promise<void>) {
   const network = createNetwork(options);
-  const guest = await spawnGuest({
+  const agent = guestAgent();
+  const attachment = network.attach(agent);
+  const machine = await bootMachine({
     cpus: 1,
-    network,
-    root: root_device(),
-    devices: [consoleDevice(closed_input(), console_output()), entropyDevice()],
+    plugins: [
+      root_device(),
+      agent,
+      consoleDevice(closed_input(), console_output()),
+      entropyDevice(),
+      attachment,
+    ],
   });
-  const console_done = guest.machine.bootConsole.pipeTo(console_output());
+  const guest = Object.assign(agent, { network: attachment });
+  const console_done = machine.bootConsole.pipeTo(console_output());
   try {
     await fn(guest);
   } finally {
     network.close();
-    guest.machine.close();
-    await guest.machine.closed;
+    machine.close();
+    await machine.closed;
     await console_done;
   }
 }
@@ -117,30 +126,6 @@ test("serializes a 502 when fetch rejects", async () => {
     assert.doesNotMatch(output, /upstream is unreachable/);
   });
 });
-
-async function adapter_request(
-  network: ReturnType<typeof hostFetchNetwork>,
-  request: string,
-): Promise<string> {
-  const input = new TransformStream<Uint8Array, Uint8Array>();
-  const output = new TransformStream<Uint8Array, Uint8Array>();
-  const abort = new AbortController();
-  const session: TcpSession = {
-    target: { hostname: "198.18.0.1", port: 80 },
-    readable: input.readable,
-    writable: output.writable,
-    signal: abort.signal,
-  };
-  const handled = Promise.resolve().then(() => network.connectTcp(session));
-  const response = collect(output.readable);
-  const writer = input.writable.getWriter();
-  const written = (async () => {
-    await writer.write(new TextEncoder().encode(request));
-    await writer.close();
-  })();
-  const [, bytes] = await Promise.all([written, response, handled]);
-  return decoder.decode(bytes);
-}
 
 test("streams request bodies larger than the former adapter cap", async () => {
   const length = 17 * 1024 * 1024;

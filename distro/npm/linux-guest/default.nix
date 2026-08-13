@@ -3,7 +3,7 @@
 }:
 
 let
-  agentfs = callPackage ./agentfs.nix { };
+  agentDisk = callPackage ./agent-disk.nix { };
   rootfs = callPackage ./rootfs.nix { };
   ext4Root = callPackage ./rootfs.nix {
     format = "ext4";
@@ -14,7 +14,7 @@ in
 {
   package = callPackage ./package.nix {
     inherit
-      agentfs
+      agentDisk
       ext4Root
       rootfs
       wrongRoot

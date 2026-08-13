@@ -99,7 +99,7 @@ code. JavaScript responses must use a JavaScript MIME type.
 
 The VM page must remain same-site with the bridge family. Copy or bundle
 `packages/bridge-site/client.js` into that page and call `serveGuest` once its
-guest network is ready:
+guest network attachment is ready:
 
 ```js
 import { guestFetchHandler } from "@lowland/guest";
@@ -107,7 +107,7 @@ import { serveGuest } from "./bridge-client.js";
 
 serveGuest({
   hub: "https://hub.localhost.low.land",
-  fetch: (port) => guestFetchHandler(guest.network, { port }),
+  fetch: (port) => guestFetchHandler(attachment, { port }),
 });
 ```
 

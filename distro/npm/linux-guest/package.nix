@@ -1,5 +1,5 @@
 {
-  agentfs,
+  agentDisk,
   bytes,
   busybox,
   ext4Root,
@@ -41,7 +41,7 @@ let
   # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
   # or by building this attribute itself.
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
-    "agent.erofs" = agentfs;
+    "agent.img" = agentDisk;
     "rootfs.ext4" = ext4Root;
     "lifecycle-initramfs.cpio" = lifecycle-initramfs;
     "rootfs.erofs" = rootfs;
@@ -71,7 +71,7 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -rT ${kernel}/dist packages/kernel/dist
       cp -rT ${bytes}/dist packages/bytes/dist
-      cp ${agentfs} packages/linux-guest/agent.erofs
+      cp ${agentDisk} packages/linux-guest/agent.img
       pnpm --filter=@lowland/guest check
       pnpm --filter=@lowland/guest build
 
@@ -81,13 +81,18 @@ let
     installPhase = ''
       runHook preInstall
 
-      mkdir -p $out
+      mkdir -p $out/node_modules/@lowland/bytes
       cp packages/linux-guest/package.json $out/package.json
       cp packages/linux-guest/README.md $out/README.md
       cp packages/linux-guest/LICENSE $out/LICENSE
-      cp packages/linux-guest/agent.erofs $out/agent.erofs
+      cp packages/linux-guest/agent.img $out/agent.img
       cp -r packages/linux-guest/dist $out/dist
-      node scripts/pack-package.mjs packages/linux-guest --out $out/linux-guest.tgz
+      cp packages/bytes/package.json $out/node_modules/@lowland/bytes/package.json
+      cp packages/bytes/README.md $out/node_modules/@lowland/bytes/README.md
+      cp packages/bytes/LICENSE $out/node_modules/@lowland/bytes/LICENSE
+      cp -r packages/bytes/dist $out/node_modules/@lowland/bytes/dist
+      npm pack ./packages/linux-guest --pack-destination $out
+      mv $out/tombl-linux-guest-*.tgz $out/linux-guest.tgz
 
       runHook postInstall
     '';
@@ -112,7 +117,7 @@ let
       cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
       cp -r ${kernel}/dist packages/kernel/dist
       cp -r ${bytes}/dist packages/bytes/dist
-      cp ${agentfs} packages/linux-guest/agent.erofs
+      cp ${agentDisk} packages/linux-guest/agent.img
       pnpm --filter=@lowland/guest-tests check
 
       LINUX_GUEST_TEST_ASSETS=${test-assets} \

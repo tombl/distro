@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@lowland/bytes": "workspace:*",
-    "@lowland/kernel": "workspace:*",
-    "@lowland/guest": "workspace:*"
+    "@lowland/guest": "workspace:*",
+    "@lowland/kernel": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"

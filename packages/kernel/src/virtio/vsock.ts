@@ -255,7 +255,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
     throw new Error("no local vsock ports available");
   }
 
-  function flush_rx(controller: VirtioController) {
+  function flush_rx(_controller: VirtioController) {
     while (pending_packets.length > 0 && rx_buffers.length > 0) {
       const packet = pending_packets.shift()!;
       const chain = rx_buffers.shift()!;

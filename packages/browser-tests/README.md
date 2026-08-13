@@ -24,7 +24,7 @@ The generic check discovery in `checks.nix` exposes these checks and the
 generic CI build matrix runs them. There is no separate browser-test app or CI
 job.
 
-The suite is a boot smoke test: `spawnGuest` → `exec uname` → clean
+The suite is a boot smoke test: `guestAgent` + `bootMachine` → `exec uname` → clean
 `machine.closed`, once per engine. It catches SAB/COOP/COEP/worker/
 module-loading regressions that only show up on a real browser engine.
 

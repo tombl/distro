@@ -1,6 +1,8 @@
 # `@lowland/guest`
 
-`@lowland/guest` provides a bootable Linux guest for JavaScript, with APIs for processes, files, and networking.
+`@lowland/guest` is the Lowland guest-agent integration. It contributes its
+private boot filesystem and vsock transport to an `@lowland/kernel` machine and
+exposes processes, files, mounts, and networking through the returned agent.
 
 ## Installation
 
@@ -11,9 +13,12 @@ npm install @lowland/kernel @lowland/guest
 ## Usage
 
 ```js
-import { blockDevice, spawnGuest } from "@lowland/guest";
+import { blockDevice, bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
 
-const rootfs = new Uint8Array(await fetch("/rootfs.erofs").then((r) => r.arrayBuffer()));
+const rootfs = new Uint8Array(
+  await fetch("/rootfs.erofs").then((response) => response.arrayBuffer()),
+);
 const root = blockDevice({
   capacity: rootfs.byteLength,
   read(offset, target) {
@@ -22,158 +27,103 @@ const root = blockDevice({
     return source.byteLength;
   },
 });
-const guest = await spawnGuest({ cpus: 1, root });
-const process = await guest.exec(["uname", "-a"]);
 
-console.log(await new Response(process.stdout).text());
-guest.machine.close();
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [root, guest],
+});
+
+const result = await guest.run(["uname", "-a"]);
+console.log(new TextDecoder().decode(result.stdout));
 ```
 
-Exactly one attached EROFS or ext4 filesystem must have the native volume label
-`LOWLAND_ROOT`. Device order is deliberately not part of the boot contract:
-the private agent scans attached block devices for that label, pivots into the
-matching image, and unmounts its own boot filesystem before guest processes
-run. It rejects missing and duplicate root labels. Images built by this
-repository set the label automatically.
+`exec()` returns a live `ChildProcess` with streaming standard I/O. `run()`
+collects its status, stdout, and stderr and is convenient for bounded commands.
+Both methods accept an argv array without shell parsing.
 
-By default, EROFS is mounted read-only and ext4 is mounted read-write. Pass
-`cmdline: "lowland.root.overlay=tmpfs"` to mount either image read-only beneath
-a temporary writable OverlayFS. The overlay is discarded when the machine
-stops; durable storage remains the embedding application's responsibility.
+The plugin boots its private EROFS using the GPT partition label
+`LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
+agent then requires exactly one attached EROFS or ext4 filesystem labeled
+`LOWLAND_ROOT`, pivots into it, and unmounts its private boot filesystem.
+Missing and duplicate system roots fail `bootMachine()` through the plugin
+readiness hook.
 
-## Share a host directory
-
-`@lowland/guest/node` adapts a host directory to virtio-fs:
+Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
+image read-only beneath a temporary writable OverlayFS:
 
 ```js
-import { spawnGuest, fileSystemDevice } from "@lowland/guest";
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  args: ["lowland.root.overlay=tmpfs"],
+  plugins: [guest, root],
+});
+```
+
+## Networking
+
+Networking is another composable guest integration:
+
+```js
+import { createNetwork } from "@lowland/guest";
+
+const guest = guestAgent();
+const network = createNetwork({ connectTcp, resolveDns });
+const attachment = network.attach(guest);
+
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [root, guest, attachment],
+});
+
+console.log(attachment.address);
+```
+
+The attachment contributes the virtio NIC and configures it after the agent is
+ready. Each agent supports one network attachment; attach multiple agents to
+the same network to put them on one private IPv4 subnet.
+
+## Host directory adapters
+
+`@lowland/guest/node` provides `NodeFS`, and
+`@lowland/guest/browser` provides `BrowserFS`. Adapt them with the kernel's
+`fileSystemDevice()` and mount the resulting virtio-fs device through the
+agent:
+
+```js
+import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "@lowland/guest/node";
 
-const shared = new NodeFS("/srv/guest-share");
-const guest = await spawnGuest({
-  cpus: 1,
-  root,
-  devices: [
-    fileSystemDevice(shared, {
-      tag: "host",
-      cache: false,
-    }),
-  ],
-});
-
-await guest.fs.mkdir("/tmp/host");
-const mount = await guest.exec([
-  "mount",
-  "-t",
-  "virtiofs",
-  "host",
-  "/tmp/host",
-]);
-if (!(await mount.status).success) throw new Error("mount failed");
-```
-
-Pass `{ readOnly: true }` to reject writable opens and every mutating backend
-operation. This must be set on the backend even when the guest mount also uses
-`-o ro` if read-only access is part of the trust boundary.
-
-The Node adapter exposes symbolic links without following their final targets
-on the host; the guest kernel resolves their targets inside the guest. It
-validates every host path beneath the configured root and serializes guest
-namespace operations so the guest cannot race its own validation.
-
-Use an application-owned directory whose namespace is not concurrently
-restructured by another host process. Portable Node does not expose the
-descriptor-relative `openat2`/`*at` operations needed to make containment
-race-free while an unrelated host process renames ancestors or introduces
-symlinks. Under that kind of concurrent host mutation this adapter is not a
-hard sandbox boundary. A deployment requiring that stronger guarantee needs
-an OS sandbox or a native descriptor-relative filesystem helper.
-
-In a browser, the adapter accepts any writable `FileSystemDirectoryHandle`.
-Use OPFS for storage private to the site:
-
-```js
-import { spawnGuest, fileSystemDevice } from "@lowland/guest";
-import { BrowserFS } from "@lowland/guest/browser";
-
-const opfs = await navigator.storage.getDirectory();
-const shared = new BrowserFS(
-  await opfs.getDirectoryHandle("guest", { create: true }),
-);
-const guest = await spawnGuest({
-  cpus: 1,
-  root,
-  devices: [
-    fileSystemDevice(shared, {
-      tag: "persistent",
-    }),
-  ],
-});
-```
-
-It also accepts a user-selected directory for interchange with local
-applications:
-
-```js
-const shared = new BrowserFS(
-  await window.showDirectoryPicker({ mode: "readwrite" }),
-);
-const device = fileSystemDevice(shared, {
-  tag: "interchange",
+const shared = fileSystemDevice(new NodeFS("/srv/guest-share"), {
+  tag: "host",
   cache: false,
 });
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [root, guest, shared],
+});
+await guest.fs.mkdir("/tmp/host");
+await guest.mount("host", "/tmp/host", { type: "virtiofs" });
 ```
 
-OPFS and selected directories expose the same browser File System API handles.
-That API has no Unix modes, owners, links, or inode metadata, so the adapter
-synthesizes conventional values; changes to that synthetic metadata last for
-the lifetime of the adapter, while file and directory contents persist in the
-underlying storage. The portable API has no atomic rename operation, so renames
-copy to an empty destination and then remove the source. Renaming over an
-existing destination is unsupported and leaves it untouched. Failure can leave
-a partial newly-created destination, or both names if removing the source fails.
+Pass `{ readOnly: true }` to `NodeFS` when read-only access is part of the trust
+boundary. A read-only guest mount alone does not prevent writes through raw
+filesystem requests. The Node adapter confines paths beneath its configured
+root and does not follow final symlinks, but portable Node lacks the
+descriptor-relative operations needed to make that confinement race-free
+against an unrelated host process restructuring the directory. Use an OS
+sandbox or native helper when that stronger boundary is required.
 
-Browser handles also cannot keep an unlinked file alive like a Unix file
-descriptor. When the adapter sees a path disappear, old guest descriptors for
-that entry become stale and fail instead of targeting a replacement. The
-portable API cannot detect an external remove-and-recreate if it never observes
-the path missing. Writable operations from one adapter are serialized, but the
-browser API cannot provide POSIX-equivalent coordination with other adapters,
-tabs, or local applications. Closing a browser writable commits its transaction
-but does not promise physical-media durability.
-
-Devices cache names and attributes for one second and use the guest data page
-cache. Use `cache: false` for interchange directories which other applications
-modify; it sets metadata and name validity to zero, but it is not direct I/O and
-does not disable the data page cache. Host writes are therefore not guaranteed
-to become visible through an already-open guest descriptor.
-
-## Runner directory shares
-
-The standalone runner mounts host directories automatically. Both options can
-be repeated and require an absolute guest path:
-
-```sh
-wasm-linux-runner \
-  --share ./project:/tmp/project \
-  --share-ro ./toolchain:/opt/toolchain
-```
-
-`--share` grants the guest read-write access. `--share-ro` combines a
-read-only guest mount with backend enforcement, so raw guest filesystem calls
-cannot make the host directory writable. Shares disable virtio-fs metadata and
-name caching for host/guest interchange. Automatic mounting is provided by the
-default runner image; a custom root disk must consume the `wasm.share=`
-kernel parameters and mount the attached devices itself.
-
-## Documentation
-
-See [linux.tombl.dev](https://linux.tombl.dev/getting-started/).
-
-## API
-
-See the [`@lowland/guest` reference](https://linux.tombl.dev/reference/linux-guest/).
+`BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
+The browser API has no Unix inode metadata or atomic portable rename, so the
+adapter synthesizes metadata and implements rename as copy-then-remove. A
+failed rename can leave a partial destination or both names. Use `cache: false`
+for directories modified outside the guest; this disables metadata and name
+caching, but not the guest's data page cache.
 
 ## License
 
-The TypeScript and JavaScript sources are available under the MIT license. The published installation also contains the Linux kernel (`GPL-2.0-only WITH Linux-syscall-note`), musl (MIT), and BusyBox (`GPL-2.0-only`).
+The TypeScript and JavaScript sources are available under the MIT license. The
+published agent image also contains GPL-2.0-only BusyBox and MIT-licensed musl.

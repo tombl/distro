@@ -221,7 +221,7 @@ The canonical host path does not supply an initramfs. The kernel first boots a
 small agent filesystem:
 
 ```text
-root=/dev/vda rootfstype=erofs ro rootwait init=/init
+root=PARTLABEL=LOWLAND_AGENT rootfstype=erofs ro rootwait init=/init
 ```
 
 The agent runs as PID 1. It mounts `devtmpfs`, `devpts`, `proc`, and `sysfs`.

@@ -6,12 +6,7 @@ import { configure_machine, merge_device_tree, run_machine_booted } from "./plug
 import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
-import {
-  close_virtio_device,
-  virtio_device_description,
-  virtio_imports,
-  type VirtioDevice,
-} from "./virtio/core.ts";
+import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
 import {
   allocate_shared_memory,
   type Imports,

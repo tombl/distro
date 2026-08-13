@@ -11,7 +11,7 @@ import {
   serialize_head,
   strip_hop_by_hop,
 } from "./http.ts";
-import type { GuestNetwork, Network, TcpConnection } from "./network.ts";
+import type { Network, NetworkAttachment, TcpConnection } from "./network.ts";
 
 /**
  * Turns a listener inside a guest into a fetch-like handler: each call opens
@@ -20,7 +20,7 @@ import type { GuestNetwork, Network, TcpConnection } from "./network.ts";
  * not up yet rejects, and retrying is the caller's concern.
  */
 export function guestFetchHandler(
-  network: GuestNetwork,
+  network: NetworkAttachment,
   options: { port: number },
 ): (request: Request) => Promise<Response>;
 export function guestFetchHandler(
@@ -28,7 +28,7 @@ export function guestFetchHandler(
   options: { hostname: string; port: number },
 ): (request: Request) => Promise<Response>;
 export function guestFetchHandler(
-  network: GuestNetwork | Network,
+  network: NetworkAttachment | Network,
   options: { hostname?: string; port: number },
 ): (request: Request) => Promise<Response> {
   return async (request) => {

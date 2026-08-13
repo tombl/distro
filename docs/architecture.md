@@ -6,7 +6,7 @@ This repository builds the userspace and opinionated SDK for WebAssembly Linux. 
 
 `@lowland/kernel`, published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The package remains useful without this distro and exposes devices as the extension point.
 
-The SDK published from this repository owns the guest agent and its host client, the supported root filesystem contract, and the opinionated API for running commands and moving data across the guest boundary. The CLI and demo site are consumers of this SDK, not alternative integration layers.
+The guest package owns the guest agent and its host client, the supported root filesystem contract, and the APIs for running commands and moving data across the guest boundary. `guestAgent()` is a kernel plugin provider rather than another machine constructor: it contributes the GPT-wrapped agent EROFS, vsock transport, boot arguments, and readiness hook while retaining the bound guest capabilities on the returned object. The GPT partition label makes the agent disk independent of virtio device ordering using the kernel's standard `PARTLABEL` root lookup. Applications compose it with ordinary kernel plugins and call the kernel's sole `bootMachine()` function.
 
 ## Userspace
 
@@ -23,18 +23,19 @@ The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 
 `@lowland/guest` builds an opinionated IPv4 network on that primitive.
-`spawnGuest()` attaches a NIC, assigns a static address in `192.0.2.0/24`, and
-configures the kernel's address and default route. Its JavaScript endpoint
+`network.attach(agent)` returns a plugin which attaches a NIC, assigns a static
+address in `192.0.2.0/24`, and configures the kernel's address and default route
+after the agent becomes ready. Its JavaScript endpoint
 implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses outside
 the virtual subnet are proxied through the caller's `connectTcp` adapter, which
 can be implemented with Node's `net.connect`. The gateway address maps to the
 host's loopback address. UDP proxying to arbitrary hosts is intentionally not
 part of the first cut.
 
-Each guest exposes its assigned address and host connection API as
-`guest.network`. Supplying the same `createNetwork()` result to multiple
-`spawnGuest()` calls joins their NICs to one switch. Omitting `network` starts
-the guest without a NIC; network creation and ownership remain with the caller.
+Each attachment exposes its assigned address and host connection API. Calling
+`attach()` on the same `createNetwork()` result for multiple agents joins their
+NICs to one switch. Omitting a network attachment starts the machine without a
+NIC; network creation and ownership remain with the caller.
 
 ## Testing
 

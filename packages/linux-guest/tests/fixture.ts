@@ -1,11 +1,16 @@
 import {
+  bootMachine,
   consoleDevice,
-  createNetwork,
   entropyDevice,
-  type Network,
-  type NetworkedGuest,
-  spawnGuest,
+  type Machine,
   type VirtioDevice,
+} from "@lowland/kernel";
+import {
+  createNetwork,
+  guestAgent,
+  type GuestAgent,
+  type Network,
+  type NetworkAttachment,
 } from "../src/index.ts";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
@@ -17,7 +22,12 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(devices?: readonly VirtioDevice[], options?: { cmdline?: string }): Promise<NetworkedGuest>;
+  spawn(devices?: readonly VirtioDevice[], options?: { cmdline?: string }): Promise<TestGuest>;
+}
+
+export interface TestGuest extends GuestAgent {
+  readonly machine: Machine;
+  readonly network: NetworkAttachment;
 }
 
 export function guest_test(
@@ -41,26 +51,33 @@ export function guest_test(
       },
       resolveDns: resolve4,
     });
-    const guests: NetworkedGuest[] = [];
+    const guests: TestGuest[] = [];
     const consoles: Promise<void>[] = [];
 
     async function spawn(
       extra_devices: readonly VirtioDevice[] = [],
       options: { cmdline?: string } = {},
     ) {
-      const guest = await spawnGuest({
+      const agent = guestAgent();
+      const attachment = network.attach(agent);
+      const machine = await bootMachine({
         cpus: 1,
-        ...options,
-        network,
-        root: root_device(),
-        devices: [
+        args: options.cmdline ? [options.cmdline] : [],
+        // Put both a system disk and an agent-dependent plugin before the
+        // agent deliberately. Neither device discovery nor readiness depends
+        // on plugin array order.
+        plugins: [
+          root_device(),
+          attachment,
+          agent,
           consoleDevice(closed_input(), console_output()),
           entropyDevice(),
           ...extra_devices,
         ],
       });
+      const guest: TestGuest = Object.assign(agent, { machine, network: attachment });
       guests.push(guest);
-      consoles.push(guest.machine.bootConsole.pipeTo(console_output()));
+      consoles.push(machine.bootConsole.pipeTo(console_output()));
       await guest.fs.writeFile("/tmp/network-test", network_test);
       await guest.fs.chmod("/tmp/network-test", 0o755);
       await guest.fs.writeFile("/tmp/user-trap", user_trap);

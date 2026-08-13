@@ -1,5 +1,5 @@
 dist/
-/agent.erofs
+/agent.img
 /getdents-inode
 /lifecycle-initramfs.cpio
 /network-test

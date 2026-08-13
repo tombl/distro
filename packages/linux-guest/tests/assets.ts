@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { blockDevice } from "../src/index.ts";
+import { blockDevice } from "@lowland/kernel";
 
 const ATTRIBUTE = "linux-guest.checks.tests.assets";
 const exec_file = promisify(execFile);
@@ -25,7 +25,7 @@ async function build() {
 
 const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
 
-export const agentfs = await readFile(join(directory, "agent.erofs"));
+export const agent_disk = await readFile(join(directory, "agent.img"));
 export const rootfs = await readFile(join(directory, "rootfs.erofs"));
 export const ext4_rootfs = await readFile(join(directory, "rootfs.ext4"));
 export const wrong_rootfs = await readFile(join(directory, "wrong-root.erofs"));
@@ -60,9 +60,9 @@ export function ext4_root_device() {
 
 export function agent_device() {
   return blockDevice({
-    capacity: agentfs.byteLength,
+    capacity: agent_disk.byteLength,
     read(offset, target) {
-      const source = agentfs.subarray(offset, offset + target.byteLength);
+      const source = agent_disk.subarray(offset, offset + target.byteLength);
       target.set(source);
       return source.byteLength;
     },

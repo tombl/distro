@@ -48,6 +48,6 @@ test("serves an installed boot tree from OPFS and supports live recovery", async
   const live = await page.goto("/?live=1");
   expect(await live.text()).toContain("@lowland/kernel");
   expect(await page.evaluate(() => fetch("/app.js").then((response) => response.text()))).toContain(
-    "spawnGuest",
+    "guestAgent",
   );
 });

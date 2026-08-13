@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileSystemDevice } from "../src/index.ts";
+import { fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "../src/node.ts";
 import { guest_test } from "./fixture.ts";
 

@@ -76,6 +76,7 @@
         "imports": {
           "@lowland/bytes": "./static/__ASSET_DIRECTORY__/bytes/index.js",
           "@lowland/kernel": "./static/__ASSET_DIRECTORY__/dist/index.js",
+          "@lowland/kernel/plugin": "./static/__ASSET_DIRECTORY__/dist/plugin.js",
           "@lowland/guest": "./static/__ASSET_DIRECTORY__/guest/index.js",
           "@lowland/guest/browser": "./static/__ASSET_DIRECTORY__/guest/browser.js"
         }
@@ -84,35 +85,28 @@
     <script type="module">
       import { FitAddon, Terminal, WebglAddon } from "./vendor/xterm/dist.js";
       import {
-        consoleDevice,
         createNetwork,
+        guestFetchHandler,
+        guestAgent,
+        hostFetchNetwork,
+      } from "@lowland/guest";
+      import {
+        blockDevice,
+        bootMachine,
+        consoleDevice,
         entropyDevice,
         fileSystemDevice,
-        guestFetchHandler,
-        hostFetchNetwork,
-        blockDevice,
-        spawnGuest,
-      } from "@lowland/guest";
-      import { workerDevice } from "@lowland/kernel";
+        workerDevice,
+      } from "@lowland/kernel";
       import { BrowserFS } from "@lowland/guest/browser";
       import { serveGuest } from "./static/__ASSET_DIRECTORY__/bridge-client.js";
 
-      // Firefox cannot currently run service workers in the COOP+COEP process
-      // used by our module workers, and controlling those workers prevents them
-      // from starting. Keep Firefox live-only until Mozilla fixes bug 1613912.
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1613912
-      const persistentInstallSupported = !navigator.userAgent.includes("Firefox/");
-      let bootMode = persistentInstallSupported ? "__BOOT_MODE__" : "live";
-      if ("serviceWorker" in navigator) {
-        if (!persistentInstallSupported) {
-          await (await navigator.serviceWorker.getRegistration("/"))?.unregister();
-          if (navigator.serviceWorker.controller) {
-            location.reload();
-            await new Promise(() => {});
-          }
-        } else if (bootMode === "live" || !navigator.serviceWorker.controller) {
-          await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
-        }
+      let bootMode = "__BOOT_MODE__";
+      if (
+        "serviceWorker" in navigator &&
+        (bootMode === "live" || !navigator.serviceWorker.controller)
+      ) {
+        await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
       }
 
       const parameters = Object.fromEntries(new URLSearchParams(location.search));
@@ -307,21 +301,30 @@
       const bootDirectory = opfs
         ? await opfs.getDirectoryHandle("boot", { create: true })
         : undefined;
-      const guest = await spawnGuest({
-        root: bootMode === "live" ? blockDevice(disk) : disk,
-        bootConsole: bootOut,
+      const guest = guestAgent();
+      const networkAttachment = network.attach(guest);
+
+      const args = [];
+      if (bootMode === "live") args.push("lowland.root.overlay=tmpfs");
+      if (installDisk) args.push("lowland.install=1");
+      const extraArgs = cmdline.replace(/\+/g, " ");
+      if (extraArgs) args.push(extraArgs);
+
+      const plugins = [guest, ttyConsole];
+      if (installDisk) plugins.push(installDisk);
+      plugins.push(entropyDevice());
+      if (bootDirectory) {
+        plugins.push(fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }));
+      }
+      plugins.push(bootMode === "live" ? blockDevice(disk) : disk);
+      plugins.push(networkAttachment);
+
+      const machine = await bootMachine({
         cpus: navigator.hardwareConcurrency,
-        network,
-        cmdline: `${bootMode === "live" ? "lowland.root.overlay=tmpfs " : ""}${installDisk ? "lowland.install=1 " : ""}${cmdline.replace(/\+/g, " ")}`,
-        devices: [
-          ttyConsole,
-          ...(installDisk ? [installDisk] : []),
-          entropyDevice(),
-          ...(bootDirectory
-            ? [fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false })]
-            : []),
-        ],
+        args,
+        plugins,
       });
+      void machine.bootConsole.pipeTo(bootOut).catch(() => {});
       if (bootDirectory) {
         await guest.fs.mkdir("/boot", { recursive: true });
         await guest.mount("boot", "/boot", { type: "virtiofs" });
@@ -332,7 +335,7 @@
       if (location.origin === "https://low.land") {
         serveGuest({
           hub: "https://hub.localhost.low.land",
-          fetch: (port) => guestFetchHandler(guest.network, { port }),
+          fetch: (port) => guestFetchHandler(networkAttachment, { port }),
         });
       }
     </script>

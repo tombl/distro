@@ -201,7 +201,7 @@ guest_test("session teardown", async (t) => {
     const root = root_device();
     const machine = await bootMachine({
       cpus: 1,
-      args: ["root=/dev/vda", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
+      args: ["root=PARTLABEL=LOWLAND_AGENT", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
       plugins: [agent_device(), root, vsock],
     });
     try {

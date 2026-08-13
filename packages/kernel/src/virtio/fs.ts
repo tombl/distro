@@ -15,7 +15,6 @@ import {
 
 type MaybePromise<T> = T | PromiseLike<T>;
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
 const utf8_encoder = new TextEncoder();
 
 const FuseOpcode = {

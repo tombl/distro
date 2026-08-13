@@ -5,7 +5,13 @@ import {
   type EthernetPort,
   type MacAddress,
 } from "@lowland/kernel";
+import {
+  getMachinePlugin,
+  type MachinePlugin,
+  type MachinePluginProvider,
+} from "@lowland/kernel/plugin";
 import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
+import { wait_for_agent, type GuestAgent } from "./agent.ts";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);
@@ -19,6 +25,7 @@ const ETHERNET_MTU = 1500;
 const IP_REASSEMBLY_TIMEOUT_MS = 60_000;
 const MAX_IP_REASSEMBLIES = 64;
 const MAX_IP_FRAGMENTS = 64;
+const networked_agents = new WeakSet<GuestAgent>();
 
 const EthernetType = { IPv4: 0x0800, ARP: 0x0806 } as const;
 const IpProtocol = { ICMP: 1, TCP: 6, UDP: 17 } as const;
@@ -152,7 +159,7 @@ export interface UdpConnection {
 }
 
 export interface TcpConnectOptions {
-  /** The guest's address on the network, e.g. `guest.network.address`. */
+  /** The guest's address on the network, e.g. `attachment.address`. */
   hostname: string;
   port: number;
   transport?: "tcp";
@@ -161,7 +168,7 @@ export interface TcpConnectOptions {
 }
 
 export interface UdpConnectOptions {
-  /** The guest's address on the network, e.g. `guest.network.address`. */
+  /** The guest's address on the network, e.g. `attachment.address`. */
   hostname: string;
   port: number;
   transport: "udp";
@@ -202,9 +209,8 @@ export interface NetworkOptions {
 }
 
 /**
- * A private IPv4 network, created by `createNetwork`. Guests spawned with
- * the same network can reach each other, and the host can connect to any of
- * them.
+ * A private IPv4 network, created by `createNetwork`. Agents attached to the
+ * same network can reach each other, and the host can connect to any of them.
  */
 export interface Network extends Disposable {
   /**
@@ -214,6 +220,12 @@ export interface Network extends Disposable {
    */
   readonly gateway: string;
   /**
+   * Attaches a guest agent to this network. The returned plugin contributes
+   * the NIC and configures it after the guest agent becomes ready. An agent
+   * supports one network attachment.
+   */
+  attach(agent: GuestAgent): NetworkAttachment;
+  /**
    * Connects from the host to a port on an attached guest. Resolves once
    * the guest accepts the connection; rejects if nothing is listening there
    * or no guest has the address. If the guest may not be listening yet,
@@ -221,11 +233,11 @@ export interface Network extends Disposable {
    *
    * @example Reach a server running in the guest
    * ```ts
-   * const server = await guest.exec(["nc", "-l", "-p", "8080"]);
+   * const server = await agent.exec(["nc", "-l", "-p", "8080"]);
    * let connection;
    * for (;;) {
    *   try {
-   *     connection = await guest.network.connect({ port: 8080 });
+   *     connection = await attachment.connect({ port: 8080 });
    *     break;
    *   } catch {
    *     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -245,16 +257,46 @@ export interface Network extends Disposable {
   close(): void;
 }
 
-/**
- * A guest's side of a `Network`, present as `guest.network` when the guest
- * was spawned with one.
- */
-export interface GuestNetwork {
+/** A guest-specific network attachment and machine plugin. */
+export interface NetworkAttachment extends MachinePluginProvider {
   /** The guest's address on the network, e.g. `"192.0.2.2"`. */
   readonly address: string;
   /** Connects to a port on this guest — `network.connect` with the address filled in. */
   connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
   connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
+}
+
+async function configure_guest_network(agent: GuestAgent, address: string, gateway: string) {
+  const deadline = performance.now() + 10_000;
+  let failure: unknown;
+  while (performance.now() < deadline) {
+    try {
+      await agent.fs.stat("/sys/class/net/eth0");
+      failure = undefined;
+      break;
+    } catch (error) {
+      failure = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  if (failure) throw new Error("guest network device did not appear", { cause: failure });
+
+  const result = await agent.run([
+    "/bin/sh",
+    "-c",
+    [
+      "/sbin/ifconfig lo up",
+      `/sbin/ifconfig eth0 ${address} netmask 255.255.255.0 up`,
+      `/sbin/route add default gw ${gateway} eth0`,
+    ].join(" && "),
+  ]);
+  if (!result.status.success) {
+    const decoder = new TextDecoder();
+    const output = `${decoder.decode(result.stdout)}${decoder.decode(result.stderr)}`.trim();
+    throw new Error(
+      `guest network configuration failed (${result.status.code})${output ? `: ${output}` : ""}`,
+    );
+  }
 }
 
 interface Attachment {
@@ -529,9 +571,9 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
 
 /**
  * Creates a private IPv4 network: an Ethernet switch in this process plus a
- * userspace TCP/IP endpoint at `192.0.2.1`. Pass the result to every
- * `spawnGuest` that should be on the network; guests on the same network
- * reach each other over real TCP and UDP.
+ * userspace TCP/IP endpoint at `192.0.2.1`. Attach every guest agent that
+ * should be on the network; guests on the same network reach each other over
+ * real TCP and UDP.
  *
  * Guest traffic beyond the subnet goes through the adapters: outbound TCP
  * is proxied with `connectTcp`, DNS is answered with `resolveDns`, and UDP
@@ -559,9 +601,14 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *   resolveDns: resolve4,
  * });
  *
- * const guest = await spawnGuest({ cpus: 1, root, network });
+ * const agent = guestAgent();
+ * const attachment = network.attach(agent);
+ * const machine = await bootMachine({
+ *   cpus: 1,
+ *   plugins: [agent, root, attachment],
+ * });
  * // Guests can now reach whatever the host process can:
- * const process = await guest.exec(["wget", "-qO-", "http://example.com"]);
+ * const process = await agent.exec(["wget", "-qO-", "http://example.com"]);
  * ```
  */
 export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Network {
@@ -1385,6 +1432,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
 
   const network: InternalNetwork = {
     gateway: GATEWAY_ADDRESS,
+    attach(agent) {
+      return attach_guest(network, agent);
+    },
     connect(options: TcpConnectOptions | UdpConnectOptions) {
       return options.transport === "udp" ? connect_udp(options) : connect_tcp(options);
     },
@@ -1447,13 +1497,41 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   return network;
 }
 
-export function attach_guest(network: Network) {
+function attach_guest(network: Network, agent: GuestAgent): NetworkAttachment {
+  if (networked_agents.has(agent)) throw new Error("guest agent already has a network attachment");
   const attachment = (network as InternalNetwork)[do_attach_guest]();
-  const guest_network: GuestNetwork = {
-    address: attachment.address,
-    connect(options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">) {
-      return network.connect({ ...options, hostname: attachment.address } as UdpConnectOptions);
+  networked_agents.add(agent);
+  let configured = false;
+  const plugin: MachinePlugin = {
+    configure(setup) {
+      if (configured) throw new Error("guest network is already attached to a machine");
+      configured = true;
+      setup.devices.add(attachment.device);
+    },
+    async booted(machine) {
+      await wait_for_agent(agent, machine);
+      await configure_guest_network(agent, attachment.address, network.gateway);
     },
   };
-  return { attachment, guest_network };
+  void attachment.device.closed.finally(() => attachment.close()).catch(() => {});
+
+  function connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
+  function connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
+  function connect(
+    options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">,
+  ) {
+    if (options.transport === "udp") {
+      return network.connect({ ...options, hostname: attachment.address });
+    }
+    return network.connect({ ...options, hostname: attachment.address });
+  }
+
+  const guest_network: NetworkAttachment = {
+    address: attachment.address,
+    connect,
+    [getMachinePlugin]() {
+      return plugin;
+    },
+  };
+  return guest_network;
 }
