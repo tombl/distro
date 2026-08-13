@@ -1,0 +1,112 @@
+---
+interface Props {
+  current: "site" | "docs";
+}
+
+const { current } = Astro.props;
+---
+
+<header class="site-header">
+  <nav aria-label="Site">
+    <p class="identity">
+      <a href="https://low.land">lowland</a>
+      {current === "docs" && <span class="section"> / docs</span>}
+    </p>
+    <div class="middle"><slot name="middle" /></div>
+    <ul>
+      <li>
+        <a href="https://docs.low.land" aria-current={current === "docs" ? "page" : undefined}>
+          docs
+        </a>
+      </li>
+      <li><a href="https://github.com/tombl/distro" target="_blank">github</a></li>
+    </ul>
+  </nav>
+  <slot />
+</header>
+
+<style>
+  .site-header {
+    position: relative;
+    padding-block: 1rem;
+    border-block-end: 1px solid transparent;
+  }
+
+  nav,
+  .site-header > :global(*) {
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding-inline: 1rem;
+  }
+
+  nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 1rem;
+  }
+
+  .middle {
+    min-width: 0;
+  }
+
+  .middle:empty {
+    display: none;
+  }
+
+  p,
+  ul {
+    margin: 0;
+  }
+
+  .identity > a {
+    color: var(--code-foreground);
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .section {
+    color: var(--muted);
+  }
+
+  ul {
+    grid-column: 3;
+    justify-self: end;
+    display: flex;
+    gap: 1rem;
+    list-style: none;
+    padding: 0;
+  }
+
+  ul a {
+    color: var(--muted);
+    text-decoration: none;
+    transition: color 120ms;
+  }
+
+  ul a:hover,
+  ul a[aria-current="page"] {
+    color: var(--code-foreground);
+  }
+
+  ul a[aria-current="page"] {
+    font-weight: 500;
+  }
+
+  @media (max-width: 32rem) {
+    nav {
+      grid-template-columns: auto minmax(0, 1fr);
+      row-gap: 0.75rem;
+    }
+
+    .middle {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+
+    ul {
+      grid-column: 2;
+      grid-row: 1;
+    }
+  }
+</style>

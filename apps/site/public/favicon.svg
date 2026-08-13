@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <style>
+    text {
+      font: 700 14px ui-monospace, SFMono-Regular, Consolas, monospace;
+      fill: #24292f;
+    }
+    @media (prefers-color-scheme: dark) {
+      text {
+        fill: #c9d1d9;
+      }
+    }
+  </style>
+  <text x="8" y="13" text-anchor="middle">$</text>
+</svg>
