@@ -1,0 +1,62 @@
+Keep the direct namespace operations and reject only options which need a
+forked intermediate process.
+
+--- a/sys-utils/nsenter.c
++++ b/sys-utils/nsenter.c
+@@ -542,6 +542,9 @@ static int is_usable_namespace(pid_t target, const struct namespace_file *nsfile
+ 
+ static void continue_as_child(void)
+ {
++#ifdef __wasm__
++	errx(EXIT_FAILURE, _("fork mode is unavailable"));
++#else
+ 	pid_t child;
+ 	int status;
+ 	pid_t ret;
+@@ -576,6 +579,7 @@ static void continue_as_child(void)
+ 		kill(getpid(), WTERMSIG(status));
+ 	}
+ 	exit(EXIT_FAILURE);
++#endif
+ }
+ 
+ static int parse_pid_str(char *pidstr, pid_t *ns_target_pid)
+--- a/sys-utils/unshare.c
++++ b/sys-utils/unshare.c
+@@ -296,7 +296,11 @@ static pid_t fork_and_wait(int *fd)
+ 	if (*fd < 0)
+ 		err(EXIT_FAILURE, _("eventfd failed"));
+ 
++#ifdef __wasm__
++	errx(EXIT_FAILURE, _("namespace mapping and persistence modes require fork"));
++#else
+ 	pid = fork();
++#endif
+ 	if (pid < 0)
+ 		err(EXIT_FAILURE, _("fork failed"));
+ 
+@@ -694,7 +698,11 @@ static pid_t map_ids_from_child(int *fd, struct map_range *usermap,
+ 
+ 	/* Avoid forking more than we need to */
+ 	if (usermap && groupmap) {
++#ifdef __wasm__
++		errx(EXIT_FAILURE, _("external uid/gid mapping requires fork"));
++#else
+ 		pid = fork();
++#endif
+ 		if (pid < 0)
+ 			err(EXIT_FAILURE, _("fork failed"));
+ 		if (pid)
+@@ -1157,7 +1165,11 @@ int main(int argc, char *argv[])
+ 		}
+ #endif
+ 		/* force child forking before mountspace binding so
+ 		 * pid_for_children is populated */
++#ifdef __wasm__
++		errx(EXIT_FAILURE, _("--fork and PID namespace modes require fork"));
++#else
+ 		pid = fork();
++#endif
+ 
+ 		switch(pid) {
+ 		case -1:

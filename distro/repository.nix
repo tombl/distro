@@ -34,6 +34,8 @@
   rust-smoke,
   sed,
   sqlite3,
+  tar,
+  util-linux,
   vim,
   xz,
   zlib,
@@ -79,6 +81,8 @@ apk.mkRepository {
       rust-smoke
       sed
       sqlite3
+      tar
+      util-linux
       vim
       xz
       zlib

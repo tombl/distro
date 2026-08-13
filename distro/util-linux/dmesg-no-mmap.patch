@@ -1,0 +1,77 @@
+wasm has no mmap.  dmesg only uses it as an efficient way to read an input
+file, so read the file into the heap instead.  Keep the same parser and raw
+output paths, but release the original allocation normally rather than
+incrementally unmapping pages.
+
+--- a/sys-utils/dmesg.c
++++ b/sys-utils/dmesg.c
+@@ -678,7 +678,7 @@ static size_t max_threads_id_size(void)
+ }
+ 
+ /*
+- * Reads messages from regular file by mmap
++ * Reads messages from a regular file.
+  */
+ static ssize_t mmap_file_buffer(struct dmesg_control *ctl, char **buf)
+ {
+@@ -694,9 +694,9 @@ static ssize_t mmap_file_buffer(struct dmesg_control *ctl, char **buf)
+ 	if ((intmax_t)st.st_size >= (intmax_t)SINT_MAX(ssize_t))
+ 		err(EXIT_FAILURE, _("%s is too large"), ctl->filename);
+ 
+-	*buf = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+-	if (*buf == MAP_FAILED)
+-		err(EXIT_FAILURE, _("cannot mmap: %s"), ctl->filename);
++	*buf = xmalloc(st.st_size);
++	if (read_all(fd, *buf, st.st_size) != st.st_size)
++		err(EXIT_FAILURE, _("cannot read: %s"), ctl->filename);
+ 	ctl->mmap_buff = *buf;
+ 	ctl->pagesize = getpagesize();
+ 	close(fd);
+@@ -766,8 +771,7 @@ static ssize_t prepare_buffer(struct dmesg_control *ctl, char **buf)
+ 
+ static void release_buffer(struct dmesg_control *ctl, char *buf)
+ {
+-	if (!ctl->mmap_buff)
+-		free(buf);
++	free(buf);
+ 	if (ctl->kmsg >= 0)
+ 		close(ctl->kmsg);
+ 	if (ctl->json && ul_jsonwrt_is_ready(&ctl->jfmt)) {
+@@ -912,16 +916,6 @@ static int get_next_syslog_record(struct dmesg_control *ctl,
+ 
+ 	INIT_DMESG_RECORD(rec);
+ 
+-	/*
+-	 * Unmap already printed file data from memory
+-	 */
+-	if (ctl->mmap_buff && (size_t) (rec->next - ctl->mmap_buff) > ctl->pagesize) {
+-		void *x = ctl->mmap_buff;
+-
+-		ctl->mmap_buff += ctl->pagesize;
+-		munmap(x, ctl->pagesize);
+-	}
+-
+ 	for (i = 0; i < rec->next_size; i++) {
+ 		const char *p = rec->next + i;
+ 		const char *end = NULL;
+@@ -1032,16 +1026,14 @@ static void raw_print(struct dmesg_control *ctl, const char *buf, size_t size)
+ 	} else {
+ 		/*
+-		 * Print file in small chunks to save memory
++		 * Print the buffered file in small chunks.
+ 		 */
+ 		while (size && !ferror(stdout)) {
+ 			size_t sz = size > ctl->pagesize ? ctl->pagesize : size;
+-			char *x = ctl->mmap_buff;
+ 
+-			safe_fwrite(ctl, x, sz, 0, stdout);
+-			lastc = x[sz - 1];
++			safe_fwrite(ctl, buf, sz, 0, stdout);
++			lastc = buf[sz - 1];
++			buf += sz;
+ 			size -= sz;
+-			ctl->mmap_buff += sz;
+-			munmap(x, sz);
+ 		}
+ 	}
+ 
