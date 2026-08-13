@@ -1,28 +1,35 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice } from "@lowland/kernel/virtio/block.js";
-import { serveDevice, serveDeviceError } from "@lowland/kernel/virtio/remote.js";
+import { blockDevice, serveDevice } from "@lowland/kernel";
 
-const configuration = await new Promise((resolve) =>
-  addEventListener("message", (event) => resolve(event.data), { once: true }),
+type Configuration = {
+  handle: FileSystemFileHandle;
+  capacity?: number;
+};
+
+const configuration = await new Promise<Configuration>((resolve) =>
+  addEventListener("message", (event: MessageEvent<Configuration>) => resolve(event.data), {
+    once: true,
+  }),
 );
 
-async function openAccessHandle(handle) {
-  // A navigation may start the replacement worker while the old page's worker
-  // is still releasing its exclusive OPFS lock. Retry only that lock conflict;
-  // every other initialization error must remain visible to workerDevice().
+async function openAccessHandle(handle: FileSystemFileHandle): Promise<FileSystemSyncAccessHandle> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await handle.createSyncAccessHandle();
     } catch (error) {
-      if (error?.name !== "NoModificationAllowedError" || attempt === 7) throw error;
+      if (
+        !(error instanceof DOMException) ||
+        error.name !== "NoModificationAllowedError" ||
+        attempt === 7
+      ) {
+        throw error;
+      }
       await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** attempt));
     }
   }
 }
 
-// A setup failure, such as the disk being open in another tab, must reach
-// workerDevice() on the page with its name and message.
 try {
   const access = await openAccessHandle(configuration.handle);
   if (configuration.capacity !== undefined) access.truncate(configuration.capacity);
@@ -63,5 +70,9 @@ try {
     }),
   );
 } catch (error) {
-  serveDeviceError(self, error);
+  const value = error instanceof Error ? error : new Error(String(error));
+  postMessage({
+    type: "error",
+    error: { name: value.name, message: value.message, stack: value.stack },
+  });
 }

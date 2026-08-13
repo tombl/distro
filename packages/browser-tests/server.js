@@ -8,10 +8,15 @@ import { testAsset, testAssets } from "../../scripts/test-assets.ts";
 const here = fileURLToPath(new URL(".", import.meta.url));
 const types = {
   ".cpio": "application/octet-stream",
+  ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".erofs": "application/octet-stream",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
   ".wasm": "application/wasm",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
 };
 
 // `node server.js` serves this package: the scenario page, the workspace

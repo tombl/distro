@@ -7,6 +7,9 @@ packages:
   - packages/browser-tests
   - packages/linux-guest
   - packages/runner
+  - apps/docs
+  - apps/site
+  - packages/web-ui
 
 catalog:
   "@playwright/test": 1.64.1
@@ -17,3 +20,6 @@ linkWorkspacePackages: true
 
 allowBuilds:
   esbuild: true
+
+patchedDependencies:
+  '@jsr/deno__doc@0.202.0': patches/@jsr__deno__doc@0.202.0.patch
