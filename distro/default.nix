@@ -75,6 +75,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     basic-init = callPackage ./basic-init/package.nix { };
     busybox = callPackage ./busybox/package.nix { };
     bzip2 = callPackage ./bzip2/package.nix { };
+    ca-certificates = callPackage ./ca-certificates/package.nix { };
     coreutils = callPackage ./coreutils/package.nix { };
     curl = callPackage ./curl/package.nix { };
     diffutils = callPackage ./diffutils/package.nix { };

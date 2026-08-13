@@ -13,11 +13,16 @@ mount -t proc proc /proc || fail "mounting proc"
 
 apk --allow-untrusted \
   --repository /repo/wasm32/Packages.adb \
-  add bash coreutils file util-linux || fail "installing userland packages"
+  add bash coreutils file openssl util-linux || fail "installing userland packages"
 
 [ "$(readlink /bin/sh)" = busybox ] || fail "/bin/sh is not BusyBox"
 apk info --who-owns /bin/sh | grep -q 'owned by busybox-' || fail "BusyBox does not own /bin/sh"
 bash -c 'test "$BASH_VERSION" != ""' || fail "Bash does not run beside BusyBox"
+
+[ -s /etc/ssl/cert.pem ] || fail "CA certificate bundle is missing"
+apk info --who-owns /etc/ssl/cert.pem | grep -q 'owned by ca-certificates-' ||
+  fail "ca-certificates does not exclusively own the trust bundle"
+openssl version | grep -q '^OpenSSL 3.5.7' || fail "OpenSSL does not run beside apk-tools"
 
 ls --version >/tmp/ls-version || fail "ls --version failed"
 grep -q 'GNU coreutils' /tmp/ls-version || fail "coreutils does not own /bin/ls"

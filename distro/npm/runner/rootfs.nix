@@ -3,6 +3,7 @@
   apk-tools,
   basic-init,
   busybox,
+  ca-certificates,
   image,
   repository,
   vm-test,
@@ -38,6 +39,7 @@ package
       apk-tools
       basic-init
       busybox
+      ca-certificates
     ];
     files = {
       "/bin/basic-init" = "${basic-init}/bin/init";

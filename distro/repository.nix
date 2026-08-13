@@ -7,6 +7,7 @@
   bash,
   busybox,
   bzip2,
+  ca-certificates,
   coreutils,
   curl,
   diffutils,
@@ -53,6 +54,7 @@ apk.mkRepository {
       bash
       busybox
       bzip2
+      ca-certificates
       coreutils
       curl
       diffutils

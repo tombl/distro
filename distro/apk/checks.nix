@@ -3,11 +3,13 @@
   apk-tools,
   bash,
   busybox,
+  ca-certificates,
   coreutils,
   file,
   jq,
   lua,
   ncurses,
+  openssl,
   pkgs,
   util-linux,
   vm-test,
@@ -37,10 +39,12 @@ let
     packages = {
       inherit
         bash
+        ca-certificates
         busybox
         coreutils
         file
         ncurses
+        openssl
         util-linux
         ;
     };
@@ -84,6 +88,7 @@ in
     contents = [
       apk-tools
       busybox
+      ca-certificates
       repositoryPackage
     ];
   };
@@ -93,6 +98,7 @@ in
     contents = [
       apk-tools
       busybox
+      ca-certificates
       userlandRepositoryPackage
     ];
   };

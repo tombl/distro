@@ -15,6 +15,7 @@
   llvm-toolchain,
   vm-test,
   busybox,
+  ca-certificates,
 }:
 
 let
@@ -167,6 +168,7 @@ let
         # skew) and no PEM fixture has to be baked into the image.
         contents = [
           busybox
+          ca-certificates
           ncurses
           openssl
           finalAttrs.finalPackage

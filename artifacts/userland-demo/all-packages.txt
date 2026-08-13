@@ -1,0 +1,548 @@
+=10;?\11;?\
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[lowland-d0:tmux*"gravel" 22:45 13-Aug-26
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[lowland-d0:tmux*"gravel" 22:45 13-Aug-26random: crng init done
+printk: legacy bootconsole [earlycon0] enabled
+Linux version 7.1.5 (nixbld@localhost) (clang version 22.1.8, LLD 22.1.8) # SMP 
+Heap:   (ptrval) -> (ptrval) = 22544
+Stack:  00000000 -> (ptrval) = 65536
+Core count: 1
+Zone ranges:
+  Normal   [mem 0x0000000000000000-0x00000000fffeffff]
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000000000000000-0x00000000fffeffff]
+Initmem setup node 0 [mem 0x0000000000000000-0x00000000fffeffff]
+On node 0, zone Normal: 1 pages in unavailable ranges
+percpu: max_distance=0x10000 too large for vmalloc space 0x0
+percpu: Embedded 1 pages/cpu s17972 r0 d47564 u65536
+Kernel command line: console=hvc0 root=/dev/vda rootwait init=/init rw wasm.share=wasmfs0,ro,L3JlcG8=
+printk: log buffer data + meta data: 131072 + 409600 = 540672 bytes
+Dentry cache hash table entries: 524288 (order: 5, 2097152 bytes, linear)
+Inode-cache hash table entries: 262144 (order: 4, 1048576 bytes, linear)
+Sorting __ex_table...
+Built 1 zonelists, mobility grouping off.  Total pages: 65535
+mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=1, Nodes=1
+rcu: Hierarchical RCU implementation.
+rcu:    RCU restricting CPUs from NR_CPUS=64 to nr_cpu_ids=1.
+rcu: RCU calculated value of scheduler-enlistment delay is 10 jiffies.
+rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=1
+
+NR_IRQS: 256
+
+IRQs enabled
+
+rcu: srcu_init: Setting srcu_struct sizes based on contention.
+
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns
+
+clocksource: wasm: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+
+Console: colour dummy device 80x25
+
+pid_max: default: 32768 minimum: 301
+
+Mount-cache hash table entries: 16384 (order: 0, 65536 bytes, linear)
+
+Mountpoint-cache hash table entries: 16384 (order: 0, 65536 bytes, linear)
+
+VFS: Finished mounting rootfs on nullfs
+
+rcu: Hierarchical SRCU implementation.
+rcu:    
+Max phase no-delay instances is 1000.
+
+[lowland-d0:fish*"gravel" 22:45 13-Aug-26
+smp: Bringing up secondary CPUs ...
+
+smp: Brought up 1 node, 1 CPU
+
+Memory: 4183168K/4194240K available (6720K reserved, 0K cma-reserved)
+
+devtmpfs: initialized
+
+posixtimers hash table entries: 512 (order: 0, 6144 bytes, linear)
+
+futex hash table entries: 256 (16384 bytes on 1 NUMA nodes, total 16 KiB, linear).
+
+NET: Registered PF_NETLINK/PF_ROUTE protocol family
+
+pps_core: LinuxPPS API ver. 1 registered
+pps_core: Software ver. 5.3.6 - Copyright 2005-2007 Rodolfo Giometti <giometti@linux.it>
+PTP clock support registered
+
+clocksource: Switched to clocksource wasm
+
+NET: Registered PF_INET protocol family
+
+IP idents hash table entries: 65536 (order: 3, 524288 bytes, linear)
+
+tcp_listen_portaddr_hash hash table entries: 8192 (order: 1, 98304 bytes, linear)
+
+Table-perturb hash table entries: 65536 (order: 2, 262144 bytes, linear)
+
+TCP established hash table entries: 32768 (order: 1, 131072 bytes, linear)
+
+TCP bind hash table entries: 32768 (order: 4, 786432 bytes, linear)
+
+TCP: Hash tables configured (established 32768 bind 32768)
+
+UDP hash table entries: 2048 (order: 1, 114688 bytes, linear)
+
+NET: Registered PF_UNIX/PF_LOCAL protocol family
+
+workingset: timestamp_bits=30 (anon: 26) max_order=16 bucket_order=0 (anon: 0)
+
+squashfs: version 4.0 (2009/01/31) Phillip Lougher
+
+fuse: init (API version 7.45)
+
+io scheduler mq-deadline registered
+
+io scheduler kyber registered
+
+NET: Registered PF_VSOCK protocol family
+
+virtiofs virtio0: discovered new tag: wasmfs0
+
+printk: legacy console [hvc0] enabled
+
+printk: legacy bootconsole [earlycon0] disabled
+virtio_blk virtio3: 1/0/0 default/read/poll queu
+es
+virtio_blk virtio3: [vda] 1572864 512-byte logical blocks (805 M
+B/768 MiB)
+EXT4-fs (vda): mounted filesystem 161618f8-c072-4119-92eb-e4d9ffccc6ab r/w with ordered data mod
+e. Quota mode: d
+isabled.
+VFS: Mounted root (ext4 filesystem) on device 25
+4:0.
+VFS: Pivoted int
+o new rootfs
+This architecture does not have kernel memory pr
+otection.
+Run /init as ini
+t process
+~ # PTP clock support registered
+clocksource: Switched to clocksource wasm
+NET: Registered PF_INET protocol family
+IP idents hash table entries: 65536 (order: 3, 524288 bytes, linear)
+tcp_listen_portaddr_hash hash table entries: 8192 (order: 1, 98304 bytes, linear)
+Table-perturb hash table entries: 65536 (order: 2, 262144 bytes, linear)
+TCP established hash table entries: 32768 (order: 1, 131072 bytes, linear)
+TCP bind hash table entries: 32768 (order: 4, 786432 bytes, linear)
+TCP: Hash tables configured (established 32768 bind 32768)
+UDP hash table entries: 2048 (order: 1, 114688 bytes, linear)
+NET: Registered PF_UNIX/PF_LOCAL protocol family
+workingset: timestamp_bits=30 (anon: 26) max_order=16 bucket_order=0 (anon: 0)
+squashfs: version 4.0 (2009/01/31) Phillip Lougher
+fuse: init (API version 7.45)
+io scheduler mq-deadline registered
+io scheduler kyber registered
+NET: Registered PF_VSOCK protocol family
+virtiofs virtio0: discovered new tag: wasmfs0
+printk: legacy console [hvc0] enabled
+printk: legacy bootconsole [earlycon0] disabled
+virtio_blk virtio3: 1/0/0 default/read/poll queues
+virtio_blk virtio3: [vda] 1572864 512-byte logical blocks (805 MB/768 MiB)
+EXT4-fs (vda): mounted filesystem 161618f8-c072-4119-92eb-e4d9ffccc6ab r/w with ordered data mode. Quota mode: disabled.
+VFS: Mounted root (ext4 filesystem) on device 254:0.
+VFS: Pivoted into new rootfs
+This architecture does not have kernel memory protection.
+Run /init as init process
+~ #
+[lowland-d0:fish*"gravel" 22:45 13-Aug-26clear; printf '\nLOWLAND LOCAL RUNNER ? REAL APK WALKTHROUGH\n==================================
+========\n\nInteractive wasm32 Linux guest; writable ext4 disk; APK repo mounted read-only at /repo.
+\n\n'
+
+LOWLAND LOCAL RUNNER — REAL APK WALKTHROUGH
+==========================================
+
+Interactive wasm32 Linux guest; writable ext4 disk; APK repo mounted read-only at /repo.
+
+~ # printf 'Base image before install:\n'; apk info | sort; printf '\nInstalling the complete reposi
+tory through apk...\n\n'
+Base image before install:
+apk-tools
+basic-init
+busybox
+ca-certificates
+
+Installing the complete repository through apk...
+
+~ # apk --allow-untrusted --repository /repo/wasm32/Packages.adb add bash bzip2 coreutils curl diffu
+tils dropbear e2fsprogs file findutils gawk git grep jq kselftests less linux-guest-agent lowland-bo
+ot ltp lua make ncurses openssl patch python quickjs readline rust-smoke sed sqlite3 tar util-linux 
+vim xz zlib zstd
+( 1/35) Installing ncurses (6.6-r0)
+( 2/35) Installing bash (5.3-r0)                                                                   
+( 3/35) Installing bzip2 (1.0.8-r0)                                                                
+( 4/35) Installing coreutils (9.7-r0)                                                              
+( 5/35) Installing curl (8.21.0-r0)                                                                
+( 6/35) Installing diffutils (3.10-r0)                                                             
+( 7/35) Installing dropbear (2026.92-r0)                                                           
+( 8/35) Installing e2fsprogs (1.47.4-r0)                                                           
+( 9/35) Installing file (5.48-r0)                                                                  
+(10/35) Installing findutils (4.10.0-r0)                                                           
+(11/35) Installing gawk (5.3.1-r0)                                                                 
+(12/35) Installing git (2.55.0-r0)                                                                 
+(13/35) Installing grep (3.11-r0)                                                                  
+(14/35) Installing jq (1.7.1-r0)                                                                   
+(15/35) Installing kselftests (0.0.0-r0)                                                           
+(16/35) Installing less (668-r0)                                                                   
+(17/35) Installing linux-guest-agent (0.0.0-r0)                                                    
+(18/35) Installing lowland-boot (0.1786628131-r0)                                                  
+(19/35) Installing ltp (20260529-r0)                                                               
+(20/35) Installing lua (5.4.8-r0)#########                                                         
+(21/35) Installing make (4.4.1-r0)########                                                         
+(22/35) Installing openssl (3.5.7-r0)######                                                        
+(23/35) Installing patch (2.7.6-r0)############                                                    
+(24/35) Installing python (3.13.14-r0)#########                                                    
+(25/35) Installing quickjs (0.15.1-r0)####################################                         
+(26/35) Installing readline (8.3-r0)#######################################                        
+(27/35) Installing rust-smoke (0.0.0-r0)###################################                        
+(28/35) Installing sed (4.9-r0)#############################################                       
+(29/35) Installing sqlite3 (3.51.0-r0)######################################                       
+(30/35) Installing xz (5.6.4-r0)#############################################                      
+(31/35) Installing zstd (1.5.6-r0)############################################                     
+(32/35) Installing tar (1.35-r0)##############################################                     
+(33/35) Installing util-linux (2.42.2-r0)######################################                    
+(34/35) Installing vim (9.1.2148-r0)####################################################           
+(35/35) Installing zlib (1.3.1-r0)################################################################ 
+OK: 268.5 MiB in 39 packages#######################################################################
+~ # printf '\nInstalled package count: '; apk info | wc -l; apk info --who-owns /etc/ssl/cert.pem; a
+pk info --who-owns /bin/sh
+
+Installed package count: 39
+/etc/ssl/cert.pem is owned by ca-certificates-3.125-r0
+/bin/sh is owned by busybox-1.37.0-r0
+~ # printf '\n=== busybox, bash, basic-init ===\n'; /bin/sh -c 'echo busybox-sh-ok'; bash --version 
+| head -1; bash -c 'echo bash-brace-{1..3}'; apk info -L basic-init | tail -3
+
+=== busybox, bash, basic-init ===
+busybox-sh-ok
+GNU bash, version 5.3.9(1)-release (wasm32-unknown-linux-musl)
+bash-brace-1 bash-brace-2 bash-brace-3
+basic-init-0.0.0-r0 contains:
+bin/init
+
+~ # printf '\n=== ca-certificates and apk-tools ===\n'; apk --version; wc -c /etc/ssl/cert.pem; apk 
+info --who-owns /etc/ssl/cert.pem
+
+=== ca-certificates and apk-tools ===
+apk-tools 3.0.5, compiled for wasm32.
+460226 /etc/ssl/cert.pem
+/etc/ssl/cert.pem is owned by ca-certificates-3.125-r0
+~ # 
+[lowland-d0:fish*"gravel" 22:46 13-Aug-26printf '\n=== bzip2 ===\n'; printf 'bzip2 roundtrip\n' >/tmp/plain; bzip2 -c /tmp/plain | bunzip
+2 -c
+
+=== bzip2 ===
+bzip2 roundtrip
+~ # printf '\n=== coreutils ===\n'; printf 'coreutils\n' | sha256sum; ls --version | head -1
+
+=== coreutils ===
+1832e6b2f0ec30dd4bf2bdd06221aaa0aa1bb5efe4bb6c09843f57e53b9ecce0  -
+ls (GNU coreutils) 9.7
+~ # printf '\n=== curl ===\n'; curl --version | head -2; curl -s file:///tmp/plain
+
+=== curl ===
+curl 8.21.0 (wasm32-unknown-linux-musl) libcurl/8.21.0 OpenSSL/3.5.7 zlib/1.3.1
+Release-Date: 2026-06-24
+bzip2 roundtrip
+~ # printf '\n=== diffutils ===\n'; printf 'one\n' >/tmp/a; printf 'two\n' >/tmp/b; diff -u /tmp/a /
+tmp/b || true
+
+=== diffutils ===
+--- /tmp/a      2026-08-13 14:46:06.308335000 +0000
++++ /tmp/b      2026-08-13 14:46:06.308335000 +0000
+@@ -1 +1 @@
+-one
++two
+~ # printf '\n=== dropbear ===\n'; /sbin/dropbear -V 2>&1; dropbearkey -t ed25519 -f /tmp/hostkey 2>
+&1 | grep -E 'Fingerprint|ssh-ed25519'
+
+=== dropbear ===
+Dropbear v2026.92
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEqXYdKEK4ylGj0nmMEsQUSljHwnuWM+dNhXo/orKT0Q @(none)
+Fingerprint: SHA256:yMPj35tj0b1kuHG4M+o8w7udcEoc/704kRJlRSiTs6Q
+~ # printf '\n=== e2fsprogs ===\n'; truncate -s 8M /tmp/fs.img; /sbin/mke2fs -q -t ext4 /tmp/fs.img;
+ /sbin/mke2fs -V 2>&1 | head -2; file /tmp/fs.img
+
+=== e2fsprogs ===
+mke2fs 1.47.4 (6-Mar-2025)
+        Using EXT2FS Library version 1.47.4
+
+/tmp/fs.img: Linux rev 1.0 ext4 filesystem data, UUID=ad44b268-c78b-4dc1-a333-01c3474d62d4 (extents) (64bit) (large files) (huge files)
+~ # printf '\n=== file ===\n'; printf '#!/bin/sh\necho hi\n' >/tmp/tool; chmod +x /tmp/tool; file /t
+mp/tool
+
+=== file ===
+/tmp/tool: POSIX shell script, ASCII text executable
+~ # printf '\n=== findutils ===\n'; mkdir -p /tmp/tree/a /tmp/tree/b; touch /tmp/tree/a/needle; find
+ /tmp/tree -name needle
+
+=== findutils ===
+/tmp/tree/a/needle
+~ # printf '\n=== gawk ===\n'; printf 'alice 2\nbob 5\n' | awk '{sum += $2} END {print "gawk sum=" s
+um}'
+
+=== gawk ===
+gawk sum=7
+~ # printf '\n=== git ===\n'; rm -rf /tmp/repo; mkdir /tmp/repo; cd /tmp/repo; git init -q; git conf
+ig user.name Demo; git config user.email demo@example.test; echo hello >README; git add README; git 
+commit -qm initial; git --no-pager log --oneline; cd /
+
+=== git ===
+4e9d900 (HEAD -> master) initial
+~ # printf '\n=== grep and jq ===\n'; printf 'alpha\nbeta\n' | grep -E '^b'; printf '{"packages":["b
+usybox","bash"]}' | jq -c '.packages | sort'
+
+=== grep and jq ===
+beta
+["bash","busybox"]
+~ # printf '\n=== Linux kselftests ===\n'; cd /tmp; /openat2/openat2_test | tail -8; cd /
+
+=== Linux kselftests ===
+ok 110 openat2 with invalid (very large) how.mode and O_TMPFILE fails with -22 (Invalid argument)
+ok 111 openat2 with incompatible resolve flags (BENEATH | IN_ROOT) fails with -22 (Invalid argument)
+ok 112 openat2 with invalid how.resolve and O_RDONLY fails with -22 (Invalid argument)
+ok 113 openat2 with invalid how.resolve and O_CREAT fails with -22 (Invalid argument)
+ok 114 openat2 with invalid how.resolve and O_TMPFILE fails with -22 (Invalid argument)
+ok 115 openat2 with invalid how.resolve and O_PATH fails with -22 (Invalid argument)
+ok 116 openat2 with currently unknown bit (1 << 63) fails with -22 (Invalid argument)
+# Totals: pass:116 fail:0 xfail:0 xpass:0 skip:0 error:0
+~ # printf '\n=== less ===\n'; LESS=FX less /tmp/plain; echo less-exited-cleanly
+
+=== less ===
+bzip2 roundtrip
+less-exited-cleanly
+~ # printf '\n=== LTP ===\n'; uname04 | tail -9
+=== LTP ===
+tst_test.c:2096: TINFO: LTP version: 20260529
+tst_test.c:2099: TINFO: Tested kernel: 7.1.5 # SMP  wasm
+tst_kconfig.c:73: TINFO: Couldn't locate kernel config!
+tst_test.c:1835: TINFO: Overall timeout per run is 0h 00m 30s
+uname04.c:70: TINFO: Calling uname with default personality
+uname04.c:62: TPASS: No bytes leaked
+uname04.c:73: TINFO: Calling uname with UNAME26 personality
+uname04.c:62: TPASS: No bytes leaked
+
+Summary:
+passed   2
+failed   0
+broken   0
+skipped  0
+warnings 0
+~ # printf '\n=== Lua ===\n'; lua -e 'print("lua", 6*7)'
+
+=== Lua ===
+lua     42
+~ # printf '\n=== GNU make ===\n'; mkdir -p /tmp/makedemo; printf 'all:\n\t@echo make-ok\n' >/tmp/ma
+kedemo/Makefile; make -C /tmp/makedemo --no-print-directory
+
+=== GNU make ===
+make-ok
+~ # printf '\n=== ncurses ===\n'; /bin/ncursesw6-config --version; python3 -c 'import curses; curses
+.setupterm("xterm"); print("ncurses colors", curses.tigetnum("colors"))'
+
+=== ncurses ===
+6.6.20251230
+ncurses colors 8
+~ # printf '\n=== OpenSSL ===\n'; openssl version; printf demo | openssl dgst -sha256
+
+=== OpenSSL ===
+OpenSSL 3.5.7 9 Jun 2026 (Library: OpenSSL 3.5.7 9 Jun 2026)
+SHA2-256(stdin)= 2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea
+~ # printf '\n=== patch ===\n'; printf 'old\n' >/tmp/change; printf '%s\n' '--- change' '+++ change'
+ '@@ -1 +1 @@' '-old' '+new' | patch /tmp/change; cat /tmp/change
+
+=== patch ===
+patching file /tmp/change
+new
+~ # printf '\n=== Python ===\n'; python3 -c 'import json,sqlite3,ssl; print("python", json.dumps({"a
+nswer":42}), ssl.OPENSSL_VERSION)'
+
+=== Python ===
+python {"answer": 42} OpenSSL 3.5.7 9 Jun 2026
+~ # printf '\n=== QuickJS ===\n'; qjs -e 'console.log("quickjs", [1,2,3].map(x => x*x).join(","))'
+
+=== QuickJS ===
+quickjs 1,4,9
+~ # printf '\n=== readline ===\n'; test -s /lib/libreadline.a && echo readline-library-installed; py
+thon3 -c 'import readline; readline.parse_and_bind("tab: complete"); print("python readline consumer
+ ok")'
+
+=== readline ===
+readline-library-installed
+python readline consumer ok
+~ # printf '\n=== Rust smoke binary ===\n'; rust-smoke one two three
+
+=== Rust smoke binary ===
+hello from rust on wasm linux!
+args: ["rust-smoke", "one", "two", "three"]
+spawning 4 threads x 10000 mutex increments...
+recv: worker-2 finished, tls=10000
+recv: worker-3 finished, tls=10000
+recv: worker-0 finished, tls=10000
+recv: worker-1 finished, tls=10000
+joined all: sum=6 mutex_count=40000 atomic_count=40000
+sleep(100ms) took 100.67ms
+park_timeout(100ms) took 100.36ms
+scoped threads: sum=10
+total elapsed: 377.39ms
+THREADS OK
+~ # printf '\n=== sed ===\n'; printf 'hello wasm\n' | sed 's/wasm/lowland/'
+
+=== sed ===
+hello lowland
+~ # printf '\n=== SQLite ===\n'; rm -f /tmp/demo.db; sqlite3 /tmp/demo.db 'create table t(n); insert
+ into t values(21),(21); select sum(n) from t;'
+
+=== SQLite ===
+42
+~ # printf '\n=== GNU tar ===\n'; mkdir -p /tmp/tardir; echo archive >/tmp/tardir/item; tar -czf /tm
+p/demo.tar.gz -C /tmp/tardir item; tar -tzf /tmp/demo.tar.gz
+
+=== GNU tar ===
+item
+~ # printf '\n=== util-linux ===\n'; uuidgen; setsid sh -c 'echo util-linux-setsid pid=$$'; wait
+
+=== util-linux ===
+6bdaec59-af79-4eb7-b89c-187b87596e7f
+util-linux-setsid pid=149
+~ # printf '\n=== Vim ===\n'; printf old >/tmp/vim.txt; vim -Nu NONE -n -es -c '%s/old/new/' -c 'wq'
+ /tmp/vim.txt; cat /tmp/vim.txt
+
+=== Vim ===
+new
+~ # printf '\n=== xz and zstd ===\n'; printf 'xz roundtrip\n' >/tmp/xz; xz -c /tmp/xz | xz -dc; prin
+tf 'zstd roundtrip\n' >/tmp/zs; zstd -q -c /tmp/zs | zstd -q -d -c
+
+=== xz and zstd ===
+xz roundtrip
+zstd roundtrip
+~ # printf '\n=== zlib ===\n'; test -s /lib/libz.a && echo zlib-static-library-installed; python3 -c
+ 'import zlib; print("zlib consumer", zlib.decompress(zlib.compress(b"ok")).decode())'
+
+=== zlib ===
+zlib-static-library-installed
+zlib consumer ok
+~ # printf '\n=== Linux guest agent and Lowland boot payloads ===\n'; apk info -L linux-guest-agent 
+| tail -3; apk info -L lowland-boot | tail -6
+
+=== Linux guest agent and Lowland boot payloads ===
+linux-guest-agent-0.0.0-r0 contains:
+bin/linux-guest-agent
+
+boot/static/yapm0lrkxqpxxinbg0shlkblsx62qq42/guest/syscalls.d.ts
+boot/static/yapm0lrkxqpxxinbg0shlkblsx62qq42/guest/syscalls.js
+boot/vendor/xterm/dist.js
+boot/vendor/xterm/xterm.css
+etc/apk/protected_paths.d/lowland-boot.list
+
+~ # printf '\n=== final package audit ===\n'; apk info | sort; printf '\nAll 39 repository packages 
+installed; all command demos completed.\n'
+
+=== final package audit ===
+apk-tools
+bash
+basic-init
+busybox
+bzip2
+ca-certificates
+coreutils
+curl
+diffutils
+dropbear
+e2fsprogs
+file
+findutils
+gawk
+git
+grep
+jq
+kselftests
+less
+linux-guest-agent
+lowland-boot
+ltp
+lua
+make
+ncurses
+openssl
+patch
+python
+quickjs
+readline
+rust-smoke
+sed
+sqlite3
+tar
+util-linux
+vim
+xz
+zlib
+zstd
+
+All 39 repository packages installed; all command demos completed.
+~ # sync; printf '\nPowering off the local runner cleanly.\n'; busybox poweroff -f
+
+Powering off the local runner cleanly.
+>[exited]
