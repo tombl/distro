@@ -41,7 +41,12 @@ exec 3>/tmp/less-input || fail "opening less input fifo failed"
 sleep 1
 pager_pid=$(pidof less) || fail "less did not start under the pty"
 kill -WINCH "$pager_pid" || fail "sending SIGWINCH to less failed"
-printf 'Gq' >&3
+# Let less finish repainting after SIGWINCH before driving it. Input sent while
+# the terminal is being reinitialized may legitimately be flushed.
+sleep 1
+printf 'G' >&3
+sleep 1
+printf 'q' >&3
 exec 3>&-
 wait "$session_pid" ||
   fail "script failed to run less under a pty"
