@@ -1,0 +1,28 @@
+--- a/shell.c
++++ b/shell.c
+@@ -104,1 +104,1 @@
+-#if defined (NO_MAIN_ENV_ARG)
++#if defined (NO_MAIN_ENV_ARG) || defined (__wasm__)
+@@ -365,7 +365,7 @@
+ }
+ #endif /* __CYGWIN__ */
+ 
+-#if defined (NO_MAIN_ENV_ARG)
++#if defined (NO_MAIN_ENV_ARG) || defined (__wasm__)
+ /* systems without third argument to main() */
+ int
+ main (int argc, char **argv)
+@@ -381,11 +381,11 @@
+ #endif
+   volatile int locally_skip_execution;
+   volatile int arg_index, top_level_arg_index;
+-#if defined (__OPENNT) || defined (__MVS__)
++#if defined (__OPENNT) || defined (__MVS__) || defined (__wasm__)
+   char **env;
+ 
+   env = environ;
+-#endif /* __OPENNT || __MVS__ */
++#endif /* __OPENNT || __MVS__ || __wasm__ */
+ 
+   USE_VAR(argc);
+   USE_VAR(argv);
