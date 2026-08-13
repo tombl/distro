@@ -9,6 +9,14 @@ const types = {
   wasm: "application/wasm",
 };
 
+// Existing Firefox installations may still start this worker after the page
+// becomes live-only. Retire their registration during the normal update cycle;
+// see https://bugzilla.mozilla.org/show_bug.cgi?id=1613912.
+if (navigator.userAgent.includes("Firefox/")) {
+  self.addEventListener("install", () => self.skipWaiting());
+  self.addEventListener("activate", (event) => event.waitUntil(self.registration.unregister()));
+}
+
 function contentType(name) {
   const extension = name.split(".").at(-1)?.toLowerCase();
   return types[extension] ?? "application/octet-stream";
