@@ -249,6 +249,8 @@ globalThis.schedulerHandoffStress = () => runInitramfs("/scheduler-handoff.cpio"
 
 globalThis.remoteMemoryProtocol = () => runInitramfs("/remote-vm.cpio", 2);
 
+globalThis.posixSpawnHandoffStress = () => runInitramfs("/posix-spawn-stress.cpio", 1);
+
 globalThis.opfsVirtioFileSystem = async () => {
   const storage = await navigator.storage.getDirectory();
   await storage.removeEntry("virtio-fs-test", { recursive: true }).catch(() => {});
