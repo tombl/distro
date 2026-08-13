@@ -332,6 +332,7 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
       switch (message?.type) {
         case "bind":
           assert(!connected, "virtio device is already bound");
+          message.memory.grow(0);
           control = new Int32Array(message.control);
           connected = connect_virtio_device(device, {
             memory: message.memory,

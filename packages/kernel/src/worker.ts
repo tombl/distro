@@ -392,10 +392,11 @@ function start({
   user: initial_user_context,
   user_copy_status,
 }: InitMessage) {
-  // This worker may register after another isolate has grown the shared user
-  // memory. V8 can retain the fixed-length buffer wrapper captured in the
-  // InitMessage until its asynchronous refresh runs; grow(0) refreshes it
-  // synchronously before any user-memory view is constructed.
+  // Refresh every WebAssembly.Memory received across a worker boundary
+  // immediately, including any future additions to InitMessage. Chromium can
+  // retain the fixed-length buffer wrapper captured before another isolate
+  // grows it; grow(0) refreshes the wrapper before constructing any views.
+  memory.grow(0);
   initial_user_context?.memory.grow(0);
 
   let user_context = initial_user_context;
