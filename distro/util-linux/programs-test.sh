@@ -66,6 +66,37 @@ dmesg_out=$(dmesg --file /tmp/kmsg)
 contains "$dmesg_out" "util-linux dmesg fixture" ||
   fail "dmesg did not parse a saved kmsg file"
 
+# pager_preexec must affect only the callback child.  The fake pager records
+# its defaults and stdin; test_pager itself checks its environment after close.
+cat >/tmp/test-pager-child <<'EOF'
+#!/bin/sh
+printf 'LESS=%s\nLV=%s\n' "$LESS" "$LV" >/tmp/pager-child.env
+cat >/tmp/pager.stdin
+EOF
+chmod +x /tmp/test-pager-child
+unset LESS LV
+PAGER=/tmp/test-pager-child /test_pager || fail "test_pager"
+[ "$(cat /tmp/pager-child.env)" = "LESS=FRSX
+LV=-c" ] || fail "pager child defaults: $(cat /tmp/pager-child.env)"
+contains "$(cat /tmp/pager.stdin)" "254" || fail "pager did not receive stdin"
+
+# The restricted-path callback child assumes the real identity while its
+# privileged parent keeps euid 0.  Check both result and signed errno paths.
+mkdir -p /tmp/restricted-root
+printf 'world\n' >/tmp/restricted-world
+printf 'root\n' >/tmp/restricted-root/file
+chmod 644 /tmp/restricted-world
+chmod 700 /tmp/restricted-root
+restricted_ok=$(/test_fileutils --restricted-path 1000 /tmp/restricted-world) ||
+  fail "restricted-path success probe"
+[ "$restricted_ok" = \
+  "parent=1000:0 access=0 errno=0 result=1000:1000:/tmp/restricted-world" ] ||
+  fail "restricted-path success semantics: $restricted_ok"
+restricted_denied=$(/test_fileutils --restricted-path 1000 /tmp/restricted-root/file) ||
+  fail "restricted-path errno probe"
+[ "$restricted_denied" = "parent=1000:0 access=0 errno=13 result=(null)" ] ||
+  fail "restricted-path errno semantics: $restricted_denied"
+
 # Build and probe a real filesystem image through mkfs.minix and libblkid.
 dd if=/dev/zero of=/tmp/minix.img bs=1024 count=256 2>/dev/null ||
   fail "creating minix image"

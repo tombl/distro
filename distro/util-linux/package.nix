@@ -18,7 +18,6 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "util-linux";
   version = "2.42.2";
   inherit src;
-
   nativeBuildInputs = [
     pkgs.autoconf
     pkgs.pkg-config
@@ -42,57 +41,53 @@ stdenv.mkDerivation (finalAttrs: {
     touch configure
   '';
 
+  postBuild = ''
+    make test_fileutils test_pager
+  '';
+
+  postInstall = ''
+    mkdir -p "$out/libexec/util-linux-tests"
+    cp test_fileutils test_pager "$out/libexec/util-linux-tests/"
+  '';
+
   # Upstream's default suite is the baseline. BusyBox overlap is deliberately
   # irrelevant: callers asking for util-linux should get the real program.
   # Optional target libraries are enabled when the package scope has them, and
   # ordinary heap-buffer mmap uses and fork+exec sites are ported below.
   #
-  # The remaining omissions are actual target limits:
-  #   * fsck is a parallel process orchestrator whose checker lifecycle and
-  #     progress handoff require fork semantics.
+  # Current target omissions and work still being converted:
+  #   * fsck remains disabled until its checker exec and delayed progress
+  #     signal child are converted without weakening their lifecycle.
   #   * fincore requires either cachestat (ENOSYS on the guest kernel) or its
   #     mmap/mincore fallback (not available on wasm).
-  #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC. The wasm defconfig omits
-  #     it, and enabling CONFIG_SYSVIPC currently traps inside the kernel's
-  #     ipcget() on the first shmget(), rather than providing usable IPC.
+  #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC; CONFIG_SYSVIPC is disabled
+  #     in the shipped wasm kernel configuration.
   #   * cramfs tools (selected only by zlib) use mmap as their filesystem image
   #     and file-input representation throughout.
-  # Programs whose only unsupported mode is daemonization, namespace
-  # intermediation, pager shell escape, or a forked slow-tty writer still ship;
-  # their direct/foreground operation remains available.
+  # Callback clone is used only on wasm where child-only setup cannot be
+  # expressed as posix_spawn actions. Without CLONE_VM the kernel snapshots
+  # the address space and waits synchronously for the copy; it returns
+  # EOPNOTSUPP when the caller has more than one mm user. These utilities are
+  # single-threaded at their clone sites. Native builds retain upstream fork.
   #
   # Timer-backed behavior:
   #   * flock -w <timeout> uses setitimer/SIGALRM; the spawn check holds a
   #     conflicting lock and asserts both its timeout status and elapsed time.
-  #
-  # Degraded but shipped:
-  #   * setsid -c (set controlling terminal) errors out: it needs
-  #     ioctl(TIOCSCTTY) in the child after setsid(), which posix_spawn cannot
-  #     express, and there is no controlling terminal here anyway.
-  #   * setsid's spawning paths do start the command in a new session
-  #     (verified), but the new session's id is the setsid process's own pid
-  #     rather than the exec'd child's pid: musl runs setsid() inside the
-  #     CLONE_VM posix_spawn child, which shares state with the spawner. Session
-  #     isolation is real; only the leader-pid numbering differs from a
-  #     fork-based setsid. Its ordinary path remains setsid()+execvp().
   patches = [
     ./configure-platform-programs.patch
     ./foreground-only.patch
     ./namespace-no-fork.patch
     ./switch-root-no-fork.patch
     ./wall-no-fork.patch
-    # libcommon's ul_restricted_path_oper() forks a child to resolve a path
-    # under the caller's identity; it is linked into every tool. wasm has no
-    # fork() (the symbol is undeclared, a hard compile error), and this is a
-    # single-user sandbox, so run the operation directly in-process.
-    ./fileutils-no-fork.patch
-    # wasm has no fork(): the two shipped tools that fork+exec a child are
-    # converted to posix_spawn (clone+execve), following the gawk template.
-    # setsid uses POSIX_SPAWN_SETSID so the child becomes a session leader.
-    ./setsid-posix-spawn.patch
+    # Preserve ul_restricted_path_oper's privilege boundary with a private
+    # callback-clone child; the parent retains its effective credentials.
+    ./fileutils-callback-clone.patch
+    # setsid's callback child performs setsid(), optional TIOCSCTTY, and exec,
+    # preserving the upstream child PID == session ID and --ctty semantics.
+    ./setsid-callback-clone.patch
     ./flock-posix-spawn.patch
-    # Common pager support only needs a pipe attached to an exec'd shell.
-    ./pager-posix-spawn.patch
+    # pager_preexec remains child-local, including its LESS/LV defaults.
+    ./pager-callback-clone.patch
     # script's PTY child uses callback clone so its existing setsid, TIOCSCTTY,
     # stdio attachment, and exec sequence runs on a fresh child stack.
     ./script-callback-clone.patch
@@ -171,6 +166,16 @@ stdenv.mkDerivation (finalAttrs: {
         vm-test.installedTest {
           name = "util-linux-${name}";
           inherit init;
+          files = {
+            "/test_fileutils" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_fileutils";
+              mode = "0755";
+            };
+            "/test_pager" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_pager";
+              mode = "0755";
+            };
+          };
           contents = [
             busybox
             file

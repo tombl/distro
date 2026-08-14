@@ -1,0 +1,104 @@
+Run pager_preexec in a private-memory callback child.
+
+pager_preexec sets child-only environment defaults.  Running it in the parent
+before posix_spawn leaked LESS/LV into the caller.  Callback clone preserves
+the original fork boundary and the existing child setup exactly.
+
+--- a/lib/pager.c
++++ b/lib/pager.c
+@@ -10,6 +10,9 @@
+  * by Davidlohr Bueso <dave@xxxxxxx> - March 2012.
+  */
+ 
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <unistd.h>
+ #include <stdbool.h>
+ #include <stdlib.h>
+@@ -61,15 +64,61 @@
+ 		warn(_("failed to set the %s environment variable"), "LV");
+ }
+ 
++#ifdef __wasm__
++struct pager_child_args {
++	struct child_process *cmd;
++	int read_fd;
++	int write_fd;
++};
++
++static int pager_child(void *data)
++{
++	struct pager_child_args *args = data;
++	struct child_process *cmd = args->cmd;
++
++	if (dup2(args->read_fd, STDIN_FILENO) < 0)
++		errexec(cmd->argv[0]);
++	close(args->read_fd);
++	close(args->write_fd);
++	pager_preexec();
++	execvp(cmd->argv[0], (char *const *) cmd->argv);
++	errexec(cmd->argv[0]);
++}
++#endif
++
+ static int start_command(struct child_process *cmd)
+ {
+ 	int fdin[2];
++#ifdef __wasm__
++	const size_t stack_size = 128 * 1024;
++	struct pager_child_args args;
++	void *stack;
++#endif
+ 
+ 	if (pipe(fdin) < 0)
+ 		return -1;
+ 	cmd->in = fdin[1];
+ 
+ 	fflush(NULL);
++#ifdef __wasm__
++	stack = malloc(stack_size);
++	if (!stack) {
++		cmd->pid = 0;
++		close_pair(fdin);
++		return -1;
++	}
++	args = (struct pager_child_args) {
++		.cmd = cmd, .read_fd = fdin[0], .write_fd = fdin[1]
++	};
++	cmd->pid = clone(pager_child, (char *) stack + stack_size,
++			 SIGCHLD, &args);
++	free(stack);
++	if (cmd->pid < 0) {
++		cmd->pid = 0;
++		close_pair(fdin);
++		return -1;
++	}
++#else
+ 	cmd->pid = fork();
+ 	if (!cmd->pid) {
+ 		dup2(fdin[0], STDIN_FILENO);
+@@ -79,12 +128,12 @@
+ 		execvp(cmd->argv[0], (char *const*) cmd->argv);
+ 		errexec(cmd->argv[0]);
+ 	}
+-
+ 	if (cmd->pid < 0) {
+ 		cmd->pid = 0;
+ 		close_pair(fdin);
+ 		return -1;
+ 	}
++#endif
+ 
+ 	close(fdin[0]);
+ 	return 0;
+@@ -325,6 +374,9 @@
+ 	for (i = 0; i < MAX; i++)
+ 		printf("%d\n", i);
+ 	pager_close();
++	if (getenv("LESS") || getenv("LV"))
++		errx(EXIT_FAILURE,
++		     "pager child environment leaked into parent");
+ 	return EXIT_SUCCESS;
+ }
+ #endif /* TEST_PROGRAM_PAGER */

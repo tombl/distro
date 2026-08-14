@@ -1,7 +1,7 @@
 #!/bin/sh
-# Exercises the two tools whose fork+exec was converted to posix_spawn:
-# flock (advisory locking, -c spawns a shell) and setsid (new session via
-# POSIX_SPAWN_SETSID). Timer assertions use the real wall clock and a generous
+# Exercises the two tools whose child creation was made forkless:
+# flock (advisory locking, -c uses posix_spawn) and setsid (private-memory
+# callback clone). Timer assertions use the real wall clock and a generous
 # upper bound below the host VM deadline.
 
 fail() {
@@ -67,20 +67,16 @@ setsid --fork --wait sh -c 'exit 7'
 setsid sh -c 'exit 7'
 [ "$?" = "7" ] || fail "plain setsid did not propagate exit status 7"
 
-# Prove the command really landed in a *new* session. Field 6 of
-# /proc/<pid>/stat is the session id. The caller (this init shell) has one
-# session; a child spawned without setsid would inherit it, so a child under
-# setsid having a different session id proves setsid took effect.
-#
-# NOTE: on this platform the new session's id equals the setsid *tool's* pid
-# rather than the exec'd child's own pid (musl runs setsid() inside the
-# CLONE_VM posix_spawn child), so we assert "new session", not "sid == child
-# pid". See PLATFORM ISSUES in package.nix.
+# Prove the command is the leader of its new session. Fields 1 and 6 of
+# /proc/<pid>/stat are pid and session id. POSIX/Linux setsid semantics require
+# these to match; merely differing from the caller's session is insufficient.
 read -r _ _ _ _ _ pses _ </proc/self/stat
-setsid --wait sh -c 'cat /proc/self/stat >/tmp/sid.stat'
-read -r _ _ _ _ _ sses _ </tmp/sid.stat
+setsid --wait sh -c \
+  'read -r p _ _ _ _ s _ </proc/self/stat; printf "%s %s\n" "$p" "$s" >/tmp/sid.stat'
+read -r spid sses </tmp/sid.stat
 [ -n "$sses" ] || fail "setsid: empty child session id"
 [ "$sses" != "$pses" ] || fail "setsid: child stayed in caller's session ($sses)"
+[ "$sses" = "$spid" ] || fail "setsid: child pid $spid differs from session id $sses"
 
 echo "::vm-test::pass"
 while :; do :; done
