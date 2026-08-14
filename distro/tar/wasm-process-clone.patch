@@ -1,0 +1,679 @@
+Use callback clone where GNU tar requires fork-like child setup
+
+wasm Linux has no fork syscall.  Its callback clone without CLONE_VM gives a
+single-threaded caller's child a private copy of memory and descriptors with
+fork-like process semantics, while starting at an explicit function on a fresh
+stack.  Restructure tar's fork sites around that interface without changing the
+compressor/reblocking topology, child-only TAR_* environment setup, privilege
+restoration, status propagation, or remote-rsh protocol.
+
+The kernel rejects a non-CLONE_VM snapshot when another task shares the address
+space.  GNU tar creates no threads, so these process-creation sites satisfy that
+constraint.  Keep a native fork fallback so the patched source remains usable
+outside wasm builds.
+
+diff --git a/lib/rtapelib.c b/lib/rtapelib.c
+index f0fb76f..757362b 100644
+--- a/lib/rtapelib.c
++++ b/lib/rtapelib.c
+@@ -54,6 +54,7 @@
+ #endif
+ 
+ #include <signal.h>
++#include <sched.h>
+ 
+ #if HAVE_NETDB_H
+ # include <netdb.h>
+@@ -378,6 +379,52 @@ sys_reset_uid_gid (void)
+   return NULL;
+ }
+ 
++#if !WITH_REXEC
++struct remote_shell_child_args
++{
++  int pipe_number;
++  char const *remote_shell;
++  char const *remote_shell_basename;
++  char const *remote_host;
++  char const *remote_user;
++  char const *rmt_command;
++};
++
++static int
++remote_shell_child (void *argument)
++{
++  struct remote_shell_child_args *args = argument;
++  int n = args->pipe_number;
++
++  if (dup2 (to_remote[n][PREAD], STDIN_FILENO) < 0
++      || (to_remote[n][PREAD] != STDIN_FILENO
++	  && close (to_remote[n][PREAD]) != 0)
++      || (to_remote[n][PWRITE] != STDIN_FILENO
++	  && close (to_remote[n][PWRITE]) != 0)
++      || dup2 (from_remote[n][PWRITE], STDOUT_FILENO) < 0
++      || close (from_remote[n][PREAD]) != 0
++      || close (from_remote[n][PWRITE]) != 0)
++    error (EXIT_ON_EXEC_ERROR, errno,
++	   _("Cannot redirect files for remote shell"));
++
++  char const *reseterr = sys_reset_uid_gid ();
++  if (reseterr)
++    error (EXIT_ON_EXEC_ERROR, errno,
++	   _("Cannot reset uid and gid: %s"), reseterr);
++
++  if (args->remote_user)
++    execl (args->remote_shell, args->remote_shell_basename,
++	   args->remote_host, "-l", args->remote_user,
++	   args->rmt_command, (char *) 0);
++  else
++    execl (args->remote_shell, args->remote_shell_basename,
++	   args->remote_host, args->rmt_command, (char *) 0);
++
++  error (EXIT_ON_EXEC_ERROR, errno, _("Cannot execute remote shell"));
++  return EXIT_ON_EXEC_ERROR;
++}
++#endif
++
+ /* Open a file (a magnetic tape device?) on the system specified in
+    FILE_NAME, as the given user. FILE_NAME has the form `[USER@]HOST:FILE'.
+    OPEN_MODE is O_RDONLY, O_WRONLY, etc.  If successful, return the
+@@ -510,7 +557,31 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+ 	return -1;
+       }
+ 
++    struct remote_shell_child_args child_args = {
++      .pipe_number = remote_pipe_number,
++      .remote_shell = remote_shell,
++      .remote_shell_basename = remote_shell_basename,
++      .remote_host = remote_host,
++      .remote_user = remote_user,
++      .rmt_command = rmt_command,
++    };
++#if defined __wasm__
++    enum { CHILD_STACK_SIZE = 64 * 1024 };
++    void *child_stack = malloc (CHILD_STACK_SIZE);
++    if (!child_stack)
++      status = -1;
++    else
++      {
++	status = clone (remote_shell_child,
++			(char *) child_stack + CHILD_STACK_SIZE,
++			SIGCHLD, &child_args);
++	int e = errno;
++	free (child_stack);
++	errno = e;
++      }
++#else
+     status = fork ();
++#endif
+     if (status == -1)
+       {
+ 	int e = errno;
+@@ -525,6 +596,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+ 
+     if (status == 0)
+       {
++#if !defined __wasm__
+ 	/* Child.  */
+ 
+ 	if (dup2 (to_remote[remote_pipe_number][PREAD], STDIN_FILENO) < 0
+@@ -554,6 +626,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+ 
+ 	/* In a previous version, _exit was used here instead of exit.  */
+ 	error (EXIT_ON_EXEC_ERROR, errno, _("Cannot execute remote shell"));
++#endif
+       }
+ 
+     /* Parent.  */
+diff --git a/src/common.h b/src/common.h
+index 9451e13..eb0f936 100644
+--- a/src/common.h
++++ b/src/common.h
+@@ -741,7 +741,7 @@ void write_error_details (char const *name, size_t status, size_t size);
+ _Noreturn void write_fatal (char const *name);
+ _Noreturn void write_fatal_details (char const *name, ssize_t status, size_t size);
+ 
+-pid_t xfork (void);
++pid_t xclone (int (*child_function) (void *), void *child_argument);
+ void xpipe (int fd[2]);
+ 
+ void *page_aligned_alloc (void **ptr, size_t size);
+diff --git a/src/misc.c b/src/misc.c
+index 73c0464..be9d304 100644
+--- a/src/misc.c
++++ b/src/misc.c
+@@ -17,6 +17,7 @@
+ 
+ #define COMMON_INLINE _GL_EXTERN_INLINE
+ #include <system.h>
++#include <sched.h>
+ #include <rmt.h>
+ #include "common.h"
+ #include <quotearg.h>
+@@ -1191,13 +1192,31 @@ file_removed_diag (const char *name, bool top_level,
+     diagfn (name);
+ }
+ 
+-/* Fork, aborting if unsuccessful.  */
++/* Create a process that begins at CHILD_FUNCTION.  Unlike fork, clone can
++   provide the wasm kernel with an explicit entry point and stack.  Omitting
++   CLONE_VM gives the child the same private-memory semantics as fork.  */
+ pid_t
+-xfork (void)
++xclone (int (*child_function) (void *), void *child_argument)
+ {
++#if defined __wasm__
++  enum { CHILD_STACK_SIZE = 64 * 1024 };
++  void *child_stack = xmalloc (CHILD_STACK_SIZE);
++  pid_t p = clone (child_function,
++		   (char *) child_stack + CHILD_STACK_SIZE,
++		   SIGCHLD, child_argument);
++  int e = errno;
++
++  free (child_stack);
++  errno = e;
++  if (p == (pid_t) -1)
++    call_arg_fatal ("clone", _("child process"));
++#else
+   pid_t p = fork ();
++  if (p == 0)
++    _exit (child_function (child_argument));
+   if (p == (pid_t) -1)
+     call_arg_fatal ("fork", _("child process"));
++#endif
+   return p;
+ }
+ 
+diff --git a/src/system.c b/src/system.c
+index 93fff88..c22e8b2 100644
+--- a/src/system.c
++++ b/src/system.c
+@@ -225,6 +225,16 @@ sys_wait_for_child (pid_t child_pid, bool eof)
+     }
+ }
+ 
++static int
++spawn_shell_child (void *argument)
++{
++  char const *shell = argument;
++
++  priv_set_restore_linkdir ();
++  execlp (shell, "-sh", "-i", NULL);
++  exec_fatal (shell);
++}
++
+ void
+ sys_spawn_shell (void)
+ {
+@@ -232,14 +242,8 @@ sys_spawn_shell (void)
+   const char *shell = getenv ("SHELL");
+   if (! shell)
+     shell = "/bin/sh";
+-  child = xfork ();
+-  if (child == 0)
+-    {
+-      priv_set_restore_linkdir ();
+-      execlp (shell, "-sh", "-i", NULL);
+-      exec_fatal (shell);
+-    }
+-  else
++  child = xclone (spawn_shell_child, (void *) shell);
++  if (child > 0)
+     {
+       int wait_status;
+       while (waitpid (child, &wait_status, 0) == -1)
+@@ -342,29 +346,24 @@ wait_for_grandchild (pid_t pid)
+   exit (exit_code);
+ }
+ 
+-/* Set ARCHIVE for writing, then compressing an archive.  */
+-pid_t
+-sys_child_open_for_compress (void)
++static int
++compress_program_child (void *argument)
+ {
+-  int parent_pipe[2];
++  int *child_pipe = argument;
++
++  set_program_name (_("tar (grandchild)"));
++  xdup2 (child_pipe[PWRITE], STDOUT_FILENO);
++  xclose (child_pipe[PREAD]);
++  priv_set_restore_linkdir ();
++  xexec (use_compress_program_option);
++}
++
++static int
++compress_reblock_child (void *argument)
++{
++  int *parent_pipe = argument;
+   int child_pipe[2];
+   pid_t grandchild_pid;
+-  pid_t child_pid;
+-
+-  signal (SIGPIPE, SIG_IGN);
+-  xpipe (parent_pipe);
+-  child_pid = xfork ();
+-
+-  if (child_pid > 0)
+-    {
+-      /* The parent tar is still here!  Just clean up.  */
+-
+-      archive = parent_pipe[PWRITE];
+-      xclose (parent_pipe[PREAD]);
+-      return child_pid;
+-    }
+-
+-  /* The new born child tar is here!  */
+ 
+   set_program_name (_("tar (child)"));
+   signal (SIGPIPE, SIG_DFL);
+@@ -405,19 +404,7 @@ sys_child_open_for_compress (void)
+   /* We do need a grandchild tar.  */
+ 
+   xpipe (child_pipe);
+-  grandchild_pid = xfork ();
+-
+-  if (grandchild_pid == 0)
+-    {
+-      /* The newborn grandchild tar is here!  Launch the compressor.  */
+-
+-      set_program_name (_("tar (grandchild)"));
+-
+-      xdup2 (child_pipe[PWRITE], STDOUT_FILENO);
+-      xclose (child_pipe[PREAD]);
+-      priv_set_restore_linkdir ();
+-      xexec (use_compress_program_option);
+-    }
++  grandchild_pid = xclone (compress_program_child, child_pipe);
+ 
+   /* The child tar is still here!  */
+ 
+@@ -486,6 +473,21 @@ sys_child_open_for_compress (void)
+   wait_for_grandchild (grandchild_pid);
+ }
+ 
++/* Set ARCHIVE for writing, then compressing an archive.  */
++pid_t
++sys_child_open_for_compress (void)
++{
++  int parent_pipe[2];
++  pid_t child_pid;
++
++  signal (SIGPIPE, SIG_IGN);
++  xpipe (parent_pipe);
++  child_pid = xclone (compress_reblock_child, parent_pipe);
++  archive = parent_pipe[PWRITE];
++  xclose (parent_pipe[PREAD]);
++  return child_pid;
++}
++
+ static void
+ run_decompress_program (void)
+ {
+@@ -522,28 +524,25 @@ run_decompress_program (void)
+   exec_fatal (prog);
+ }
+ 
+-/* Set ARCHIVE for uncompressing, then reading an archive.  */
+-pid_t
+-sys_child_open_for_uncompress (void)
++static int
++decompress_program_child (void *argument)
+ {
+-  int parent_pipe[2];
++  int *child_pipe = argument;
++
++  set_program_name (_("tar (grandchild)"));
++  xdup2 (child_pipe[PREAD], STDIN_FILENO);
++  xclose (child_pipe[PWRITE]);
++  priv_set_restore_linkdir ();
++  run_decompress_program ();
++  return EXIT_FAILURE;
++}
++
++static int
++decompress_reblock_child (void *argument)
++{
++  int *parent_pipe = argument;
+   int child_pipe[2];
+   pid_t grandchild_pid;
+-  pid_t child_pid;
+-
+-  xpipe (parent_pipe);
+-  child_pid = xfork ();
+-
+-  if (child_pid > 0)
+-    {
+-      /* The parent tar is still here!  Just clean up.  */
+-
+-      archive = parent_pipe[PREAD];
+-      xclose (parent_pipe[PWRITE]);
+-      return child_pid;
+-    }
+-
+-  /* The newborn child tar is here!  */
+ 
+   set_program_name (_("tar (child)"));
+   signal (SIGPIPE, SIG_DFL);
+@@ -574,19 +573,7 @@ sys_child_open_for_uncompress (void)
+   /* We do need a grandchild tar.  */
+ 
+   xpipe (child_pipe);
+-  grandchild_pid = xfork ();
+-
+-  if (grandchild_pid == 0)
+-    {
+-      /* The newborn grandchild tar is here!  Launch the uncompressor.  */
+-
+-      set_program_name (_("tar (grandchild)"));
+-
+-      xdup2 (child_pipe[PREAD], STDIN_FILENO);
+-      xclose (child_pipe[PWRITE]);
+-      priv_set_restore_linkdir ();
+-      run_decompress_program ();
+-    }
++  grandchild_pid = xclone (decompress_program_child, child_pipe);
+ 
+   /* The child tar is still here!  */
+ 
+@@ -641,6 +628,20 @@ sys_child_open_for_uncompress (void)
+   wait_for_grandchild (grandchild_pid);
+ }
+ 
++/* Set ARCHIVE for uncompressing, then reading an archive.  */
++pid_t
++sys_child_open_for_uncompress (void)
++{
++  int parent_pipe[2];
++  pid_t child_pid;
++
++  xpipe (parent_pipe);
++  child_pid = xclone (decompress_reblock_child, parent_pipe);
++  archive = parent_pipe[PREAD];
++  xclose (parent_pipe[PWRITE]);
++  return child_pid;
++}
++
+ 
+ 
+ static void
+@@ -744,29 +745,40 @@ stat_to_env (char *name, char type, struct tar_stat_info *st)
+ static pid_t global_pid;
+ static void (*pipe_handler) (int sig);
+ 
++struct command_child_args
++{
++  int pipefd[2];
++  char *file_name;
++  int typechar;
++  struct tar_stat_info *st;
++};
++
++static int
++command_child (void *argument)
++{
++  struct command_child_args *args = argument;
++
++  xdup2 (args->pipefd[PREAD], STDIN_FILENO);
++  xclose (args->pipefd[PWRITE]);
++  stat_to_env (args->file_name, args->typechar, args->st);
++  priv_set_restore_linkdir ();
++  xexec (to_command_option);
++}
++
+ int
+ sys_exec_command (char *file_name, int typechar, struct tar_stat_info *st)
+ {
+-  int p[2];
++  struct command_child_args args = {
++    .file_name = file_name,
++    .typechar = typechar,
++    .st = st,
++  };
+ 
+-  xpipe (p);
++  xpipe (args.pipefd);
+   pipe_handler = signal (SIGPIPE, SIG_IGN);
+-  global_pid = xfork ();
+-
+-  if (global_pid != 0)
+-    {
+-      xclose (p[PREAD]);
+-      return p[PWRITE];
+-    }
+-
+-  /* Child */
+-  xdup2 (p[PREAD], STDIN_FILENO);
+-  xclose (p[PWRITE]);
+-
+-  stat_to_env (file_name, typechar, st);
+-
+-  priv_set_restore_linkdir ();
+-  xexec (to_command_option);
++  global_pid = xclone (command_child, &args);
++  xclose (args.pipefd[PREAD]);
++  return args.pipefd[PWRITE];
+ }
+ 
+ void
+@@ -804,116 +816,131 @@ sys_wait_command (void)
+   global_pid = -1;
+ }
+ 
+-int
+-sys_exec_info_script (const char **archive_name, int volume_number)
++struct info_script_child_args
+ {
+-  pid_t pid;
++  int pipefd[2];
++  char const *archive_name;
++  int volume_number;
++};
++
++static int
++info_script_child (void *argument)
++{
++  struct info_script_child_args *args = argument;
+   char uintbuf[UINTMAX_STRSIZE_BOUND];
+-  int p[2];
+-  static void (*saved_handler) (int sig);
+ 
+-  xpipe (p);
+-  saved_handler = signal (SIGPIPE, SIG_IGN);
+-
+-  pid = xfork ();
+-
+-  if (pid != 0)
+-    {
+-      /* Master */
+-
+-      int rc;
+-      int status;
+-      char *buf = NULL;
+-      size_t size = 0;
+-      FILE *fp;
+-
+-      xclose (p[PWRITE]);
+-      fp = fdopen (p[PREAD], "r");
+-      rc = getline (&buf, &size, fp);
+-      fclose (fp);
+-
+-      if (rc > 0 && buf[rc-1] == '\n')
+-	buf[--rc] = 0;
+-
+-      while (waitpid (pid, &status, 0) == -1)
+-	if (errno != EINTR)
+-	  {
+-	    signal (SIGPIPE, saved_handler);
+-	    waitpid_error (info_script_option);
+-	    return -1;
+-	  }
+-
+-      signal (SIGPIPE, saved_handler);
+-
+-      if (WIFEXITED (status))
+-	{
+-	  if (WEXITSTATUS (status) == 0 && rc > 0)
+-	    *archive_name = buf;
+-	  else
+-	    free (buf);
+-	  return WEXITSTATUS (status);
+-	}
+-
+-      free (buf);
+-      return -1;
+-    }
+-
+-  /* Child */
+   setenv ("TAR_VERSION", PACKAGE_VERSION, 1);
+-  setenv ("TAR_ARCHIVE", *archive_name, 1);
+-  setenv ("TAR_VOLUME", STRINGIFY_BIGINT (volume_number, uintbuf), 1);
++  setenv ("TAR_ARCHIVE", args->archive_name, 1);
++  setenv ("TAR_VOLUME", STRINGIFY_BIGINT (args->volume_number, uintbuf), 1);
+   setenv ("TAR_BLOCKING_FACTOR",
+ 	  STRINGIFY_BIGINT (blocking_factor, uintbuf), 1);
+   setenv ("TAR_SUBCOMMAND", subcommand_string (subcommand_option), 1);
+   setenv ("TAR_FORMAT",
+ 	  archive_format_string (current_format == DEFAULT_FORMAT ?
+ 				 archive_format : current_format), 1);
+-  setenv ("TAR_FD", STRINGIFY_BIGINT (p[PWRITE], uintbuf), 1);
+-
+-  xclose (p[PREAD]);
+-
++  setenv ("TAR_FD", STRINGIFY_BIGINT (args->pipefd[PWRITE], uintbuf), 1);
++  xclose (args->pipefd[PREAD]);
+   priv_set_restore_linkdir ();
+   xexec (info_script_option);
+ }
+ 
++int
++sys_exec_info_script (const char **archive_name, int volume_number)
++{
++  struct info_script_child_args args = {
++    .archive_name = *archive_name,
++    .volume_number = volume_number,
++  };
++  pid_t pid;
++  int rc;
++  int status;
++  char *buf = NULL;
++  size_t size = 0;
++  FILE *fp;
++  static void (*saved_handler) (int sig);
++
++  xpipe (args.pipefd);
++  saved_handler = signal (SIGPIPE, SIG_IGN);
++  pid = xclone (info_script_child, &args);
++
++  xclose (args.pipefd[PWRITE]);
++  fp = fdopen (args.pipefd[PREAD], "r");
++  rc = getline (&buf, &size, fp);
++  fclose (fp);
++
++  if (rc > 0 && buf[rc-1] == '\n')
++    buf[--rc] = 0;
++
++  while (waitpid (pid, &status, 0) == -1)
++    if (errno != EINTR)
++      {
++	signal (SIGPIPE, saved_handler);
++	waitpid_error (info_script_option);
++	return -1;
++      }
++
++  signal (SIGPIPE, saved_handler);
++
++  if (WIFEXITED (status))
++    {
++      if (WEXITSTATUS (status) == 0 && rc > 0)
++	*archive_name = buf;
++      else
++	free (buf);
++      return WEXITSTATUS (status);
++    }
++
++  free (buf);
++  return -1;
++}
++
++struct checkpoint_child_args
++{
++  char const *script_name;
++  char const *archive_name;
++  int checkpoint_number;
++};
++
++static int
++checkpoint_child (void *argument)
++{
++  struct checkpoint_child_args *args = argument;
++  char uintbuf[UINTMAX_STRSIZE_BOUND];
++
++  setenv ("TAR_VERSION", PACKAGE_VERSION, 1);
++  setenv ("TAR_ARCHIVE", args->archive_name, 1);
++  setenv ("TAR_CHECKPOINT",
++	  STRINGIFY_BIGINT (args->checkpoint_number, uintbuf), 1);
++  setenv ("TAR_BLOCKING_FACTOR",
++	  STRINGIFY_BIGINT (blocking_factor, uintbuf), 1);
++  setenv ("TAR_SUBCOMMAND", subcommand_string (subcommand_option), 1);
++  setenv ("TAR_FORMAT",
++	  archive_format_string (current_format == DEFAULT_FORMAT ?
++				 archive_format : current_format), 1);
++  priv_set_restore_linkdir ();
++  xexec (args->script_name);
++}
++
+ void
+ sys_exec_checkpoint_script (const char *script_name,
+ 			    const char *archive_name,
+ 			    int checkpoint_number)
+ {
++  struct checkpoint_child_args args = {
++    .script_name = script_name,
++    .archive_name = archive_name,
++    .checkpoint_number = checkpoint_number,
++  };
+   pid_t pid;
+-  char uintbuf[UINTMAX_STRSIZE_BOUND];
++  int status;
+ 
+-  pid = xfork ();
+-
+-  if (pid != 0)
+-    {
+-      /* Master */
+-
+-      int status;
+-
+-      while (waitpid (pid, &status, 0) == -1)
+-	if (errno != EINTR)
+-	  {
+-	    waitpid_error (script_name);
+-	    break;
+-	  }
+-
+-      return;
+-    }
+-
+-  /* Child */
+-  setenv ("TAR_VERSION", PACKAGE_VERSION, 1);
+-  setenv ("TAR_ARCHIVE", archive_name, 1);
+-  setenv ("TAR_CHECKPOINT", STRINGIFY_BIGINT (checkpoint_number, uintbuf), 1);
+-  setenv ("TAR_BLOCKING_FACTOR",
+-	  STRINGIFY_BIGINT (blocking_factor, uintbuf), 1);
+-  setenv ("TAR_SUBCOMMAND", subcommand_string (subcommand_option), 1);
+-  setenv ("TAR_FORMAT",
+-	  archive_format_string (current_format == DEFAULT_FORMAT ?
+-				 archive_format : current_format), 1);
+-  priv_set_restore_linkdir ();
+-  xexec (script_name);
++  pid = xclone (checkpoint_child, &args);
++  while (waitpid (pid, &status, 0) == -1)
++    if (errno != EINTR)
++      {
++	waitpid_error (script_name);
++	break;
++      }
+ }
+ 
+ #endif /* not MSDOS */

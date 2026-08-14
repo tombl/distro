@@ -21,19 +21,12 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-nls"
   ];
 
-  # tar creates every child with fork()+exec (xfork/xexec in src/system.c, and
-  # the remote-shell path in lib/rtapelib.c). wasm has no fork(); rewrite each
-  # site to posix_spawn (clone+execve), carrying the between-fork-and-exec fd
-  # plumbing in posix_spawn file actions and setting the child's environment in
-  # the parent beforehand (posix_spawn cannot run code between clone and exec).
-  # The compressor spawn used by -z/-j/-J/--zstd is the important path. Its old
-  # regular-file branch (compressor writes straight to the archive fd) maps
-  # cleanly to posix_spawn; the grandchild "reblocking" branch, used only for
-  # pipe/stdin/non-regular/remote archives, is fork-for-concurrency (a tar
-  # process shuffling records, not an exec) and cannot be expressed with
-  # posix_spawn, so it now fails with a clear diagnostic. Compressing to and
-  # from named regular files -- what the tests and normal use do -- works.
-  patches = [ ./wasm-posix-spawn.patch ];
+  # wasm has no fork(), but its callback clone creates a process with a private
+  # copy of memory when CLONE_VM is omitted.  That snapshot requires a
+  # single-threaded caller, which tar is.  Keep tar's child-side setup and
+  # compressor reblocking topology intact by starting each child at an
+  # explicit callback on a fresh stack.
+  patches = [ ./wasm-process-clone.patch ];
 
   passthru.apk = {
     depends = [

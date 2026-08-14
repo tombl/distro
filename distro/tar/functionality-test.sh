@@ -8,9 +8,15 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
-# tar spawns each compressor through /bin/sh (posix_spawn on wasm), which needs
-# a working /dev for the pipe children.
+# Tar's cloned children run compressors through /bin/sh and need a working
+# /dev for their pipe endpoints.
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+
+# The remote transport deliberately retains upstream's privilege-reset path,
+# whose getpwuid/initgroups calls require an NSS entry in this minimal guest.
+mkdir -p /etc
+printf 'root:x:0:0:root:/root:/bin/sh\n' >/etc/passwd
+printf 'root:x:0:\n' >/etc/group
 
 # Prove the GNU binary shadows busybox's tar applet.
 tar --version | grep -q 'GNU tar' || fail "not running GNU tar"
@@ -65,6 +71,125 @@ check_comp -z gz "gzip -dc"
 check_comp -J xz "xz -dc"
 check_comp --zstd zst "zstd -dc"
 check_comp -j bz2 "bzip2 -dc"
+
+mkfifo /tmp/compressor-status.fifo
+cat </tmp/compressor-status.fifo >/dev/null &
+status_reader=$!
+tar --use-compress-program='exit 17' -cf /tmp/compressor-status.fifo \
+  -C /tmp src >/dev/null 2>&1 && fail "reblock compressor status was ignored"
+wait "$status_reader" || fail "status FIFO reader"
+
+mkfifo /tmp/compressor-signal.fifo
+cat </tmp/compressor-signal.fifo >/dev/null &
+signal_reader=$!
+tar --use-compress-program='kill -TERM $$' -cf /tmp/compressor-signal.fifo \
+  -C /tmp src >/dev/null 2>&1 && fail "reblock compressor signal was ignored"
+wait "$signal_reader" || fail "signal FIFO reader"
+
+# Compressed standard streams retain tar's normal pipeline semantics.
+tar -zcf - -C /tmp src >/tmp/stdout.tar.gz || fail "gzip: compressed stdout"
+gzip -dc </tmp/stdout.tar.gz >/tmp/stdout.tar || fail "gzip: decode stdout archive"
+tar tf /tmp/stdout.tar >/dev/null || fail "gzip: list stdout archive"
+
+rm -rf /tmp/out-stdin
+mkdir -p /tmp/out-stdin
+gzip -c /tmp/plain.tar | tar -zxf - -C /tmp/out-stdin \
+  || fail "gzip: compressed stdin"
+cmp /tmp/src/one.txt /tmp/out-stdin/src/one.txt \
+  || fail "gzip: compressed stdin content"
+
+# A FIFO forces the compressor/decompressor reblocking topology.
+mkfifo /tmp/archive-out.fifo
+gzip -dc </tmp/archive-out.fifo >/tmp/fifo.tar &
+fifo_reader=$!
+tar -zcf /tmp/archive-out.fifo -C /tmp src || fail "gzip: create to FIFO"
+wait "$fifo_reader" || fail "gzip: FIFO reader"
+tar tf /tmp/fifo.tar >/dev/null || fail "gzip: list FIFO archive"
+
+mkfifo /tmp/archive-in.fifo
+gzip -c /tmp/plain.tar >/tmp/archive-in.fifo &
+fifo_writer=$!
+rm -rf /tmp/out-fifo
+mkdir -p /tmp/out-fifo
+tar -zxf /tmp/archive-in.fifo -C /tmp/out-fifo || fail "gzip: extract from FIFO"
+wait "$fifo_writer" || fail "gzip: FIFO writer"
+cmp /tmp/src/one.txt /tmp/out-fifo/src/one.txt \
+  || fail "gzip: FIFO extract content"
+
+# --to-command receives per-member state in its cloned child.  A checkpoint
+# action executed later in the same tar process must not inherit that state.
+cat >/tmp/to-command.sh <<'EOF'
+#!/bin/sh
+[ "$TAR_FILENAME" = "src/one.txt" ] || exit 41
+[ "$TAR_FILETYPE" = "f" ] || exit 42
+cat >/tmp/to-command.data
+EOF
+chmod +x /tmp/to-command.sh
+
+cat >/tmp/checkpoint.sh <<'EOF'
+#!/bin/sh
+[ -z "${TAR_FILENAME+x}" ] || exit 51
+[ -n "$TAR_CHECKPOINT" ] || exit 52
+echo checkpoint-ok >/tmp/checkpoint.ok
+EOF
+chmod +x /tmp/checkpoint.sh
+
+rm -f /tmp/checkpoint.ok /tmp/to-command.data
+tar xf /tmp/plain.tar src/one.txt --to-command=/tmp/to-command.sh \
+  --checkpoint=1 --checkpoint-action=exec=/tmp/checkpoint.sh \
+  || fail "child environment scripts"
+[ "$(cat /tmp/to-command.data)" = "hello" ] \
+  || fail "to-command data"
+[ "$(cat /tmp/checkpoint.ok)" = "checkpoint-ok" ] \
+  || fail "checkpoint environment"
+
+tar xf /tmp/plain.tar src/one.txt --to-command='exit 23' >/dev/null 2>&1 \
+  && fail "to-command status was ignored"
+
+# Multi-volume info scripts receive their state and reply descriptor only in
+# the clone child.  A 32 KiB member crosses several 10 KiB volumes.
+cat >/tmp/info-script.sh <<'EOF'
+#!/bin/sh
+[ -n "$TAR_VERSION" ] || exit 61
+[ -n "$TAR_ARCHIVE" ] || exit 62
+[ -n "$TAR_VOLUME" ] || exit 63
+[ -n "$TAR_FD" ] || exit 64
+eval "echo /tmp/volume-${TAR_VOLUME}.tar >&${TAR_FD}"
+EOF
+chmod +x /tmp/info-script.sh
+dd if=/dev/zero of=/tmp/large.bin bs=1024 count=32 2>/dev/null \
+  || fail "prepare multi-volume input"
+rm -f /tmp/volume-*.tar
+tar -cM -L 10 -f /tmp/volume-1.tar --info-script=/tmp/info-script.sh \
+  -C /tmp large.bin || fail "multi-volume create"
+rm -rf /tmp/out-volume
+mkdir -p /tmp/out-volume
+tar -xM -f /tmp/volume-1.tar --info-script=/tmp/info-script.sh \
+  -C /tmp/out-volume || fail "multi-volume extract"
+cmp /tmp/large.bin /tmp/out-volume/large.bin \
+  || fail "multi-volume content"
+
+# Exercise the rsh/rmt protocol locally, including compressed remote
+# reblocking.  The fake transport deliberately ignores host/login arguments.
+cat >/tmp/fake-rsh <<'EOF'
+#!/bin/sh
+echo invoked >/tmp/fake-rsh.invoked
+echo "$(id -u):$(id -g)" >/tmp/fake-rsh.ids
+exec /libexec/rmt
+EOF
+chmod +x /tmp/fake-rsh
+rm -f /tmp/remote.tar.gz /tmp/fake-rsh.invoked /tmp/fake-rsh.ids
+tar --rsh-command /tmp/fake-rsh -zcf 127.0.0.1:/tmp/remote.tar.gz -C /tmp src \
+  || fail "compressed remote create"
+[ "$(cat /tmp/fake-rsh.invoked)" = "invoked" ] || fail "remote transport not used"
+[ "$(cat /tmp/fake-rsh.ids)" = "$(id -u):$(id -g)" ] \
+  || fail "remote transport credentials"
+rm -rf /tmp/out-remote
+mkdir -p /tmp/out-remote
+tar --rsh-command /tmp/fake-rsh -zxf 127.0.0.1:/tmp/remote.tar.gz -C /tmp/out-remote \
+  || fail "compressed remote extract"
+cmp /tmp/src/dir/three.txt /tmp/out-remote/src/dir/three.txt \
+  || fail "compressed remote content"
 
 echo "::vm-test::pass"
 while :; do :; done
