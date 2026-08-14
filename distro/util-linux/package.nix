@@ -45,13 +45,13 @@ stdenv.mkDerivation (finalAttrs: {
 
   postBuild = ''
     make test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
-      test_mount_context_mount
+      test_mount_context_mount test_waitpid_timeout
   '';
 
   postInstall = ''
     mkdir -p "$out/libexec/util-linux-tests"
     cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
-      test_mount_context_mount \
+      test_mount_context_mount test_waitpid_timeout \
       "$out/libexec/util-linux-tests/"
   '';
 
@@ -113,6 +113,12 @@ stdenv.mkDerivation (finalAttrs: {
     # uuidd uses a self-pipe for its service signals and callback clones for
     # musl's double-fork daemon continuation on wasm; native paths are intact.
     ./uuidd-no-daemon.patch
+    # irqtop retains periodic absolute-monotonic updates without timerfd and
+    # routes its explicit signal set through a lifecycle-safe self-pipe.
+    ./irqtop-portable-events.patch
+    # Keep waitpid's pidfd/epoll model; only its unavailable timerfd is
+    # replaced by an absolute monotonic epoll deadline on wasm.
+    ./waitpid-no-timerfd.patch
   ];
 
   configureFlags = [
@@ -200,6 +206,10 @@ stdenv.mkDerivation (finalAttrs: {
             };
             "/test_mount_context_mount" = {
               source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_mount_context_mount";
+              mode = "0755";
+            };
+            "/test_waitpid_timeout" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_waitpid_timeout";
               mode = "0755";
             };
           };

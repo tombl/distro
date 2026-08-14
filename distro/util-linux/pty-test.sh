@@ -39,6 +39,26 @@ contains "$(cat /tmp/typescript)" "SCRIPT_MARKER" ||
 contains "$(cat /tmp/script.out)" "SCRIPT_MARKER" ||
   fail "script stdout does not contain marker: $(cat /tmp/script.out)"
 
+# Drive irqtop's interactive quit path through a real PTY and verify that its
+# normal exit restores the exact terminal mode it inherited.
+printf '%s\n' '#!/bin/sh' \
+  'before=$(stty -g) || exit 91' \
+  'irqtop -d 10' \
+  'rc=$?' \
+  'after=$(stty -g) || exit 92' \
+  '[ "$before" = "$after" ] || exit 93' \
+  'echo IRQTOP_TTY_RESTORED' \
+  'exit "$rc"' \
+  > /tmp/irqtop-wrapper || fail "create irqtop wrapper"
+chmod +x /tmp/irqtop-wrapper || fail "make irqtop wrapper executable"
+printf q | timeout 5 script -q -e -c 'TERM=xterm /tmp/irqtop-wrapper' \
+  /tmp/irqtop.typescript >/tmp/irqtop.out 2>/tmp/irqtop.err
+irqtop_rc=$?
+[ "$irqtop_rc" -eq 0 ] ||
+  fail "irqtop interactive q status $irqtop_rc: $(cat /tmp/irqtop.err)"
+contains "$(cat /tmp/irqtop.typescript)" IRQTOP_TTY_RESTORED ||
+  fail "irqtop interactive q did not restore its tty"
+
 # Drive more through a real PTY. Its child command paths must return to the
 # pager, and every exit path must restore the terminal mode seen by its shell.
 seq 1 200 >/tmp/more-input || fail "create more fixture"

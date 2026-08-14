@@ -1,0 +1,200 @@
+waitpid: preserve absolute timeouts without timerfd on wasm
+
+Use an absolute CLOCK_MONOTONIC deadline through epoll_wait where timerfd is
+unavailable. Long waits are split into capped slices and recomputed after every
+wake; when a PID and the deadline become ready together, preserve the existing
+readiness-first policy.
+
+--- a/misc-utils/waitpid.c
++++ b/misc-utils/waitpid.c
+@@ -18,7 +18,9 @@
+  */
+ 
+ #include <sys/epoll.h>
++#ifndef __wasm__
+ #include <sys/timerfd.h>
++#endif
+ #include <assert.h>
+ #include <stdlib.h>
+ #include <errno.h>
+@@ -57,6 +59,9 @@
+ 	bool	verbose;
+ 
+ 	struct timespec timeout;
++#ifdef __wasm__
++	struct timespec timeout_deadline;
++#endif
+ };
+ 
+ static void parse_pids_or_err(struct process_info *pinfos, size_t n_strings, char * const *strings)
+@@ -99,8 +104,40 @@
+ 	}
+ }
+ 
+-static int open_timeoutfd(const struct waitpid_control *ctl)
++static int open_timeoutfd(struct waitpid_control *ctl)
+ {
++#ifdef __wasm__
++	struct timespec now;
++	time_t time_t_max = (time_t) (UINTMAX_MAX >>
++		((sizeof(uintmax_t) - sizeof(time_t)) * CHAR_BIT + 1));
++	bool saturated = false;
++
++	if (!ctl->timeout.tv_sec && !ctl->timeout.tv_nsec)
++		return -1;
++	if (ctl->timeout.tv_sec < 0 || ctl->timeout.tv_nsec < 0) {
++		errno = EINVAL;
++		err_nosys(EXIT_FAILURE, _("could not set timer"));
++	}
++
++	if (clock_gettime(CLOCK_MONOTONIC, &now))
++		err_nosys(EXIT_FAILURE, _("could not read monotonic clock"));
++	if (ctl->timeout.tv_sec > time_t_max - now.tv_sec) {
++		ctl->timeout_deadline.tv_sec = time_t_max;
++		saturated = true;
++	} else
++		ctl->timeout_deadline.tv_sec = now.tv_sec + ctl->timeout.tv_sec;
++	ctl->timeout_deadline.tv_nsec = now.tv_nsec + ctl->timeout.tv_nsec;
++	if (ctl->timeout_deadline.tv_nsec >= 1000000000L) {
++		if (saturated || ctl->timeout_deadline.tv_sec == time_t_max)
++			ctl->timeout_deadline.tv_nsec = 999999999L;
++		else {
++			ctl->timeout_deadline.tv_sec++;
++			ctl->timeout_deadline.tv_nsec -= 1000000000L;
++		}
++	}
++
++	return -1;
++#else
+ 	int fd;
+ 	struct itimerspec timer = {};
+ 
+@@ -117,8 +154,47 @@
+ 		err_nosys(EXIT_FAILURE, _("could not set timer"));
+ 
+ 	return fd;
++#endif
++}
+ 
++#if defined(__wasm__) || defined(TEST_PROGRAM_WAITPID)
++static int deadline_msec(const struct timespec *deadline,
++			 const struct timespec *now)
++{
++	time_t sec;
++	long nsec, extra;
++	int msec;
++
++	sec = deadline->tv_sec - now->tv_sec;
++	nsec = deadline->tv_nsec - now->tv_nsec;
++	if (nsec < 0) {
++		sec--;
++		nsec += 1000000000L;
++	}
++	if (sec < 0 || (sec == 0 && nsec == 0))
++		return 0;
++	if (sec > INT_MAX / 1000)
++		return INT_MAX;
++
++	extra = (nsec + 999999L) / 1000000L;
++	msec = (int) sec * 1000;
++	return msec > INT_MAX - extra ? INT_MAX : msec + extra;
+ }
++#endif
++
++#ifdef __wasm__
++static int timeout_msec(const struct waitpid_control *ctl)
++{
++	struct timespec now;
++
++	if (!ctl->timeout.tv_sec && !ctl->timeout.tv_nsec)
++		return -1;
++	if (clock_gettime(CLOCK_MONOTONIC, &now))
++		err_nosys(EXIT_FAILURE, _("could not read monotonic clock"));
++
++	return deadline_msec(&ctl->timeout_deadline, &now);
++}
++#endif
+ 
+ static size_t add_listeners(int epll, size_t n_pids,
+ 			struct process_info *pinfos, int timeoutfd)
+@@ -155,7 +231,25 @@
+ 		struct epoll_event evt;
+ 		int ret, fd;
+ 
++#ifdef __wasm__
++		int timeout = timeout_msec(ctl);
++
++		ret = epoll_wait(epll, &evt, 1, timeout);
++		if (ret == 0) {
++			/* INT_MAX is only one slice of a longer absolute timeout. */
++			if (timeout_msec(ctl) > 0)
++				continue;
++			/* Prefer a process exit that became ready at the deadline. */
++			ret = epoll_wait(epll, &evt, 1, 0);
++			if (ret == 0) {
++				if (ctl->verbose)
++					printf(_("Timeout expired\n"));
++				exit(EXIT_TIMEOUT_EXPIRED);
++			}
++		}
++#else
+ 		ret = epoll_wait(epll, &evt, 1, -1);
++#endif
+ 		if (ret == -1) {
+ 			if (errno == EINTR)
+ 				continue;
+@@ -163,11 +257,13 @@
+ 				err_nosys(EXIT_FAILURE, _("failure during wait"));
+ 		}
+ 
++#ifndef __wasm__
+ 		if (evt.data.u64 == TIMEOUT_SOCKET_IDX) {
+ 			if (ctl->verbose)
+ 				printf(_("Timeout expired\n"));
+ 			exit(EXIT_TIMEOUT_EXPIRED);
+ 		}
++#endif
+ 
+ 		struct process_info *pi = &pinfos[evt.data.u64];
+ 
+@@ -255,6 +351,7 @@
+ 	return optind;
+ }
+ 
++#ifndef TEST_PROGRAM_WAITPID
+ int main(int argc, char **argv)
+ {
+ 	int pid_idx, epoll, timeoutfd;
+@@ -292,3 +389,19 @@
+ 		active_pids = min(active_pids, ctl.count);
+ 	wait_for_exits(&ctl, epoll, active_pids, proc_infos);
+ }
++#else
++int main(void)
++{
++	const struct timespec zero = { 0, 0 };
++	const struct timespec one_ns = { 0, 1 };
++	const struct timespec capped = { (time_t) INT_MAX / 1000 + 10, 0 };
++	const struct timespec after_first_slice = { (time_t) INT_MAX / 1000, 0 };
++
++	if (deadline_msec(&zero, &zero) != 0 ||
++	    deadline_msec(&one_ns, &zero) != 1 ||
++	    deadline_msec(&capped, &zero) != INT_MAX ||
++	    deadline_msec(&capped, &after_first_slice) <= 0)
++		return EXIT_FAILURE;
++	return EXIT_SUCCESS;
++}
++#endif
+--- a/misc-utils/Makemodule.am
++++ b/misc-utils/Makemodule.am
+@@ -308,6 +308,10 @@
+ waitpid_SOURCES = misc-utils/waitpid.c
+ waitpid_LDADD = $(LDADD) libcommon.la
+ waitpid_CFLAGS = $(AM_CFLAGS)
++check_PROGRAMS += test_waitpid_timeout
++test_waitpid_timeout_SOURCES = misc-utils/waitpid.c
++test_waitpid_timeout_LDADD = $(LDADD) libcommon.la
++test_waitpid_timeout_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_WAITPID
+ endif
+ 
+ if BUILD_ENOSYS

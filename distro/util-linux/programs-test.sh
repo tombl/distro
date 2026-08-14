@@ -84,6 +84,121 @@ check_uuid() {
   esac
 }
 
+monotonic_msec() {
+  awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime
+}
+
+# irqtop uses an absolute monotonic deadline on wasm.  Two iterations mean
+# exactly the immediate snapshot and one delayed snapshot, without drift or a
+# timerfd dependency.
+irqtop_start=$(monotonic_msec)
+irqtop -b -c never -n 2 -d .1 >/tmp/irqtop-two.out ||
+  fail "irqtop two-snapshot batch run"
+irqtop_end=$(monotonic_msec)
+irqtop_elapsed=$((irqtop_end - irqtop_start))
+[ "$(awk '/^irqtop \| total:/ { count++ } END { print count + 0 }' /tmp/irqtop-two.out)" -eq 2 ] ||
+  fail "irqtop did not emit exactly two snapshots"
+[ "$irqtop_elapsed" -ge 50 ] && [ "$irqtop_elapsed" -lt 1000 ] ||
+  fail "irqtop .1 second interval took ${irqtop_elapsed}ms"
+irqtop -b -n 2 -d 0 >/dev/null 2>&1 && fail "irqtop accepted a zero delay"
+
+# Keep a pollable stdin open while irqtop runs asynchronously.  WINCH requests
+# a refresh and must not terminate the process; TERM must take the normal exit
+# path and return success promptly.
+rm -f /tmp/irqtop-input
+mkfifo /tmp/irqtop-input || fail "create irqtop input fifo"
+exec 9<>/tmp/irqtop-input
+irqtop -b -c never -d 10 <&9 >/tmp/irqtop-signals.out &
+irqtop_pid=$!
+sleep .1
+kill -WINCH "$irqtop_pid" || fail "signal irqtop SIGWINCH"
+sleep .1
+kill -0 "$irqtop_pid" 2>/dev/null || fail "irqtop exited on SIGWINCH"
+irqtop_term_start=$(monotonic_msec)
+kill -TERM "$irqtop_pid" || fail "signal irqtop SIGTERM"
+wait "$irqtop_pid"
+irqtop_rc=$?
+irqtop_term_end=$(monotonic_msec)
+exec 9>&-
+[ "$irqtop_rc" -eq 0 ] || fail "irqtop SIGTERM status $irqtop_rc"
+[ "$((irqtop_term_end - irqtop_term_start))" -lt 1000 ] ||
+  fail "irqtop did not exit promptly on SIGTERM"
+
+# waitpid keeps pidfds in epoll on wasm and implements only the unavailable
+# timerfd with epoll's timeout argument.  Exercise success, timeout precision,
+# an interrupted wait, multi-process count, and the documented zero-timeout
+# spelling (which disables the timeout).
+/test_waitpid_timeout || fail "waitpid capped-deadline boundary helper"
+
+sleep .1 &
+waitpid_child=$!
+waitpid -t 2 "$waitpid_child" || fail "waitpid exit before timeout"
+wait "$waitpid_child" 2>/dev/null
+
+sleep 5 &
+waitpid_child=$!
+waitpid_start=$(monotonic_msec)
+waitpid -v -t .5 "$waitpid_child" >/tmp/waitpid-timeout.out
+waitpid_rc=$?
+waitpid_end=$(monotonic_msec)
+waitpid_elapsed=$((waitpid_end - waitpid_start))
+[ "$waitpid_rc" -eq 3 ] || fail "waitpid timeout status $waitpid_rc"
+[ "$(cat /tmp/waitpid-timeout.out)" = "Timeout expired" ] ||
+  fail "waitpid verbose timeout output: $(cat /tmp/waitpid-timeout.out)"
+[ "$waitpid_elapsed" -ge 450 ] ||
+  fail "waitpid fractional timeout fired early (${waitpid_elapsed}ms)"
+kill -0 "$waitpid_child" 2>/dev/null || fail "waitpid timeout killed its target"
+kill "$waitpid_child" || fail "stop waitpid timeout child"
+wait "$waitpid_child" 2>/dev/null
+
+# SIGCONT interrupts a blocking epoll_wait after the waiter is stopped.  The
+# absolute deadline must continue to elapse while stopped rather than restart.
+sleep 5 &
+waitpid_child=$!
+waitpid_start=$(monotonic_msec)
+waitpid -v -t .5 "$waitpid_child" >/tmp/waitpid-eintr.out &
+waitpid_waiter=$!
+sleep .2
+kill -STOP "$waitpid_waiter" || fail "stop waitpid EINTR waiter"
+sleep .4
+waitpid_cont=$(monotonic_msec)
+kill -CONT "$waitpid_waiter" || fail "continue waitpid EINTR waiter"
+wait "$waitpid_waiter"
+waitpid_rc=$?
+waitpid_end=$(monotonic_msec)
+waitpid_elapsed=$((waitpid_end - waitpid_start))
+waitpid_after_cont=$((waitpid_end - waitpid_cont))
+[ "$waitpid_rc" -eq 3 ] || fail "waitpid EINTR timeout status $waitpid_rc"
+[ "$(cat /tmp/waitpid-eintr.out)" = "Timeout expired" ] ||
+  fail "waitpid EINTR verbose output: $(cat /tmp/waitpid-eintr.out)"
+[ "$waitpid_elapsed" -ge 450 ] && [ "$waitpid_after_cont" -lt 400 ] ||
+  fail "waitpid EINTR changed deadline (${waitpid_elapsed}ms total, ${waitpid_after_cont}ms after CONT)"
+kill -0 "$waitpid_child" 2>/dev/null || fail "waitpid EINTR killed its target"
+kill "$waitpid_child" || fail "stop waitpid EINTR child"
+wait "$waitpid_child" 2>/dev/null
+
+sleep 1 & waitpid_child_a=$!
+sleep 1.5 & waitpid_child_b=$!
+waitpid -v -c 2 -t 3 "$waitpid_child_a" "$waitpid_child_b" \
+  >/tmp/waitpid-count.out ||
+  fail "waitpid count across two children"
+[ "$(awk '/^PID [0-9]+ finished$/ { count++ } END { print count + 0 }' /tmp/waitpid-count.out)" -eq 2 ] ||
+  fail "waitpid count completion records: $(cat /tmp/waitpid-count.out)"
+contains "$(cat /tmp/waitpid-count.out)" "PID $waitpid_child_a finished" ||
+  fail "waitpid omitted first counted PID"
+contains "$(cat /tmp/waitpid-count.out)" "PID $waitpid_child_b finished" ||
+  fail "waitpid omitted second counted PID"
+
+sleep .2 &
+waitpid_child=$!
+waitpid -t 0 "$waitpid_child" || fail "waitpid zero timeout was not disabled"
+wait "$waitpid_child" 2>/dev/null
+
+sleep .2 &
+waitpid_child=$!
+waitpid "$waitpid_child" || fail "waitpid without timeout"
+wait "$waitpid_child" 2>/dev/null
+
 # The foreground service must answer real protocol requests, ignore SIGPIPE,
 # and remove both ownership files on a terminating signal.
 uuidd_socket=/tmp/uuidd-foreground.sock
