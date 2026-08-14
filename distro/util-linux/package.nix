@@ -44,12 +44,14 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   postBuild = ''
-    make test_fileutils test_pager test_switch_root test_ttymsg test_sulogin
+    make test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
+      test_mount_context_mount
   '';
 
   postInstall = ''
     mkdir -p "$out/libexec/util-linux-tests"
     cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
+      test_mount_context_mount \
       "$out/libexec/util-linux-tests/"
   '';
 
@@ -104,8 +106,9 @@ stdenv.mkDerivation (finalAttrs: {
     ./libblkid-no-mmap.patch
     ./cramfs-no-mmap.patch
     ./libblkid-no-fork.patch
-    # Direct mount operations and the libmount inspection APIs work. Restrict
-    # only external helpers, idmapped namespaces, and explicit parallel mode.
+    # Callback children preserve external helpers and mount -a -F. Only the
+    # generic double-return fork API and config-disabled idmap creation remain
+    # unavailable on wasm.
     ./libmount-no-fork.patch
     # uuidd's service works in its existing foreground mode; only daemonizing
     # via fork is unavailable.
@@ -193,6 +196,10 @@ stdenv.mkDerivation (finalAttrs: {
             };
             "/test_sulogin" = {
               source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_sulogin";
+              mode = "0755";
+            };
+            "/test_mount_context_mount" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_mount_context_mount";
               mode = "0755";
             };
           };

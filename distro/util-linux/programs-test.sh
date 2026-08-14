@@ -64,14 +64,135 @@ version=$(/bin/mount --version) || fail "mount --version failed"
 contains "$version" "util-linux" ||
   fail "suite did not identify as util-linux: $version"
 
-# Direct mount(2), libmount table parsing, and mountpoint all work without the
-# unavailable external-helper and parallel-fork modes.
+# Direct mount(2), libmount table parsing, and mountpoint work normally.
 mkdir -p /mnt || fail "create mount point"
 mount -t tmpfs tmpfs /mnt || fail "mount tmpfs"
 mountpoint -q /mnt || fail "mountpoint did not see /mnt"
 fstype=$(findmnt -n -o FSTYPE /mnt)
 [ "$fstype" = tmpfs ] || fail "findmnt reported '$fstype' instead of tmpfs"
 umount /mnt || fail "umount tmpfs"
+
+# External helpers run in copy-clone children.  Record every argument and the
+# post-drop real/effective credentials, and ensure the helper's exact status is
+# returned without mutating the calling shell's credentials.
+cat >/sbin/mount.test <<'EOF'
+#!/bin/sh
+{
+  printf 'uid=%s euid=%s\n' "$(id -ru)" "$(id -u)"
+  for arg do printf 'arg=%s\n' "$arg"; done
+} >"${MOUNT_HELPER_LOG:-/tmp/mount-helper.log}"
+
+if [ "$MOUNT_HELPER_MODE" = parallel ]; then
+  name=${2##*/}
+  touch "/tmp/mount-helper-ready-$name"
+  i=0
+  while [ ! -e /tmp/mount-helper-ready-mnt-a ] && [ "$i" -lt 100 ]; do
+    sleep .05
+    i=$((i + 1))
+  done
+  i=0
+  while [ ! -e /tmp/mount-helper-ready-mnt-b ] && [ "$i" -lt 100 ]; do
+    sleep .05
+    i=$((i + 1))
+  done
+  [ -e /tmp/mount-helper-ready-mnt-a ] &&
+    [ -e /tmp/mount-helper-ready-mnt-b ] || exit 70
+  echo "$name" >>/tmp/mount-helper-overlap
+  if [ "$MOUNT_HELPER_FAIL" = "$name" ] || [ "$MOUNT_HELPER_FAIL" = all ]; then
+    echo "$name" >/tmp/mount-helper-failed
+    exit 1
+  fi
+  exit 0
+fi
+
+exit "${MOUNT_HELPER_STATUS:-0}"
+EOF
+chmod +x /sbin/mount.test
+
+cat >/tmp/mount.credential <<'EOF'
+#!/bin/sh
+printf 'uid=%s euid=%s\n' "$(id -ru)" "$(id -u)" >/tmp/mount-credential.log
+EOF
+chmod +x /tmp/mount.credential
+/test_mount_context_mount --helper-credentials /tmp/mount.credential \
+  >/tmp/mount-credential-parent || fail "mount helper credential isolation"
+[ "$(cat /tmp/mount-credential.log)" = 'uid=1000 euid=1000' ] ||
+  fail "mount helper did not drop credentials: $(cat /tmp/mount-credential.log)"
+[ "$(cat /tmp/mount-credential-parent)" = 'parent uid=1000 euid=0' ] ||
+  fail "mount helper mutated parent credentials: $(cat /tmp/mount-credential-parent)"
+
+rm -f /tmp/mount-helper.log
+MOUNT_HELPER_STATUS=23 MOUNT_HELPER_LOG=/tmp/mount-helper.log \
+  mount -t test -s -f -n -v -o foo=bar helper-source /tmp/helper-target
+mount_rc=$?
+[ "$mount_rc" -eq 23 ] || fail "mount helper status $mount_rc"
+[ "$(id -u)" -eq 0 ] || fail "mount helper changed parent credentials"
+contains "$(cat /tmp/mount-helper.log)" 'uid=0 euid=0' ||
+  fail "mount helper credentials: $(cat /tmp/mount-helper.log)"
+mount_helper_log=$(cat /tmp/mount-helper.log)
+[ "$mount_helper_log" = "uid=0 euid=0
+arg=helper-source
+arg=/tmp/helper-target
+arg=-s
+arg=-f
+arg=-n
+arg=-v
+arg=-o
+arg=rw,foo=bar" ] || fail "mount helper argv: $mount_helper_log"
+
+# umount helpers preserve their option order/status too.  Keep a real tmpfs
+# mounted so libmount selects umount.tmpfs, then clean it up internally.
+cat >/sbin/umount.tmpfs <<'EOF'
+#!/bin/sh
+{
+  printf 'uid=%s euid=%s\n' "$(id -ru)" "$(id -u)"
+  for arg do printf 'arg=%s\n' "$arg"; done
+} >/tmp/umount-helper.log
+exit 24
+EOF
+chmod +x /sbin/umount.tmpfs
+mkdir -p /tmp/umount-helper-target
+mount -i -t tmpfs tmpfs /tmp/umount-helper-target || fail "helper fixture mount"
+umount -n -l -f -v -r /tmp/umount-helper-target
+umount_rc=$?
+[ "$umount_rc" -eq 24 ] || fail "umount helper status $umount_rc"
+umount_helper_log=$(cat /tmp/umount-helper.log)
+[ "$umount_helper_log" = "uid=0 euid=0
+arg=/tmp/umount-helper-target
+arg=-n
+arg=-l
+arg=-f
+arg=-v
+arg=-r" ] || fail "umount helper argv: $umount_helper_log"
+mountpoint -q /tmp/umount-helper-target || fail "umount helper unexpectedly unmounted"
+umount -i /tmp/umount-helper-target || fail "helper fixture cleanup"
+
+# -F must launch both rows before either helper can leave its barrier.  The
+# existing child list then reaps both and computes all-success versus SOMEOK.
+mkdir -p /tmp/mnt-a /tmp/mnt-b
+cat >/tmp/libmount-fstab <<'EOF'
+helper-a /tmp/mnt-a test defaults 0 0
+helper-b /tmp/mnt-b test defaults 0 0
+EOF
+rm -f /tmp/mount-helper-ready-* /tmp/mount-helper-overlap /tmp/mount-helper-failed
+MOUNT_HELPER_MODE=parallel mount -a -F -T /tmp/libmount-fstab ||
+  fail "parallel mount helpers"
+[ "$(sort /tmp/mount-helper-overlap)" = "mnt-a
+mnt-b" ] || fail "mount -F helpers did not overlap"
+rm -f /tmp/mount-helper-ready-* /tmp/mount-helper-overlap
+MOUNT_HELPER_MODE=parallel MOUNT_HELPER_FAIL=mnt-b \
+  mount -a -F -T /tmp/libmount-fstab
+mount_rc=$?
+[ "$(cat /tmp/mount-helper-failed)" = mnt-b ] ||
+  fail "mixed mount helper did not return failure"
+[ "$mount_rc" -eq 64 ] || fail "mount -F mixed status $mount_rc"
+[ "$(sort /tmp/mount-helper-overlap)" = "mnt-a
+mnt-b" ] || fail "mixed mount -F helpers did not overlap"
+rm -f /tmp/mount-helper-ready-* /tmp/mount-helper-overlap
+MOUNT_HELPER_MODE=parallel MOUNT_HELPER_FAIL=all \
+  mount -a -F -T /tmp/libmount-fstab
+mount_rc=$?
+[ "$mount_rc" -eq 32 ] || fail "mount -F all-failed status $mount_rc"
 
 # Mount namespaces remain available even though optional namespace families
 # are disabled in the kernel configuration.  A mount made by unshare must not

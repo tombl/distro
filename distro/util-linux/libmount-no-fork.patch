@@ -1,54 +1,411 @@
-libmount: keep direct operations when fork is unavailable
+libmount: preserve child semantics with callback clone on wasm
 
-The direct mount/umount syscalls and all of libmount's parsing and inspection
-APIs work on wasm.  Only external filesystem helpers, idmapped namespace
-creation, and the explicitly requested parallel context mode fundamentally
-need fork.  Report those individual operations as unsupported instead of
-discarding libmount and every program that uses it.
+External mount helpers and mount -a -F have bounded child continuations, so
+run those continuations with callback clone on wasm while retaining the native
+fork paths.  The shared worker exit maps libmount state to mount(8) status;
+this also fixes native -F overlooking an external helper failure when the raw
+mnt_context_mount() call itself succeeded.  The exported generic double-return
+mnt_fork_context API remains unsupported because a callback cannot represent
+that contract.  Idmapped USER_NS creation remains unavailable because user
+namespaces are not configured.
 
 --- a/libmount/src/context_mount.c
 +++ b/libmount/src/context_mount.c
-@@ -378,6 +378,9 @@ static int exec_helper(struct libmnt_context *cxt)
- 	assert(cxt->helper);
- 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
- 
+@@ -17,6 +17,9 @@
+  */
+ #include <sys/wait.h>
+ #include <sys/mount.h>
 +#ifdef __wasm__
-+	return -ENOSYS;
-+#else
- 	DBG(CXT, ul_debugobj(cxt, "mount: executing helper %s", cxt->helper));
- 
- 	if (ns_tgt->fd != -1
-@@ -499,6 +502,7 @@ static int exec_helper(struct libmnt_context *cxt)
- 
- 	free(namespace);
- 	return rc;
++# include <sched.h>
 +#endif
+ 
+ #include "mountP.h"
+ #include "strutils.h"
+@@ -376,6 +379,78 @@
+ 	return rc;
  }
  
- /*
++#ifdef __wasm__
++struct mount_helper_child_args {
++	struct libmnt_context *cxt;
++	char *namespace;
++};
++
++static int exec_helper_child(void *data)
++{
++	struct mount_helper_child_args *ca = data;
++	struct libmnt_context *cxt = ca->cxt;
++	const char *args[14], *type;
++	struct libmnt_optlist *ol = mnt_context_get_optlist(cxt);
++	struct libmnt_opt *opt;
++	const char *o = NULL;
++	int i = 0;
++
++	if (!ol)
++		_exit(EXIT_FAILURE);
++
++	/* Call helper with original user=<name> (aka "saved user")
++	 * or remove the username at all.
++	 */
++	opt = mnt_optlist_get_opt(ol, MNT_MS_USER, cxt->map_userspace);
++	if (opt && !(cxt->flags & MNT_FL_SAVED_USER))
++		mnt_opt_set_value(opt, NULL);
++
++	if (mnt_optlist_get_optstr(ol, &o, NULL, MNT_OL_FLTR_HELPERS))
++		_exit(EXIT_FAILURE);
++
++	if (drop_permissions() != 0)
++		_exit(EXIT_FAILURE);
++
++	if (!mnt_context_switch_origin_ns(cxt))
++		_exit(EXIT_FAILURE);
++
++	type = mnt_fs_get_fstype(cxt->fs);
++
++	args[i++] = cxt->helper;
++	args[i++] = mnt_fs_get_srcpath(cxt->fs);
++	args[i++] = mnt_fs_get_target(cxt->fs);
++
++	if (mnt_context_is_sloppy(cxt))
++		args[i++] = "-s";
++	if (mnt_context_is_fake(cxt))
++		args[i++] = "-f";
++	if (mnt_context_is_nomtab(cxt))
++		args[i++] = "-n";
++	if (mnt_context_is_verbose(cxt))
++		args[i++] = "-v";
++	if (o) {
++		args[i++] = "-o";
++		args[i++] = o;
++	}
++	if (type
++	    && strchr(type, '.')
++	    && !ul_endswith(cxt->helper, type)) {
++		args[i++] = "-t";
++		args[i++] = type;
++	}
++	if (ca->namespace) {
++		args[i++] = "-N";
++		args[i++] = ca->namespace;
++	}
++	args[i] = NULL;
++	for (i = 0; args[i]; i++)
++		DBG(CXT, ul_debugobj(cxt, "argv[%d] = \"%s\"", i, args[i]));
++	DBG_FLUSH;
++	execv(cxt->helper, (char * const *) args);
++	_exit(MNT_EX_EXEC);
++}
++#endif
++
+ static int exec_helper(struct libmnt_context *cxt)
+ {
+ 	struct libmnt_ns *ns_tgt = mnt_context_get_target_ns(cxt);
+@@ -398,10 +473,34 @@
+ 
+ 	DBG_FLUSH;
+ 
++#ifdef __wasm__
++	{
++		const size_t stack_size = 128 * 1024;
++		struct mount_helper_child_args ca = {
++			.cxt = cxt,
++			.namespace = namespace
++		};
++		void *stack = malloc(stack_size);
++		int errsv;
++
++		if (!stack) {
++			errno = ENOMEM;
++			pid = -1;
++		} else {
++			pid = clone(exec_helper_child, (char *) stack + stack_size,
++				    SIGCHLD, &ca);
++			errsv = errno;
++			free(stack);
++			errno = errsv;
++		}
++	}
++#else
+ 	pid = fork();
++#endif
+ 	switch (pid) {
+ 	case 0:
+ 	{
++#ifndef __wasm__
+ 		const char *args[14], *type;
+ 		struct libmnt_optlist *ol = mnt_context_get_optlist(cxt);
+ 		struct libmnt_opt *opt;
+@@ -462,6 +561,7 @@
+ 		DBG_FLUSH;
+ 		execv(cxt->helper, (char * const *) args);
+ 		_exit(MNT_EX_EXEC);
++#endif
+ 	}
+ 	default:
+ 	{
+@@ -1119,6 +1219,40 @@
+ 	return rc;
+ }
+ 
++static __attribute__((__noreturn__)) void next_mount_exit(
++					struct libmnt_context *cxt, int rc)
++{
++	rc = mnt_context_get_excode(cxt, rc, NULL, 0);
++	DBG(CXT, ul_debugobj(cxt, "next-mount: child exit [rc=%d]", rc));
++	DBG_FLUSH;
++	_exit(rc);
++}
++
++#ifdef __wasm__
++struct next_mount_child_args {
++	struct libmnt_context *cxt;
++	struct libmnt_fs *fs;
++};
++
++static int next_mount_child(void *data)
++{
++	struct next_mount_child_args *args = data;
++	char *pattern;
++	int rc;
++
++	args->cxt->pid = getpid();
++	mnt_context_enable_fork(args->cxt, FALSE);
++	rc = mnt_context_apply_fs(args->cxt, args->fs);
++	if (!rc) {
++		pattern = args->cxt->fstype_pattern;
++		args->cxt->fstype_pattern = NULL;
++		rc = mnt_context_mount(args->cxt);
++		args->cxt->fstype_pattern = pattern;
++	}
++	next_mount_exit(args->cxt, rc);
++}
++#endif
++
+ /**
+  * mnt_context_next_mount:
+  * @cxt: context
+@@ -1246,6 +1380,26 @@
+ 	cxt->mountinfo = mountinfo;
+ 
+ 	if (mnt_context_is_fork(cxt)) {
++#ifdef __wasm__
++		const size_t stack_size = 128 * 1024;
++		struct next_mount_child_args ca = { .cxt = cxt, .fs = *fs };
++		void *stack;
++		pid_t pid;
++
++		stack = malloc(stack_size);
++		if (!stack)
++			return -ENOMEM;
++		pid = clone(next_mount_child, (char *) stack + stack_size,
++			    SIGCHLD, &ca);
++		rc = pid < 0 ? -errno : 0;
++		free(stack);
++		if (rc)
++			return rc;
++		rc = mnt_context_add_child(cxt, pid);
++		if (rc)
++			return rc;
++		return 0;
++#else
+ 		rc = mnt_fork_context(cxt);
+ 		if (rc)
+ 			return rc;		/* fork error */
+@@ -1253,6 +1407,7 @@
+ 		if (mnt_context_is_parent(cxt)) {
+ 			return 0;		/* parent */
+ 		}
++#endif
+ 	}
+ 
+ 	/*
+@@ -1279,9 +1434,7 @@
+ 	}
+ 
+ 	if (mnt_context_is_child(cxt)) {
+-		DBG(CXT, ul_debugobj(cxt, "next-mount: child exit [rc=%d]", rc));
+-		DBG_FLUSH;
+-		_exit(rc);
++		next_mount_exit(cxt, rc);
+ 	}
+ 	return 0;
+ }
+@@ -1863,6 +2016,48 @@
+ 
+ #ifdef TEST_PROGRAM
+ 
++static int test_helper_credentials(struct libmnt_test *ts __attribute__((unused)),
++				   int argc, char *argv[])
++{
++	struct libmnt_context *cxt;
++	int rc;
++
++	if (argc < 2) {
++		warnx("missing helper path");
++		return -EINVAL;
++	}
++	cxt = mnt_new_context();
++	if (!cxt)
++		return -ENOMEM;
++	if (mnt_context_set_source(cxt, "helper-source") ||
++	    mnt_context_set_target(cxt, "/tmp/helper-target") ||
++	    mnt_context_set_fstype(cxt, "test") ||
++	    mnt_context_set_options(cxt, "rw") ||
++	    mnt_context_merge_mflags(cxt))
++		return -EINVAL;
++	cxt->helper = strdup(argv[1]);
++	if (!cxt->helper)
++		return -ENOMEM;
++
++	if (setresgid(1000, 0, 0) != 0 || setresuid(1000, 0, 0) != 0) {
++		warn("cannot create distinct real/effective credentials");
++		return -errno;
++	}
++	rc = exec_helper(cxt);
++	if (rc || cxt->helper_status != 0) {
++		warnx("helper failed [rc=%d, status=%d]", rc, cxt->helper_status);
++		return rc ? rc : cxt->helper_status;
++	}
++	if (getuid() != 1000 || geteuid() != 0) {
++		warnx("helper changed parent credentials [uid=%u, euid=%u]",
++			(unsigned int) getuid(), (unsigned int) geteuid());
++		return -EPERM;
++	}
++	printf("parent uid=1000 euid=0\n");
++	mnt_free_context(cxt);
++	return 0;
++}
++
+ static int test_perms(struct libmnt_test *ts __attribute__((unused)),
+ 		      int argc, char *argv[])
+ {
+@@ -1968,6 +2163,7 @@
+ int main(int argc, char *argv[])
+ {
+ 	struct libmnt_test tss[] = {
++	{ "--helper-credentials", test_helper_credentials, "<helper-path>" },
+ 	{ "--perms",		test_perms,    "<fstab-options> [--root]" },
+ 	{ "--fix-options",	test_fixopts,  "<fstab-options> [--root]" },
+ 
 --- a/libmount/src/context_umount.c
 +++ b/libmount/src/context_umount.c
-@@ -683,6 +683,9 @@ static int exec_helper(struct libmnt_context *cxt)
- 	assert((cxt->flags & MNT_FL_MOUNTFLAGS_MERGED));
- 	assert(cxt->helper_exec_status == 1);
+@@ -18,6 +18,9 @@
  
+ #include <sys/wait.h>
+ #include <sys/mount.h>
 +#ifdef __wasm__
-+	return -ENOSYS;
-+#else
- 	if (mnt_context_is_fake(cxt)) {
- 		DBG(CXT, ul_debugobj(cxt, "fake mode: does not execute helper"));
- 		cxt->helper_exec_status = rc = 0;
-@@ -780,6 +783,7 @@ static int exec_helper(struct libmnt_context *cxt)
- 
- 	free(namespace);
- 	return rc;
++# include <sched.h>
 +#endif
+ 
+ #include "pathnames.h"
+ #include "loopdev.h"
+@@ -670,6 +673,58 @@
+ 	return -EPERM;
  }
  
- /*
++#ifdef __wasm__
++struct umount_helper_child_args {
++	struct libmnt_context *cxt;
++	char *namespace;
++};
++
++static int exec_helper_child(void *data)
++{
++	struct umount_helper_child_args *ca = data;
++	struct libmnt_context *cxt = ca->cxt;
++	const char *args[12], *type;
++	int i = 0;
++
++	if (drop_permissions() != 0)
++		_exit(EXIT_FAILURE);
++
++	if (!mnt_context_switch_origin_ns(cxt))
++		_exit(EXIT_FAILURE);
++
++	type = mnt_fs_get_fstype(cxt->fs);
++	args[i++] = cxt->helper;
++	args[i++] = mnt_fs_get_target(cxt->fs);
++
++	if (mnt_context_is_nomtab(cxt))
++		args[i++] = "-n";
++	if (mnt_context_is_lazy(cxt))
++		args[i++] = "-l";
++	if (mnt_context_is_force(cxt))
++		args[i++] = "-f";
++	if (mnt_context_is_verbose(cxt))
++		args[i++] = "-v";
++	if (mnt_context_is_rdonly_umount(cxt))
++		args[i++] = "-r";
++	if (type
++	    && strchr(type, '.')
++	    && !ul_endswith(cxt->helper, type)) {
++		args[i++] = "-t";
++		args[i++] = type;
++	}
++	if (ca->namespace) {
++		args[i++] = "-N";
++		args[i++] = ca->namespace;
++	}
++	args[i] = NULL;
++	for (i = 0; args[i]; i++)
++		DBG(CXT, ul_debugobj(cxt, "argv[%d] = \"%s\"", i, args[i]));
++	DBG_FLUSH;
++	execv(cxt->helper, (char * const *) args);
++	_exit(MNT_EX_EXEC);
++}
++#endif
++
+ static int exec_helper(struct libmnt_context *cxt)
+ {
+ 	char *namespace = NULL;
+@@ -697,10 +752,34 @@
+ 
+ 	DBG_FLUSH;
+ 
++#ifdef __wasm__
++	{
++		const size_t stack_size = 128 * 1024;
++		struct umount_helper_child_args ca = {
++			.cxt = cxt,
++			.namespace = namespace
++		};
++		void *stack = malloc(stack_size);
++		int errsv;
++
++		if (!stack) {
++			errno = ENOMEM;
++			pid = -1;
++		} else {
++			pid = clone(exec_helper_child, (char *) stack + stack_size,
++				    SIGCHLD, &ca);
++			errsv = errno;
++			free(stack);
++			errno = errsv;
++		}
++	}
++#else
+ 	pid = fork();
++#endif
+ 	switch (pid) {
+ 	case 0:
+ 	{
++#ifndef __wasm__
+ 		const char *args[12], *type;
+ 		int i = 0;
+ 
+@@ -743,6 +822,7 @@
+ 		DBG_FLUSH;
+ 		execv(cxt->helper, (char * const *) args);
+ 		_exit(MNT_EX_EXEC);
++#endif
+ 	}
+ 	default:
+ 	{
 --- a/libmount/src/hook_idmap.c
 +++ b/libmount/src/hook_idmap.c
-@@ -194,4 +194,7 @@ static int get_userns_fd_from_idmap(struct list_head *idmap)
+@@ -190,6 +190,9 @@
+ 
+ static int get_userns_fd_from_idmap(struct list_head *idmap)
  {
 +#ifdef __wasm__
 +	return -ENOSYS;
@@ -56,17 +413,31 @@ discarding libmount and every program that uses it.
  	int fd_userns = -1;
  	ssize_t rc = -1;
  	char c = '1';
-@@ -258,6 +261,7 @@ err_close_sock:
- 	close(sock_fds[1]);
+@@ -262,6 +265,7 @@
+ 	}
  
  	return fd_userns;
 +#endif
  }
  
- static int hook_prepare(
+ static int open_userns(const char *path)
 --- a/libmount/src/context.c
 +++ b/libmount/src/context.c
-@@ -3236,4 +3236,7 @@ int mnt_fork_context(struct libmnt_context *cxt)
+@@ -3213,7 +3213,11 @@
+ 	return rc;
+ }
+ 
++#ifdef __wasm__
++int mnt_context_add_child(struct libmnt_context *cxt, pid_t pid)
++#else
+ static int mnt_context_add_child(struct libmnt_context *cxt, pid_t pid)
++#endif
+ {
+ 	pid_t *pids;
+ 
+@@ -3233,6 +3237,9 @@
+ 
+ int mnt_fork_context(struct libmnt_context *cxt)
  {
 +#ifdef __wasm__
 +	return -ENOSYS;
@@ -74,7 +445,7 @@ discarding libmount and every program that uses it.
  	int rc = 0;
  	pid_t pid;
  
-@@ -3266,6 +3269,7 @@ int mnt_fork_context(struct libmnt_context *cxt)
+@@ -3263,6 +3270,7 @@
  	}
  
  	return rc;
@@ -82,3 +453,15 @@ discarding libmount and every program that uses it.
  }
  
  int mnt_context_wait_for_children(struct libmnt_context *cxt,
+--- a/libmount/src/mountP.h
++++ b/libmount/src/mountP.h
+@@ -721,6 +721,9 @@
+ extern int mnt_context_delete_loopdev(struct libmnt_context *cxt);
+ 
+ extern int mnt_fork_context(struct libmnt_context *cxt);
++#ifdef __wasm__
++extern int mnt_context_add_child(struct libmnt_context *cxt, pid_t pid);
++#endif
+ 
+ extern int mnt_context_set_tabfilter(struct libmnt_context *cxt,
+ 				     int (*fltr)(struct libmnt_fs *, void *),
