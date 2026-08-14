@@ -39,6 +39,181 @@ contains "$(cat /tmp/typescript)" "SCRIPT_MARKER" ||
 contains "$(cat /tmp/script.out)" "SCRIPT_MARKER" ||
   fail "script stdout does not contain marker: $(cat /tmp/script.out)"
 
+# Drive more through a real PTY. Its child command paths must return to the
+# pager, and every exit path must restore the terminal mode seen by its shell.
+seq 1 200 >/tmp/more-input || fail "create more fixture"
+printf '%s\n' '#!/bin/sh' \
+  '{ printf "PID:%s\nARGS:%s\n" "$$" "$*"; awk '\''/^SigBlk:/ { print "MASK:" $2 }'\'' /proc/self/status; } >/tmp/more-shell.marker' \
+  > /tmp/more-fake-shell || fail "create fake more shell"
+printf '%s\n' '#!/bin/sh' \
+  'printf "PID:%s\nARGS:%s\n" "$$" "$*" >/tmp/more-editor.marker' \
+  > /tmp/more-fake-editor || fail "create fake more editor"
+printf '%s\n' '#!/bin/sh' \
+  'before=$(stty -g) || exit 91' \
+  'more /tmp/more-input' \
+  'rc=$?' \
+  'after=$(stty -g) || exit 92' \
+  '[ "$before" = "$after" ] || exit 93' \
+  'echo MORE_TTY_RESTORED' \
+  'exit "$rc"' \
+  > /tmp/more-wrapper || fail "create more wrapper"
+chmod +x /tmp/more-fake-shell /tmp/more-fake-editor /tmp/more-wrapper ||
+  fail "make more helpers executable"
+
+find_more_pid() {
+  for comm in /proc/[0-9]*/comm; do
+    [ "$(cat "$comm" 2>/dev/null)" = more ] || continue
+    pid=${comm#/proc/}
+    printf '%s\n' "${pid%%/*}"
+    return 0
+  done
+  return 1
+}
+
+rm -f /tmp/more-shell.marker /tmp/more-editor.marker /tmp/more-command.in
+mkfifo /tmp/more-command.in || fail "create more command fifo"
+SHELL=/bin/sh script -q -c \
+  'TERM=xterm SHELL=/tmp/more-fake-shell VISUAL=/tmp/more-fake-editor /tmp/more-wrapper' \
+  /tmp/more-command.typescript </tmp/more-command.in >/tmp/more-command.out 2>&1 &
+more_session=$!
+exec 3>/tmp/more-command.in
+i=0
+while ! contains "$(cat /tmp/more-command.out 2>/dev/null)" "--More--" &&
+    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+[ "$i" -lt 200 ] || fail "more command prompt readiness"
+more_pid=$(find_more_pid) || fail "locate more command process"
+old_size=$(wc -c </tmp/more-command.out)
+printf '!' >&3
+i=0
+while [ "$(wc -c </tmp/more-command.out)" -le "$old_size" ] &&
+    [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+[ "$i" -lt 100 ] || fail "more shell input readiness"
+printf 'marker-command\n' >&3
+i=0
+while [ ! -s /tmp/more-shell.marker ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+[ -s /tmp/more-shell.marker ] || fail "more shell callback"
+contains "$(cat /tmp/more-shell.marker)" "ARGS:-c marker-command" ||
+  fail "more shell argv: $(cat /tmp/more-shell.marker)"
+child_mask=$(awk -F: '$1 == "MASK" { print $2 }' /tmp/more-shell.marker)
+for child_signal in INT QUIT TSTP CONT WINCH; do
+  signal_number=$(kill -l "$child_signal") || fail "resolve $child_signal"
+  signal_bit=$((1 << (signal_number - 1)))
+  [ $(((0x$child_mask) & signal_bit)) -ne 0 ] ||
+    fail "more command child unblocked $child_signal (SigBlk=$child_mask)"
+done
+i=0
+command_pid=$(awk -F: '$1 == "PID" { print $2 }' /tmp/more-shell.marker)
+[ -n "$command_pid" ] || fail "more shell callback PID"
+while [ -e "/proc/$command_pid" ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ "$i" -lt 100 ] || fail "more did not reap shell callback"
+printf 'v' >&3
+i=0
+while [ ! -s /tmp/more-editor.marker ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+[ -s /tmp/more-editor.marker ] || fail "more editor callback"
+contains "$(cat /tmp/more-editor.marker)" "/tmp/more-input" ||
+  fail "more editor argv: $(cat /tmp/more-editor.marker)"
+i=0
+editor_pid=$(awk -F: '$1 == "PID" { print $2 }' /tmp/more-editor.marker)
+[ -n "$editor_pid" ] || fail "more editor callback PID"
+while [ -e "/proc/$editor_pid" ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ "$i" -lt 100 ] || fail "more did not reap editor callback"
+printf 'q' >&3
+exec 3>&-
+(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+watchdog=$!
+wait "$more_session"
+more_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$more_rc" -eq 0 ] || fail "more shell/editor session status $more_rc"
+contains "$(cat /tmp/more-command.typescript)" MORE_TTY_RESTORED ||
+  fail "more did not resume and restore tty after child commands"
+
+# QUIT is advisory on first delivery; WINCH must leave paging alive; TSTP is
+# mirrored as a real stopped process and CONT resumes paging.
+rm -f /tmp/more-signal.in
+mkfifo /tmp/more-signal.in || fail "create more signal fifo"
+SHELL=/bin/sh script -q -c 'TERM=xterm /tmp/more-wrapper' \
+  /tmp/more-signal.typescript </tmp/more-signal.in >/tmp/more-signal.out 2>&1 &
+more_session=$!
+exec 3>/tmp/more-signal.in
+i=0
+while ! contains "$(cat /tmp/more-signal.out 2>/dev/null)" "--More--" &&
+    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+[ "$i" -lt 200 ] || fail "more signal prompt readiness"
+more_pid=$(find_more_pid) || fail "locate more signal process"
+kill -QUIT "$more_pid" || fail "signal more QUIT"
+i=0
+while ! contains "$(cat /tmp/more-signal.out)" "Use q or Q to quit" &&
+    [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+[ "$i" -lt 100 ] || fail "more QUIT advisory behavior"
+kill -WINCH "$more_pid" || fail "signal more WINCH"
+# Stress the kernel's stop/continue cancellation rule. A queued CONT must
+# cancel an as-yet-undispatched TSTP rather than leave the pager stopped.
+i=0
+while [ "$i" -lt 20 ]; do
+  kill -TSTP "$more_pid" || fail "rapid signal more TSTP"
+  kill -CONT "$more_pid" || fail "rapid signal more CONT"
+  i=$((i + 1))
+done
+sleep .1
+awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit found }' \
+  "/proc/$more_pid/status" 2>/dev/null || fail "more retained cancelled TSTP"
+kill -TSTP "$more_pid" || fail "signal more TSTP"
+i=0
+while ! awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
+    "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ "$i" -lt 100 ] || fail "more did not stop on TSTP"
+kill -CONT "$more_pid" || fail "signal more CONT"
+i=0
+while awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
+    "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ "$i" -lt 100 ] || fail "more did not resume on CONT"
+printf 'q' >&3
+exec 3>&-
+(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+watchdog=$!
+wait "$more_session"
+more_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$more_rc" -eq 0 ] || fail "more signal session status $more_rc"
+contains "$(cat /tmp/more-signal.typescript)" MORE_TTY_RESTORED ||
+  fail "more signal session did not restore tty"
+
+# INT follows the pager's normal clean-exit path and also restores the tty.
+rm -f /tmp/more-int.in
+mkfifo /tmp/more-int.in || fail "create more INT fifo"
+SHELL=/bin/sh script -q -c 'TERM=xterm /tmp/more-wrapper' \
+  /tmp/more-int.typescript </tmp/more-int.in >/tmp/more-int.out 2>&1 &
+more_session=$!
+exec 3>/tmp/more-int.in
+i=0
+while ! contains "$(cat /tmp/more-int.out 2>/dev/null)" "--More--" &&
+    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+[ "$i" -lt 200 ] || fail "more INT prompt readiness"
+more_pid=$(find_more_pid) || fail "locate more INT process"
+kill -INT "$more_pid" || fail "signal more INT"
+exec 3>&-
+(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+watchdog=$!
+wait "$more_session"
+more_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$more_rc" -eq 0 ] || fail "more INT session status $more_rc"
+contains "$(cat /tmp/more-int.typescript)" MORE_TTY_RESTORED ||
+  fail "more INT path did not restore tty"
+
 # While the proxy is active it must retain upstream's all-signals-blocked
 # model, unblocking only the signals serviced by the self-pipe bridge.
 rm -f /tmp/pty-mask.pid /tmp/pty-mask.release
