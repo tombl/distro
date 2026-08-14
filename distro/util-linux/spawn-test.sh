@@ -71,6 +71,7 @@ setsid sh -c 'exit 7'
 # /proc/<pid>/stat are pid and session id. POSIX/Linux setsid semantics require
 # these to match; merely differing from the caller's session is insufficient.
 read -r _ _ _ _ _ pses _ </proc/self/stat
+# shellcheck disable=SC2016 # The nested shell expands its own pid/session fields.
 setsid --wait sh -c \
   'read -r p _ _ _ _ s _ </proc/self/stat; printf "%s %s\n" "$p" "$s" >/tmp/sid.stat'
 read -r spid sses </tmp/sid.stat

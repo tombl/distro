@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2016 # Single-quoted strings are evaluated by child shells.
 # Keep the shipped suite explicit and exercise representative libmount,
 # libblkid, and ncurses-backed behavior. A version check establishes that
 # util-linux owns its overlapping paths rather than BusyBox.
@@ -191,8 +192,10 @@ kill -0 "$waitpid_child" 2>/dev/null || fail "waitpid EINTR killed its target"
 kill "$waitpid_child" || fail "stop waitpid EINTR child"
 wait "$waitpid_child" 2>/dev/null
 
-sleep 1 & waitpid_child_a=$!
-sleep 1.5 & waitpid_child_b=$!
+sleep 1 &
+waitpid_child_a=$!
+sleep 1.5 &
+waitpid_child_b=$!
 waitpid -v -c 2 -t 3 "$waitpid_child_a" "$waitpid_child_b" \
   >/tmp/waitpid-count.out ||
   fail "waitpid count across two children"
@@ -640,10 +643,16 @@ rm -f /tmp/fsck-signal /tmp/fsck-signal-ready
 echo "fsck phase: signal"
 PATH=/tmp:$PATH FSCK_TEST_MODE=signal fsck -T -t test /tmp/fsck-dev1 &
 fsck_parent=$!
-(sleep 10; kill -KILL "$fsck_parent" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$fsck_parent" 2>/dev/null
+) &
 fsck_watchdog=$!
 i=0
-while [ ! -s /tmp/fsck-signal-ready ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+while [ ! -s /tmp/fsck-signal-ready ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ -s /tmp/fsck-signal-ready ] || fail "fsck signal child readiness"
 sleep .2
 kill -TERM "$fsck_parent" || fail "signal fsck"

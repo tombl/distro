@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2016 # Single-quoted strings are evaluated in nested PTYs.
 
 fail() {
   printf 'vm test guest failure: %s\n' "$*"
@@ -86,7 +87,7 @@ printf '%s\n' '#!/bin/sh' \
   '[ "$before" = "$after" ] || exit 93' \
   'echo IRQTOP_TTY_RESTORED' \
   'exit "$rc"' \
-  > /tmp/irqtop-wrapper || fail "create irqtop wrapper"
+  >/tmp/irqtop-wrapper || fail "create irqtop wrapper"
 chmod +x /tmp/irqtop-wrapper || fail "make irqtop wrapper executable"
 printf q | timeout 5 script -q -e -c 'TERM=xterm /tmp/irqtop-wrapper' \
   /tmp/irqtop.typescript >/tmp/irqtop.out 2>/tmp/irqtop.err
@@ -101,10 +102,10 @@ contains "$(cat /tmp/irqtop.typescript)" IRQTOP_TTY_RESTORED ||
 seq 1 200 >/tmp/more-input || fail "create more fixture"
 printf '%s\n' '#!/bin/sh' \
   '{ printf "PID:%s\nARGS:%s\n" "$$" "$*"; awk '\''/^SigBlk:/ { print "MASK:" $2 }'\'' /proc/self/status; } >/tmp/more-shell.marker' \
-  > /tmp/more-fake-shell || fail "create fake more shell"
+  >/tmp/more-fake-shell || fail "create fake more shell"
 printf '%s\n' '#!/bin/sh' \
   'printf "PID:%s\nARGS:%s\n" "$$" "$*" >/tmp/more-editor.marker' \
-  > /tmp/more-fake-editor || fail "create fake more editor"
+  >/tmp/more-fake-editor || fail "create fake more editor"
 printf '%s\n' '#!/bin/sh' \
   'before=$(stty -g) || exit 91' \
   'more /tmp/more-input' \
@@ -113,7 +114,7 @@ printf '%s\n' '#!/bin/sh' \
   '[ "$before" = "$after" ] || exit 93' \
   'echo MORE_TTY_RESTORED' \
   'exit "$rc"' \
-  > /tmp/more-wrapper || fail "create more wrapper"
+  >/tmp/more-wrapper || fail "create more wrapper"
 chmod +x /tmp/more-fake-shell /tmp/more-fake-editor /tmp/more-wrapper ||
   fail "make more helpers executable"
 
@@ -136,18 +137,27 @@ more_session=$!
 exec 3>/tmp/more-command.in
 i=0
 while ! contains "$(cat /tmp/more-command.out 2>/dev/null)" "--More--" &&
-    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+  [ "$i" -lt 200 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ "$i" -lt 200 ] || fail "more command prompt readiness"
 more_pid=$(find_more_pid) || fail "locate more command process"
 old_size=$(wc -c </tmp/more-command.out)
 printf '!' >&3
 i=0
 while [ "$(wc -c </tmp/more-command.out)" -le "$old_size" ] &&
-    [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+  [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ "$i" -lt 100 ] || fail "more shell input readiness"
 printf 'marker-command\n' >&3
 i=0
-while [ ! -s /tmp/more-shell.marker ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+while [ ! -s /tmp/more-shell.marker ] && [ "$i" -lt 200 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ -s /tmp/more-shell.marker ] || fail "more shell callback"
 contains "$(cat /tmp/more-shell.marker)" "ARGS:-c marker-command" ||
   fail "more shell argv: $(cat /tmp/more-shell.marker)"
@@ -168,7 +178,10 @@ done
 [ "$i" -lt 100 ] || fail "more did not reap shell callback"
 printf 'v' >&3
 i=0
-while [ ! -s /tmp/more-editor.marker ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+while [ ! -s /tmp/more-editor.marker ] && [ "$i" -lt 200 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ -s /tmp/more-editor.marker ] || fail "more editor callback"
 contains "$(cat /tmp/more-editor.marker)" "/tmp/more-input" ||
   fail "more editor argv: $(cat /tmp/more-editor.marker)"
@@ -182,7 +195,10 @@ done
 [ "$i" -lt 100 ] || fail "more did not reap editor callback"
 printf 'q' >&3
 exec 3>&-
-(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$more_session" 2>/dev/null
+) &
 watchdog=$!
 wait "$more_session"
 more_rc=$?
@@ -201,13 +217,19 @@ more_session=$!
 exec 3>/tmp/more-signal.in
 i=0
 while ! contains "$(cat /tmp/more-signal.out 2>/dev/null)" "--More--" &&
-    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+  [ "$i" -lt 200 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ "$i" -lt 200 ] || fail "more signal prompt readiness"
 more_pid=$(find_more_pid) || fail "locate more signal process"
 kill -QUIT "$more_pid" || fail "signal more QUIT"
 i=0
 while ! contains "$(cat /tmp/more-signal.out)" "Use q or Q to quit" &&
-    [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+  [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ "$i" -lt 100 ] || fail "more QUIT advisory behavior"
 kill -WINCH "$more_pid" || fail "signal more WINCH"
 # Stress the kernel's stop/continue cancellation rule. A queued CONT must
@@ -224,7 +246,7 @@ awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit found }' \
 kill -TSTP "$more_pid" || fail "signal more TSTP"
 i=0
 while ! awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
-    "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
   sleep .05
   i=$((i + 1))
 done
@@ -232,14 +254,17 @@ done
 kill -CONT "$more_pid" || fail "signal more CONT"
 i=0
 while awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
-    "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  "/proc/$more_pid/status" 2>/dev/null && [ "$i" -lt 100 ]; do
   sleep .05
   i=$((i + 1))
 done
 [ "$i" -lt 100 ] || fail "more did not resume on CONT"
 printf 'q' >&3
 exec 3>&-
-(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$more_session" 2>/dev/null
+) &
 watchdog=$!
 wait "$more_session"
 more_rc=$?
@@ -257,12 +282,18 @@ more_session=$!
 exec 3>/tmp/more-int.in
 i=0
 while ! contains "$(cat /tmp/more-int.out 2>/dev/null)" "--More--" &&
-    [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done
+  [ "$i" -lt 200 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ "$i" -lt 200 ] || fail "more INT prompt readiness"
 more_pid=$(find_more_pid) || fail "locate more INT process"
 kill -INT "$more_pid" || fail "signal more INT"
 exec 3>&-
-(sleep 10; kill -KILL "$more_session" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$more_session" 2>/dev/null
+) &
 watchdog=$!
 wait "$more_session"
 more_rc=$?
@@ -279,7 +310,10 @@ script -q -c \
   /tmp/mask.typescript </dev/null >/tmp/mask.out 2>&1 &
 mask_script=$!
 i=0
-while [ ! -s /tmp/pty-mask.pid ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+while [ ! -s /tmp/pty-mask.pid ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ -s /tmp/pty-mask.pid ] || fail "PTY proxy mask readiness"
 mask_proxy=$(cat /tmp/pty-mask.pid)
 blocked=$(awk '/^SigBlk:/ { print $2 }' "/proc/$mask_proxy/status") ||
@@ -289,7 +323,10 @@ usr2_bit=$((1 << (usr2 - 1)))
 [ $(((0x$blocked) & usr2_bit)) -ne 0 ] ||
   fail "PTY proxy unexpectedly unblocked SIGUSR2 (SigBlk=$blocked)"
 touch /tmp/pty-mask.release
-(sleep 10; kill -KILL "$mask_script" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$mask_script" 2>/dev/null
+) &
 watchdog=$!
 wait "$mask_script"
 mask_rc=$?
@@ -318,20 +355,26 @@ script -q -c \
   /tmp/stop-cont.typescript </dev/null >/tmp/stop-cont.out 2>&1 &
 script_parent=$!
 i=0
-while [ ! -s /tmp/pty-stop.pid ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+while [ ! -s /tmp/pty-stop.pid ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
 [ -s /tmp/pty-stop.pid ] || fail "PTY stopped child readiness"
 # script deliberately mirrors the child's SIGSTOP onto itself; once its
 # parent is resumed, its callback resumes the managed PTY child.
 i=0
 while ! awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
-    "/proc/$script_parent/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  "/proc/$script_parent/status" 2>/dev/null && [ "$i" -lt 100 ]; do
   sleep .05
   i=$((i + 1))
 done
 awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
   "/proc/$script_parent/status" 2>/dev/null || fail "PTY parent did not mirror SIGSTOP"
 kill -CONT "$script_parent" || fail "resume PTY proxy parent"
-(sleep 10; kill -KILL "$script_parent" 2>/dev/null) &
+(
+  sleep 10
+  kill -KILL "$script_parent" 2>/dev/null
+) &
 watchdog=$!
 wait "$script_parent"
 stop_rc=$?
