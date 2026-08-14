@@ -39,6 +39,75 @@ contains "$(cat /tmp/typescript)" "SCRIPT_MARKER" ||
 contains "$(cat /tmp/script.out)" "SCRIPT_MARKER" ||
   fail "script stdout does not contain marker: $(cat /tmp/script.out)"
 
+# While the proxy is active it must retain upstream's all-signals-blocked
+# model, unblocking only the signals serviced by the self-pipe bridge.
+rm -f /tmp/pty-mask.pid /tmp/pty-mask.release
+script -q -c \
+  'echo "$PPID" >/tmp/pty-mask.pid; i=0; while [ ! -e /tmp/pty-mask.release ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done; test -e /tmp/pty-mask.release && echo PTY_MASK_RELEASED' \
+  /tmp/mask.typescript </dev/null >/tmp/mask.out 2>&1 &
+mask_script=$!
+i=0
+while [ ! -s /tmp/pty-mask.pid ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+[ -s /tmp/pty-mask.pid ] || fail "PTY proxy mask readiness"
+mask_proxy=$(cat /tmp/pty-mask.pid)
+blocked=$(awk '/^SigBlk:/ { print $2 }' "/proc/$mask_proxy/status") ||
+  fail "read PTY proxy signal mask"
+usr2=$(kill -l USR2) || fail "resolve SIGUSR2"
+usr2_bit=$((1 << (usr2 - 1)))
+[ $(((0x$blocked) & usr2_bit)) -ne 0 ] ||
+  fail "PTY proxy unexpectedly unblocked SIGUSR2 (SigBlk=$blocked)"
+touch /tmp/pty-mask.release
+(sleep 10; kill -KILL "$mask_script" 2>/dev/null) &
+watchdog=$!
+wait "$mask_script"
+mask_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$mask_rc" -eq 0 ] || fail "PTY proxy mask test status $mask_rc"
+contains "$(cat /tmp/mask.typescript)" PTY_MASK_RELEASED ||
+  fail "PTY proxy mask child did not complete"
+
+# The callback child must receive the caller's original mask and dispositions,
+# not the bridge handlers or its temporarily blocked setup mask.
+trap '' USR1
+script -q -c \
+  'kill -USR1 $$; grep -q "^SigBlk:[[:space:]]*0000000000000000$" /proc/self/status && echo PTY_SIGNAL_RESTORE' \
+  /tmp/signal-restore.typescript </dev/null >/tmp/signal-restore.out 2>&1
+restore_rc=$?
+trap - USR1
+[ "$restore_rc" -eq 0 ] || fail "PTY child signal restoration rc=$restore_rc"
+contains "$(cat /tmp/signal-restore.typescript)" PTY_SIGNAL_RESTORE ||
+  fail "PTY child inherited bridge signal state"
+
+# A stopped child remains owned and is resumed rather than being mistaken for
+# an exited child by coalesced SIGCHLD processing.
+rm -f /tmp/pty-stop.pid
+script -q -c \
+  'echo $$ >/tmp/pty-stop.pid; kill -STOP $$; echo PTY_STOP_CONT' \
+  /tmp/stop-cont.typescript </dev/null >/tmp/stop-cont.out 2>&1 &
+script_parent=$!
+i=0
+while [ ! -s /tmp/pty-stop.pid ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+[ -s /tmp/pty-stop.pid ] || fail "PTY stopped child readiness"
+# script deliberately mirrors the child's SIGSTOP onto itself; once its
+# parent is resumed, its callback resumes the managed PTY child.
+i=0
+while ! awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
+    "/proc/$script_parent/status" 2>/dev/null && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
+  "/proc/$script_parent/status" 2>/dev/null || fail "PTY parent did not mirror SIGSTOP"
+kill -CONT "$script_parent" || fail "resume PTY proxy parent"
+(sleep 10; kill -KILL "$script_parent" 2>/dev/null) &
+watchdog=$!
+wait "$script_parent"
+stop_rc=$?
+kill "$watchdog" 2>/dev/null || true
+[ "$stop_rc" -eq 0 ] || fail "PTY STOP/CONT status $stop_rc"
+contains "$(cat /tmp/stop-cont.typescript)" PTY_STOP_CONT ||
+  fail "PTY child did not resume after SIGSTOP"
+
 # --ctty must run TIOCSCTTY after setsid in the callback child.  The command's
 # stdin remains its controlling terminal and it remains the session leader.
 script -q -c \
