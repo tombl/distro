@@ -58,9 +58,7 @@ stdenv.mkDerivation (finalAttrs: {
   # Optional target libraries are enabled when the package scope has them, and
   # ordinary heap-buffer mmap uses and fork+exec sites are ported below.
   #
-  # Current target omissions and work still being converted:
-  #   * fsck remains disabled until its checker exec and delayed progress
-  #     signal child are converted without weakening their lifecycle.
+  # Current target omissions:
   #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC; CONFIG_SYSVIPC is disabled
   #     in the shipped wasm kernel configuration.
   # Callback clone is used only on wasm where child-only setup cannot be
@@ -78,6 +76,7 @@ stdenv.mkDerivation (finalAttrs: {
     ./sulogin-callback-clone.patch
     ./readprofile-posix-spawn.patch
     ./namespace-no-fork.patch
+    ./fsck-callback-clone.patch
     ./switch-root-no-fork.patch
     ./wall-no-fork.patch
     # Preserve ul_restricted_path_oper's privilege boundary with a private
@@ -144,9 +143,7 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-fadvise"
     "--disable-ldattach"
 
-    # These programs fundamentally require VM mappings or general fork
-    # semantics, rather than a fork+exec operation we can express with spawn.
-    "--disable-fsck"
+    # System V IPC is absent from the shipped kernel configuration.
     "--disable-ipcmk"
     "--disable-ipcrm"
     "--disable-ipcs"

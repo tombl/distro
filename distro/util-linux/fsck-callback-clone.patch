@@ -1,0 +1,119 @@
+diff --git a/disk-utils/fsck.c b/disk-utils/fsck.c
+index 5e710ec..b69f535 100644
+--- a/disk-utils/fsck.c
++++ b/disk-utils/fsck.c
+@@ -49,6 +49,9 @@
+ #include <dirent.h>
+ #include <sys/resource.h>
+ #include <sys/time.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <blkid.h>
+ #include <libmount.h>
+ 
+@@ -630,6 +633,37 @@ static void print_stats(struct fsck_instance *inst)
+ 			(int64_t)inst->rusage.ru_stime.tv_usec);
+ }
+ 
++#ifdef __wasm__
++struct fsck_exec_args {
++	const char *progpath;
++	char **argv;
++	int interactive;
++};
++
++static int fsck_exec_child(void *data)
++{
++	struct fsck_exec_args *ca = data;
++
++	if (!ca->interactive)
++		close(STDIN_FILENO);
++	execv(ca->progpath, ca->argv);
++	err(FSCK_EX_ERROR, _("%s: execute failed"), ca->progpath);
++}
++
++struct progress_notify_args {
++	pid_t pid;
++};
++
++static int progress_notify_child(void *data)
++{
++	struct progress_notify_args *ca = data;
++
++	sleep(1);
++	kill(ca->pid, SIGUSR1);
++	return FSCK_EX_OK;
++}
++#endif
++
+ /*
+  * Execute a particular fsck program, and link it into the list of
+  * child processes we are waiting for.
+@@ -691,6 +725,33 @@ static int execute(const char *progname, const char *progpath,
+ 	/* Fork and execute the correct program. */
+ 	if (noexecute)
+ 		pid = -1;
++#ifdef __wasm__
++	else {
++		const size_t stack_size = 128 * 1024;
++		struct fsck_exec_args ca = {
++			.progpath = progpath, .argv = argv,
++			.interactive = interactive
++		};
++		void *stack = malloc(stack_size);
++		int errsv;
++
++		if (!stack) {
++			warn(_("clone failed"));
++			free_instance(inst);
++			return ENOMEM;
++		}
++		pid = clone(fsck_exec_child, (char *) stack + stack_size,
++			    SIGCHLD, &ca);
++		errsv = errno;
++		free(stack);
++		if (pid < 0) {
++			errno = errsv;
++			warn(_("clone failed"));
++			free_instance(inst);
++			return errno;
++		}
++	}
++#else
+ 	else if ((pid = fork()) < 0) {
+ 		warn(_("fork failed"));
+ 		free_instance(inst);
+@@ -701,6 +762,7 @@ static int execute(const char *progname, const char *progpath,
+ 		execv(progpath, argv);
+ 		err(FSCK_EX_ERROR, _("%s: execute failed"), progpath);
+ 	}
++#endif
+ 
+ 	for (i=0; i < argc; i++)
+ 		free(argv[i]);
+@@ -842,11 +904,24 @@ static struct fsck_instance *wait_one(int flags)
+ 			 * time to set up the signal handler
+ 			 */
+ 			if (inst2->start_time.tv_sec < time(NULL) + 2) {
++#ifdef __wasm__
++				const size_t stack_size = 128 * 1024;
++				struct progress_notify_args ca = { .pid = inst2->pid };
++				void *stack = malloc(stack_size);
++
++				if (stack) {
++					(void) clone(progress_notify_child,
++						     (char *) stack + stack_size,
++						     SIGCHLD, &ca);
++					free(stack);
++				}
++#else
+ 				if (fork() == 0) {
+ 					sleep(1);
+ 					kill(inst2->pid, SIGUSR1);
+ 					exit(FSCK_EX_OK);
+ 				}
++#endif
+ 			} else
+ 				kill(inst2->pid, SIGUSR1);
+ 			inst2->flags |= FLAG_PROGRESS;

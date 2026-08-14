@@ -27,7 +27,7 @@ programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 chcpu chmem choom chrt colcrt colrm column copyfilerange coresched
 ctrlaltdel delpart dmesg exch fallocate fdisk fincore findfs
-findmnt flock fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
+findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
 hexdump hwclock ionice irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
 lsfd lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
@@ -94,6 +94,165 @@ nsenter -t "$ns_pid" -m mountpoint -q /tmp/ns-held ||
   fail "nsenter did not observe target mount namespace"
 mountpoint -q /tmp/ns-held && fail "held mount escaped into parent"
 kill "$ns_pid" 2>/dev/null || true
+
+# Supervised mount-namespace children preserve exit status and isolate mounts.
+mkdir -p /tmp/ns-fork
+echo "unshare phase: fork"
+unshare -m --fork sh -c \
+  'mount -t tmpfs tmpfs /tmp/ns-fork || exit 90; exit 23'
+unshare_rc=$?
+[ "$unshare_rc" -eq 23 ] || fail "unshare --fork status $unshare_rc"
+mountpoint -q /tmp/ns-fork && fail "forked unshare mount escaped"
+
+# Signal forwarding reaches the supervised child and returns its exact status.
+echo "unshare phase: forward"
+for unshare_run in 1 2 3; do
+  rm -f "/tmp/unshare-forward.signal-$unshare_run"
+  UNSHARE_RUN=$unshare_run timeout 10 unshare -m --forward-signals sh -c \
+    'trap "echo TERM >\"/tmp/unshare-forward.signal-$UNSHARE_RUN\"; exit 42" TERM; kill -TERM "$PPID"; while :; do sleep .1; done'
+  unshare_rc=$?
+  [ "$unshare_rc" -eq 42 ] || fail "forward-signals run $unshare_run status $unshare_rc"
+  [ "$(cat "/tmp/unshare-forward.signal-$unshare_run")" = TERM ] ||
+    fail "forwarded TERM missing run $unshare_run"
+done
+
+# --kill-child installs the requested parent-death signal in the callback child.
+rm -f /tmp/unshare-kill.ready /tmp/unshare-kill.signal
+echo "unshare phase: kill-child"
+unshare -m --kill-child=TERM sh -c \
+  'trap "echo TERM >/tmp/unshare-kill.signal; exit" TERM; echo ready >/tmp/unshare-kill.ready; while :; do sleep .1; done' &
+unshare_parent=$!
+i=0
+while [ ! -s /tmp/unshare-kill.ready ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ -s /tmp/unshare-kill.ready ] || fail "kill-child readiness"
+kill -KILL "$unshare_parent" || fail "kill unshare supervisor"
+wait "$unshare_parent" 2>/dev/null
+i=0
+while [ ! -s /tmp/unshare-kill.signal ] && [ "$i" -lt 100 ]; do
+  sleep .05
+  i=$((i + 1))
+done
+[ "$(cat /tmp/unshare-kill.signal)" = TERM ] || fail "kill-child signal missing"
+
+# The pre-unshare helper pins the new mount namespace from its original one.
+mkdir -p /tmp/ns-persist-view
+: >/tmp/ns-persist
+echo "unshare phase: persistence"
+timeout 10 unshare --mount=/tmp/ns-persist --fork sh -c \
+  'mount -t tmpfs tmpfs /tmp/ns-persist-view && touch /tmp/ns-persist-view/inside' ||
+  fail "persist mount namespace"
+nsenter --mount=/tmp/ns-persist test -e /tmp/ns-persist-view/inside ||
+  fail "nsenter persisted mount namespace"
+[ ! -e /tmp/ns-persist-view/inside ] || fail "persisted mount escaped"
+umount /tmp/ns-persist || fail "unmount persisted namespace"
+
+# Generic fsck keeps checker process status, parallel/serialized scheduling,
+# stdin handling, wait4 statistics, signal delivery, and progress handoff.
+touch /tmp/fsck-dev1 /tmp/fsck-dev2
+cat >/tmp/fsck.test <<'EOF'
+#!/bin/sh
+dev=
+for arg do dev=$arg; done
+name=${dev##*/}
+case "$FSCK_TEST_MODE" in
+status) exit 4 ;;
+parallel)
+  touch "/tmp/fsck-start-$name"
+  other=fsck-dev1; [ "$name" = fsck-dev1 ] && other=fsck-dev2
+  i=0
+  while [ ! -e "/tmp/fsck-start-$other" ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+  [ -e "/tmp/fsck-start-$other" ] || exit 8
+  ;;
+serial)
+  [ ! -e /tmp/fsck-active ] || echo overlap >/tmp/fsck-overlap
+  touch /tmp/fsck-active
+  sleep .2
+  rm -f /tmp/fsck-active
+  echo "$name" >>/tmp/fsck-serial
+  ;;
+stdin)
+  if read line; then echo open >/tmp/fsck-stdin; else echo closed >>/tmp/fsck-stdin; fi
+  ;;
+stdin-one)
+  if read line && [ "$line" = preserved ]; then echo preserved >/tmp/fsck-stdin-one; else exit 8; fi
+  ;;
+signal)
+  trap 'echo TERM >/tmp/fsck-signal; exit 0' TERM
+  echo ready >/tmp/fsck-signal-ready
+  while :; do sleep .1; done
+  ;;
+esac
+exit 0
+EOF
+chmod +x /tmp/fsck.test
+PATH=/tmp:$PATH FSCK_TEST_MODE=status fsck -T -t test /tmp/fsck-dev1
+fsck_rc=$?
+[ "$fsck_rc" -eq 4 ] || fail "fsck checker status $fsck_rc"
+PATH=/tmp:$PATH FSCK_TEST_MODE=status fsck -T -r -t test /tmp/fsck-dev1 >/tmp/fsck-stats
+contains "$(cat /tmp/fsck-stats)" "/tmp/fsck-dev1: status 4, rss " ||
+  fail "fsck wait4 statistics: $(cat /tmp/fsck-stats)"
+rm -f /tmp/fsck-start-*
+echo "fsck phase: parallel"
+PATH=/tmp:$PATH FSCK_FORCE_ALL_PARALLEL=1 FSCK_TEST_MODE=parallel \
+  fsck -T -t test /tmp/fsck-dev1 /tmp/fsck-dev2 || fail "parallel fsck"
+rm -f /tmp/fsck-active /tmp/fsck-overlap /tmp/fsck-serial
+echo "fsck phase: serial"
+PATH=/tmp:$PATH FSCK_FORCE_ALL_PARALLEL=1 FSCK_TEST_MODE=serial \
+  fsck -T -s -t test /tmp/fsck-dev1 /tmp/fsck-dev2 || fail "serialized fsck"
+[ ! -e /tmp/fsck-overlap ] && [ "$(wc -l </tmp/fsck-serial)" -eq 2 ] ||
+  fail "fsck -s scheduling"
+rm -f /tmp/fsck-stdin
+echo "fsck phase: stdin"
+printf 'must-not-be-read\n' | PATH=/tmp:$PATH FSCK_FORCE_ALL_PARALLEL=1 \
+  FSCK_TEST_MODE=stdin fsck -T -t test /tmp/fsck-dev1 /tmp/fsck-dev2 ||
+  fail "fsck stdin handling"
+[ "$(cat /tmp/fsck-stdin)" = "closed
+closed" ] || fail "noninteractive checker stdin was not closed"
+rm -f /tmp/fsck-stdin-one
+printf 'preserved\n' | PATH=/tmp:$PATH FSCK_TEST_MODE=stdin-one \
+  fsck -T -t test /tmp/fsck-dev1 || fail "interactive fsck stdin"
+[ "$(cat /tmp/fsck-stdin-one)" = preserved ] ||
+  fail "single checker stdin was not preserved"
+rm -f /tmp/fsck-signal /tmp/fsck-signal-ready
+echo "fsck phase: signal"
+PATH=/tmp:$PATH FSCK_TEST_MODE=signal fsck -T -t test /tmp/fsck-dev1 &
+fsck_parent=$!
+(sleep 10; kill -KILL "$fsck_parent" 2>/dev/null) &
+fsck_watchdog=$!
+i=0
+while [ ! -s /tmp/fsck-signal-ready ] && [ "$i" -lt 100 ]; do sleep .05; i=$((i + 1)); done
+[ -s /tmp/fsck-signal-ready ] || fail "fsck signal child readiness"
+sleep .2
+kill -TERM "$fsck_parent" || fail "signal fsck"
+wait "$fsck_parent"
+fsck_rc=$?
+kill "$fsck_watchdog" 2>/dev/null || true
+[ "$fsck_rc" -ne 137 ] || fail "fsck signal wait timed out"
+[ "$fsck_rc" -eq 0 ] || fail "fsck signal status $fsck_rc"
+[ "$(cat /tmp/fsck-signal)" = TERM ] || fail "fsck did not signal checker"
+
+cat >/tmp/fsck.ext4 <<'EOF'
+#!/bin/sh
+dev=
+for arg do dev=$arg; done
+case "${dev##*/}" in
+fsck-dev1) sleep .2 ;;
+fsck-dev2)
+  trap 'echo USR1 >/tmp/fsck-progress; exit 0' USR1
+  sleep 5
+  exit 8
+  ;;
+esac
+EOF
+chmod +x /tmp/fsck.ext4
+rm -f /tmp/fsck-progress
+echo "fsck phase: progress"
+PATH=/tmp:$PATH FSCK_FORCE_ALL_PARALLEL=1 \
+  fsck -T -C0 -t ext4 /tmp/fsck-dev1 /tmp/fsck-dev2 || fail "fsck progress handoff"
+[ "$(cat /tmp/fsck-progress)" = USR1 ] || fail "delayed fsck progress signal"
 
 # The mmap-free dmesg file-input path parses a saved kernel log.
 printf '6,1,1000,-;util-linux dmesg fixture\n' >/tmp/kmsg
