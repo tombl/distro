@@ -58,8 +58,6 @@ stdenv.mkDerivation (finalAttrs: {
   # Current target omissions and work still being converted:
   #   * fsck remains disabled until its checker exec and delayed progress
   #     signal child are converted without weakening their lifecycle.
-  #   * fincore requires either cachestat (ENOSYS on the guest kernel) or its
-  #     mmap/mincore fallback (not available on wasm).
   #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC; CONFIG_SYSVIPC is disabled
   #     in the shipped wasm kernel configuration.
   #   * cramfs tools (selected only by zlib) use mmap as their filesystem image
@@ -101,6 +99,7 @@ stdenv.mkDerivation (finalAttrs: {
     # dmesg and libblkid use mappings as ordinary read/heap buffers. Preserve
     # their behavior with explicit allocation and reads.
     ./dmesg-no-mmap.patch
+    ./fincore-cachestat.patch
     ./libblkid-no-mmap.patch
     ./libblkid-no-fork.patch
     # Direct mount operations and the libmount inspection APIs work. Restrict
@@ -144,7 +143,6 @@ stdenv.mkDerivation (finalAttrs: {
 
     # These programs fundamentally require VM mappings or general fork
     # semantics, rather than a fork+exec operation we can express with spawn.
-    "--disable-fincore"
     "--disable-fsck"
     "--disable-ipcmk"
     "--disable-ipcrm"

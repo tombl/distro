@@ -26,7 +26,7 @@ mount -t sysfs sysfs /sys || fail "mount sysfs"
 programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 chcpu chmem choom chrt colcrt colrm column copyfilerange coresched
-ctrlaltdel delpart dmesg exch fallocate fdisk findfs
+ctrlaltdel delpart dmesg exch fallocate fdisk fincore findfs
 findmnt flock fsck.minix fsfreeze fstrim getino getopt hardlink
 hexdump hwclock ionice irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
@@ -101,6 +101,31 @@ dmesg_out=$(dmesg --file /tmp/kmsg)
 contains "$dmesg_out" "util-linux dmesg fixture" ||
   fail "dmesg did not parse a saved kmsg file"
 
+: >/tmp/kmsg-empty
+dmesg --file /tmp/kmsg-empty >/dev/null 2>&1 &&
+  fail "dmesg accepted an empty mmap replacement"
+awk 'BEGIN { for (i = 0; i < 70000; i++) printf "x"; print "" }' >/tmp/kmsg-raw
+dmesg --raw --file /tmp/kmsg-raw >/tmp/kmsg-raw.out || fail "dmesg raw file"
+cmp /tmp/kmsg-raw /tmp/kmsg-raw.out || fail "dmesg raw multi-page output"
+
+# The wasm heap path keeps look's native empty-file failure and handles a
+# sorted dictionary spanning a page whose final line has no newline.
+: >/tmp/look-empty
+look key /tmp/look-empty >/dev/null 2>&1 && fail "look accepted empty dictionary"
+awk 'BEGIN { for (i = 0; i < 10000; i++) printf "key%04d%s", i, i == 9999 ? "" : "\n" }' >/tmp/look-dict
+[ "$(look key9999 /tmp/look-dict)" = key9999 ] || fail "look page-boundary dictionary"
+
+# musl lacks a wrapper, so both paths exercise util-linux's raw cachestat
+# syscall against the guest kernel implementation.
+printf 'cached fincore fixture\n' >/tmp/fincore-file
+cat /tmp/fincore-file >/dev/null
+fincore -n -b -o FILE,PAGES,RES /tmp/fincore-file |
+  awk '$1 == "/tmp/fincore-file" && $2 >= 1 && $3 >= 23 { ok = 1 } END { exit !ok }' ||
+  fail "fincore cachestat path"
+fincore --cachestat -n -b -o FILE,PAGES,RES /tmp/fincore-file |
+  awk '$1 == "/tmp/fincore-file" && $2 >= 1 && $3 >= 23 { ok = 1 } END { exit !ok }' ||
+  fail "fincore forced cachestat path"
+
 # pager_preexec must affect only the callback child.  The fake pager records
 # its defaults and stdin; test_pager itself checks its environment after close.
 cat >/tmp/test-pager-child <<'EOF'
@@ -138,6 +163,8 @@ dd if=/dev/zero of=/tmp/minix.img bs=1024 count=256 2>/dev/null ||
 mkfs.minix /tmp/minix.img >/dev/null || fail "mkfs.minix"
 blkid_type=$(blkid -p -s TYPE -o value /tmp/minix.img)
 [ "$blkid_type" = minix ] || fail "blkid reported '$blkid_type' instead of minix"
+contains "$(wipefs /tmp/minix.img)" "minix" ||
+  fail "wipefs/libblkid did not list the minix signature"
 # ncurses is a real dependency now; ul exercises its terminfo-backed formatter.
 printf 'X\b_\n' | ul >/tmp/ul.out || fail "ul"
 contains "$(cat /tmp/ul.out)" X || fail "ul output: $(od -An -tx1 /tmp/ul.out)"
