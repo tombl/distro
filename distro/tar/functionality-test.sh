@@ -11,6 +11,9 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 # Tar's cloned children run compressors through /bin/sh and need a working
 # /dev for their pipe endpoints.
 mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
+# BusyBox's no-MMU shell re-executes itself through /proc/self/exe when it
+# starts commands, including the subshell GNU tar offers at a volume prompt.
+mount -t proc proc /proc || fail "mounting proc failed"
 
 # The remote transport deliberately retains upstream's privilege-reset path,
 # whose getpwuid/initgroups calls require an NSS entry in this minimal guest.
@@ -85,6 +88,51 @@ signal_reader=$!
 tar --use-compress-program='kill -TERM $$' -cf /tmp/compressor-signal.fifo \
   -C /tmp src >/dev/null 2>&1 && fail "reblock compressor signal was ignored"
 wait "$signal_reader" || fail "signal FIFO reader"
+
+# Feed a complete, valid archive through stdin so each case necessarily uses
+# tar's reblocking child and decompressor grandchild before that program fails.
+# A one-block record avoids trailing record padding: tar intentionally ignores
+# a decompressor's SIGPIPE after seeing the end markers, whereas these tests
+# need the helper to reach its explicit failure after delivering EOF.
+tar -b 1 -cf /tmp/plain-tight.tar -C /tmp src \
+  || fail "prepare tightly blocked decompressor input"
+cat >/tmp/decompress-exit.sh <<'EOF'
+#!/bin/sh
+cat
+echo reached >/tmp/decompress-exit.reached
+exit 19
+EOF
+chmod +x /tmp/decompress-exit.sh
+rm -f /tmp/decompress-exit.list /tmp/decompress-exit.reached
+tar --use-compress-program=/tmp/decompress-exit.sh -tf - \
+  </tmp/plain-tight.tar \
+  >/tmp/decompress-exit.list 2>/tmp/decompress-exit.err
+decompress_status=$?
+[ "$(cat /tmp/decompress-exit.reached)" = "reached" ] \
+  || fail "nonzero decompressor did not reach its exit"
+[ "$decompress_status" -ne 0 ] \
+  || fail "reblock decompressor status was ignored"
+grep -qx 'src/one.txt' /tmp/decompress-exit.list \
+  || fail "nonzero decompressor did not emit the valid archive"
+
+cat >/tmp/decompress-signal.sh <<'EOF'
+#!/bin/sh
+cat
+echo reached >/tmp/decompress-signal.reached
+kill -TERM $$
+EOF
+chmod +x /tmp/decompress-signal.sh
+rm -f /tmp/decompress-signal.list /tmp/decompress-signal.reached
+tar --use-compress-program=/tmp/decompress-signal.sh -tf - \
+  </tmp/plain-tight.tar \
+  >/tmp/decompress-signal.list 2>/tmp/decompress-signal.err
+decompress_status=$?
+[ "$(cat /tmp/decompress-signal.reached)" = "reached" ] \
+  || fail "signaled decompressor did not reach its signal"
+[ "$decompress_status" -ne 0 ] \
+  || fail "reblock decompressor signal was ignored"
+grep -qx 'src/one.txt' /tmp/decompress-signal.list \
+  || fail "signaled decompressor did not emit the valid archive"
 
 # Compressed standard streams retain tar's normal pipeline semantics.
 tar -zcf - -C /tmp src >/tmp/stdout.tar.gz || fail "gzip: compressed stdout"
@@ -169,24 +217,61 @@ tar -xM -f /tmp/volume-1.tar --info-script=/tmp/info-script.sh \
 cmp /tmp/large.bin /tmp/out-volume/large.bin \
   || fail "multi-volume content"
 
+# Without an info script, `!' at the volume-change prompt exercises
+# sys_spawn_shell.  This non-reading shell helper writes a marker and exits, so
+# tar can safely retain stdio read-ahead for the following `n' replies, which
+# give each subsequent volume a fresh name.  Sixteen bounded replies are ample
+# for this 32 KiB member.
+cat >/tmp/volume-shell <<'EOF'
+#!/bin/sh
+echo spawned >/tmp/volume-shell.invoked
+exit 0
+EOF
+chmod +x /tmp/volume-shell
+rm -f /tmp/shell-volume-*.tar /tmp/volume-shell.invoked
+{
+  echo '!'
+  volume=2
+  while [ "$volume" -le 16 ]; do
+    echo "n /tmp/shell-volume-${volume}.tar"
+    volume=$((volume + 1))
+  done
+} | SHELL=/tmp/volume-shell \
+  tar -cM -L 10 -f /tmp/shell-volume-1.tar -C /tmp large.bin \
+    >/dev/null 2>&1 \
+  || fail "multi-volume shell prompt"
+[ "$(cat /tmp/volume-shell.invoked)" = "spawned" ] \
+  || fail "multi-volume shell was not executed"
+[ -f /tmp/shell-volume-2.tar ] \
+  || fail "multi-volume shell test did not advance volumes"
+
 # Exercise the rsh/rmt protocol locally, including compressed remote
-# reblocking.  The fake transport deliberately ignores host/login arguments.
+# reblocking.  Its strict argv check proves the remote username survives the
+# callback boundary and is passed with the traditional rsh `-l USER' shape.
 cat >/tmp/fake-rsh <<'EOF'
 #!/bin/sh
+if [ "$#" -ne 4 ] || [ "$1" != "127.0.0.1" ] || [ "$2" != "-l" ] \
+   || [ "$3" != "archive-user" ] || [ -z "$4" ]; then
+  printf '%s\n' "$*" >/tmp/fake-rsh.bad-argv
+  exit 71
+fi
 echo invoked >/tmp/fake-rsh.invoked
 echo "$(id -u):$(id -g)" >/tmp/fake-rsh.ids
 exec /libexec/rmt
 EOF
 chmod +x /tmp/fake-rsh
-rm -f /tmp/remote.tar.gz /tmp/fake-rsh.invoked /tmp/fake-rsh.ids
-tar --rsh-command /tmp/fake-rsh -zcf 127.0.0.1:/tmp/remote.tar.gz -C /tmp src \
+rm -f /tmp/remote.tar.gz /tmp/fake-rsh.invoked /tmp/fake-rsh.ids \
+  /tmp/fake-rsh.bad-argv
+tar --rsh-command /tmp/fake-rsh -zcf \
+  archive-user@127.0.0.1:/tmp/remote.tar.gz -C /tmp src \
   || fail "compressed remote create"
 [ "$(cat /tmp/fake-rsh.invoked)" = "invoked" ] || fail "remote transport not used"
 [ "$(cat /tmp/fake-rsh.ids)" = "$(id -u):$(id -g)" ] \
   || fail "remote transport credentials"
 rm -rf /tmp/out-remote
 mkdir -p /tmp/out-remote
-tar --rsh-command /tmp/fake-rsh -zxf 127.0.0.1:/tmp/remote.tar.gz -C /tmp/out-remote \
+tar --rsh-command /tmp/fake-rsh -zxf \
+  archive-user@127.0.0.1:/tmp/remote.tar.gz -C /tmp/out-remote \
   || fail "compressed remote extract"
 cmp /tmp/src/dir/three.txt /tmp/out-remote/src/dir/three.txt \
   || fail "compressed remote content"

@@ -13,18 +13,20 @@ constraint.  Keep a native fork fallback so the patched source remains usable
 outside wasm builds.
 
 diff --git a/lib/rtapelib.c b/lib/rtapelib.c
-index f0fb76f..757362b 100644
+index f0fb76f..e89ce46 100644
 --- a/lib/rtapelib.c
 +++ b/lib/rtapelib.c
-@@ -54,6 +54,7 @@
+@@ -54,6 +54,9 @@
  #endif
  
  #include <signal.h>
-+#include <sched.h>
++#if defined __wasm__
++# include <sched.h>
++#endif
  
  #if HAVE_NETDB_H
  # include <netdb.h>
-@@ -378,6 +379,52 @@ sys_reset_uid_gid (void)
+@@ -378,6 +381,52 @@ sys_reset_uid_gid (void)
    return NULL;
  }
  
@@ -77,7 +79,7 @@ index f0fb76f..757362b 100644
  /* Open a file (a magnetic tape device?) on the system specified in
     FILE_NAME, as the given user. FILE_NAME has the form `[USER@]HOST:FILE'.
     OPEN_MODE is O_RDONLY, O_WRONLY, etc.  If successful, return the
-@@ -510,7 +557,31 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+@@ -510,7 +559,31 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
  	return -1;
        }
  
@@ -109,7 +111,7 @@ index f0fb76f..757362b 100644
      if (status == -1)
        {
  	int e = errno;
-@@ -525,6 +596,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+@@ -525,6 +598,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
  
      if (status == 0)
        {
@@ -117,7 +119,7 @@ index f0fb76f..757362b 100644
  	/* Child.  */
  
  	if (dup2 (to_remote[remote_pipe_number][PREAD], STDIN_FILENO) < 0
-@@ -554,6 +626,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
+@@ -554,6 +628,7 @@ rmt_open__ (const char *file_name, int open_mode, int bias,
  
  	/* In a previous version, _exit was used here instead of exit.  */
  	error (EXIT_ON_EXEC_ERROR, errno, _("Cannot execute remote shell"));
@@ -139,18 +141,20 @@ index 9451e13..eb0f936 100644
  
  void *page_aligned_alloc (void **ptr, size_t size);
 diff --git a/src/misc.c b/src/misc.c
-index 73c0464..be9d304 100644
+index 73c0464..2225712 100644
 --- a/src/misc.c
 +++ b/src/misc.c
-@@ -17,6 +17,7 @@
+@@ -17,6 +17,9 @@
  
  #define COMMON_INLINE _GL_EXTERN_INLINE
  #include <system.h>
-+#include <sched.h>
++#if defined __wasm__
++# include <sched.h>
++#endif
  #include <rmt.h>
  #include "common.h"
  #include <quotearg.h>
-@@ -1191,13 +1192,31 @@ file_removed_diag (const char *name, bool top_level,
+@@ -1191,13 +1194,31 @@ file_removed_diag (const char *name, bool top_level,
      diagfn (name);
  }
  
