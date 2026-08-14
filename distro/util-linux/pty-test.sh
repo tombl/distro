@@ -21,6 +21,12 @@ mount -t devpts devpts /dev/pts || fail "mount devpts"
 mount -t proc proc /proc || fail "mount proc"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 
+for ttymsg_run in 1 2 3; do
+  ttymsg_result=$(/test_ttymsg) || fail "ttymsg slow terminal callback run $ttymsg_run"
+  contains "$ttymsg_result" "payload=yes fd-leak=no" ||
+    fail "ttymsg callback semantics run $ttymsg_run: $ttymsg_result"
+done
+
 script -q -c 'tty && test -t 0 && test -t 1 && test -t 2 && echo SCRIPT_MARKER' \
   -T /tmp/timing /tmp/typescript </dev/null >/tmp/script.out 2>/tmp/script.err
 rc=$?

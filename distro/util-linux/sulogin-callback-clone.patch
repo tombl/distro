@@ -1,0 +1,288 @@
+diff --git a/login-utils/sulogin.c b/login-utils/sulogin.c
+index b889b49..86f7d24 100644
+--- a/login-utils/sulogin.c
++++ b/login-utils/sulogin.c
+@@ -40,6 +40,9 @@
+ #include <errno.h>
+ #include <getopt.h>
+ #include <sys/ioctl.h>
++#if defined(__wasm__) || defined(TEST_PROGRAM_SULOGIN)
++# include <sched.h>
++#endif
+ #ifdef HAVE_CRYPT_H
+ # include <crypt.h>
+ #endif
+@@ -66,6 +69,9 @@
+ #include "strutils.h"
+ #include "ttyutils.h"
+ #include "sulogin-consoles.h"
++#ifdef TEST_PROGRAM_SULOGIN
++# include "all-io.h"
++#endif
+ #define CONMAX		16
+ 
+ static unsigned int timeout;
+@@ -972,6 +978,107 @@ static void tcreset_selinux(struct list_head *consoles)
+ }
+ #endif
+ 
++static void __attribute__((__noreturn__)) service_console(struct passwd *pwd,
++							  struct console *con,
++							  int force)
++{
++	setup(con);
++	while (1) {
++		const char *passwd = pwd->pw_passwd;
++		char *answer;
++		int doshell = 0;
++		int deny = !force && locked_account_password(pwd->pw_passwd);
++
++		doprompt(passwd, con, deny);
++
++		if ((answer = getpasswd(con)) == NULL)
++			break;
++		if (deny) {
++#ifdef HAVE_EXPLICIT_BZERO
++			explicit_bzero(answer, SULOGIN_PASSWORD_BUFSIZ);
++#endif
++			exit(EXIT_FAILURE);
++		}
++
++		if (!passwd[0] || locked_account_password(passwd))
++			doshell++;
++		else {
++			const char *cryptbuf = crypt(answer, passwd);
++			if (cryptbuf == NULL)
++				warn(_("crypt failed"));
++			else if (strcmp(cryptbuf, pwd->pw_passwd) == 0)
++				doshell++;
++		}
++#ifdef HAVE_EXPLICIT_BZERO
++		explicit_bzero(answer, SULOGIN_PASSWORD_BUFSIZ);
++#endif
++		if (doshell) {
++			sushell(pwd, con);
++
++			mask_signal(SIGQUIT, SIG_IGN, &saved_sigquit);
++			mask_signal(SIGTSTP, SIG_IGN, &saved_sigtstp);
++			mask_signal(SIGINT, SIG_IGN, &saved_sigint);
++
++			fprintf(stderr, _("cannot execute su shell\n\n"));
++			break;
++		}
++		fprintf(stderr, _("Login incorrect\n\n"));
++	}
++	if (alarm_raised) {
++		tcfinal(con);
++		warnx(_("Timed out\n\n"));
++	}
++	exit(EXIT_SUCCESS);
++}
++
++#if defined(__wasm__) || defined(TEST_PROGRAM_SULOGIN)
++struct sulogin_child_args {
++	struct passwd *pwd;
++	struct console *con;
++	int force;
++};
++
++#ifdef TEST_PROGRAM_SULOGIN
++static int sulogin_test_fd = -1;
++#endif
++
++static int sulogin_child(void *data)
++{
++	struct sulogin_child_args *args = data;
++
++#ifdef TEST_PROGRAM_SULOGIN
++	if (sulogin_test_fd >= 0) {
++		int record[2] = { args->con->id, getpid() };
++
++		return write(sulogin_test_fd, record, sizeof(record)) ==
++		       (ssize_t) sizeof(record) ? EXIT_SUCCESS : EXIT_FAILURE;
++	}
++#endif
++	mask_signal(SIGCHLD, SIG_DFL, NULL);
++	dup2(args->con->fd, STDERR_FILENO);
++	service_console(args->pwd, args->con, args->force);
++}
++
++static pid_t spawn_console(struct passwd *pwd, struct console *con, int force)
++{
++	const size_t stack_size = 128 * 1024;
++	struct sulogin_child_args args = {
++		.pwd = pwd, .con = con, .force = force
++	};
++	void *stack = malloc(stack_size);
++	pid_t pid;
++
++	if (!stack) {
++		errno = ENOMEM;
++		return -1;
++	}
++	pid = clone(sulogin_child, (char *) stack + stack_size,
++		    SIGCHLD, &args);
++	free(stack);
++	return pid;
++}
++#endif
++
+ static void usage(void)
+ {
+ 	FILE *out = stdout;
+@@ -995,6 +1102,7 @@ static void usage(void)
+ 	exit(EXIT_SUCCESS);
+ }
+ 
++#ifndef TEST_PROGRAM_SULOGIN
+ int main(int argc, char **argv)
+ {
+ 	struct list_head *ptr, consoles;
+@@ -1169,7 +1277,7 @@ int main(int argc, char **argv)
+ 	{
+ 		if (ptr->next == &consoles) {
+ 			con = list_entry(ptr, struct console, entry);
+-			goto nofork;
++			service_console(pwd, con, opt_e);
+ 		}
+ 	}
+ 
+@@ -1182,66 +1290,22 @@ int main(int argc, char **argv)
+ 		if (con->flags & CON_EIO)
+ 			goto next;
+ 
+-		switch ((con->pid = fork())) {
++#ifdef __wasm__
++		con->pid = spawn_console(pwd, con, opt_e);
++#else
++		con->pid = fork();
++#endif
++		switch (con->pid) {
+ 		case 0:
+ 			mask_signal(SIGCHLD, SIG_DFL, NULL);
+ 			dup2(con->fd, STDERR_FILENO);
+-		nofork:
+-			setup(con);
+-			while (1) {
+-				const char *passwd = pwd->pw_passwd;
+-				char *answer;
+-				int doshell = 0;
+-				int deny = !opt_e && locked_account_password(pwd->pw_passwd);
+-
+-				doprompt(passwd, con, deny);
+-
+-				if ((answer = getpasswd(con)) == NULL)
+-					break;
+-				if (deny) {
+-#ifdef HAVE_EXPLICIT_BZERO
+-					explicit_bzero(answer, SULOGIN_PASSWORD_BUFSIZ);
+-#endif
+-					exit(EXIT_FAILURE);
+-				}
+-
+-				/* no password or locked account */
+-				if (!passwd[0] || locked_account_password(passwd))
+-					doshell++;
+-				else {
+-					const char *cryptbuf;
+-					cryptbuf = crypt(answer, passwd);
+-					if (cryptbuf == NULL)
+-						warn(_("crypt failed"));
+-					else if (strcmp(cryptbuf, pwd->pw_passwd) == 0)
+-						doshell++;
+-				}
+-#ifdef HAVE_EXPLICIT_BZERO
+-				explicit_bzero(answer, SULOGIN_PASSWORD_BUFSIZ);
+-#endif
+-				if (doshell) {
+-					/* sushell() unmask signals */
+-					sushell(pwd, con);
+-
+-					mask_signal(SIGQUIT, SIG_IGN, &saved_sigquit);
+-					mask_signal(SIGTSTP, SIG_IGN, &saved_sigtstp);
+-					mask_signal(SIGINT,  SIG_IGN, &saved_sigint);
+-
+-					fprintf(stderr, _("cannot execute su shell\n\n"));
+-					break;
+-				}
+-				fprintf(stderr, _("Login incorrect\n\n"));
+-			}
+-			if (alarm_raised) {
+-				tcfinal(con);
+-				warnx(_("Timed out\n\n"));
+-			}
+-			/*
+-			 * User pressed Control-D.
+-			 */
+-			exit(0);
++			service_console(pwd, con, opt_e);
+ 		case -1:
++#ifdef __wasm__
++			warn(_("child process creation failed"));
++#else
+ 			warn(_("fork failed"));
++#endif
+ 			FALLTHROUGH;
+ 		default:
+ 			break;
+@@ -1334,3 +1398,39 @@ int main(int argc, char **argv)
+ 
+ 	return EXIT_SUCCESS;
+ }
++#else
++int main(void)
++{
++	struct passwd pwd = { 0 };
++	struct console consoles[2] = { 0 };
++	int records[4], pipes[2], status;
++	pid_t pids[2];
++
++	if (pipe(pipes) != 0)
++		err(EXIT_FAILURE, "pipe");
++	sulogin_test_fd = pipes[1];
++	consoles[0].id = 3;
++	consoles[1].id = 7;
++	pids[0] = spawn_console(&pwd, &consoles[0], 0);
++	pids[1] = spawn_console(&pwd, &consoles[1], 0);
++	if (pids[0] < 0 || pids[1] < 0 || pids[0] == pids[1])
++		err(EXIT_FAILURE, "clone");
++	close(pipes[1]);
++	if (read_all(pipes[0], (char *) records, sizeof(records)) !=
++	    (ssize_t) sizeof(records))
++		err(EXIT_FAILURE, "child records");
++	for (size_t i = 0; i < ARRAY_SIZE(pids); i++)
++		if (waitpid(pids[i], &status, 0) != pids[i] ||
++		    !WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
++			err(EXIT_FAILURE, "child status");
++	if (!((records[0] == 3 && records[2] == 7) ||
++	      (records[0] == 7 && records[2] == 3)) ||
++	    !((records[1] == pids[0] || records[1] == pids[1]) &&
++	      (records[3] == pids[0] || records[3] == pids[1]) &&
++	      records[1] != records[3]))
++		errx(EXIT_FAILURE, "console dispatch");
++	printf("parent=%d children=%d,%d consoles=%d,%d\n", getpid(),
++	       pids[0], pids[1], records[0], records[2]);
++	return EXIT_SUCCESS;
++}
++#endif
+diff --git a/login-utils/Makemodule.am b/login-utils/Makemodule.am
+index 7c2add6..4c41d14 100644
+--- a/login-utils/Makemodule.am
++++ b/login-utils/Makemodule.am
+@@ -50,6 +50,16 @@ check_PROGRAMS += test_consoles
+ test_consoles_SOURCES = login-utils/sulogin-consoles.c
+ test_consoles_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM
+ test_consoles_LDADD = $(LDADD) libcommon.la
++check_PROGRAMS += test_sulogin
++test_sulogin_SOURCES = \
++	login-utils/sulogin.c \
++	login-utils/sulogin-consoles.c \
++	login-utils/sulogin-consoles.h
++test_sulogin_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_SULOGIN
++test_sulogin_LDADD = $(LDADD) libcommon.la
++if HAVE_LIBCRYPT
++test_sulogin_LDADD += -lcrypt
++endif
+ endif # BUILD_SULOGIN
+ 
+ 

@@ -1,23 +1,104 @@
-WebAssembly has no fork.  Removing the old initramfs synchronously preserves
-switch_root's operation; the native implementation merely uses a child so the
-new init can be started while that cleanup proceeds.
-
+diff --git a/sys-utils/switch_root.c b/sys-utils/switch_root.c
+index 69ae770..31dce14 100644
 --- a/sys-utils/switch_root.c
 +++ b/sys-utils/switch_root.c
-@@ -191,6 +191,20 @@ static int switchroot(const char *newroot)
+@@ -24,6 +24,9 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <sys/statfs.h>
++#ifdef TEST_PROGRAM_SWITCH_ROOT
++# include <sys/wait.h>
++#endif
+ #include <sys/param.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+@@ -34,6 +37,10 @@
+ #include <ctype.h>
+ #include <dirent.h>
+ #include <getopt.h>
++#if defined(__wasm__) || defined(TEST_PROGRAM_SWITCH_ROOT)
++# include <sched.h>
++# include <signal.h>
++#endif
+ 
+ #include "c.h"
+ #include "nls.h"
+@@ -123,6 +130,64 @@ done:
+ 	return rc;
+ }
+ 
++#if defined(__wasm__) || defined(TEST_PROGRAM_SWITCH_ROOT)
++struct cleanup_child_args {
++	int cfd;
++};
++
++#ifdef TEST_PROGRAM_SWITCH_ROOT
++static int cleanup_test_ready = -1;
++static int cleanup_test_release = -1;
++static int cleanup_test_ready_read = -1;
++static int cleanup_test_release_write = -1;
++#endif
++
++static int cleanup_old_root(void *data)
++{
++	struct cleanup_child_args *args = data;
++	struct statfs stfs;
++
++#ifdef TEST_PROGRAM_SWITCH_ROOT
++	if (cleanup_test_ready >= 0) {
++		char byte = 'R';
++
++		close(cleanup_test_ready_read);
++		close(cleanup_test_release_write);
++		if (write(cleanup_test_ready, &byte, 1) != 1 ||
++		    read(cleanup_test_release, &byte, 1) != 1)
++			return EXIT_FAILURE;
++	}
++#endif
++
++	if (fstatfs(args->cfd, &stfs) == 0 &&
++	    (F_TYPE_EQUAL(stfs.f_type, STATFS_RAMFS_MAGIC) ||
++	     F_TYPE_EQUAL(stfs.f_type, STATFS_TMPFS_MAGIC)))
++		recursiveRemove(args->cfd);
++	else {
++		warn(_("old root filesystem is not an initramfs"));
++		close(args->cfd);
++	}
++	exit(EXIT_SUCCESS);
++}
++
++static pid_t spawn_cleanup(int cfd)
++{
++	const size_t stack_size = 128 * 1024;
++	struct cleanup_child_args args = { .cfd = cfd };
++	void *stack = malloc(stack_size);
++	pid_t pid;
++
++	if (!stack) {
++		errno = ENOMEM;
++		return -1;
++	}
++	pid = clone(cleanup_old_root, (char *) stack + stack_size,
++		    SIGCHLD, &args);
++	free(stack);
++	return pid;
++}
++#endif
++
+ static int switchroot(const char *newroot)
+ {
+ 	/*  Don't try to unmount the old "/", there's no way to do it. */
+@@ -191,6 +256,17 @@ static int switchroot(const char *newroot)
  		goto fail;
  	}
  
 +#ifdef __wasm__
 +	{
-+		struct statfs stfs;
-+
-+		if (fstatfs(cfd, &stfs) == 0 &&
-+		    (F_TYPE_EQUAL(stfs.f_type, STATFS_RAMFS_MAGIC) ||
-+		     F_TYPE_EQUAL(stfs.f_type, STATFS_TMPFS_MAGIC)))
-+			recursiveRemove(cfd);
-+		else
-+			warn(_("old root filesystem is not an initramfs"));
++		pid_t pid = spawn_cleanup(cfd);
++		if (pid < 0) {
++			warn(_("clone failed"));
++			goto fail;
++		}
 +		close(cfd);
 +		return 0;
 +	}
@@ -25,7 +106,7 @@ new init can be started while that cleanup proceeds.
  	switch (fork()) {
  	case 0: /* child */
  	{
-@@ -216,6 +228,7 @@ static int switchroot(const char *newroot)
+@@ -213,6 +289,7 @@ static int switchroot(const char *newroot)
  		close(cfd);
  		return 0;
  	}
@@ -33,3 +114,81 @@ new init can be started while that cleanup proceeds.
  
  fail:
  	if (cfd >= 0)
+@@ -237,6 +314,7 @@ static void __attribute__((__noreturn__)) usage(void)
+ 	exit(EXIT_SUCCESS);
+ }
+ 
++#ifndef TEST_PROGRAM_SWITCH_ROOT
+ int main(int argc, char *argv[])
+ {
+ 	char *newroot, *init, **initargs;
+@@ -281,3 +359,54 @@ int main(int argc, char *argv[])
+ 	execv(init, initargs);
+ 	errexec(init);
+ }
++#else
++int main(void)
++{
++	char testdir[] = "/tmp/test-switch-root.XXXXXX";
++	char sentinel[PATH_MAX];
++	int ready[2], release[2], status;
++	int fd, sentinel_fd;
++	char byte;
++	pid_t pid;
++
++	if (!mkdtemp(testdir) ||
++	    mount("tmpfs", testdir, "tmpfs", 0, "size=1m") != 0)
++		err(EXIT_FAILURE, "dedicated test tmpfs");
++	if (snprintf(sentinel, sizeof(sentinel), "%s/sentinel", testdir) < 0 ||
++	    mkdir(sentinel, 0700) != 0)
++		err(EXIT_FAILURE, "sentinel directory");
++	if (strlcat(sentinel, "/file", sizeof(sentinel)) >= sizeof(sentinel))
++		errx(EXIT_FAILURE, "sentinel path");
++	sentinel_fd = open(sentinel, O_WRONLY | O_CREAT | O_EXCL, 0600);
++	if (sentinel_fd < 0)
++		err(EXIT_FAILURE, "sentinel file");
++	close(sentinel_fd);
++	fd = open(testdir, O_RDONLY | O_DIRECTORY);
++	if (fd < 0 || pipe(ready) != 0 || pipe(release) != 0)
++		err(EXIT_FAILURE, "test setup");
++	cleanup_test_ready = ready[1];
++	cleanup_test_release = release[0];
++	cleanup_test_ready_read = ready[0];
++	cleanup_test_release_write = release[1];
++	pid = spawn_cleanup(fd);
++	close(ready[1]);
++	close(release[0]);
++	close(fd);
++	if (pid < 0)
++		err(EXIT_FAILURE, "clone");
++	if (read(ready[0], &byte, 1) != 1 || byte != 'R')
++		err(EXIT_FAILURE, "child readiness");
++	byte = 'G';
++	if (write(release[1], &byte, 1) != 1)
++		err(EXIT_FAILURE, "child release");
++	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
++	    WEXITSTATUS(status) != EXIT_SUCCESS)
++		err(EXIT_FAILURE, "child status");
++	if (access(sentinel, F_OK) == 0 || errno != ENOENT)
++		errx(EXIT_FAILURE, "sentinel was not removed");
++	if (umount(testdir) != 0 || rmdir(testdir) != 0)
++		err(EXIT_FAILURE, "test tmpfs cleanup");
++	printf("parent=%d child=%d concurrent=yes\n", getpid(), pid);
++	return EXIT_SUCCESS;
++}
++#endif
+diff --git a/sys-utils/Makemodule.am b/sys-utils/Makemodule.am
+index ef7bc0b..6e74f8d 100644
+--- a/sys-utils/Makemodule.am
++++ b/sys-utils/Makemodule.am
+@@ -513,6 +513,10 @@ sbin_PROGRAMS += switch_root
+ MANPAGES += sys-utils/switch_root.8
+ dist_noinst_DATA += sys-utils/switch_root.8.adoc
+ switch_root_SOURCES = sys-utils/switch_root.c
++check_PROGRAMS += test_switch_root
++test_switch_root_SOURCES = sys-utils/switch_root.c
++test_switch_root_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_SWITCH_ROOT
++test_switch_root_LDADD = $(LDADD) libcommon.la
+ endif
+ 
+ if BUILD_UNSHARE

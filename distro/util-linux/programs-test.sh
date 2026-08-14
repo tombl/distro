@@ -157,6 +157,17 @@ restricted_denied=$(/test_fileutils --restricted-path 1000 /tmp/restricted-root/
 [ "$restricted_denied" = "parent=1000:0 access=0 errno=13 result=(null)" ] ||
   fail "restricted-path errno semantics: $restricted_denied"
 
+# Process-only setup remains child-local and asynchronous on wasm.  These
+# private upstream-source helpers exercise the same callback launchers used by
+# switch_root cleanup and sulogin consoles.  ttymsg runs in the PTY check.
+switch_cleanup=$(/test_switch_root) || fail "switch_root cleanup callback"
+contains "$switch_cleanup" "concurrent=yes" ||
+  fail "switch_root cleanup semantics: $switch_cleanup"
+sulogin_result=$(/test_sulogin) || fail "sulogin console callbacks"
+contains "$sulogin_result" "consoles=3,7" ||
+  contains "$sulogin_result" "consoles=7,3" ||
+  fail "sulogin console dispatch: $sulogin_result"
+
 # Build and probe a real filesystem image through mkfs.minix and libblkid.
 dd if=/dev/zero of=/tmp/minix.img bs=1024 count=256 2>/dev/null ||
   fail "creating minix image"

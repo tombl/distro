@@ -18,20 +18,4 @@ Keep programs whose useful foreground operation does not require fork.
  	set_tty(ctl);
  	print_separator('-', 24);
  	output_prompt(ctl, filename);
---- a/login-utils/sulogin.c
-+++ b/login-utils/sulogin.c
-@@ -1182,7 +1182,13 @@ int main(int argc, char **argv)
- 		if (con->flags & CON_EIO)
- 			goto next;
- 
--		switch ((con->pid = fork())) {
-+#ifdef __wasm__
-+		/* The wasm guest has one console; service it in this process. */
-+		con->pid = 0;
-+#else
-+		con->pid = fork();
-+#endif
-+		switch (con->pid) {
- 		case 0:
- 			mask_signal(SIGCHLD, SIG_DFL, NULL);
- 			dup2(con->fd, STDERR_FILENO);
+

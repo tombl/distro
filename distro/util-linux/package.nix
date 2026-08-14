@@ -20,6 +20,7 @@ stdenv.mkDerivation (finalAttrs: {
   inherit src;
   nativeBuildInputs = [
     pkgs.autoconf
+    pkgs.automake
     pkgs.pkg-config
   ];
   buildInputs = [
@@ -31,23 +32,25 @@ stdenv.mkDerivation (finalAttrs: {
   ];
   postPatch = ''
     patchShebangs tools
+    # configure.ac and the included Makemodule.am fragments are patched, so
+    # regenerate both configure and Makefile.in from the shipped macro set.
     autoconf
-    # Patching configure.ac makes it newer than the shipped generated files, so
-    # make's maintainer rules would try to re-run aclocal/automake (absent, and
-    # unneeded: no new macros, AM_CONDITIONALs or AC_DEFINEs were added). Touch
-    # the generated files newest-last so they all read as up to date.
+    automake
+    # Keep the complete generated set newer than its inputs so make's
+    # maintainer rules do not try to regenerate only part of it during build.
     touch aclocal.m4 config.h.in
     find . -name Makefile.in -exec touch {} +
     touch configure
   '';
 
   postBuild = ''
-    make test_fileutils test_pager
+    make test_fileutils test_pager test_switch_root test_ttymsg test_sulogin
   '';
 
   postInstall = ''
     mkdir -p "$out/libexec/util-linux-tests"
-    cp test_fileutils test_pager "$out/libexec/util-linux-tests/"
+    cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
+      "$out/libexec/util-linux-tests/"
   '';
 
   # Upstream's default suite is the baseline. BusyBox overlap is deliberately
@@ -72,6 +75,7 @@ stdenv.mkDerivation (finalAttrs: {
   patches = [
     ./configure-platform-programs.patch
     ./foreground-only.patch
+    ./sulogin-callback-clone.patch
     ./readprofile-posix-spawn.patch
     ./namespace-no-fork.patch
     ./switch-root-no-fork.patch
@@ -180,6 +184,18 @@ stdenv.mkDerivation (finalAttrs: {
             };
             "/test_pager" = {
               source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_pager";
+              mode = "0755";
+            };
+            "/test_switch_root" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_switch_root";
+              mode = "0755";
+            };
+            "/test_ttymsg" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_ttymsg";
+              mode = "0755";
+            };
+            "/test_sulogin" = {
+              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_sulogin";
               mode = "0755";
             };
           };
