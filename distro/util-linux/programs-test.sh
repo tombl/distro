@@ -60,6 +60,28 @@ fstype=$(findmnt -n -o FSTYPE /mnt)
 [ "$fstype" = tmpfs ] || fail "findmnt reported '$fstype' instead of tmpfs"
 umount /mnt || fail "umount tmpfs"
 
+# Mount namespaces remain available even though optional namespace families
+# are disabled in the kernel configuration.  A mount made by unshare must not
+# escape, and nsenter must observe a mount held by another process.
+mkdir -p /tmp/ns-direct /tmp/ns-held
+unshare -m sh -c 'mount -t tmpfs tmpfs /tmp/ns-direct && mountpoint -q /tmp/ns-direct' ||
+  fail "direct mount namespace"
+mountpoint -q /tmp/ns-direct && fail "unshared mount escaped into parent"
+
+setsid --fork unshare -m sh -c \
+  'mount -t tmpfs tmpfs /tmp/ns-held || exit; echo $$ >/tmp/ns.pid; sleep 20'
+i=0
+while [ ! -s /tmp/ns.pid ] && [ "$i" -lt 50 ]; do
+  sleep 1
+  i=$((i + 1))
+done
+[ -s /tmp/ns.pid ] || fail "held namespace did not start"
+ns_pid=$(cat /tmp/ns.pid)
+nsenter -t "$ns_pid" -m mountpoint -q /tmp/ns-held ||
+  fail "nsenter did not observe target mount namespace"
+mountpoint -q /tmp/ns-held && fail "held mount escaped into parent"
+kill "$ns_pid" 2>/dev/null || true
+
 # The mmap-free dmesg file-input path parses a saved kernel log.
 printf '6,1,1000,-;util-linux dmesg fixture\n' >/tmp/kmsg
 dmesg_out=$(dmesg --file /tmp/kmsg)
@@ -106,6 +128,30 @@ blkid_type=$(blkid -p -s TYPE -o value /tmp/minix.img)
 # ncurses is a real dependency now; ul exercises its terminfo-backed formatter.
 printf 'X\b_\n' | ul >/tmp/ul.out || fail "ul"
 contains "$(cat /tmp/ul.out)" X || fail "ul output: $(od -An -tx1 /tmp/ul.out)"
+
+# Compressed maps use zcat through posix_spawn.  The synthetic profile has a
+# 16-byte sampling step and one sample attributed to fixture_symbol.
+cat >/tmp/System.map <<'EOF'
+00000010 T _stext
+00000020 T fixture_symbol
+00000030 T _etext
+EOF
+gzip -c /tmp/System.map >/tmp/System.map.gz || fail "compress System.map"
+printf '\020\000\000\000\007\000\000\000' >/tmp/profile
+readprofile -m /tmp/System.map.gz -p /tmp/profile >/tmp/readprofile.out ||
+  fail "readprofile compressed map"
+contains "$(cat /tmp/readprofile.out)" "fixture_symbol" ||
+  fail "readprofile did not parse compressed map: $(cat /tmp/readprofile.out)"
+
+# Closing descriptors 0 and 1 makes pipe() allocate stdout as its write end.
+# The spawn actions must leave that already-correct descriptor open for zcat.
+sh -c 'exec 0<&- 1>&-; readprofile -m /tmp/System.map.gz -p /tmp/profile' \
+  2>/tmp/readprofile-lowfd.err
+lowfd_rc=$?
+[ "$lowfd_rc" -eq 1 ] ||
+  fail "readprofile low-fd exited $lowfd_rc: $(cat /tmp/readprofile-lowfd.err)"
+[ "$(cat /tmp/readprofile-lowfd.err)" = "readprofile: write error" ] ||
+  fail "readprofile low-fd failed before final output: $(cat /tmp/readprofile-lowfd.err)"
 
 echo "::vm-test::pass"
 while :; do :; done

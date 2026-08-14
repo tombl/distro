@@ -1,9 +1,10 @@
-Keep the direct namespace operations and reject only options which need a
-forked intermediate process.
+Keep direct mount-namespace operations and reject only modes which require an
+intermediate process.  The wasm kernel retains the initial mount namespace and
+supports CLONE_NEWNS/setns even though optional namespace families are disabled.
 
 --- a/sys-utils/nsenter.c
 +++ b/sys-utils/nsenter.c
-@@ -542,6 +542,9 @@ static int is_usable_namespace(pid_t target, const struct namespace_file *nsfile
+@@ -543,6 +543,9 @@
  
  static void continue_as_child(void)
  {
@@ -13,7 +14,7 @@ forked intermediate process.
  	pid_t child;
  	int status;
  	pid_t ret;
-@@ -576,6 +579,7 @@ static void continue_as_child(void)
+@@ -575,6 +578,7 @@
  		kill(getpid(), WTERMSIG(status));
  	}
  	exit(EXIT_FAILURE);
@@ -23,7 +24,7 @@ forked intermediate process.
  static int parse_pid_str(char *pidstr, pid_t *ns_target_pid)
 --- a/sys-utils/unshare.c
 +++ b/sys-utils/unshare.c
-@@ -296,7 +296,11 @@ static pid_t fork_and_wait(int *fd)
+@@ -296,7 +296,11 @@
  	if (*fd < 0)
  		err(EXIT_FAILURE, _("eventfd failed"));
  
@@ -35,7 +36,7 @@ forked intermediate process.
  	if (pid < 0)
  		err(EXIT_FAILURE, _("fork failed"));
  
-@@ -694,7 +698,11 @@ static pid_t map_ids_from_child(int *fd, struct map_range *usermap,
+@@ -694,7 +698,11 @@
  
  	/* Avoid forking more than we need to */
  	if (usermap && groupmap) {
@@ -47,13 +48,12 @@ forked intermediate process.
  		if (pid < 0)
  			err(EXIT_FAILURE, _("fork failed"));
  		if (pid)
-@@ -1157,7 +1165,11 @@ int main(int argc, char *argv[])
- 		}
+@@ -1157,7 +1165,11 @@
  #endif
  		/* force child forking before mountspace binding so
  		 * pid_for_children is populated */
 +#ifdef __wasm__
-+		errx(EXIT_FAILURE, _("--fork and PID namespace modes require fork"));
++		errx(EXIT_FAILURE, _("requested child-management mode requires fork"));
 +#else
  		pid = fork();
 +#endif

@@ -1,0 +1,72 @@
+Preserve compressed System.map input by spawning zcat with pipe file actions.
+
+--- a/sys-utils/readprofile.c
++++ b/sys-utils/readprofile.c
+@@ -44,6 +44,9 @@
+ #include <sys/utsname.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
++#ifdef __wasm__
++# include <spawn.h>
++#endif
+ 
+ #include "c.h"
+ #include "strutils.h"
+@@ -53,6 +56,10 @@
+ 
+ #define S_LEN 128
+ 
++#ifdef __wasm__
++extern char **environ;
++#endif
++
+ /* These are the defaults */
+ static char defaultmap[]="/boot/System.map";
+ static char defaultpro[]="/proc/profile";
+@@ -65,10 +72,38 @@
+ 		int fd[2];
+ 		pid_t pid;
+ 		FILE *fp;
++#ifdef __wasm__
++		posix_spawn_file_actions_t actions;
++		char *argv[] = { (char *) "zcat", name, NULL };
++		int rc;
++#endif
+ 
+ 		if (pipe(fd) != 0)
+ 			err(EXIT_FAILURE, _("pipe failed"));
+ 
++#ifdef __wasm__
++		rc = posix_spawn_file_actions_init(&actions);
++		if (rc) {
++			close(fd[0]);
++			close(fd[1]);
++			errno = rc;
++			err(EXIT_FAILURE, _("failed to initialize spawn actions"));
++		}
++		rc = posix_spawn_file_actions_addclose(&actions, fd[0]);
++		if (!rc && fd[1] != STDOUT_FILENO)
++			rc = posix_spawn_file_actions_adddup2(&actions, fd[1], STDOUT_FILENO);
++		if (!rc && fd[1] != STDOUT_FILENO)
++			rc = posix_spawn_file_actions_addclose(&actions, fd[1]);
++		if (!rc)
++			rc = posix_spawnp(&pid, "zcat", &actions, NULL, argv, environ);
++		posix_spawn_file_actions_destroy(&actions);
++		if (rc) {
++			close(fd[0]);
++			close(fd[1]);
++			errno = rc;
++			err(EXIT_FAILURE, _("failed to execute zcat"));
++		}
++#else
+ 		pid = fork();
+ 		if (pid < 0)
+ 			err(EXIT_FAILURE, _("fork failed"));
+@@ -82,6 +117,7 @@
+ 			execlp("zcat", "zcat", name, NULL);
+ 			err(EXIT_FAILURE, _("failed to execute zcat"));
+ 		}
++#endif
+ 
+ 		close(fd[1]);
+ 		fp = fdopen(fd[0], "r");

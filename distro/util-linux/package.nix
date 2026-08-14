@@ -76,6 +76,7 @@ stdenv.mkDerivation (finalAttrs: {
   patches = [
     ./configure-platform-programs.patch
     ./foreground-only.patch
+    ./readprofile-posix-spawn.patch
     ./namespace-no-fork.patch
     ./switch-root-no-fork.patch
     ./wall-no-fork.patch
