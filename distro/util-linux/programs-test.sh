@@ -23,20 +23,24 @@ mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
 mount -t proc proc /proc || fail "mount proc"
 mount -t sysfs sysfs /sys || fail "mount sysfs"
 
+[ ! -e /libexec/util-linux-tests ] ||
+  fail "private util-linux test helpers leaked into the production output"
+[ ! -d /proc/sysvipc ] ||
+  fail "System V IPC proc interface unexpectedly exists"
+
 programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
-chcpu chmem choom chrt colcrt colrm column copyfilerange coresched
+choom chrt colcrt colrm column copyfilerange
 ctrlaltdel delpart dmesg exch fallocate fdisk fincore findfs
 findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
-hexdump hwclock ionice irqtop isosize kill last lastb
+hexdump ionice irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
 lsfd lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
 mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei nologin nsenter partx pipesz
-pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake
+pivot_root prlimit readprofile rename renice resizepart rev
 script scriptlive scriptreplay setarch setpgid setsid setterm sfdisk sulogin
-swaplabel switch_root taskset uclampset ul umount uname26
-unshare utmpdump uuidd uuidgen uuidparse waitpid wall wdctl whereis wipefs
-zramctl
+swaplabel switch_root taskset ul umount uname26
+unshare utmpdump uuidd uuidgen uuidparse waitpid wall whereis wipefs
 '
 
 for program in $programs; do
@@ -47,7 +51,8 @@ for program in $programs; do
   [ -n "$path" ] || fail "$program is missing"
 done
 
-for program in swapon swapoff eject fadvise ldattach; do
+for program in swapon swapoff eject fadvise ldattach ipcmk ipcrm ipcs lsipc \
+  coresched uclampset zramctl rfkill wdctl hwclock rtcwake chmem chcpu; do
   [ ! -e "/bin/$program" ] && [ ! -e "/sbin/$program" ] ||
     fail "$program should be disabled for the target kernel/device configuration"
 done
@@ -65,6 +70,7 @@ wait_uuidd_ready() {
 
 wait_uuidd_exit() {
   pid=$1
+  label=$2
   i=0
   while kill -0 "$pid" 2>/dev/null &&
     [ "$(awk '{ print $3 }' "/proc/$pid/stat" 2>/dev/null)" != Z ] &&
@@ -72,7 +78,15 @@ wait_uuidd_exit() {
     sleep .05
     i=$((i + 1))
   done
-  [ "$i" -lt 100 ] || fail "uuidd process $pid did not exit"
+  [ "$i" -lt 100 ] || fail "uuidd $label process $pid did not exit"
+}
+
+reap_uuidd_foreground() {
+  pid=$1
+  label=$2
+  wait "$pid"
+  rc=$?
+  [ "$rc" -eq 0 ] || fail "uuidd $label exit status $rc"
 }
 
 check_uuid() {
@@ -201,6 +215,8 @@ wait "$waitpid_child" 2>/dev/null
 
 # The foreground service must answer real protocol requests, ignore SIGPIPE,
 # and remove both ownership files on a terminating signal.
+mkdir -p /var/lib/libuuid || fail "create uuidd clock state directory"
+echo "uuidd phase: foreground TERM"
 uuidd_socket=/tmp/uuidd-foreground.sock
 uuidd_pidfile=/tmp/uuidd-foreground.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
@@ -222,7 +238,8 @@ sleep .1
 kill -0 "$uuidd_pid" 2>/dev/null || fail "uuidd exited on SIGPIPE"
 check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 kill -TERM "$uuidd_pid" || fail "signal uuidd SIGTERM"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" foreground-TERM
+reap_uuidd_foreground "$uuidd_launcher_pid" SIGTERM
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd SIGTERM did not clean socket and pidfile"
 
@@ -230,24 +247,28 @@ wait_uuidd_exit "$uuidd_pid"
 # environment.  Use a normal daemon launch to exercise HUP with its real
 # startup disposition; ALRM does not have that shell-job exception.
 uuidd_socket=/tmp/uuidd-HUP.sock
+echo "uuidd phase: daemon HUP"
 uuidd_pidfile=/tmp/uuidd-HUP.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd for SIGHUP"
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -HUP "$uuidd_pid" || fail "signal uuidd SIGHUP"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" daemon-HUP
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd SIGHUP did not clean socket and pidfile"
 
 uuidd_socket=/tmp/uuidd-ALRM.sock
+echo "uuidd phase: foreground ALRM"
 uuidd_pidfile=/tmp/uuidd-ALRM.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -F -s "$uuidd_socket" -p "$uuidd_pidfile" &
+uuidd_launcher_pid=$!
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" foreground-ALRM
+reap_uuidd_foreground "$uuidd_launcher_pid" SIGALRM
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd SIGALRM did not clean socket and pidfile"
 
@@ -255,38 +276,45 @@ wait_uuidd_exit "$uuidd_pid"
 # INT on the normally launched daemon child, whose inherited disposition is
 # the service's real startup disposition.
 uuidd_socket=/tmp/uuidd-int.sock
+echo "uuidd phase: daemon INT"
 uuidd_pidfile=/tmp/uuidd-int.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd for SIGINT"
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" daemon-INT
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd SIGINT did not clean socket and pidfile"
 
 # Inactivity is a normal clean shutdown. A timeout larger than poll(2)'s
 # millisecond range must retain its full duration rather than wrapping.
 uuidd_socket=/tmp/uuidd-timeout.sock
+echo "uuidd phase: foreground inactivity"
 uuidd_pidfile=/tmp/uuidd-timeout.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -F -T 1 -s "$uuidd_socket" -p "$uuidd_pidfile" &
+uuidd_launcher_pid=$!
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" foreground-inactivity
+reap_uuidd_foreground "$uuidd_launcher_pid" inactivity
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd inactivity did not clean socket and pidfile"
 uuidd_socket=/tmp/uuidd-long-timeout.sock
+echo "uuidd phase: foreground long timeout"
 uuidd_pidfile=/tmp/uuidd-long-timeout.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -F -T 4294967295 -s "$uuidd_socket" -p "$uuidd_pidfile" &
+uuidd_launcher_pid=$!
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
 uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
 sleep .1
 kill -0 "$uuidd_pid" 2>/dev/null || fail "uuidd long timeout wrapped"
 check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 kill -TERM "$uuidd_pid" || fail "stop uuidd long-timeout service"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" foreground-long-timeout
+reap_uuidd_foreground "$uuidd_launcher_pid" long-timeout
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd long-timeout shutdown did not clean service files"
 
@@ -294,6 +322,7 @@ wait_uuidd_exit "$uuidd_pid"
 # reparented, is not its session leader, runs from / with /dev/null stdio, and
 # remains a fully functional protocol server until uuidd --kill shuts it down.
 uuidd_socket=/tmp/uuidd-daemon.sock
+echo "uuidd phase: daemon shutdown"
 uuidd_pidfile=/tmp/uuidd-daemon.pid
 rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd daemon"
@@ -312,7 +341,7 @@ done
 check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
 check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -t)" 1
 timeout 5 uuidd -k -s "$uuidd_socket" || fail "stop uuidd daemon"
-wait_uuidd_exit "$uuidd_pid"
+wait_uuidd_exit "$uuidd_pid" daemon-shutdown
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd daemon shutdown did not clean socket and pidfile"
 
@@ -477,6 +506,12 @@ done
 ns_pid=$(cat /tmp/ns.pid)
 nsenter -t "$ns_pid" -m mountpoint -q /tmp/ns-held ||
   fail "nsenter did not observe target mount namespace"
+ns_inode=$(stat -Lc %i "/proc/$ns_pid/ns/mnt") ||
+  fail "stat held mount namespace"
+lsns -t mnt -n -o NS,NPROCS,PID -p "$ns_pid" |
+  awk -v inode="$ns_inode" -v pid="$ns_pid" \
+    '$1 == inode && $2 >= 1 && $3 == pid { found = 1 } END { exit !found }' ||
+  fail "lsns did not report held namespace inode $ns_inode with PID $ns_pid"
 mountpoint -q /tmp/ns-held && fail "held mount escaped into parent"
 kill "$ns_pid" 2>/dev/null || true
 

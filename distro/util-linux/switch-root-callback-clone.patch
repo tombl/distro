@@ -1,3 +1,9 @@
+switch_root: preserve concurrent old-root cleanup on wasm
+
+Keep deletion isolated in the original asynchronous child by running the
+bounded cleanup continuation with private callback clone on wasm. Native
+builds retain the upstream fork path.
+
 diff --git a/sys-utils/switch_root.c b/sys-utils/switch_root.c
 index 69ae770..31dce14 100644
 --- a/sys-utils/switch_root.c

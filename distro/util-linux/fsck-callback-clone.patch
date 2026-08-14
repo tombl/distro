@@ -1,3 +1,9 @@
+fsck: preserve checker process semantics with callback clone on wasm
+
+Run checker exec continuations and the delayed progress notifier in private
+copy-clone children on wasm. The parent retains upstream scheduling, stdin,
+wait4/rusage, status, and signal behavior; native builds retain fork.
+
 diff --git a/disk-utils/fsck.c b/disk-utils/fsck.c
 index 5e710ec..b69f535 100644
 --- a/disk-utils/fsck.c

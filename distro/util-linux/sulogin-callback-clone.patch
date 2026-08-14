@@ -1,3 +1,9 @@
+sulogin: preserve per-console service children on wasm
+
+Each configured console still receives an independent login continuation.
+Use private copy-clone children on wasm and retain the native fork path,
+including status and signal handling in the parent.
+
 diff --git a/login-utils/sulogin.c b/login-utils/sulogin.c
 index b889b49..86f7d24 100644
 --- a/login-utils/sulogin.c

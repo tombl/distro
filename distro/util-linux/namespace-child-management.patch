@@ -1,3 +1,10 @@
+namespace tools: preserve supported child management on wasm
+
+Mount namespaces are available in the target kernel, so retain direct and
+supervised unshare operation plus mount-namespace persistence with synchronized
+callback children. Reject only nsenter continuations tied to unavailable user
+and PID namespace behavior; native builds retain fork.
+
 diff --git a/sys-utils/nsenter.c b/sys-utils/nsenter.c
 index 0fc1d76..5b6a936 100644
 --- a/sys-utils/nsenter.c

@@ -1,40 +1,26 @@
---- a/configure.ac
-+++ b/configure.ac
-@@ -2269,12 +2269,18 @@
-   [], [UL_DEFAULT_ENABLE([scriptutils], [check])]
- )
- 
--UL_ENABLE_ALIAS([script], [scriptutils])
-+AC_ARG_ENABLE([script],
-+  AS_HELP_STRING([--disable-script], [do not build script]),
-+  [], [UL_DEFAULT_ENABLE([script], [check])]
-+)
- UL_BUILD_INIT([script])
- UL_REQUIRES_HAVE([script], [pty], [openpty function (libutil)])
- AM_CONDITIONAL([BUILD_SCRIPT], [test "x$build_script" = xyes])
- 
--UL_ENABLE_ALIAS([scriptreplay], [scriptutils])
-+AC_ARG_ENABLE([scriptreplay],
-+  AS_HELP_STRING([--disable-scriptreplay], [do not build scriptreplay]),
-+  [], [UL_DEFAULT_ENABLE([scriptreplay], [check])]
-+)
- UL_BUILD_INIT([scriptreplay])
- AM_CONDITIONAL([BUILD_SCRIPTREPLAY], [test "x$build_scriptreplay" = xyes])
- 
+script: preserve PTY child setup with callback clone on wasm
+
+The PTY slave initialization, signal reset, and exec sequence form a bounded
+child continuation. Run it in a private copy-clone child on wasm while retaining
+the exact upstream fork paths for native script and scriptlive builds.
+
 --- a/term-utils/script.c
 +++ b/term-utils/script.c
-@@ -41,6 +41,7 @@
+@@ -41,6 +41,9 @@
  #include <sys/ioctl.h>
  #include <sys/time.h>
  #include <signal.h>
-+#include <sched.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
  #include <errno.h>
  #include <string.h>
  #include <getopt.h>
-@@ -761,6 +762,39 @@
+@@ -761,6 +764,41 @@
  		       "Program not started."), filename);
  }
  
++#ifdef __wasm__
 +struct script_child_args {
 +	struct script_control *ctl;
 +	const char *shell;
@@ -67,26 +53,28 @@
 +
 +	err(EXIT_FAILURE, "failed to execute %s", shell);
 +}
++#endif
 +
  int main(int argc, char **argv)
  {
  	struct script_control ctl = {
-@@ -773,6 +807,9 @@
+@@ -773,6 +811,11 @@
  	const char *timingfile = NULL, *shell = NULL;
  	char **cmd_argv = NULL;
  	int cmd_argc = 0;
++#ifdef __wasm__
 +	const size_t child_stack_size = 64 * 1024;
 +	char *child_stack;
 +	struct script_child_args child_args;
++#endif
  
  	enum { FORCE_OPTION = CHAR_MAX + 1 };
  
-@@ -1019,40 +1056,18 @@
+@@ -1019,6 +1062,21 @@
  	 * We have terminal, do not use err() from now, use "goto done"
  	 */
  
--	switch ((int) (ctl.child = fork())) {
--	case -1: /* error */
++#ifdef __wasm__
 +	child_args = (struct script_child_args) {
 +		.ctl = &ctl,
 +		.shell = shell,
@@ -96,55 +84,39 @@
 +			  SIGCHLD, &child_args);
 +	free(child_stack);
 +	if (ctl.child == -1) {
++		warn(_("cannot create child process"));
++		rc = -errno;
++		goto done;
++	}
++#else
+ 	switch ((int) (ctl.child = fork())) {
+ 	case -1: /* error */
  		warn(_("cannot create child process"));
- 		rc = -errno;
- 		goto done;
--
--	case 0: /* child */
--	{
--		const char *shname;
--
--		ul_pty_init_slave(ctl.pty);
--
--		signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
--
--		shname = strrchr(shell, '/');
--		shname = shname ? shname + 1 : shell;
--
--		if (access(shell, X_OK) == 0) {
--			if (ctl.command)
--				execl(shell, shname, "-c", ctl.command, (char *)NULL);
--			else
--				execl(shell, shname, "-i", (char *)NULL);
--		} else {
--			if (ctl.command)
--				execlp(shname, shname, "-c", ctl.command, (char *)NULL);
--			else
--				execlp(shname, shname, "-i", (char *)NULL);
--		}
--
--		err(EXIT_FAILURE, "failed to execute %s", shell);
--		break;
--	}
--	default:
--		break;
+@@ -1054,6 +1112,7 @@
+ 	default:
+ 		break;
  	}
++#endif
  
  	/* parent */
+ 	ul_pty_set_child(ctl.pty, ctl.child);
 --- a/term-utils/scriptlive.c
 +++ b/term-utils/scriptlive.c
-@@ -23,6 +23,7 @@
+@@ -27,6 +27,9 @@
  #include <sys/types.h>
  #include <sys/wait.h>
  #include <termios.h>
-+#include <sched.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
  #include <paths.h>
  
  #include "c.h"
-@@ -156,6 +157,38 @@ static int mainloop_cb(void *data)
+@@ -155,6 +158,40 @@
  	return process_next_step(ss);
  }
  
++#ifdef __wasm__
 +struct scriptlive_child_args {
 +	struct scriptlive *ss;
 +	const char *shell;
@@ -176,26 +148,28 @@
 +
 +	err(EXIT_FAILURE, "failed to execute %s", args->shell);
 +}
++#endif
 +
  int
  main(int argc, char *argv[])
  {
-@@ -170,6 +204,9 @@ main(int argc, char *argv[])
+@@ -169,6 +206,11 @@
  	struct ul_pty_callbacks *cb;
  	struct scriptlive ss = { .pty = NULL };
  	pid_t child;
++#ifdef __wasm__
 +	const size_t child_stack_size = 64 * 1024;
 +	char *child_stack;
 +	struct scriptlive_child_args child_args;
++#endif
  
  	static const struct option longopts[] = {
  		{ "command",    required_argument,      0, 'c' },
-@@ -308,39 +345,18 @@ main(int argc, char *argv[])
+@@ -308,6 +350,21 @@
  
  	fflush(stdout);			/* ??? */
  
--	switch ((int) (child = fork())) {
--	case -1: /* error */
++#ifdef __wasm__
 +	child_args = (struct scriptlive_child_args) {
 +		.ss = &ss,
 +		.shell = shell,
@@ -206,37 +180,18 @@
 +		      SIGCHLD, &child_args);
 +	free(child_stack);
 +	if (child == -1) {
++		ul_pty_cleanup(ss.pty);
++		err(EXIT_FAILURE, _("cannot create child process"));
++	}
++#else
+ 	switch ((int) (child = fork())) {
+ 	case -1: /* error */
  		ul_pty_cleanup(ss.pty);
- 		err(EXIT_FAILURE, _("cannot create child process"));
--		break;
--
--	case 0: /* child */
--	{
--		const char *shname;
--
--		ul_pty_init_slave(ss.pty);
--
--		signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
--
--		shname = strrchr(shell, '/');
--		shname = shname ? shname + 1 : shell;
--
--		if (access(shell, X_OK) == 0) {
--			if (command)
--				execl(shell, shname, "-c", command, (char *)NULL);
--			else
--				execl(shell, shname, "-i", (char *)NULL);
--		} else {
--			if (command)
--				execlp(shname, shname, "-c", command, (char *)NULL);
--			else
--				execlp(shname, shname, "-i", (char *)NULL);
--		}
--		err(EXIT_FAILURE, "failed to execute %s", shell);
--		break;
--	}
--	default:
--		break;
+@@ -342,6 +399,7 @@
+ 	default:
+ 		break;
  	}
++#endif
  
  	/* parent */
+ 	ul_pty_set_child(ss.pty, child);

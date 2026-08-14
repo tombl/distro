@@ -39,6 +39,43 @@ contains "$(cat /tmp/typescript)" "SCRIPT_MARKER" ||
 contains "$(cat /tmp/script.out)" "SCRIPT_MARKER" ||
   fail "script stdout does not contain marker: $(cat /tmp/script.out)"
 
+# Record input with script, then replay it through scriptlive's own PTY child.
+# The marker is created by the replayed shell only after all three standard
+# descriptors are terminals and its controlling terminal is a new devpts slave,
+# distinct from the wrapper PTY; echoed input alone cannot satisfy this check.
+rm -f /tmp/scriptlive.input /tmp/scriptlive.timing /tmp/scriptlive.record \
+  /tmp/scriptlive-child.marker
+printf '%s\n' \
+  'tty_path=$(tty) || exit 81' \
+  'test -t 0 && test -t 1 && test -t 2 || exit 82' \
+  'case "$tty_path" in /dev/pts/*) ;; *) exit 83 ;; esac' \
+  '[ -z "$SCRIPTLIVE_OUTER_TTY" ] || [ "$tty_path" != "$SCRIPTLIVE_OUTER_TTY" ] || exit 84' \
+  'printf "SCRIPTLIVE_CHILD:%s OUTER:%s\n" "$tty_path" "$SCRIPTLIVE_OUTER_TTY" >/tmp/scriptlive-child.marker' \
+  'exit' |
+  script -q -e -I /tmp/scriptlive.input -O /tmp/scriptlive.record \
+    -T /tmp/scriptlive.timing -c sh \
+    >/tmp/scriptlive-record.out 2>/tmp/scriptlive-record.err
+script_record_rc=$?
+[ "$script_record_rc" -eq 0 ] ||
+  fail "scriptlive input recording status $script_record_rc: $(cat /tmp/scriptlive-record.err)"
+[ -s /tmp/scriptlive.input ] || fail "scriptlive input recording is empty"
+[ -s /tmp/scriptlive.timing ] || fail "scriptlive timing recording is empty"
+
+rm -f /tmp/scriptlive-child.marker
+timeout 10 script -q -e -c \
+  'outer_tty=$(tty) || exit 90; export SCRIPTLIVE_OUTER_TTY=$outer_tty; exec scriptlive -d 100 -c sh -I /tmp/scriptlive.input -T /tmp/scriptlive.timing' \
+  /tmp/scriptlive-replay.typescript </dev/null \
+  >/tmp/scriptlive-replay.out 2>/tmp/scriptlive-replay.err
+scriptlive_rc=$?
+[ "$scriptlive_rc" -eq 0 ] ||
+  fail "scriptlive replay status $scriptlive_rc: $(cat /tmp/scriptlive-replay.err)"
+[ -s /tmp/scriptlive-child.marker ] ||
+  fail "scriptlive replay did not execute input in its PTY child"
+contains "$(cat /tmp/scriptlive-child.marker)" "SCRIPTLIVE_CHILD:/dev/pts/" ||
+  fail "scriptlive child PTY semantics: $(cat /tmp/scriptlive-child.marker)"
+contains "$(cat /tmp/scriptlive-replay.typescript)" ">>> scriptlive: done." ||
+  fail "scriptlive replay did not complete normally"
+
 # Drive irqtop's interactive quit path through a real PTY and verify that its
 # normal exit restores the exact terminal mode it inherited.
 printf '%s\n' '#!/bin/sh' \

@@ -17,6 +17,16 @@
 stdenv.mkDerivation (finalAttrs: {
   pname = "util-linux";
   version = "2.42.2";
+  outputs = [
+    "out"
+    "testSupport"
+  ];
+  # The wasm stdenv stages an FHS tree with DESTDIR. The generic multi-output
+  # hook's store-prefixed configure directories would be nested under that
+  # tree and leak into libtool/pkg-config metadata; testSupport is populated
+  # explicitly below instead.
+  setOutputFlags = false;
+  moveToDev = false;
   inherit src;
   nativeBuildInputs = [
     pkgs.autoconf
@@ -49,10 +59,10 @@ stdenv.mkDerivation (finalAttrs: {
   '';
 
   postInstall = ''
-    mkdir -p "$out/libexec/util-linux-tests"
+    mkdir -p "$testSupport/libexec/util-linux-tests"
     cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
       test_mount_context_mount test_waitpid_timeout \
-      "$out/libexec/util-linux-tests/"
+      "$testSupport/libexec/util-linux-tests/"
   '';
 
   # Upstream's default suite is the baseline. BusyBox overlap is deliberately
@@ -77,10 +87,10 @@ stdenv.mkDerivation (finalAttrs: {
     ./foreground-only.patch
     ./sulogin-callback-clone.patch
     ./readprofile-posix-spawn.patch
-    ./namespace-no-fork.patch
+    ./namespace-child-management.patch
     ./fsck-callback-clone.patch
-    ./switch-root-no-fork.patch
-    ./wall-no-fork.patch
+    ./switch-root-callback-clone.patch
+    ./wall-callback-clone.patch
     # Preserve ul_restricted_path_oper's privilege boundary with a private
     # callback-clone child; the parent retains its effective credentials.
     ./fileutils-callback-clone.patch
@@ -109,10 +119,10 @@ stdenv.mkDerivation (finalAttrs: {
     # Callback children preserve external helpers and mount -a -F. Only the
     # generic double-return fork API and config-disabled idmap creation remain
     # unavailable on wasm.
-    ./libmount-no-fork.patch
+    ./libmount-callback-clone.patch
     # uuidd uses a self-pipe for its service signals and callback clones for
     # musl's double-fork daemon continuation on wasm; native paths are intact.
-    ./uuidd-no-daemon.patch
+    ./uuidd-portable-service.patch
     # irqtop retains periodic absolute-monotonic updates without timerfd and
     # routes its explicit signal set through a lifecycle-safe self-pipe.
     ./irqtop-portable-events.patch
@@ -152,6 +162,23 @@ stdenv.mkDerivation (finalAttrs: {
     "--disable-fadvise"
     "--disable-ldattach"
 
+    # The fixed guest kernel omits CONFIG_SCHED_CORE, CONFIG_UCLAMP_TASK,
+    # CONFIG_ZRAM, CONFIG_RFKILL, CONFIG_WATCHDOG, CONFIG_RTC_CLASS,
+    # CONFIG_MEMORY_HOTPLUG, and CONFIG_HOTPLUG_CPU. Disable the utilities whose
+    # primary device/scheduler operations require those interfaces; related
+    # offline and scheduler tools remain enabled. hwclock's isolated --predict
+    # and --systz modes avoid an RTC read, but do not justify shipping the
+    # otherwise RTC-specific utility in a guest with no RTC class or device.
+    "--disable-coresched"
+    "--disable-uclampset"
+    "--disable-zramctl"
+    "--disable-rfkill"
+    "--disable-wdctl"
+    "--disable-hwclock"
+    "--disable-rtcwake"
+    "--disable-chmem"
+    "--disable-chcpu"
+
     # System V IPC is absent from the shipped kernel configuration.
     "--disable-ipcmk"
     "--disable-ipcrm"
@@ -185,31 +212,31 @@ stdenv.mkDerivation (finalAttrs: {
           inherit init;
           files = {
             "/test_fileutils" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_fileutils";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_fileutils";
               mode = "0755";
             };
             "/test_pager" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_pager";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_pager";
               mode = "0755";
             };
             "/test_switch_root" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_switch_root";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_switch_root";
               mode = "0755";
             };
             "/test_ttymsg" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_ttymsg";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_ttymsg";
               mode = "0755";
             };
             "/test_sulogin" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_sulogin";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_sulogin";
               mode = "0755";
             };
             "/test_mount_context_mount" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_mount_context_mount";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_mount_context_mount";
               mode = "0755";
             };
             "/test_waitpid_timeout" = {
-              source = "${finalAttrs.finalPackage}/libexec/util-linux-tests/test_waitpid_timeout";
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_waitpid_timeout";
               mode = "0755";
             };
           };

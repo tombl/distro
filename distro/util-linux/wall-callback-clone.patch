@@ -1,3 +1,9 @@
+wall: preserve bounded slow-terminal delivery on wasm
+
+ttymsg still hands a blocked terminal write to a child and returns its PID to
+the caller. Use a private callback-clone continuation on wasm while retaining
+the native fork path and arbitrary writev vector semantics.
+
 diff --git a/term-utils/ttymsg.c b/term-utils/ttymsg.c
 index 37ab94c..318e492 100644
 --- a/term-utils/ttymsg.c
