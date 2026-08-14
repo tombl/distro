@@ -106,7 +106,6 @@ stdenv.mkDerivation (finalAttrs: {
     # Direct mount operations and the libmount inspection APIs work. Restrict
     # only external helpers, idmapped namespaces, and explicit parallel mode.
     ./libmount-no-fork.patch
-    ./swapon-eject-posix-spawn.patch
     # uuidd's service works in its existing foreground mode; only daemonizing
     # via fork is unavailable.
     ./uuidd-no-daemon.patch
@@ -132,6 +131,16 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-btrfs"
     "--without-econf"
     "--without-user"
+
+    # These interfaces have no usable backing in the shipped guest: the wasm
+    # architecture selects ARCH_NO_SWAP, CONFIG_ADVISE_SYSCALLS is disabled,
+    # virtio-blk has no eject operation, and none of ldattach's attachable
+    # protocol line disciplines is configured. Keep the independently useful
+    # mkswap utility enabled.
+    "--disable-swapon"
+    "--disable-eject"
+    "--disable-fadvise"
+    "--disable-ldattach"
 
     # These programs fundamentally require VM mappings or general fork
     # semantics, rather than a fork+exec operation we can express with spawn.

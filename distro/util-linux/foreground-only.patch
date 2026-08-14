@@ -1,25 +1,8 @@
 Keep programs whose useful foreground operation does not require fork.
-
---- a/sys-utils/ldattach.c
-+++ b/sys-utils/ldattach.c
-@@ -484,8 +484,13 @@ int main(int argc, char **argv)
- 		gsm0710_set_conf(tty_fd, gsm_mtu);
- 
- 	/* Go into background if not in debug mode. */
-+#ifdef __wasm__
-+	if (!debug)
-+		errx(EXIT_FAILURE, _("daemon mode is unavailable; use --debug"));
-+#else
- 	if (!debug && daemon(0, 0) < 0)
- 		err(EXIT_FAILURE, _("cannot daemonize"));
-+#endif
- 
- 	/* Sleep to keep the line discipline active. */
- 	pause();
 --- a/text-utils/more.c
 +++ b/text-utils/more.c
-@@ -1239,5 +1239,8 @@ static void __attribute__((__format__ (__printf__, 3, 4)))
- execute(struct more_control *ctl, char *filename, const char *cmd, ...)
+@@ -1239,5 +1239,8 @@
+ 	execute(struct more_control *ctl, char *filename, const char *cmd, ...)
  {
 +#ifdef __wasm__
 +	fputs(_("external commands are unavailable\n"), stderr);
@@ -27,7 +10,7 @@ Keep programs whose useful foreground operation does not require fork.
  	pid_t id;
  	va_list argp;
  	char *arg;
-@@ -1292,6 +1295,7 @@ execute(struct more_control *ctl, char *filename, const char *cmd, ...)
+@@ -1291,6 +1294,7 @@
  		}
  	} else
  		fputs(_("can't fork\n"), stderr);

@@ -26,15 +26,15 @@ mount -t sysfs sysfs /sys || fail "mount sysfs"
 programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 chcpu chmem choom chrt colcrt colrm column copyfilerange coresched
-ctrlaltdel delpart dmesg eject exch fadvise fallocate fdisk findfs
+ctrlaltdel delpart dmesg exch fallocate fdisk findfs
 findmnt flock fsck.minix fsfreeze fstrim getino getopt hardlink
 hexdump hwclock ionice irqtop isosize kill last lastb
-lastlog2 ldattach linux32 linux64 logger look losetup lsblk lsclocks lscpu
+lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
 lsfd lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
 mkfs.minix mkswap more mount mountpoint namei nologin nsenter partx pipesz
 pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake
 script scriptlive scriptreplay setarch setpgid setsid setterm sfdisk sulogin
-swaplabel swapoff swapon switch_root taskset uclampset ul umount uname26
+swaplabel switch_root taskset uclampset ul umount uname26
 unshare utmpdump uuidd uuidgen uuidparse waitpid wall wdctl whereis wipefs
 zramctl
 '
@@ -46,6 +46,19 @@ for program in $programs; do
   done
   [ -n "$path" ] || fail "$program is missing"
 done
+
+for program in swapon swapoff eject fadvise ldattach; do
+  [ ! -e "/bin/$program" ] && [ ! -e "/sbin/$program" ] ||
+    fail "$program should be disabled for the target kernel/device configuration"
+done
+
+# Formatting swap images remains useful offline even though this kernel cannot
+# activate them.  Keep mkswap and verify the resulting image format.
+dd if=/dev/zero of=/tmp/swap.img bs=1024 count=1024 2>/dev/null ||
+  fail "creating swap image"
+mkswap -L WASM-SWAP /tmp/swap.img >/dev/null || fail "mkswap image"
+contains "$(file /tmp/swap.img)" "Linux swap file" ||
+  fail "mkswap did not create a swap image"
 
 version=$(/bin/mount --version) || fail "mount --version failed"
 contains "$version" "util-linux" ||
