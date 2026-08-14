@@ -1,19 +1,529 @@
-wasm has no fork-backed daemon().  uuidd already has a foreground --no-fork
-mode that retains the actual service; make the unsupported daemonizing mode
-fail with a useful instruction.
+uuidd: preserve service signals and daemonization on wasm
+
+Use a lifecycle-safe self-pipe where signalfd is unavailable, and express
+musl's double-fork daemon continuation with private-memory callback clones.
 
 --- a/misc-utils/uuidd.c
 +++ b/misc-utils/uuidd.c
-@@ -120,8 +120,12 @@ static void create_daemon(void)
- {
- 	uid_t euid;
- 
+@@ -39,7 +39,11 @@
+ #include <signal.h>
+ #include <string.h>
+ #include <getopt.h>
 +#ifdef __wasm__
-+	errx(EXIT_FAILURE, _("daemon mode is unavailable; use --no-fork"));
++# include <sched.h>
 +#else
- 	if (daemon(0, 0))
- 		err(EXIT_FAILURE, "daemon");
+ #include <sys/signalfd.h>
++#endif
+ #include <poll.h>
+ 
+ #include "uuid.h"
+@@ -51,6 +55,9 @@
+ #include "optutils.h"
+ #include "monotonic.h"
+ #include "timer.h"
++#ifdef __wasm__
++# include "xalloc.h"
 +#endif
  
- 	euid = geteuid();
+ #ifdef HAVE_LIBSYSTEMD
+ # include <systemd/sd-daemon.h>
+@@ -73,6 +80,13 @@
+ 	const char	*cleanup_socket;
+ 	uint32_t	timeout;
+ 	uint32_t	cont_clock_offset;
++#ifdef __wasm__
++	int		sigpipe[2];
++	sigset_t	original_sigmask;
++	sigset_t	installed_sigset;
++	struct sigaction original_sigactions[5];
++	volatile sig_atomic_t sigpending;
++#endif
+ 
+ 	unsigned int	debug: 1,
+ 			quiet: 1,
+@@ -90,6 +104,20 @@
+ 			 s_flag;
+ };
+ 
++#ifdef __wasm__
++struct uuidd_daemon_args {
++	const char *pidfile_path;
++	struct uuidd_cxt_t *cxt;
++	int socket_fd;
++	int pidfile_fd;
++	char *first_stack;
++};
++
++static void __attribute__((__noreturn__))
++server_loop_service(const char *pidfile_path, struct uuidd_cxt_t *uuidd_cxt,
++		    int s, int fd_pidfile);
++#endif
++
+ static void __attribute__((__noreturn__)) usage(void)
+ {
+ 	FILE *out = stdout;
+@@ -118,6 +146,69 @@
+ 	exit(EXIT_SUCCESS);
+ }
+ 
++#ifdef __wasm__
++static int uuidd_daemon_second(void *data)
++{
++	struct uuidd_daemon_args *args = data;
++	uid_t euid;
++
++	/* We are now running on stack #2, so stack #1 is safe to release. */
++	free(args->first_stack);
++	args->first_stack = NULL;
++	euid = geteuid();
++	if (setreuid(euid, euid) < 0)
++		err(EXIT_FAILURE, "setreuid");
++	server_loop_service(args->pidfile_path, args->cxt,
++			    args->socket_fd, args->pidfile_fd);
++}
++
++static int uuidd_daemon_first(void *data)
++{
++	const size_t stack_size = 128 * 1024;
++	struct uuidd_daemon_args *args = data;
++	char *stack;
++	pid_t pid;
++
++	if (setsid() < 0)
++		err(EXIT_FAILURE, "setsid");
++	stack = xmalloc(stack_size);
++	pid = clone(uuidd_daemon_second, stack + stack_size, SIGCHLD, args);
++	free(stack);
++	if (pid < 0)
++		err(EXIT_FAILURE, "clone");
++	_exit(EXIT_SUCCESS);
++}
++
++static void __attribute__((__noreturn__))
++create_daemon(struct uuidd_daemon_args *args)
++{
++	const size_t stack_size = 128 * 1024;
++	char *stack;
++	int fd;
++	pid_t pid;
++
++	/* Match musl daemon(0, 0): redirect before either fork. */
++	if (chdir("/") < 0)
++		err(EXIT_FAILURE, "chdir");
++	fd = open("/dev/null", O_RDWR);
++	if (fd < 0)
++		err(EXIT_FAILURE, "open /dev/null");
++	if (dup2(fd, STDIN_FILENO) < 0 ||
++	    dup2(fd, STDOUT_FILENO) < 0 ||
++	    dup2(fd, STDERR_FILENO) < 0)
++		err(EXIT_FAILURE, "dup2 /dev/null");
++	if (fd > STDERR_FILENO)
++		close(fd);
++
++	stack = xmalloc(stack_size);
++	args->first_stack = stack;
++	pid = clone(uuidd_daemon_first, stack + stack_size, SIGCHLD, args);
++	free(stack);
++	if (pid < 0)
++		err(EXIT_FAILURE, "clone");
++	_exit(EXIT_SUCCESS);
++}
++#else
+ static void create_daemon(void)
+ {
+ 	uid_t euid;
+@@ -129,6 +220,7 @@
  	if (setreuid(euid, euid) < 0)
+ 		err(EXIT_FAILURE, "setreuid");
+ }
++#endif
+ 
+ static int call_daemon(const char *socket_path, uuidd_prot_op_t op, char *buf,
+ 		       size_t buflen, uuidd_prot_num_t *num, const char **err_context)
+@@ -305,17 +397,183 @@
+ 	return s;
+ }
+ 
+-static void __attribute__((__noreturn__)) all_done(const struct uuidd_cxt_t *uuidd_cxt, int ret)
++#ifdef __wasm__
++static const int uuidd_signals[] = {
++	SIGHUP, SIGINT, SIGTERM, SIGALRM, SIGPIPE
++};
++static struct uuidd_cxt_t *volatile uuidd_signal_target;
++
++static int uuidd_signal_index(int signum)
++{
++	size_t i;
++
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++)
++		if (uuidd_signals[i] == signum)
++			return i;
++	return -1;
++}
++
++static void uuidd_signal_handler(int signum)
++{
++	struct uuidd_cxt_t *cxt = uuidd_signal_target;
++	int saved_errno = errno;
++	int idx;
++
++	if (cxt && (idx = uuidd_signal_index(signum)) >= 0) {
++		sig_atomic_t bit = (sig_atomic_t) 1 << idx;
++		unsigned char byte = (unsigned char) signum;
++
++		if (!(cxt->sigpending & bit)) {
++			cxt->sigpending |= bit;
++			if (write(cxt->sigpipe[1], &byte, sizeof(byte)) < 0) {
++				/* EAGAIN is harmless: the pending bit retains the event. */
++			}
++		}
++	}
++	errno = saved_errno;
++}
++
++static void uuidd_signals_rollback(struct uuidd_cxt_t *cxt, size_t installed)
++{
++	while (installed > 0) {
++		installed--;
++		if (sigismember(&cxt->installed_sigset,
++				uuidd_signals[installed]) == 1)
++			sigaction(uuidd_signals[installed],
++				  &cxt->original_sigactions[installed], NULL);
++	}
++	if (cxt->sigpipe[0] >= 0)
++		close(cxt->sigpipe[0]);
++	if (cxt->sigpipe[1] >= 0)
++		close(cxt->sigpipe[1]);
++	cxt->sigpipe[0] = cxt->sigpipe[1] = -1;
++	sigprocmask(SIG_SETMASK, &cxt->original_sigmask, NULL);
++}
++
++static int uuidd_signals_setup(struct uuidd_cxt_t *cxt)
++{
++	struct sigaction action;
++	sigset_t sigset, runmask;
++	int errsv;
++	size_t i;
++
++	cxt->sigpipe[0] = cxt->sigpipe[1] = -1;
++	cxt->sigpending = 0;
++	sigemptyset(&sigset);
++	sigemptyset(&cxt->installed_sigset);
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++)
++		sigaddset(&sigset, uuidd_signals[i]);
++	if (sigprocmask(SIG_BLOCK, &sigset, &cxt->original_sigmask) < 0)
++		return -1;
++	if (pipe2(cxt->sigpipe, O_CLOEXEC | O_NONBLOCK) < 0) {
++		errsv = errno;
++		sigprocmask(SIG_SETMASK, &cxt->original_sigmask, NULL);
++		errno = errsv;
++		return -1;
++	}
++
++	memset(&action, 0, sizeof(action));
++	action.sa_handler = uuidd_signal_handler;
++	action.sa_mask = sigset;
++	action.sa_flags = SA_RESTART;
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++) {
++		if (sigaction(uuidd_signals[i], NULL,
++			      &cxt->original_sigactions[i]) < 0)
++			goto fail;
++		if (cxt->original_sigactions[i].sa_handler == SIG_IGN)
++			continue;
++		if (sigaction(uuidd_signals[i], &action, NULL) < 0)
++			goto fail;
++		sigaddset(&cxt->installed_sigset, uuidd_signals[i]);
++	}
++	if (uuidd_signal_target) {
++		errno = EBUSY;
++		goto fail;
++	}
++	uuidd_signal_target = cxt;
++	runmask = cxt->original_sigmask;
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++)
++		if (sigismember(&cxt->installed_sigset, uuidd_signals[i]) == 1)
++			sigdelset(&runmask, uuidd_signals[i]);
++	if (sigprocmask(SIG_SETMASK, &runmask, NULL) < 0) {
++		uuidd_signal_target = NULL;
++		goto fail;
++	}
++	return 0;
++
++fail:
++	errsv = errno;
++	uuidd_signals_rollback(cxt, i);
++	errno = errsv;
++	return -1;
++}
++
++static void uuidd_signals_cleanup(struct uuidd_cxt_t *cxt)
++{
++	size_t i;
++
++	if (cxt->sigpipe[0] < 0)
++		return;
++	sigprocmask(SIG_BLOCK, &cxt->installed_sigset, NULL);
++	if (uuidd_signal_target == cxt)
++		uuidd_signal_target = NULL;
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++)
++		if (sigismember(&cxt->installed_sigset, uuidd_signals[i]) == 1)
++			sigaction(uuidd_signals[i], &cxt->original_sigactions[i], NULL);
++	close(cxt->sigpipe[0]);
++	close(cxt->sigpipe[1]);
++	cxt->sigpipe[0] = cxt->sigpipe[1] = -1;
++	sigprocmask(SIG_SETMASK, &cxt->original_sigmask, NULL);
++}
++#endif
++
++static void __attribute__((__noreturn__)) all_done(struct uuidd_cxt_t *uuidd_cxt, int ret)
+ {
+ 	if (uuidd_cxt->cleanup_pidfile)
+ 		unlink(uuidd_cxt->cleanup_pidfile);
+ 	if (uuidd_cxt->cleanup_socket)
+ 		unlink(uuidd_cxt->cleanup_socket);
++#ifdef __wasm__
++	uuidd_signals_cleanup(uuidd_cxt);
++#endif
+ 	exit(ret);
+ }
+ 
+-static void handle_signal(const struct uuidd_cxt_t *uuidd_cxt, int fd)
++static void handle_signal(struct uuidd_cxt_t *uuidd_cxt, int fd)
+ {
++#ifdef __wasm__
++	sig_atomic_t pending;
++	sigset_t oldmask;
++	unsigned char buf[32];
++	ssize_t bytes;
++	int mask_error, read_errno;
++	size_t i;
++
++	if (sigprocmask(SIG_BLOCK, &uuidd_cxt->installed_sigset, &oldmask) < 0) {
++		warn(_("receiving signal failed"));
++		all_done(uuidd_cxt, EXIT_FAILURE);
++	}
++	pending = uuidd_cxt->sigpending;
++	uuidd_cxt->sigpending = 0;
++	do {
++		bytes = read(fd, buf, sizeof(buf));
++	} while (bytes > 0 || (bytes < 0 && errno == EINTR));
++	read_errno = errno;
++	mask_error = sigprocmask(SIG_SETMASK, &oldmask, NULL);
++	if (mask_error < 0 ||
++	    (bytes < 0 && read_errno != EAGAIN && read_errno != EWOULDBLOCK)) {
++		if (mask_error == 0 && bytes < 0)
++			errno = read_errno;
++		warn(_("receiving signal failed"));
++		all_done(uuidd_cxt, EXIT_FAILURE);
++	}
++	for (i = 0; i < ARRAY_SIZE(uuidd_signals); i++) {
++		if (!(pending & ((sig_atomic_t) 1 << i)))
++			continue;
++		if (uuidd_signals[i] != SIGPIPE)
++			all_done(uuidd_cxt, EXIT_SUCCESS);
++	}
++#else
+ 	struct signalfd_siginfo info;
+ 	ssize_t bytes;
+ 
+@@ -329,6 +587,7 @@
+ 	if (info.ssi_signo == SIGPIPE)
+ 		return;		/* ignored */
+ 	all_done(uuidd_cxt, EXIT_SUCCESS);
++#endif
+ }
+ 
+ static void timeout_handler(int sig __attribute__((__unused__)),
+@@ -341,8 +600,9 @@
+ 		ul_sig_err(EXIT_FAILURE, "timed out");
+ }
+ 
+-static void server_loop(const char *socket_path, const char *pidfile_path,
+-			struct uuidd_cxt_t *uuidd_cxt)
++static void __attribute__((__noreturn__))
++server_loop_service(const char *pidfile_path, struct uuidd_cxt_t *uuidd_cxt,
++		    int s, int fd_pidfile)
+ {
+ 	struct sockaddr_un	from_addr;
+ 	socklen_t		fromlen;
+@@ -353,60 +613,23 @@
+ 	char			str[UUID_STR_LEN];
+ 	int			i, ns, len;
+ 	uuidd_prot_num_t	num;		/* intentionally uninitialized */
+-	int			s = 0;
+-	int			fd_pidfile = -1;
+ 	int			ret;
+ 	struct pollfd		pfd[2];
++#ifndef __wasm__
+ 	sigset_t		sigmask;
++#endif
+ 	int			sigfd;
+ 	enum {
+ 				POLLFD_SIGNAL = 0,
+ 				POLLFD_SOCKET
+ 	};
+-
+-#ifdef HAVE_LIBSYSTEMD
+-	if (!uuidd_cxt->no_sock)	/* no_sock implies no_fork and no_pid */
+-#endif
+-	{
+-		struct ul_timer timer;
+-		struct itimerval timeout;
+-
+-		memset(&timeout, 0, sizeof timeout);
+-		timeout.it_value.tv_sec = 30;
+-		if (setup_timer(&timer, &timeout, &timeout_handler))
+-			err(EXIT_FAILURE, _("cannot set up timer"));
+-		if (pidfile_path)
+-			fd_pidfile = create_pidfile(uuidd_cxt, pidfile_path);
+-		ret = call_daemon(socket_path, UUIDD_OP_GETPID, reply_buf,
+-				  sizeof(reply_buf), 0, NULL);
+-		cancel_timer(&timer);
+-		if (ret > 0) {
+-			if (!uuidd_cxt->quiet)
+-				warnx(_("uuidd daemon is already running at pid %s"),
+-					reply_buf);
+-			exit(EXIT_FAILURE);
+-		}
+-
+-		s = create_socket(uuidd_cxt, socket_path,
+-				  (!uuidd_cxt->debug || !uuidd_cxt->no_fork));
+-		if (listen(s, SOMAXCONN) < 0) {
+-			if (!uuidd_cxt->quiet)
+-				warn(_("couldn't listen on unix socket %s"), socket_path);
+-			exit(EXIT_FAILURE);
+-		}
+-
+-		if (!uuidd_cxt->debug && !uuidd_cxt->no_fork)
+-			create_daemon();
+-
+-		if (pidfile_path) {
+-			snprintf(reply_buf, sizeof(reply_buf), "%8d\n", getpid());
+-			if (ftruncate(fd_pidfile, 0))
+-				err(EXIT_FAILURE, _("could not truncate file: %s"), pidfile_path);
+-			write_all(fd_pidfile, reply_buf, strlen(reply_buf));
+-			if (fd_pidfile > 1 && close_fd(fd_pidfile) != 0)
+-				err(EXIT_FAILURE, _("write failed: %s"), pidfile_path);
+-		}
+-
++	if (pidfile_path) {
++		snprintf(reply_buf, sizeof(reply_buf), "%8d\n", getpid());
++		if (ftruncate(fd_pidfile, 0))
++			err(EXIT_FAILURE, _("could not truncate file: %s"), pidfile_path);
++		write_all(fd_pidfile, reply_buf, strlen(reply_buf));
++		if (fd_pidfile > 1 && close_fd(fd_pidfile) != 0)
++			err(EXIT_FAILURE, _("write failed: %s"), pidfile_path);
+ 	}
+ 
+ #ifdef HAVE_LIBSYSTEMD
+@@ -426,6 +649,13 @@
+ 	}
+ #endif
+ 
++#ifdef __wasm__
++	if (uuidd_signals_setup(uuidd_cxt) < 0) {
++		warn(_("cannot set signal handler"));
++		all_done(uuidd_cxt, EXIT_FAILURE);
++	}
++	sigfd = uuidd_cxt->sigpipe[0];
++#else
+ 	sigemptyset(&sigmask);
+ 	sigaddset(&sigmask, SIGHUP);
+ 	sigaddset(&sigmask, SIGINT);
+@@ -437,17 +667,31 @@
+ 	sigprocmask(SIG_BLOCK, &sigmask, NULL);
+ 	if ((sigfd = signalfd(-1, &sigmask, 0)) < 0)
+ 		err(EXIT_FAILURE, _("cannot set signal handler"));
++#endif
+ 
+ 	pfd[POLLFD_SIGNAL].fd = sigfd;
+ 	pfd[POLLFD_SOCKET].fd = s;
+ 	pfd[POLLFD_SIGNAL].events = pfd[POLLFD_SOCKET].events = POLLIN | POLLERR | POLLHUP;
+ 
+ 	while (1) {
++#ifdef __wasm__
++		struct timespec timeout = {
++			.tv_sec = uuidd_cxt->timeout,
++		};
++
++		ret = ppoll(pfd, ARRAY_SIZE(pfd),
++				uuidd_cxt->timeout ? &timeout : NULL, NULL);
++#else
+ 		ret = poll(pfd, ARRAY_SIZE(pfd),
+-				uuidd_cxt->timeout ?
++					uuidd_cxt->timeout ?
+ 					(int) uuidd_cxt->timeout * 1000 : -1);
++#endif
+ 		if (ret < 0) {
++#ifdef __wasm__
++			if (errno == EAGAIN || errno == EINTR)
++#else
+ 			if (errno == EAGAIN)
++#endif
+ 				continue;
+ 			warn(_("poll failed"));
+ 			all_done(uuidd_cxt, EXIT_FAILURE);
+@@ -567,6 +811,63 @@
+ 	}
+ }
+ 
++static void server_loop(const char *socket_path, const char *pidfile_path,
++			struct uuidd_cxt_t *uuidd_cxt)
++{
++	char reply_buf[UUIDD_PROT_BUFSZ];
++	int s = 0, fd_pidfile = -1, ret;
++
++#ifdef HAVE_LIBSYSTEMD
++	if (!uuidd_cxt->no_sock)	/* no_sock implies no_fork and no_pid */
++#endif
++	{
++		struct ul_timer timer;
++		struct itimerval timeout;
++
++		memset(&timeout, 0, sizeof timeout);
++		timeout.it_value.tv_sec = 30;
++		if (setup_timer(&timer, &timeout, &timeout_handler))
++			err(EXIT_FAILURE, _("cannot set up timer"));
++		if (pidfile_path)
++			fd_pidfile = create_pidfile(uuidd_cxt, pidfile_path);
++		ret = call_daemon(socket_path, UUIDD_OP_GETPID, reply_buf,
++				  sizeof(reply_buf), 0, NULL);
++		cancel_timer(&timer);
++		if (ret > 0) {
++			if (!uuidd_cxt->quiet)
++				warnx(_("uuidd daemon is already running at pid %s"),
++					reply_buf);
++			exit(EXIT_FAILURE);
++		}
++
++		s = create_socket(uuidd_cxt, socket_path,
++				  (!uuidd_cxt->debug || !uuidd_cxt->no_fork));
++		if (listen(s, SOMAXCONN) < 0) {
++			if (!uuidd_cxt->quiet)
++				warn(_("couldn't listen on unix socket %s"), socket_path);
++			exit(EXIT_FAILURE);
++		}
++
++		if (!uuidd_cxt->debug && !uuidd_cxt->no_fork) {
++#ifdef __wasm__
++			struct uuidd_daemon_args args = {
++				.pidfile_path = pidfile_path,
++				.cxt = uuidd_cxt,
++				.socket_fd = s,
++				.pidfile_fd = fd_pidfile,
++				.first_stack = NULL,
++			};
++
++			create_daemon(&args);
++#else
++			create_daemon();
++#endif
++		}
++	}
++
++	server_loop_service(pidfile_path, uuidd_cxt, s, fd_pidfile);
++}
++
+ static void __attribute__ ((__noreturn__)) unexpected_size(int size)
+ {
+ 	errx(EXIT_FAILURE, _("Unexpected reply length from server %d"), size);

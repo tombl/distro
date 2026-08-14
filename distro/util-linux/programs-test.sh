@@ -52,6 +52,155 @@ for program in swapon swapoff eject fadvise ldattach; do
     fail "$program should be disabled for the target kernel/device configuration"
 done
 
+wait_uuidd_ready() {
+  socket=$1
+  pidfile=$2
+  i=0
+  while { [ ! -S "$socket" ] || [ ! -s "$pidfile" ]; } && [ "$i" -lt 100 ]; do
+    sleep .05
+    i=$((i + 1))
+  done
+  [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
+}
+
+wait_uuidd_exit() {
+  pid=$1
+  i=0
+  while kill -0 "$pid" 2>/dev/null &&
+    [ "$(awk '{ print $3 }' "/proc/$pid/stat" 2>/dev/null)" != Z ] &&
+    [ "$i" -lt 100 ]; do
+    sleep .05
+    i=$((i + 1))
+  done
+  [ "$i" -lt 100 ] || fail "uuidd process $pid did not exit"
+}
+
+check_uuid() {
+  value=$1
+  version=$2
+  case "$value" in
+  ????????-????-"$version"???-[89aAbB]???-????????????) ;;
+  *) fail "uuidd returned invalid version $version UUID: $value" ;;
+  esac
+}
+
+# The foreground service must answer real protocol requests, ignore SIGPIPE,
+# and remove both ownership files on a terminating signal.
+uuidd_socket=/tmp/uuidd-foreground.sock
+uuidd_pidfile=/tmp/uuidd-foreground.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -F -s "$uuidd_socket" -p "$uuidd_pidfile" &
+uuidd_launcher_pid=$!
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+[ "$uuidd_pid" -eq "$uuidd_launcher_pid" ] ||
+  fail "uuidd foreground pidfile does not identify its launcher"
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -t)" 1
+uuidd_bulk=$(timeout 5 uuidd -s "$uuidd_socket" -r -n 3) ||
+  fail "uuidd bulk random request"
+contains "$uuidd_bulk" "List of UUIDs:" || fail "uuidd bulk reply header"
+[ "$(printf '%s\n' "$uuidd_bulk" | awk 'NR > 1 { count++ } END { print count }')" -eq 3 ] ||
+  fail "uuidd bulk reply count: $uuidd_bulk"
+kill -PIPE "$uuidd_pid" || fail "signal uuidd SIGPIPE"
+sleep .1
+kill -0 "$uuidd_pid" 2>/dev/null || fail "uuidd exited on SIGPIPE"
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
+kill -TERM "$uuidd_pid" || fail "signal uuidd SIGTERM"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd SIGTERM did not clean socket and pidfile"
+
+# An asynchronously launched shell command inherits SIGHUP ignored in this
+# environment.  Use a normal daemon launch to exercise HUP with its real
+# startup disposition; ALRM does not have that shell-job exception.
+uuidd_socket=/tmp/uuidd-HUP.sock
+uuidd_pidfile=/tmp/uuidd-HUP.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd for SIGHUP"
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+kill -HUP "$uuidd_pid" || fail "signal uuidd SIGHUP"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd SIGHUP did not clean socket and pidfile"
+
+uuidd_socket=/tmp/uuidd-ALRM.sock
+uuidd_pidfile=/tmp/uuidd-ALRM.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -F -s "$uuidd_socket" -p "$uuidd_pidfile" &
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+kill -ALRM "$uuidd_pid" || fail "signal uuidd SIGALRM"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd SIGALRM did not clean socket and pidfile"
+
+# An asynchronously launched shell command inherits SIGINT ignored, so test
+# INT on the normally launched daemon child, whose inherited disposition is
+# the service's real startup disposition.
+uuidd_socket=/tmp/uuidd-int.sock
+uuidd_pidfile=/tmp/uuidd-int.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd for SIGINT"
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+kill -INT "$uuidd_pid" || fail "signal uuidd SIGINT"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd SIGINT did not clean socket and pidfile"
+
+# Inactivity is a normal clean shutdown. A timeout larger than poll(2)'s
+# millisecond range must retain its full duration rather than wrapping.
+uuidd_socket=/tmp/uuidd-timeout.sock
+uuidd_pidfile=/tmp/uuidd-timeout.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -F -T 1 -s "$uuidd_socket" -p "$uuidd_pidfile" &
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd inactivity did not clean socket and pidfile"
+uuidd_socket=/tmp/uuidd-long-timeout.sock
+uuidd_pidfile=/tmp/uuidd-long-timeout.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -F -T 4294967295 -s "$uuidd_socket" -p "$uuidd_pidfile" &
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+sleep .1
+kill -0 "$uuidd_pid" 2>/dev/null || fail "uuidd long timeout wrapped"
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
+kill -TERM "$uuidd_pid" || fail "stop uuidd long-timeout service"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd long-timeout shutdown did not clean service files"
+
+# Default daemon mode retains the double-fork topology: the final service is
+# reparented, is not its session leader, runs from / with /dev/null stdio, and
+# remains a fully functional protocol server until uuidd --kill shuts it down.
+uuidd_socket=/tmp/uuidd-daemon.sock
+uuidd_pidfile=/tmp/uuidd-daemon.pid
+rm -f "$uuidd_socket" "$uuidd_pidfile"
+uuidd -s "$uuidd_socket" -p "$uuidd_pidfile" || fail "launch uuidd daemon"
+wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
+uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
+kill -0 "$uuidd_pid" 2>/dev/null || fail "uuidd daemon pid is not live"
+uuidd_ppid=$(awk '$1 == "PPid:" { print $2 }' "/proc/$uuidd_pid/status")
+[ "$uuidd_ppid" -eq 1 ] || fail "uuidd daemon was not reparented: ppid=$uuidd_ppid"
+uuidd_session=$(awk '{ print $6 }' "/proc/$uuidd_pid/stat")
+[ "$uuidd_session" -ne "$uuidd_pid" ] || fail "uuidd final daemon is session leader"
+[ "$(readlink "/proc/$uuidd_pid/cwd")" = / ] || fail "uuidd daemon cwd is not /"
+for uuidd_fd in 0 1 2; do
+  [ "$(readlink "/proc/$uuidd_pid/fd/$uuidd_fd")" = /dev/null ] ||
+    fail "uuidd daemon fd $uuidd_fd is not /dev/null"
+done
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -r)" 4
+check_uuid "$(timeout 5 uuidd -s "$uuidd_socket" -t)" 1
+timeout 5 uuidd -k -s "$uuidd_socket" || fail "stop uuidd daemon"
+wait_uuidd_exit "$uuidd_pid"
+[ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
+  fail "uuidd daemon shutdown did not clean socket and pidfile"
+
 # Formatting swap images remains useful offline even though this kernel cannot
 # activate them.  Keep mkswap and verify the resulting image format.
 dd if=/dev/zero of=/tmp/swap.img bs=1024 count=1024 2>/dev/null ||

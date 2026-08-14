@@ -110,8 +110,8 @@ stdenv.mkDerivation (finalAttrs: {
     # generic double-return fork API and config-disabled idmap creation remain
     # unavailable on wasm.
     ./libmount-no-fork.patch
-    # uuidd's service works in its existing foreground mode; only daemonizing
-    # via fork is unavailable.
+    # uuidd uses a self-pipe for its service signals and callback clones for
+    # musl's double-fork daemon continuation on wasm; native paths are intact.
     ./uuidd-no-daemon.patch
   ];
 
