@@ -27,11 +27,11 @@ programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 chcpu chmem choom chrt colcrt colrm column copyfilerange coresched
 ctrlaltdel delpart dmesg exch fallocate fdisk fincore findfs
-findmnt flock fsck.minix fsfreeze fstrim getino getopt hardlink
+findmnt flock fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
 hexdump hwclock ionice irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
 lsfd lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs
-mkfs.minix mkswap more mount mountpoint namei nologin nsenter partx pipesz
+mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei nologin nsenter partx pipesz
 pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake
 script scriptlive scriptreplay setarch setpgid setsid setterm sfdisk sulogin
 swaplabel switch_root taskset uclampset ul umount uname26
@@ -165,6 +165,41 @@ blkid_type=$(blkid -p -s TYPE -o value /tmp/minix.img)
 [ "$blkid_type" = minix ] || fail "blkid reported '$blkid_type' instead of minix"
 contains "$(wipefs /tmp/minix.img)" "minix" ||
   fail "wipefs/libblkid did not list the minix signature"
+
+# Cramfs remains useful as an offline image format. Exercise duplicate files,
+# a symlink, and a file spanning multiple cramfs blocks through extraction.
+mkdir -p /tmp/cram-src
+rm -rf /tmp/cram-out
+printf 'regular cramfs file\n' >/tmp/cram-src/regular
+cp /tmp/cram-src/regular /tmp/cram-src/duplicate
+ln -s regular /tmp/cram-src/link
+awk 'BEGIN { for (i = 0; i < 70000; i++) printf "%c", 65 + (i % 26) }' >/tmp/cram-src/multiblock
+printf 'embedded boot image\n' >/tmp/cram-embedded
+: >/tmp/cram-empty
+mkfs.cramfs -i /tmp/cram-empty /tmp/cram-src /tmp/cram-empty.img >/dev/null 2>&1 &&
+  fail "mkfs.cramfs accepted empty embedded image"
+dd if=/dev/null of=/tmp/cram-oversize bs=1 seek=2147483645 2>/dev/null ||
+  fail "create sparse oversized embedded image"
+mkfs.cramfs -i /tmp/cram-oversize /tmp/cram-src /tmp/cram-oversize.img >/dev/null 2>&1 &&
+  fail "mkfs.cramfs accepted oversized embedded image"
+mkfs.cramfs /tmp/cram-src /tmp/cram.img || fail "mkfs.cramfs"
+fsck.cramfs -v /tmp/cram.img >/tmp/cram.list || fail "fsck.cramfs verify"
+contains "$(cat /tmp/cram.list)" "/tmp/cram.img: OK" ||
+  fail "fsck.cramfs verification output"
+fsck.cramfs --extract=/tmp/cram-out /tmp/cram.img || fail "fsck.cramfs extract"
+cmp /tmp/cram-src/regular /tmp/cram-out/regular || fail "cramfs regular extract"
+cmp /tmp/cram-src/duplicate /tmp/cram-out/duplicate || fail "cramfs duplicate extract"
+cmp /tmp/cram-src/multiblock /tmp/cram-out/multiblock || fail "cramfs multiblock extract"
+[ "$(readlink /tmp/cram-out/link)" = regular ] || fail "cramfs symlink extract"
+# An embedded image starts immediately after the 76-byte cramfs_super.  This
+# util-linux fsck predates support for the shifted-root flag produced by -i,
+# so validate that independent mkfs path directly rather than weakening fsck.
+mkfs.cramfs -i /tmp/cram-embedded /tmp/cram-src /tmp/cram-with-embedded.img ||
+  fail "mkfs.cramfs embedded image"
+embedded_size=$(wc -c </tmp/cram-embedded)
+dd if=/tmp/cram-with-embedded.img of=/tmp/cram-embedded.out bs=1 skip=76 \
+  count="$embedded_size" 2>/dev/null || fail "read embedded cramfs image"
+cmp /tmp/cram-embedded /tmp/cram-embedded.out || fail "cramfs embedded image"
 # ncurses is a real dependency now; ul exercises its terminfo-backed formatter.
 printf 'X\b_\n' | ul >/tmp/ul.out || fail "ul"
 contains "$(cat /tmp/ul.out)" X || fail "ul output: $(od -An -tx1 /tmp/ul.out)"

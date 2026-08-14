@@ -1,0 +1,144 @@
+Use bounded heap buffers for cramfs construction on wasm.
+
+Native builds retain mmap.  The checker uses its existing streaming CRC path
+on wasm, while mkfs uses exact reads for ordinary file and embedded-image
+buffers and a zeroed heap buffer for the output image.
+
+--- a/disk-utils/mkfs.cramfs.c
++++ b/disk-utils/mkfs.cramfs.c
+@@ -58,6 +58,9 @@
+ 
+ #define XALLOC_EXIT_CODE MKFS_EX_ERROR
+ #include "xalloc.h"
++#ifdef __wasm__
++# include "all-io.h"
++#endif
+ 
+ /* The kernel only supports PAD_SIZE of 0 and 512. */
+ #define PAD_SIZE 512
+@@ -184,10 +187,18 @@
+ 		goto err;
+ 	}
+ 
++#ifdef __wasm__
++	start = xmalloc(size);
++	if (read_all(fd, start, size) != (ssize_t) size)
++		err(MKFS_EX_ERROR, _("cannot read %s"), path);
++#else
+ 	start = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
++#endif
+ 	close(fd);
++#ifndef __wasm__
+ 	if (start == MAP_FAILED)
+ 		err(MKFS_EX_ERROR, "mmap");
++#endif
+ 	return start;
+ err:
+ 	free(start);
+@@ -196,10 +207,14 @@
+ 
+ static void
+ do_munmap(char *start, unsigned int size, unsigned int mode){
++#ifdef __wasm__
++	free(start);
++#else
+ 	if (S_ISLNK(mode))
+ 		free(start);
+ 	else
+ 		munmap(start, size);
++#endif
+ }
+ 
+ /* compute md5sums, so that we do not have to compare every pair of files */
+@@ -662,11 +677,21 @@
+ 	fd = open(file, O_RDONLY);
+ 	if (fd < 0)
+ 		err(MKFS_EX_ERROR, _("cannot open %s"), file);
++#ifdef __wasm__
++	buf = xmalloc(image_length);
++	if (read_all(fd, buf, image_length) != (ssize_t) image_length)
++		err(MKFS_EX_ERROR, _("cannot read %s"), file);
++#else
+ 	buf = mmap(NULL, image_length, PROT_READ, MAP_PRIVATE, fd, 0);
+ 	if (buf == MAP_FAILED)
+ 		err(MKFS_EX_ERROR, _("cannot map %s"), file);
++#endif
+ 	memcpy(base + offset, buf, image_length);
++#ifdef __wasm__
++	free(buf);
++#else
+ 	munmap(buf, image_length);
++#endif
+ 	if (close (fd) < 0)
+ 		err(MKFS_EX_ERROR, _("cannot close file %s"), file);
+ 	/* Pad up the image_length to a 4-byte boundary */
+@@ -710,6 +735,9 @@
+ 	/* initial guess (upper-bound) of required filesystem size */
+ 	loff_t fslen_ub = sizeof(struct cramfs_super);
+ 	unsigned int fslen_max;
++#ifdef __wasm__
++	size_t alloc_len;
++#endif
+ 	char const *dirname, *outfile;
+ 	char *lockmode = 0;
+ 	uint32_t crc = crc32(0L, NULL, 0);
+@@ -802,6 +830,8 @@
+ 	if (opt_image != NULL) {
+ 		if (lstat(opt_image, &st) < 0)
+ 			err(MKFS_EX_USAGE, _("stat of %s failed"), opt_image);
++		if (st.st_size <= 0 || (uintmax_t) st.st_size > INT_MAX - 3)
++			errx(MKFS_EX_USAGE, _("invalid image size: %s"), opt_image);
+ 		image_length = st.st_size; /* may be padded later */
+ 		fslen_ub += (image_length + 3); /* 3 is for padding */
+ 	}
+@@ -832,6 +862,11 @@
+ 	/* always allocate a multiple of blksize bytes because that's
+ 	   what we're going to write later on */
+ 	fslen_ub = ((fslen_ub - 1) | (blksize - 1)) + 1;
++#ifdef __wasm__
++	if (fslen_ub <= 0 || (uintmax_t) fslen_ub > SIZE_MAX)
++		errx(MKFS_EX_ERROR, _("ROM image is too large"));
++	alloc_len = (size_t) fslen_ub;
++#endif
+ 	fslen_max = maxfslen();
+ 
+ 	if (fslen_ub > fslen_max) {
+@@ -852,6 +887,9 @@
+ 	   RAM free.  If the reason is to be able to write to
+ 	   un-mmappable block devices, then we could try shared mmap
+ 	   and revert to anonymous mmap if the shared mmap fails. */
++#ifdef __wasm__
++	rom_image = xcalloc(1, alloc_len);
++#else
+ 	rom_image = mmap(NULL,
+ 			 fslen_ub?fslen_ub:1,
+ 			 PROT_READ | PROT_WRITE,
+@@ -860,6 +898,7 @@
+ 
+ 	if (MAP_FAILED == rom_image)
+ 		err(MKFS_EX_ERROR, _("ROM image map"));
++#endif
+ 
+ 	/* Skip the first opt_pad bytes for boot loader code */
+ 	offset = opt_pad;
+--- a/disk-utils/fsck.cramfs.c
++++ b/disk-utils/fsck.cramfs.c
+@@ -228,6 +228,7 @@
+ 
+ 	crc = crc32(0L, NULL, 0);
+ 
++#ifndef __wasm__
+ 	buf =
+ 	    mmap(NULL, super.size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+ 	if (buf == MAP_FAILED) {
+@@ -251,7 +252,9 @@
+ 		    crc32(0L, NULL, 0);
+ 		crc = crc32(crc, (unsigned char *) buf + start, super.size - start);
+ 		munmap(buf, super.size);
+-	} else {
++	} else
++#endif
++	{
+ 		int retval;
+ 		size_t length = 0;
+ 

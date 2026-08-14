@@ -60,8 +60,6 @@ stdenv.mkDerivation (finalAttrs: {
   #     signal child are converted without weakening their lifecycle.
   #   * ipcmk/ipcrm/ipcs/lsipc require System V IPC; CONFIG_SYSVIPC is disabled
   #     in the shipped wasm kernel configuration.
-  #   * cramfs tools (selected only by zlib) use mmap as their filesystem image
-  #     and file-input representation throughout.
   # Callback clone is used only on wasm where child-only setup cannot be
   # expressed as posix_spawn actions. Without CLONE_VM the kernel snapshots
   # the address space and waits synchronously for the copy; it returns
@@ -101,6 +99,7 @@ stdenv.mkDerivation (finalAttrs: {
     ./dmesg-no-mmap.patch
     ./fincore-cachestat.patch
     ./libblkid-no-mmap.patch
+    ./cramfs-no-mmap.patch
     ./libblkid-no-fork.patch
     # Direct mount operations and the libmount inspection APIs work. Restrict
     # only external helpers, idmapped namespaces, and explicit parallel mode.
@@ -123,7 +122,7 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-python"
     "--without-udev"
     "--without-ncurses"
-    "--without-libz"
+    "--with-libz"
     "--without-cap-ng"
     "--without-selinux"
     "--without-audit"
