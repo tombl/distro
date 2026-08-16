@@ -17,16 +17,22 @@ import { BrowserFS } from "@lowland/guest/browser";
 import { serveGuest } from "@lowland/bridge-site/client";
 
 const terminalElement = document.querySelector<HTMLElement>("[data-terminal]");
-const statusElement = document.querySelector<HTMLElement>("[data-terminal-status]");
-const statusTitle = document.querySelector<HTMLElement>("[data-status-title]");
-const statusDetail = document.querySelector<HTMLElement>("[data-status-detail]");
+const placeholderElement = document.querySelector<HTMLElement>("[data-terminal-placeholder]");
 
 function reportError(error: unknown) {
   console.error(error);
-  if (statusElement) {
-    statusElement.hidden = false;
-    if (statusTitle) statusTitle.textContent = "The machine could not start.";
-    if (statusDetail) statusDetail.textContent = String(error);
+  // The placeholder is the no-JavaScript face of the panel; a load failure
+  // keeps it mounted and rewrites it in place rather than losing it.
+  if (placeholderElement) {
+    placeholderElement.textContent = [
+      "The machine could not start.",
+      "",
+      String(error),
+      "",
+      "Continue with the documentation or inspect the source.",
+    ].join("\n");
+  } else {
+    term.write(`\r\nThe machine could not start: ${String(error)}\r\n`);
   }
 }
 
@@ -124,12 +130,11 @@ term.open(terminalElement);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   term.options.theme = terminalTheme();
 });
-if (statusTitle) statusTitle.textContent = "Starting Linux...";
-if (statusDetail) {
-  statusDetail.textContent = "Loading the kernel, root file system, and virtual devices.";
-}
 termFit.fit();
-addEventListener("resize", () => termFit.fit());
+addEventListener("resize", () => {
+  termFit.fit();
+  mirrorPlaceholderMetrics();
+});
 
 if (parameters.webgl !== "0") {
   try {
@@ -138,6 +143,101 @@ if (parameters.webgl !== "0") {
     console.warn(error);
   }
 }
+// The placeholder and the terminal must share the same text metrics so the
+// swap is invisible. xterm renders into fixed-width cells whose geometry is
+// authoritative; mirror the measured row height and cell width back into the
+// CSS custom properties the placeholder styles read. The cell width in turn
+// determines the placeholder's letter spacing: xterm pads each glyph to its
+// cell, so the placeholder must add the same spacing to advance identically.
+const machineElement = terminalElement.closest<HTMLElement>(".machine");
+
+function measureCellWidth(): number | undefined {
+  if (!terminalElement) return undefined;
+  const screen = terminalElement.querySelector<HTMLElement>(".xterm-screen");
+  if (screen && term.cols > 0) {
+    const width = screen.getBoundingClientRect().width / term.cols;
+    if (width > 0) return width;
+  }
+  // Fall back to xterm's own cell dimensions when the screen isn't painted.
+  const internal = (
+    term as unknown as {
+      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } };
+    }
+  )._core?._renderService?.dimensions?.css?.cell?.width;
+  return internal && internal > 0 ? internal : undefined;
+}
+
+function measureNaturalAdvance(): number | undefined {
+  if (!placeholderElement) return undefined;
+  const probe = document.createElement("span");
+  probe.textContent = "M".repeat(20);
+  probe.style.cssText = [
+    "position: absolute",
+    "visibility: hidden",
+    "white-space: pre",
+    `font-family: var(--font-mono, ui-monospace, monospace)`,
+    `font-size: ${term.options.fontSize}px`,
+    `line-height: ${term.options.lineHeight}`,
+    "letter-spacing: 0",
+  ].join(";");
+  placeholderElement.append(probe);
+  const width = probe.getBoundingClientRect().width / 20;
+  probe.remove();
+  return width;
+}
+
+function mirrorPlaceholderMetrics() {
+  if (!machineElement || !terminalElement) return;
+  const screen = terminalElement.querySelector<HTMLElement>(".xterm-screen");
+  if (screen && term.rows > 0) {
+    const lineHeight = screen.getBoundingClientRect().height / term.rows;
+    machineElement.style.setProperty("--terminal-line-height", `${lineHeight}px`);
+  }
+  machineElement.style.setProperty("--terminal-font-size", `${term.options.fontSize}px`);
+  const cellWidth = measureCellWidth();
+  const advance = measureNaturalAdvance();
+  if (cellWidth !== undefined && advance !== undefined) {
+    const spacing = cellWidth - advance;
+    machineElement.style.setProperty("--terminal-letter-spacing", `${spacing}px`);
+  }
+}
+// Measure after the terminal has actually painted (WebGL needs a frame), so
+// the mirrored geometry reflects the real cell size rather than a pre-layout
+// guess.
+requestAnimationFrame(() => mirrorPlaceholderMetrics());
+
+// The placeholder is a stand-in for a server-rendered terminal: the `<pre>`
+// shows the message when JavaScript cannot run. The handover happens at the
+// first frame of JavaScript — xterm mounts and is given the placeholder's
+// exact text, then the `<pre>` is removed only once that write has actually
+// rendered (so the exposed terminal already shows identical cells). It is a
+// hydration stand-in, not a loading screen: the terminal never starts empty,
+// and the boot log streams in after the swap.
+let terminalReady = false;
+function swapToTerminal() {
+  if (terminalReady) return;
+  terminalReady = true;
+  const text = placeholderElement?.textContent ?? "";
+  if (text) {
+    term.write(text, () => {
+      // Let the terminal paint the placeholder text before exposing it, and
+      // re-measure its geometry now that it has actually rendered.
+      requestAnimationFrame(() => {
+        mirrorPlaceholderMetrics();
+        placeholderElement?.remove();
+        termFit.fit();
+      });
+    });
+  } else {
+    placeholderElement?.remove();
+  }
+}
+
+// Normal flow: hydrate the placeholder into the terminal at the first frame
+// of JavaScript — xterm is given the placeholder's exact text and the `<pre>`
+// is removed once that text has rendered, as if the terminal had been
+// server-rendered and then hydrated. The boot log streams in after.
+swapToTerminal();
 
 if (!window.crossOriginIsolated) throw new Error("This page is not cross-origin isolated.");
 
@@ -162,29 +262,22 @@ const toTerminal = (data: string | ArrayLike<number>) =>
   );
 
 // The kernel emits pre-console printk through the boot console stream and
-// everything after hvc0 takes over through the virtio tty console. Those are
-// two independent asynchronous streams, so rendering them both straight to
-// the terminal lets the tail of the boot log interleave with the guest's
-// first console output (the motd). Buffer the boot stream and flush it before
-// the first tty byte, so the log reads as a single ordered block.
-const bootChunks: Uint8Array[] = [];
-let bootFlushed = false;
-async function flushBoot() {
-  if (bootFlushed) return;
-  bootFlushed = true;
-  for (const chunk of bootChunks) await toTerminal(chunk);
-  bootChunks.length = 0;
-}
+// everything after hvc0 takes over through the virtio tty console. Stream the
+// boot log into the terminal live, but hold the tty console's first output
+// until the boot stream has closed (hvc0 handoff), so the log reads as one
+// ordered block rather than interleaving with the motd.
+let releaseTty: () => void = () => {};
+const ttyGate = new Promise<void>((resolve) => {
+  releaseTty = resolve;
+});
 const bootOut = new WritableStream({
   write(chunk) {
-    if (bootFlushed) void toTerminal(chunk);
-    else bootChunks.push(chunk);
+    return toTerminal(chunk);
   },
-  close: () => void flushBoot(),
 });
 const stdout = new WritableStream({
   async write(chunk) {
-    await flushBoot();
+    await ttyGate;
     return toTerminal(chunk);
   },
 });
@@ -353,14 +446,20 @@ const machine = await bootMachine({
   args,
   plugins,
 });
-void machine.bootConsole.pipeTo(bootOut).catch(() => {});
+// Route the kernel's boot output into the terminal, which already holds the
+// hydrated placeholder text. Releasing the tty gate lets the guest's motd
+// follow once the boot console stream closes (hvc0 handoff).
+void machine.bootConsole
+  .pipeTo(bootOut)
+  .then(releaseTty)
+  .catch(() => {});
+setTimeout(releaseTty, 5000);
 
 if (bootDirectory) {
   await guest.fs.mkdir("/boot", { recursive: true });
   await guest.mount("boot", "/boot", { type: "virtiofs" });
 }
 terminalElement.setAttribute("aria-busy", "false");
-if (statusElement) statusElement.hidden = true;
 termFit.fit();
 
 if (location.origin === "https://low.land") {
