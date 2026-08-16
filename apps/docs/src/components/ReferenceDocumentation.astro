@@ -233,30 +233,15 @@ function kindLabel(declaration: Declaration): string {
   return declaration.kind === "typeAlias" ? "type alias" : declaration.kind;
 }
 
-// Resolves `{@link Target}` text to a fragment on this page. The target may
-// be a top-level symbol (`GuestAgent`), or a member of one (`GuestAgent.mount`,
-// which Deno docs write with the object's short name). Fall back to the
-// symbol's own section when the member anchor does not exist.
+// Resolves `{@link Target}` text to a fragment on this page. The target is a
+// top-level symbol (`GuestAgent`) or a member of one (`GuestAgent.mount`).
+// Fall back to the symbol's own section when the member anchor does not exist.
 const symbolsByName = new Map(document.symbols.map((symbol) => [symbol.name, symbol]));
-// Shorthand member links such as `Guest.mount` may name the value's short
-// type rather than the documented interface (`GuestAgent`). Resolve those to
-// the first symbol exposing that member.
-const memberAnchorByName = new Map<string, string>();
-for (const symbol of document.symbols) {
-  for (const member of symbol.declarations.flatMap(declarationMembers)) {
-    if (!memberAnchorByName.has(member.name)) {
-      memberAnchorByName.set(member.name, `#${referenceSymbolId(`${symbol.name}.${member.name}`)}`);
-    }
-  }
-}
 const resolveLink = (target: string): string | undefined => {
   if (/^https?:/i.test(target)) return target;
   const [symbolName, memberName] = target.split(".");
   const symbol = symbolsByName.get(symbolName);
-  if (!symbol) {
-    // Shorthand like `Guest.mount` for `GuestAgent.mount`.
-    return memberName ? memberAnchorByName.get(memberName) : undefined;
-  }
+  if (!symbol) return undefined;
   if (memberName) {
     const members = symbol.declarations.flatMap(declarationMembers);
     if (members.some((member) => member.name === memberName)) {
