@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/ncurses/ncurses-6.6.tar.gz";
+    url = "mirror://gnu/ncurses/ncurses-6.6.tar.gz";
     hash = "sha256-YpXsAx/jqbxBpTLljJBfLEyeG4vSY94K4HYHSqyXYyg=";
   },
   vm-test,

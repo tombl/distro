@@ -1,0 +1,197 @@
+script: preserve PTY child setup with callback clone on wasm
+
+The PTY slave initialization, signal reset, and exec sequence form a bounded
+child continuation. Run it in a private copy-clone child on wasm while retaining
+the exact upstream fork paths for native script and scriptlive builds.
+
+--- a/term-utils/script.c
++++ b/term-utils/script.c
+@@ -41,6 +41,9 @@
+ #include <sys/ioctl.h>
+ #include <sys/time.h>
+ #include <signal.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <errno.h>
+ #include <string.h>
+ #include <getopt.h>
+@@ -761,6 +764,41 @@
+ 		       "Program not started."), filename);
+ }
+ 
++#ifdef __wasm__
++struct script_child_args {
++	struct script_control *ctl;
++	const char *shell;
++};
++
++static int script_child(void *data)
++{
++	struct script_child_args *args = data;
++	struct script_control *ctl = args->ctl;
++	const char *shell = args->shell;
++	const char *shname;
++
++	ul_pty_init_slave(ctl->pty);
++	signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
++
++	shname = strrchr(shell, '/');
++	shname = shname ? shname + 1 : shell;
++
++	if (access(shell, X_OK) == 0) {
++		if (ctl->command)
++			execl(shell, shname, "-c", ctl->command, (char *) NULL);
++		else
++			execl(shell, shname, "-i", (char *) NULL);
++	} else {
++		if (ctl->command)
++			execlp(shname, shname, "-c", ctl->command, (char *) NULL);
++		else
++			execlp(shname, shname, "-i", (char *) NULL);
++	}
++
++	err(EXIT_FAILURE, "failed to execute %s", shell);
++}
++#endif
++
+ int main(int argc, char **argv)
+ {
+ 	struct script_control ctl = {
+@@ -773,6 +811,11 @@
+ 	const char *timingfile = NULL, *shell = NULL;
+ 	char **cmd_argv = NULL;
+ 	int cmd_argc = 0;
++#ifdef __wasm__
++	const size_t child_stack_size = 64 * 1024;
++	char *child_stack;
++	struct script_child_args child_args;
++#endif
+ 
+ 	enum { FORCE_OPTION = CHAR_MAX + 1 };
+ 
+@@ -1019,6 +1062,21 @@
+ 	 * We have terminal, do not use err() from now, use "goto done"
+ 	 */
+ 
++#ifdef __wasm__
++	child_args = (struct script_child_args) {
++		.ctl = &ctl,
++		.shell = shell,
++	};
++	child_stack = xmalloc(child_stack_size);
++	ctl.child = clone(script_child, child_stack + child_stack_size,
++			  SIGCHLD, &child_args);
++	free(child_stack);
++	if (ctl.child == -1) {
++		warn(_("cannot create child process"));
++		rc = -errno;
++		goto done;
++	}
++#else
+ 	switch ((int) (ctl.child = fork())) {
+ 	case -1: /* error */
+ 		warn(_("cannot create child process"));
+@@ -1054,6 +1112,7 @@
+ 	default:
+ 		break;
+ 	}
++#endif
+ 
+ 	/* parent */
+ 	ul_pty_set_child(ctl.pty, ctl.child);
+--- a/term-utils/scriptlive.c
++++ b/term-utils/scriptlive.c
+@@ -27,6 +27,9 @@
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <termios.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <paths.h>
+ 
+ #include "c.h"
+@@ -155,6 +158,40 @@
+ 	return process_next_step(ss);
+ }
+ 
++#ifdef __wasm__
++struct scriptlive_child_args {
++	struct scriptlive *ss;
++	const char *shell;
++	const char *command;
++};
++
++static int scriptlive_child(void *data)
++{
++	struct scriptlive_child_args *args = data;
++	const char *shname;
++
++	ul_pty_init_slave(args->ss->pty);
++	signal(SIGTERM, SIG_DFL); /* because /etc/csh.login */
++
++	shname = strrchr(args->shell, '/');
++	shname = shname ? shname + 1 : args->shell;
++
++	if (access(args->shell, X_OK) == 0) {
++		if (args->command)
++			execl(args->shell, shname, "-c", args->command, (char *) NULL);
++		else
++			execl(args->shell, shname, "-i", (char *) NULL);
++	} else {
++		if (args->command)
++			execlp(shname, shname, "-c", args->command, (char *) NULL);
++		else
++			execlp(shname, shname, "-i", (char *) NULL);
++	}
++
++	err(EXIT_FAILURE, "failed to execute %s", args->shell);
++}
++#endif
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -169,6 +206,11 @@
+ 	struct ul_pty_callbacks *cb;
+ 	struct scriptlive ss = { .pty = NULL };
+ 	pid_t child;
++#ifdef __wasm__
++	const size_t child_stack_size = 64 * 1024;
++	char *child_stack;
++	struct scriptlive_child_args child_args;
++#endif
+ 
+ 	static const struct option longopts[] = {
+ 		{ "command",    required_argument,      0, 'c' },
+@@ -308,6 +350,21 @@
+ 
+ 	fflush(stdout);			/* ??? */
+ 
++#ifdef __wasm__
++	child_args = (struct scriptlive_child_args) {
++		.ss = &ss,
++		.shell = shell,
++		.command = command,
++	};
++	child_stack = xmalloc(child_stack_size);
++	child = clone(scriptlive_child, child_stack + child_stack_size,
++		      SIGCHLD, &child_args);
++	free(child_stack);
++	if (child == -1) {
++		ul_pty_cleanup(ss.pty);
++		err(EXIT_FAILURE, _("cannot create child process"));
++	}
++#else
+ 	switch ((int) (child = fork())) {
+ 	case -1: /* error */
+ 		ul_pty_cleanup(ss.pty);
+@@ -342,6 +399,7 @@
+ 	default:
+ 		break;
+ 	}
++#endif
+ 
+ 	/* parent */
+ 	ul_pty_set_child(ss.pty, child);

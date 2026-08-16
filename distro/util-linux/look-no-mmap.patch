@@ -1,0 +1,38 @@
+Use an exact heap copy for look's dictionary only on wasm.
+
+--- a/misc-utils/look.c
++++ b/misc-utils/look.c
+@@ -59,6 +59,9 @@
+ 
+ #include "nls.h"
+ #include "xalloc.h"
++#ifdef __wasm__
++# include "all-io.h"
++#endif
+ #include "pathnames.h"
+ #include "closestream.h"
+ 
+@@ -153,6 +156,15 @@
+ 
+ 	if ((fd = open(file, O_RDONLY, 0)) < 0 || fstat(fd, &sb))
+ 		err(EXIT_FAILURE, "%s", file);
++#ifdef __wasm__
++	if (sb.st_size <= 0 || (uintmax_t) sb.st_size > (uintmax_t) SINT_MAX(ssize_t)) {
++		errno = EINVAL;
++		err(EXIT_FAILURE, "%s", file);
++	}
++	front = xmalloc((size_t) sb.st_size);
++	if (read_all(fd, front, (size_t) sb.st_size) != (ssize_t) sb.st_size)
++		err(EXIT_FAILURE, "%s", file);
++#else
+ 	front = mmap(NULL, (size_t) sb.st_size, PROT_READ,
+ 		     MAP_SHARED, fd, (off_t) 0);
+ 	if
+@@ -162,6 +174,7 @@
+ 		((void *)(front) <= (void *)0)
+ #endif
+ 			err(EXIT_FAILURE, "%s", file);
++#endif
+ 	back = front + sb.st_size;
+ 	return look(front, back);
+ }

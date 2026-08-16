@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.7.tar.xz";
+    url = "mirror://gnu/coreutils/coreutils-9.7.tar.xz";
     hash = "sha256-TFDtvw5E4y9UPfMyOV+KiMnIeSum54fXSOIbT7qRsXA=";
   },
   busybox,

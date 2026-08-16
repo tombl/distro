@@ -1,0 +1,296 @@
+wall: preserve bounded slow-terminal delivery on wasm
+
+ttymsg still hands a blocked terminal write to a child and returns its PID to
+the caller. Use a private callback-clone continuation on wasm while retaining
+the native fork path and arbitrary writev vector semantics.
+
+diff --git a/term-utils/ttymsg.c b/term-utils/ttymsg.c
+index 37ab94c..318e492 100644
+--- a/term-utils/ttymsg.c
++++ b/term-utils/ttymsg.c
+@@ -52,14 +52,90 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <stdlib.h>
++#ifdef TEST_PROGRAM_TTYMSG
++# include <poll.h>
++# include <sys/wait.h>
++# include <time.h>
++#endif
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ 
+ #include "nls.h"
+ #include "closestream.h"
+ #include "pathnames.h"
+ #include "ttymsg.h"
++#if defined(__wasm__) || defined(TEST_PROGRAM_TTYMSG)
++# include "xalloc.h"
++#endif
+ 
+ #define ERR_BUFLEN	(MAXNAMLEN + 1024)
+ 
++#ifdef __wasm__
++struct ttymsg_child_args {
++	size_t iovcnt;
++	size_t left;
++	int fd;
++	int tmout;
++	char device[MAXNAMLEN];
++	struct iovec iov[];
++};
++
++static int ttymsg_child(void *data)
++{
++	struct ttymsg_child_args *args = data;
++	struct iovec *iov = args->iov;
++	size_t iovcnt = args->iovcnt, left = args->left;
++	ssize_t wret;
++	int flags, rc;
++	sigset_t sigmask;
++
++	signal(SIGALRM, SIG_DFL);
++	signal(SIGTERM, SIG_DFL);
++	sigemptyset(&sigmask);
++	sigprocmask(SIG_SETMASK, &sigmask, NULL);
++	alarm((unsigned int) args->tmout);
++	rc = flags = fcntl(args->fd, F_GETFL);
++	if (rc >= 0)
++		rc = fcntl(args->fd, F_SETFL, (long) (flags & ~O_NONBLOCK));
++	if (rc < 0) {
++		warn(_("fcntl failed: %s"), args->device);
++		close_fd(args->fd);
++		return EXIT_FAILURE;
++	}
++
++	for (;;) {
++		wret = writev(args->fd, iov, iovcnt);
++		if (wret >= (ssize_t) left)
++			break;
++		if (wret >= 0) {
++			left -= wret;
++			while (wret >= (ssize_t) iov->iov_len && iovcnt > 0) {
++				wret -= iov->iov_len;
++				++iov;
++				--iovcnt;
++			}
++			if (wret) {
++				iov->iov_base = (char *) iov->iov_base + wret;
++				iov->iov_len -= wret;
++			}
++			continue;
++		}
++		if (errno == ENODEV || errno == EIO)
++			break;
++		if (errno == EWOULDBLOCK) {
++			close(args->fd);
++			return EXIT_FAILURE;
++		}
++		if (close_fd(args->fd) != 0)
++			warn(_("write failed: %s"), args->device);
++		return EXIT_FAILURE;
++	}
++	close(args->fd);
++	return EXIT_SUCCESS;
++}
++#endif
++
+ /*
+  * Display the contents of a uio structure on a terminal.  Used by wall(1),
+  * syslogd(8), and talkd(8).  Forks and finishes in child if write would block,
+@@ -135,6 +211,57 @@ ttymsg(struct iovec *iov, size_t iovcnt, char *line, int tmout) {
+ 			continue;
+ 		}
+ 		if (errno == EWOULDBLOCK) {
++#ifdef __wasm__
++			const size_t stack_size = 128 * 1024;
++			struct ttymsg_child_args *args;
++			void *stack = malloc(stack_size);
++			pid_t cpid;
++
++			if (!stack) {
++				len = snprintf(errbuf, sizeof(errbuf), _("clone: %m"));
++				if (len < 0 || (size_t) len >= sizeof(errbuf))
++					snprintf(errbuf, sizeof(errbuf), _("cannot clone"));
++				close(fd);
++				return errbuf;
++			}
++			if (iovcnt > (SIZE_MAX - sizeof(*args)) / sizeof(*iov)) {
++				free(stack);
++				errno = EOVERFLOW;
++				len = snprintf(errbuf, sizeof(errbuf), _("iovec is too large: %m"));
++				if (len < 0 || (size_t) len >= sizeof(errbuf))
++					snprintf(errbuf, sizeof(errbuf), _("iovec is too large"));
++				close(fd);
++				return errbuf;
++			}
++			args = malloc(sizeof(*args) + iovcnt * sizeof(*iov));
++			if (!args) {
++				free(stack);
++				len = snprintf(errbuf, sizeof(errbuf), _("clone: %m"));
++				if (len < 0 || (size_t) len >= sizeof(errbuf))
++					snprintf(errbuf, sizeof(errbuf), _("cannot clone"));
++				close(fd);
++				return errbuf;
++			}
++			args->iovcnt = iovcnt;
++			args->left = left;
++			args->fd = fd;
++			args->tmout = tmout;
++			memcpy(args->iov, iov, iovcnt * sizeof(*iov));
++			memcpy(args->device, device, sizeof(args->device));
++			cpid = clone(ttymsg_child, (char *) stack + stack_size,
++				     SIGCHLD, args);
++			free(args);
++			free(stack);
++			if (cpid < 0) {
++				len = snprintf(errbuf, sizeof(errbuf), _("clone: %m"));
++				if (len < 0 || (size_t) len >= sizeof(errbuf))
++					snprintf(errbuf, sizeof(errbuf), _("cannot clone"));
++				close(fd);
++				return errbuf;
++			}
++			close(fd);
++			return NULL;
++#else
+ 			int cpid, flags;
+ 			int rc;
+ 			sigset_t sigmask;
+@@ -171,6 +298,7 @@ ttymsg(struct iovec *iov, size_t iovcnt, char *line, int tmout) {
+ 				_exit(EXIT_FAILURE);
+ 			}
+ 			continue;
++#endif
+ 		}
+ 		/*
+ 		 * We get ENODEV on a slip line if we're running as root,
+@@ -197,3 +325,113 @@ ttymsg(struct iovec *iov, size_t iovcnt, char *line, int tmout) {
+ 		_exit(EXIT_SUCCESS);
+ 	return NULL;
+ }
++
++#ifdef TEST_PROGRAM_TTYMSG
++static int count_fds(void)
++{
++	DIR *dir = opendir("/proc/self/fd");
++	struct dirent *entry;
++	int count = 0;
++
++	if (!dir)
++		err(EXIT_FAILURE, "open /proc/self/fd");
++	while ((entry = readdir(dir)))
++		if (strcmp(entry->d_name, ".") != 0 &&
++		    strcmp(entry->d_name, "..") != 0)
++			count++;
++	closedir(dir);
++	return count;
++}
++
++static double monotime(void)
++{
++	struct timespec ts;
++
++	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
++		err(EXIT_FAILURE, "clock_gettime");
++	return ts.tv_sec + ts.tv_nsec / 1000000000.0;
++}
++
++int main(void)
++{
++	static const char payload[] = "ttymsg-callback-tail-7f29";
++	char fill[4096], *output, *slave, *line;
++	struct iovec iov = { .iov_base = (char *) payload,
++			     .iov_len = sizeof(payload) - 1 };
++	int master, fillfd, before, after, status = 0;
++	pid_t child = 0;
++	size_t used = 0;
++	double started, elapsed;
++	char *error;
++
++	memset(fill, 'F', sizeof(fill));
++	master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
++	if (master < 0 || grantpt(master) != 0 || unlockpt(master) != 0)
++		err(EXIT_FAILURE, "open pty");
++	slave = ptsname(master);
++	if (!slave || strncmp(slave, _PATH_DEV, strlen(_PATH_DEV)) != 0)
++		errx(EXIT_FAILURE, "invalid pty name");
++	line = slave + strlen(_PATH_DEV);
++	fillfd = open(slave, O_WRONLY | O_NOCTTY | O_NONBLOCK);
++	if (fillfd < 0)
++		err(EXIT_FAILURE, "open pty slave");
++	while (write(fillfd, fill, sizeof(fill)) >= 0)
++		;
++	if (errno != EAGAIN && errno != EWOULDBLOCK)
++		err(EXIT_FAILURE, "fill pty");
++	while (write(fillfd, fill, 1) == 1)
++		;
++	if (errno != EAGAIN && errno != EWOULDBLOCK)
++		err(EXIT_FAILURE, "top off pty");
++
++	before = count_fds();
++	errno = 0;
++	if (waitpid(-1, &status, WNOHANG) != -1 || errno != ECHILD)
++		errx(EXIT_FAILURE, "unexpected pre-existing child");
++	started = monotime();
++	error = ttymsg(&iov, 1, line, 10);
++	elapsed = monotime() - started;
++	after = count_fds();
++	if (error)
++		errx(EXIT_FAILURE, "ttymsg: %s", error);
++	if (elapsed >= 1.0)
++		errx(EXIT_FAILURE, "ttymsg blocked for %.3f seconds", elapsed);
++	if (after != before)
++		errx(EXIT_FAILURE, "parent fd leak: %d -> %d", before, after);
++	close(fillfd);
++
++	output = xmalloc(1024 * 1024);
++	started = monotime();
++	for (;;) {
++		ssize_t n = read(master, output + used, 1024 * 1024 - used);
++
++		if (n > 0)
++			used += n;
++		else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK &&
++			 errno != EIO)
++			err(EXIT_FAILURE, "read pty");
++		if (child <= 0) {
++			pid_t waited = waitpid(-1, &status, WNOHANG);
++
++			if (waited > 0)
++				child = waited;
++		}
++		if (child > 0 && memmem(output, used, payload, sizeof(payload) - 1))
++			break;
++		if (used == 1024 * 1024 || monotime() - started >= 15.0) {
++			if (memmem(output, used, payload, sizeof(payload) - 1))
++				errx(EXIT_FAILURE, "callback child was not reaped");
++			if (child > 0)
++				errx(EXIT_FAILURE, "callback payload timeout");
++			errx(EXIT_FAILURE, "callback child and payload timeout");
++		}
++		poll(&(struct pollfd) { .fd = master, .events = POLLIN }, 1, 20);
++	}
++	if (!WIFEXITED(status) || WEXITSTATUS(status) != EXIT_SUCCESS)
++		errx(EXIT_FAILURE, "callback child status");
++	printf("child=%d return=%.3f payload=yes fd-leak=no\n", child, elapsed);
++	free(output);
++	close(master);
++	return EXIT_SUCCESS;
++}
++#endif
+diff --git a/term-utils/Makemodule.am b/term-utils/Makemodule.am
+index 8a65e4c..2b3bb53 100644
+--- a/term-utils/Makemodule.am
++++ b/term-utils/Makemodule.am
+@@ -101,6 +101,10 @@ dist_noinst_DATA += term-utils/wall.1.adoc
+ wall_CFLAGS = $(SUID_CFLAGS) $(AM_CFLAGS)
+ wall_LDFLAGS = $(SUID_LDFLAGS) $(AM_LDFLAGS)
+ wall_LDADD = $(LDADD) libcommon.la
++check_PROGRAMS += test_ttymsg
++test_ttymsg_SOURCES = term-utils/ttymsg.c
++test_ttymsg_CFLAGS = $(AM_CFLAGS) -DTEST_PROGRAM_TTYMSG
++test_ttymsg_LDADD = $(LDADD) libcommon.la
+ if HAVE_SYSTEMD
+ wall_LDADD += $(SYSTEMD_LIBS)
+ wall_CFLAGS += $(SYSTEMD_CFLAGS)

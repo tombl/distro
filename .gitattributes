@@ -1,1 +1,2 @@
 apps/site/vendor/** linguist-vendored
+*.patch -whitespace

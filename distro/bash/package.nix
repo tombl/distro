@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz";
+    url = "mirror://gnu/bash/bash-5.3.tar.gz";
     hash = "sha256-yDRoQcHzXgMUcaxNq9WMezU6zwzZp4Z4T2oD2qyfHK4=";
   },
   readline,

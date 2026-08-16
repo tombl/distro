@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz";
+    url = "mirror://gnu/findutils/findutils-4.10.0.tar.xz";
     hash = "sha256-VnE/TPw/fOD9I3aVmMfzZKdULcmEoljpAPjugMiq+p4=";
   },
   busybox,

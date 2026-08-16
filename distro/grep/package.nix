@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz";
+    url = "mirror://gnu/grep/grep-3.11.tar.xz";
     hash = "sha256-e4F99gC1JWZEYiUmc7mlSjYdMrbBDxBjwdT4Wv/9oF4=";
   },
   busybox,

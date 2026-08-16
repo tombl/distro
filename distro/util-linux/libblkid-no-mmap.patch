@@ -1,0 +1,56 @@
+Use heap probe buffers only on wasm while preserving native page protection.
+
+--- a/libblkid/src/probe.c
++++ b/libblkid/src/probe.c
+@@ -569,7 +569,11 @@
+ 
+ 	DBG(BUFFER, ul_debug(" remove buffer: [off=%"PRIu64", len=%"PRIu64"]",
+ 				bf->off, bf->len));
++#ifdef __wasm__
++	free(bf->data);
++#else
+ 	munmap(bf->data, bf->len);
++#endif
+ 	free(bf);
+ }
+ 
+@@ -596,9 +600,14 @@
+ 		return NULL;
+ 	}
+ 
++#ifdef __wasm__
++	bf->data = malloc(len);
++	if (!bf->data) {
++#else
+ 	bf->data = mmap(NULL, len, PROT_READ | PROT_WRITE,
+ 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+ 	if (bf->data == MAP_FAILED) {
++#endif
+ 		free(bf);
+ 		errno = ENOMEM;
+ 		return NULL;
+@@ -624,8 +633,10 @@
+ 		return NULL;
+ 	}
+ 
++#ifndef __wasm__
+ 	if (mprotect(bf->data, len, PROT_READ))
+ 		DBG(LOWPROBE, ul_debug("\tmprotect failed: %m"));
++#endif
+ 
+ 	return bf;
+ }
+@@ -716,9 +727,13 @@
+ 
+ 			DBG(BUFFER, ul_debug("\thiding: off=%"PRIu64" len=%"PRIu64,
+ 						off, len));
++#ifndef __wasm__
+ 			mprotect(x->data, x->len, PROT_READ | PROT_WRITE);
++#endif
+ 			memset(data, 0, len);
++#ifndef __wasm__
+ 			mprotect(x->data, x->len, PROT_READ);
++#endif
+ 			ct++;
+ 		}
+ 	}

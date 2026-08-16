@@ -1,0 +1,174 @@
+Preserve restricted-path privilege semantics with a private-memory child.
+
+The child drops to the real uid, performs the lookup, and returns the result
+over the existing pipe.  A callback clone without CLONE_VM keeps the parent's
+effective credentials and address space unchanged, just as fork did.
+
+--- a/lib/fileutils.c
++++ b/lib/fileutils.c
+@@ -4,6 +4,9 @@
+  * Copyright (C) 2012 Sami Kerola <kerolasa@iki.fi>
+  * Copyright (C) 2012-2024 Karel Zak <kzak@redhat.com>
+  */
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <sys/types.h>
+@@ -25,6 +28,9 @@
+ #include "all-io.h"
+ #include "fileutils.h"
+ #include "pathnames.h"
++#ifdef TEST_PROGRAM_FILEUTILS
++# include "xalloc.h"
++#endif
+ 
+ int mkstemp_cloexec(char *template)
+ {
+@@ -178,6 +184,38 @@
+ 	}
+ }
+ 
++#ifdef __wasm__
++struct restricted_path_child_args {
++	const char *path;
++	int (*oper)(const char *path, char **result, void *data);
++	void *data;
++	int read_fd;
++	int write_fd;
++};
++
++static int restricted_path_child(void *data)
++{
++	struct restricted_path_child_args *args = data;
++	char *result = NULL;
++	ssize_t len;
++
++	close(args->read_fd);
++	errno = 0;
++
++	if (drop_permissions() != 0)
++		result = NULL;
++	else
++		args->oper(args->path, &result, args->data);
++
++	len = result ? (ssize_t) strlen(result) :
++		  errno ? -errno : -EINVAL;
++	write_all(args->write_fd, (char *) &len, sizeof(len));
++	if (result)
++		write_all(args->write_fd, result, len);
++	return 0;
++}
++#endif
++
+ /*
+  * Fork, drop permissions, and call oper() and return result.
+  */
+@@ -190,6 +228,11 @@
+ 	int pipes[2];
+ 	ssize_t len;
+ 	pid_t pid;
++#ifdef __wasm__
++	const size_t stack_size = 128 * 1024;
++	void *stack;
++	struct restricted_path_child_args args;
++#endif
+ 
+ 	if (!path || !*path)
+ 		return NULL;
+@@ -201,6 +244,26 @@
+ 	 * but if we do that, we lose ability to reassume euid of 0, so
+ 	 * we fork to do the check to keep euid intact.
+ 	 */
++#ifdef __wasm__
++	stack = malloc(stack_size);
++	if (!stack) {
++		close(pipes[0]);
++		close(pipes[1]);
++		return NULL;
++	}
++	args = (struct restricted_path_child_args) {
++		.path = path, .oper = oper, .data = data,
++		.read_fd = pipes[0], .write_fd = pipes[1]
++	};
++	pid = clone(restricted_path_child, (char *) stack + stack_size,
++		    SIGCHLD, &args);
++	if (pid < 0) {
++		close(pipes[0]);
++		close(pipes[1]);
++		free(stack);
++		return NULL;
++	}
++#else
+ 	pid = fork();
+ 	switch (pid) {
+ 	case -1:
+@@ -228,6 +291,7 @@
+ 	default:
+ 		break;
+ 	}
++#endif
+ 
+ 	close(pipes[1]);		/* close unused end */
+ 	pipes[1] = -1;
+@@ -260,6 +324,9 @@
+ 
+ 	/* We make a best effort to reap child */
+ 	ignore_result( waitpid(pid, NULL, 0) );
++#ifdef __wasm__
++	free(stack);
++#endif
+ 
+ 	errno = errsv;
+ 	return result;
+@@ -267,10 +334,19 @@
+ }
+ 
+ #ifdef TEST_PROGRAM_FILEUTILS
++static int restricted_test_oper(const char *path, char **result, void *data __attribute__((__unused__)))
++{
++	if (access(path, R_OK) != 0)
++		return -1;
++	xasprintf(result, "%u:%u:%s", (unsigned int) getuid(),
++		 (unsigned int) geteuid(), path);
++	return 0;
++}
++
+ int main(int argc, char *argv[])
+ {
+ 	if (argc < 2)
+-		errx(EXIT_FAILURE, "Usage %s --{mkstemp,close-fds,copy-file}", argv[0]);
++		errx(EXIT_FAILURE, "Usage %s --{mkstemp,close-fds,copy-file,restricted-path}", argv[0]);
+ 
+ 	if (strcmp(argv[1], "--mkstemp") == 0) {
+ 		FILE *f;
+@@ -297,6 +373,28 @@
+ 			err(EXIT_FAILURE, "read");
+ 		else if (ret == UL_COPY_WRITE_ERROR)
+ 			err(EXIT_FAILURE, "write");
++	} else if (strcmp(argv[1], "--restricted-path") == 0) {
++		char *end = NULL, *result;
++		unsigned long id;
++		int errsv, parent_access;
++
++		if (argc != 4)
++			errx(EXIT_FAILURE, "Usage %s --restricted-path <uid> <path>", argv[0]);
++		errno = 0;
++		id = strtoul(argv[2], &end, 10);
++		if (errno || !end || *end || id > (uid_t) -1)
++			errx(EXIT_FAILURE, "invalid uid: %s", argv[2]);
++		if (setresgid(id, 0, 0) != 0 || setresuid(id, 0, 0) != 0)
++			err(EXIT_FAILURE, "setresid");
++
++		errno = 0;
++		result = ul_restricted_path_oper(argv[3], restricted_test_oper, NULL);
++		errsv = errno;
++		parent_access = faccessat(AT_FDCWD, argv[3], R_OK, AT_EACCESS);
++		printf("parent=%u:%u access=%d errno=%d result=%s\n",
++		       (unsigned int) getuid(), (unsigned int) geteuid(),
++		       parent_access, errsv, result ? result : "(null)");
++		free(result);
+ 	}
+ 	return EXIT_SUCCESS;
+ }

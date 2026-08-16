@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz";
+    url = "mirror://gnu/gawk/gawk-5.3.1.tar.xz";
     hash = "sha256-dw4WPFQhuh+UXPKA48zlulFbuKbFc96eoNHHoiIDhL4=";
   },
   busybox,

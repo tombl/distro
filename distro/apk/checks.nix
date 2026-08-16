@@ -11,6 +11,7 @@
   ncurses,
   openssl,
   pkgs,
+  util-linux,
   vm-test,
 }:
 
@@ -44,6 +45,7 @@ let
         file
         ncurses
         openssl
+        util-linux
         ;
     };
   };

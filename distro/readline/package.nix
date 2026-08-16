@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/readline/readline-8.3.tar.gz";
+    url = "mirror://gnu/readline/readline-8.3.tar.gz";
     hash = "sha256-PhQxBHY8g6OaC7w2vHyGYVJVy7BtF6RjvH1EAF/Hza0=";
   },
   ncurses,

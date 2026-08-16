@@ -1,0 +1,65 @@
+Use the kernel cachestat interface without an mmap fallback on wasm.
+
+musl has no cachestat wrapper, but util-linux already provides the raw syscall
+fallback. Make --cachestat available with that fallback and preserve the
+original syscall errno when mmap/mincore is unavailable.
+
+--- a/misc-utils/fincore.c
++++ b/misc-utils/fincore.c
+@@ -284,6 +284,7 @@
+ 	return 0;
+ }
+ 
++#ifndef __wasm__
+ static int do_mincore(struct fincore_control *ctl,
+ 		      void *window, const size_t len,
+ 		      struct fincore_state *st)
+@@ -342,12 +343,13 @@
+ 
+ 	return rc;
+ }
++#endif
+ 
+ static int fincore_fd (struct fincore_control *ctl,
+ 		       int fd,
+ 		       struct fincore_state *st)
+ {
+-	int rc;
++	int rc, errsv;
+ 	const struct cachestat_range cstat_range = { 0 };
+ 
+ 	rc = cachestat(fd, &cstat_range, &st->cstat, 0);
+@@ -367,14 +369,21 @@
+ 
+ 		return 0;
+ 	}
++	errsv = errno;
+ 
+-	if (errno != ENOSYS || ctl->cachestat)
++	if (errsv != ENOSYS || ctl->cachestat)
+ 		warn(_("failed to do cachestat: %s"), st->name);
+ 
+-	if (errno == EPERM || ctl->cachestat)
+-		return -errno;
++	if (errsv == EPERM || ctl->cachestat)
++		return -errsv;
+ 
++#ifdef __wasm__
++	if (errsv == ENOSYS)
++		warn(_("failed to do cachestat: %s"), st->name);
++	return -errsv;
++#else
+ 	return mincore_fd(ctl, fd, st);
++#endif
+ }
+ 
+ /*
+@@ -504,7 +513,7 @@
+ 			ctl.total = 1;
+ 			break;
+ 		case 'C':
+-#ifndef HAVE_CACHESTAT
++#if !defined(HAVE_CACHESTAT) && !defined(__wasm__)
+ 			errx(EXIT_FAILURE, _("cachestat option is not supported"));
+ #endif
+ 			ctl.cachestat = 1;

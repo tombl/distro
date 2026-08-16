@@ -1,0 +1,110 @@
+tests: probe signalfd and timerfd directly in the guest
+
+Exercise the two file-descriptor signal/timer syscalls that util-linux tools
+depend on, independent of any particular tool, so a kernel regression fails
+fast.
+
+diff --git a/misc-utils/Makemodule.am b/misc-utils/Makemodule.am
+index 27abeb3..9b928b2 100644
+--- a/misc-utils/Makemodule.am
++++ b/misc-utils/Makemodule.am
+@@ -310,6 +310,10 @@ waitpid_LDADD = $(LDADD) libcommon.la
+ waitpid_CFLAGS = $(AM_CFLAGS)
+ endif
+ 
++check_PROGRAMS += test_fd_events
++test_fd_events_SOURCES = misc-utils/test_fd_events.c
++test_fd_events_LDADD = $(LDADD) libcommon.la
++
+ if BUILD_ENOSYS
+ 
+ misc-utils/enosys.c: syscalls.h errnos.h
+diff --git a/misc-utils/test_fd_events.c b/misc-utils/test_fd_events.c
+new file mode 100644
+index 0000000..f1dba9e
+--- /dev/null
++++ b/misc-utils/test_fd_events.c
+@@ -0,0 +1,83 @@
++/*
++ * test_fd_events: probe the signalfd and timerfd syscalls on wasm.
++ *
++ * timerfd: a 150ms one-shot must become readable after roughly 150ms via
++ * epoll.  signalfd: a blocked SIGUSR1 raised against ourselves must surface
++ * as a readable signalfd with the matching ssi_signo.
++ */
++#define _GNU_SOURCE
++#include <errno.h>
++#include <poll.h>
++#include <signal.h>
++#include <stdio.h>
++#include <sys/epoll.h>
++#include <sys/signalfd.h>
++#include <sys/timerfd.h>
++#include <time.h>
++#include <unistd.h>
++
++int main(void)
++{
++	struct timespec now, then;
++	struct signalfd_siginfo siginfo;
++	struct itimerspec timer = { 0 };
++	struct epoll_event ev;
++	struct pollfd pfd;
++	sigset_t set;
++	uint64_t expirations;
++	int tfd, sfd, efd;
++	long ms;
++
++	/* timerfd + epoll deadline */
++	timer.it_value.tv_nsec = 150 * 1000 * 1000;
++	tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
++	if (tfd < 0)
++		return 1;
++	if (timerfd_settime(tfd, 0, &timer, NULL) != 0)
++		return 2;
++	efd = epoll_create1(0);
++	if (efd < 0)
++		return 3;
++	ev.events = EPOLLIN;
++	ev.data.fd = tfd;
++	if (epoll_ctl(efd, EPOLL_CTL_ADD, tfd, &ev) != 0)
++		return 4;
++	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
++		return 5;
++	if (epoll_wait(efd, &ev, 1, 2000) != 1)
++		return 6;
++	if (clock_gettime(CLOCK_MONOTONIC, &then) != 0)
++		return 7;
++	if (read(tfd, &expirations, sizeof(expirations)) != sizeof(expirations) ||
++	    expirations == 0)
++		return 8;
++	ms = (then.tv_sec - now.tv_sec) * 1000 +
++	     (then.tv_nsec - now.tv_nsec) / 1000000;
++	if (ms < 100)
++		return 9;
++	close(efd);
++	close(tfd);
++
++	/* signalfd + blocked signal */
++	sigemptyset(&set);
++	sigaddset(&set, SIGUSR1);
++	if (sigprocmask(SIG_BLOCK, &set, NULL) != 0)
++		return 10;
++	sfd = signalfd(-1, &set, SFD_CLOEXEC);
++	if (sfd < 0)
++		return 11;
++	if (kill(getpid(), SIGUSR1) != 0)
++		return 12;
++	pfd.fd = sfd;
++	pfd.events = POLLIN;
++	if (poll(&pfd, 1, 2000) != 1 || !(pfd.revents & POLLIN))
++		return 13;
++	if (read(sfd, &siginfo, sizeof(siginfo)) != sizeof(siginfo))
++		return 14;
++	if (siginfo.ssi_signo != SIGUSR1)
++		return 15;
++	close(sfd);
++
++	puts("fd-events: timerfd and signalfd OK");
++	return 0;
++}

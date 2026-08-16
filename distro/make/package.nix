@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz";
+    url = "mirror://gnu/make/make-4.4.1.tar.gz";
     hash = "sha256-+Cg7R8wougcWcFf6u5B3lVX6RRgMRYZ1CD+e21URP5A=";
   },
   busybox,

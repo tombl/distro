@@ -52,10 +52,11 @@ nix build .#legacyPackages.x86_64-linux.repository
 
 The repository checks boot package-installed ext4 systems. One invokes target
 apk to install jq, Lua, and a scripted package from a nested local repository;
-another installs Bash, coreutils, file, and ncurses by name and
+another installs Bash, coreutils, file, ncurses, and util-linux by name and
 verifies their dependency, ownership, replacement, and removal behavior.
 
 `replaces` permits the selected full userland package to overwrite a BusyBox
-applet. apk does not keep a stack of the overwritten bytes: removing the winner
-removes that path. Run `apk fix` on the still-installed provider you want
-underneath to restore its files.
+applet (and lets util-linux win its shared `kill` path over coreutils). apk does
+not keep a stack of the overwritten bytes: removing the winner removes that
+path. Run `apk fix` on the still-installed provider you want underneath—for
+example, `apk fix coreutils` after removing util-linux—to restore its files.

@@ -1,0 +1,477 @@
+namespace tools: preserve supported child management on wasm
+
+Mount namespaces are available in the target kernel, so retain direct and
+supervised unshare operation plus mount-namespace persistence with synchronized
+callback children. Reject only nsenter continuations tied to unavailable user
+and PID namespace behavior; native builds retain fork.
+
+diff --git a/sys-utils/nsenter.c b/sys-utils/nsenter.c
+index 0fc1d76..5b6a936 100644
+--- a/sys-utils/nsenter.c
++++ b/sys-utils/nsenter.c
+@@ -543,6 +543,9 @@ static int is_usable_namespace(pid_t target, const struct namespace_file *nsfile
+ 
+ static void continue_as_child(void)
+ {
++#ifdef __wasm__
++	errx(EXIT_FAILURE, _("fork mode is unavailable"));
++#else
+ 	pid_t child;
+ 	int status;
+ 	pid_t ret;
+@@ -575,6 +578,7 @@ static void continue_as_child(void)
+ 		kill(getpid(), WTERMSIG(status));
+ 	}
+ 	exit(EXIT_FAILURE);
++#endif
+ }
+ 
+ static int parse_pid_str(char *pidstr, pid_t *ns_target_pid)
+diff --git a/sys-utils/unshare.c b/sys-utils/unshare.c
+index 9a7c9f6..971e396 100644
+--- a/sys-utils/unshare.c
++++ b/sys-utils/unshare.c
+@@ -296,7 +296,11 @@ static pid_t fork_and_wait(int *fd)
+ 	if (*fd < 0)
+ 		err(EXIT_FAILURE, _("eventfd failed"));
+ 
++#ifdef __wasm__
++	errx(EXIT_FAILURE, _("user namespace ID mapping helper requires fork"));
++#else
+ 	pid = fork();
++#endif
+ 	if (pid < 0)
+ 		err(EXIT_FAILURE, _("fork failed"));
+ 
+@@ -311,16 +315,57 @@ static pid_t fork_and_wait(int *fd)
+ 	return pid;
+ }
+ 
++#ifdef __wasm__
++struct bind_ns_child_args {
++	int fd;
++	pid_t ppid;
++};
++
++static int bind_ns_child(void *data)
++{
++	struct bind_ns_child_args *ca = data;
++	uint64_t ch;
++
++	if (read_all(ca->fd, (char *) &ch, sizeof(ch)) != sizeof(ch) ||
++	    ch != PIPE_SYNC_BYTE)
++		err(EXIT_FAILURE, _("failed to read eventfd"));
++	close(ca->fd);
++	bind_ns_files(ca->ppid);
++	return EXIT_SUCCESS;
++}
++#endif
++
+ static pid_t bind_ns_files_from_child(int *fd)
+ {
+ 	pid_t child, ppid = getpid();
+ 
++#ifdef __wasm__
++	const size_t stack_size = 128 * 1024;
++	struct bind_ns_child_args args;
++	void *stack;
++
++	*fd = eventfd(0, 0);
++	if (*fd < 0)
++		err(EXIT_FAILURE, _("eventfd failed"));
++	args.fd = *fd;
++	args.ppid = ppid;
++	stack = malloc(stack_size);
++	if (!stack)
++		err(EXIT_FAILURE, _("clone failed"));
++	child = clone(bind_ns_child, (char *) stack + stack_size,
++		      SIGCHLD, &args);
++	free(stack);
++	if (child < 0)
++		err(EXIT_FAILURE, _("clone failed"));
++	return child;
++#else
+ 	child = fork_and_wait(fd);
+ 	if (child)
+ 		return child;
+ 
+ 	bind_ns_files(ppid);
+ 	exit(EXIT_SUCCESS);
++#endif
+ }
+ 
+ static uid_t get_user(const char *s)
+@@ -694,7 +739,11 @@ static pid_t map_ids_from_child(int *fd, struct map_range *usermap,
+ 
+ 	/* Avoid forking more than we need to */
+ 	if (usermap && groupmap) {
++#ifdef __wasm__
++		errx(EXIT_FAILURE, _("external uid/gid mapping requires fork"));
++#else
+ 		pid = fork();
++#endif
+ 		if (pid < 0)
+ 			err(EXIT_FAILURE, _("fork failed"));
+ 		if (pid)
+@@ -798,6 +847,132 @@ static void __attribute__((__noreturn__)) usage(void)
+ 	exit(EXIT_SUCCESS);
+ }
+ 
++struct unshare_child_args {
++	int kill_child_signo;
++#ifdef HAVE_PIDFD_OPEN
++	int fd_parent_pid;
++#endif
++	uid_t mapuser, real_euid;
++	gid_t mapgroup, real_egid;
++	struct map_range *usermap, *groupmap;
++	int setgrpcmd, unshare_flags;
++	unsigned long propagation;
++	const char *newinterp, *newroot, *newdir, *procmnt, *binfmt_mnt;
++	int force_gid, force_uid, keepcaps;
++	gid_t gid;
++	uid_t uid;
++	int argc, optind;
++	char **argv;
++	int restore_sigmask, restore_forward_actions, close_fd_bind;
++	sigset_t oldsigset;
++	struct sigaction old_sigterm, old_sigint;
++};
++
++static void __attribute__((__noreturn__))
++run_unshare_child(struct unshare_child_args *ca)
++{
++	child_pid = 0;
++	if (ca->restore_forward_actions &&
++	    (sigaction(SIGTERM, &ca->old_sigterm, NULL) != 0 ||
++	     sigaction(SIGINT, &ca->old_sigint, NULL) != 0))
++		err(EXIT_FAILURE, _("signal handler restore failed"));
++	if (ca->restore_sigmask &&
++	    sigprocmask(SIG_SETMASK, &ca->oldsigset, NULL))
++		err(EXIT_FAILURE, _("sigprocmask restore failed"));
++	if (ca->close_fd_bind >= 0)
++		close(ca->close_fd_bind);
++
++	if (ca->kill_child_signo != 0) {
++		if (prctl(PR_SET_PDEATHSIG, ca->kill_child_signo) < 0)
++			err(EXIT_FAILURE, "prctl failed");
++#ifdef HAVE_PIDFD_OPEN
++		if (ca->fd_parent_pid != -1) {
++			struct pollfd pollfds[1] = {
++				{ .fd = ca->fd_parent_pid, .events = POLLIN }
++			};
++			int nfds = poll(pollfds, 1, 0);
++
++			if (nfds < 0)
++				err(EXIT_FAILURE, "poll parent pidfd failed");
++			if (nfds)
++				exit(EXIT_FAILURE);
++			close(ca->fd_parent_pid);
++		}
++#endif
++	}
++
++	if (ca->mapuser != MAX_OF_UINT_TYPE(uid_t) && !ca->usermap)
++		map_id(_PATH_PROC_UIDMAP, ca->mapuser, ca->real_euid);
++	if (ca->mapgroup != MAX_OF_UINT_TYPE(gid_t) && !ca->groupmap) {
++		if (ca->setgrpcmd == SETGROUPS_ALLOW)
++			errx(EXIT_FAILURE, _("options --setgroups=allow and "
++					       "--map-group are mutually exclusive"));
++		setgroups_control(SETGROUPS_DENY);
++		map_id(_PATH_PROC_GIDMAP, ca->mapgroup, ca->real_egid);
++	}
++	if (ca->setgrpcmd != SETGROUPS_NONE)
++		setgroups_control(ca->setgrpcmd);
++	if ((ca->unshare_flags & CLONE_NEWNS) && ca->propagation)
++		set_propagation(ca->propagation);
++
++	if (ca->newinterp && is_fixed(ca->newinterp) && ca->newroot) {
++		if (mount("binfmt_misc", _PATH_PROC_BINFMT_MISC, "binfmt_misc",
++			  MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) != 0)
++			err(EXIT_FAILURE, _("mount %s failed"), _PATH_PROC_BINFMT_MISC);
++		load_interp(_PATH_PROC_BINFMT_MISC, ca->newinterp);
++	}
++	if (ca->newroot) {
++		if (chroot(ca->newroot) != 0)
++			err(EXIT_FAILURE, _("cannot change root directory to '%s'"),
++			    ca->newroot);
++		ca->newdir = ca->newdir ?: "/";
++	}
++	if (ca->newdir && chdir(ca->newdir))
++		err(EXIT_FAILURE, _("cannot change directory to %s"), ca->newdir);
++	if (ca->procmnt) {
++		if (!ca->newroot && ca->propagation != (MS_PRIVATE | MS_REC)) {
++			int rc = mount("none", ca->procmnt, NULL,
++				       MS_PRIVATE | MS_REC, NULL);
++
++			if (rc != 0 && errno != EINVAL)
++				err(EXIT_FAILURE,
++				    _("cannot change %s filesystem propagation"),
++				    ca->procmnt);
++		}
++		if (mount("proc", ca->procmnt, "proc",
++			  MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) != 0)
++			err(EXIT_FAILURE, _("mount %s failed"), ca->procmnt);
++	}
++	if (ca->binfmt_mnt &&
++	    mount("binfmt_misc", ca->binfmt_mnt, "binfmt_misc",
++		  MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) != 0)
++		err(EXIT_FAILURE, _("mount %s failed"), ca->binfmt_mnt);
++	if (ca->newinterp && !(is_fixed(ca->newinterp) && ca->newroot))
++		load_interp(ca->binfmt_mnt, ca->newinterp);
++	if (ca->force_gid) {
++		if (setgroups(0, NULL) != 0)
++			err(EXIT_FAILURE, _("setgroups failed"));
++		if (setgid(ca->gid) < 0)
++			err(EXIT_FAILURE, _("setgid() failed"));
++	}
++	if (ca->force_uid && setuid(ca->uid) < 0)
++		err(EXIT_FAILURE, _("setuid() failed"));
++	if (ca->keepcaps && (ca->unshare_flags & CLONE_NEWUSER))
++		cap_permitted_to_ambient();
++	if (ca->optind < ca->argc) {
++		execvp(ca->argv[ca->optind], ca->argv + ca->optind);
++		errexec(ca->argv[ca->optind]);
++	}
++	exec_shell();
++}
++
++#ifdef __wasm__
++static int unshare_child_callback(void *data)
++{
++	run_unshare_child(data);
++}
++#endif
++
+ int main(int argc, char *argv[])
+ {
+ 	enum {
+@@ -888,6 +1063,7 @@ int main(int argc, char *argv[])
+ 	int64_t boottime = 0;
+ 	int force_monotonic = 0;
+ 	int force_boottime = 0;
++	struct unshare_child_args child_args;
+ 
+ 	setlocale(LC_ALL, "");
+ 	bindtextdomain(PACKAGE, LOCALEDIR);
+@@ -1120,11 +1296,38 @@ int main(int argc, char *argv[])
+ 	if (force_monotonic)
+ 		settime(monotonic, CLOCK_MONOTONIC);
+ 
++	child_args = (struct unshare_child_args) {
++		.kill_child_signo = kill_child_signo,
++#ifdef HAVE_PIDFD_OPEN
++		.fd_parent_pid = -1,
++#endif
++		.mapuser = mapuser, .real_euid = real_euid,
++		.mapgroup = mapgroup, .real_egid = real_egid,
++		.usermap = usermap, .groupmap = groupmap,
++		.setgrpcmd = setgrpcmd, .unshare_flags = unshare_flags,
++		.propagation = propagation,
++		.newinterp = newinterp, .newroot = newroot, .newdir = newdir,
++		.procmnt = procmnt, .binfmt_mnt = binfmt_mnt,
++		.force_gid = force_gid, .force_uid = force_uid,
++		.keepcaps = keepcaps, .gid = gid, .uid = uid,
++		.argc = argc, .optind = optind, .argv = argv,
++		.close_fd_bind = -1
++	};
++
+ 	if (forkit) {
+ 		if (forward_signals) {
+ 			/* Install signal handlers to forward signals to child */
+ 			struct sigaction sa;
+ 
++			if (sigemptyset(&sigset) != 0 ||
++			    sigaddset(&sigset, SIGINT) != 0 ||
++			    sigaddset(&sigset, SIGTERM) != 0 ||
++			    sigprocmask(SIG_BLOCK, &sigset, &oldsigset) != 0)
++				err(EXIT_FAILURE, _("sigprocmask block failed"));
++			if (sigaction(SIGTERM, NULL, &child_args.old_sigterm) != 0 ||
++			    sigaction(SIGINT, NULL, &child_args.old_sigint) != 0)
++				err(EXIT_FAILURE, _("signal handler save failed"));
++			child_args.restore_forward_actions = 1;
+ 			memset(&sa, 0, sizeof(sa));
+ 			sa.sa_handler = forward_signal;
+ 			sigemptyset(&sa.sa_mask);
+@@ -1135,10 +1338,6 @@ int main(int argc, char *argv[])
+ 			if (sigaction(SIGINT, &sa, NULL) == -1)
+ 				err(EXIT_FAILURE, _("sigaction SIGINT failed"));
+ 
+-		/* Save old mask for child to restore */
+-		if (sigemptyset(&sigset) != 0 ||
+-		    sigprocmask(SIG_SETMASK, NULL, &oldsigset) != 0)
+-			err(EXIT_FAILURE, _("sigprocmask failed"));
+ 	} else {
+ 		/* Block signals to prevent "impatient parent" problem */
+ 		if (sigemptyset(&sigset) != 0 ||
+@@ -1153,26 +1352,52 @@ int main(int argc, char *argv[])
+ 			fd_parent_pid = pidfd_open(getpid(), 0);
+ 			if (0 > fd_parent_pid)
+ 				err(EXIT_FAILURE, _("pidfd_open failed"));
++			child_args.fd_parent_pid = fd_parent_pid;
+ 		}
+ #endif
+ 		/* force child forking before mountspace binding so
+ 		 * pid_for_children is populated */
++#ifdef __wasm__
++		{
++			const size_t stack_size = 128 * 1024;
++			void *stack = malloc(stack_size);
++
++			if (!stack) {
++				errno = ENOMEM;
++				err(EXIT_FAILURE, _("clone failed"));
++			}
++			child_args.restore_sigmask = 1;
++			child_args.oldsigset = oldsigset;
++			if (npersists && (unshare_flags & CLONE_NEWNS))
++				child_args.close_fd_bind = fd_bind;
++			pid = clone(unshare_child_callback,
++				    (char *) stack + stack_size,
++				    SIGCHLD, &child_args);
++			free(stack);
++		}
++#else
+ 		pid = fork();
++#endif
+ 
+ 		switch(pid) {
+ 		case -1:
+ 			err(EXIT_FAILURE, _("fork failed"));
+ 		case 0:	/* child */
+-			child_pid = 0; /* Clear in child process */
+-			if (sigprocmask(SIG_SETMASK, &oldsigset, NULL))
+-				err(EXIT_FAILURE,
+-					_("sigprocmask restore failed"));
++#ifndef __wasm__
++			child_args.restore_sigmask = 1;
++			child_args.oldsigset = oldsigset;
+ 			if (npersists && (unshare_flags & CLONE_NEWNS))
+-				close(fd_bind);
++				child_args.close_fd_bind = fd_bind;
++			run_unshare_child(&child_args);
++#endif
+ 			break;
+ 		default: /* parent */
+-			if (forward_signals)
++			if (forward_signals) {
+ 				child_pid = pid; /* Store for signal handler */
++				if (sigprocmask(SIG_SETMASK, &oldsigset, NULL) != 0)
++					err(EXIT_FAILURE,
++					    _("sigprocmask restore failed"));
++			}
+ 			break;
+ 		}
+ 	}
+@@ -1220,110 +1445,5 @@ int main(int argc, char *argv[])
+ 		err(EXIT_FAILURE, _("child exit failed"));
+ 	}
+ 
+-	if (kill_child_signo != 0) {
+-		if (prctl(PR_SET_PDEATHSIG, kill_child_signo) < 0)
+-			err(EXIT_FAILURE, "prctl failed");
+-#ifdef HAVE_PIDFD_OPEN
+-		/* Use poll() to check that there is still the original parent. */
+-		if (fd_parent_pid != -1) {
+-			struct pollfd pollfds[1] = {
+-				{ .fd = fd_parent_pid, .events = POLLIN	}
+-			};
+-			int nfds = poll(pollfds, 1, 0);
+-
+-			if (0 > nfds)
+-				err(EXIT_FAILURE, "poll parent pidfd failed");
+-
+-			/* If the child was re-parented before prctl(2) was called, the
+-			 * new parent will likely not be interested in the precise exit
+-			 * status of the orphan.
+-			 */
+-			if (nfds)
+-				exit(EXIT_FAILURE);
+-
+-			close(fd_parent_pid);
+-			fd_parent_pid = -1;
+-		}
+-#endif
+-	}
+-
+-	if (mapuser != MAX_OF_UINT_TYPE(uid_t) && !usermap)
+-		map_id(_PATH_PROC_UIDMAP, mapuser, real_euid);
+-
+-	/* Since Linux 3.19 unprivileged writing of /proc/self/gid_map
+-	 * has been disabled unless /proc/self/setgroups is written
+-	 * first to permanently disable the ability to call setgroups
+-	 * in that user namespace. */
+-	if (mapgroup != MAX_OF_UINT_TYPE(gid_t) && !groupmap) {
+-		if (setgrpcmd == SETGROUPS_ALLOW)
+-			errx(EXIT_FAILURE, _("options --setgroups=allow and "
+-					"--map-group are mutually exclusive"));
+-		setgroups_control(SETGROUPS_DENY);
+-		map_id(_PATH_PROC_GIDMAP, mapgroup, real_egid);
+-	}
+-
+-	if (setgrpcmd != SETGROUPS_NONE)
+-		setgroups_control(setgrpcmd);
+-
+-	if ((unshare_flags & CLONE_NEWNS) && propagation)
+-		set_propagation(propagation);
+-
+-	if (newinterp && is_fixed(newinterp) && newroot) {
+-		if (mount("binfmt_misc", _PATH_PROC_BINFMT_MISC, "binfmt_misc",
+-			  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL) != 0)
+-			err(EXIT_FAILURE, _("mount %s failed"), _PATH_PROC_BINFMT_MISC);
+-		load_interp(_PATH_PROC_BINFMT_MISC, newinterp);
+-	}
+-
+-	if (newroot) {
+-		if (chroot(newroot) != 0)
+-			err(EXIT_FAILURE,
+-			    _("cannot change root directory to '%s'"), newroot);
+-		newdir = newdir ?: "/";
+-	}
+-	if (newdir && chdir(newdir))
+-		err(EXIT_FAILURE, _("cannot change directory to %s"), newdir);
+-
+-	if (procmnt) {
+-		/* When not changing root and using the default propagation flags
+-		   then the recursive propagation change of root will
+-		   automatically change that of an existing proc mount. */
+-		if (!newroot && propagation != (MS_PRIVATE|MS_REC)) {
+-			int rc = mount("none", procmnt, NULL, MS_PRIVATE|MS_REC, NULL);
+-
+-			/* Custom procmnt means that proc is very likely not mounted, causing EINVAL.
+-			   Ignoring the error in this specific instance is considered safe. */
+-			if(rc != 0 && errno != EINVAL)
+-				err(EXIT_FAILURE, _("cannot change %s filesystem propagation"), procmnt);
+-		}
+-
+-		if (mount("proc", procmnt, "proc", MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL) != 0)
+-			err(EXIT_FAILURE, _("mount %s failed"), procmnt);
+-	}
+-
+-	if (binfmt_mnt) {
+-		if (mount("binfmt_misc", binfmt_mnt, "binfmt_misc",
+-			  MS_NOSUID|MS_NOEXEC|MS_NODEV, NULL) != 0)
+-			err(EXIT_FAILURE, _("mount %s failed"), binfmt_mnt);
+-	}
+-	if (newinterp && !(is_fixed(newinterp) && newroot))
+-		load_interp(binfmt_mnt, newinterp);
+-
+-	if (force_gid) {
+-		if (setgroups(0, NULL) != 0)	/* drop supplementary groups */
+-			err(EXIT_FAILURE, _("setgroups failed"));
+-		if (setgid(gid) < 0)		/* change GID */
+-			err(EXIT_FAILURE, _("setgid() failed"));
+-	}
+-	if (force_uid && setuid(uid) < 0)	/* change UID */
+-		err(EXIT_FAILURE, _("setuid() failed"));
+-
+-	if (keepcaps && (unshare_flags & CLONE_NEWUSER))
+-		cap_permitted_to_ambient();
+-
+-	if (optind < argc) {
+-		execvp(argv[optind], argv + optind);
+-		errexec(argv[optind]);
+-	}
+-	exec_shell();
++	run_unshare_child(&child_args);
+ }
