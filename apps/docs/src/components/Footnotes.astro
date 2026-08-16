@@ -1,0 +1,103 @@
+---
+/**
+ * Turns GFM footnotes into inline disclosures: each reference becomes a
+ * toggle that opens the note in place, directly under the block that cites
+ * it, pushing the content below down with a height transition.
+ */
+---
+
+<script>
+  const section = document.querySelector<HTMLElement>("section[data-footnotes]");
+  if (section) {
+    section.hidden = true;
+
+    for (const ref of document.querySelectorAll<HTMLAnchorElement>("a[data-footnote-ref]")) {
+      const note = document.getElementById(decodeURIComponent(ref.hash.slice(1)));
+      const host = ref.closest("p, li");
+      if (!note || !host) continue;
+
+      const body = document.createElement("div");
+      body.className = "footnote-inline-body";
+      const clone = note.cloneNode(true) as HTMLElement;
+      for (const backref of clone.querySelectorAll("[data-footnote-backref]")) backref.remove();
+      const label = document.createElement("span");
+      label.className = "footnote-label";
+      label.textContent = ref.textContent;
+      (clone.querySelector("p") ?? clone).prepend(label);
+      body.append(...clone.childNodes);
+
+      const inline = document.createElement("aside");
+      inline.className = "footnote-inline";
+      inline.append(body);
+      // Inside a list item the note belongs to the item, not the list.
+      if (host.tagName === "LI") host.append(inline);
+      else host.insertAdjacentElement("afterend", inline);
+
+      ref.setAttribute("aria-expanded", "false");
+      ref.addEventListener("click", (event) => {
+        event.preventDefault();
+        const open = inline.classList.toggle("open");
+        ref.setAttribute("aria-expanded", String(open));
+      });
+    }
+  }
+</script>
+
+{/* Global on purpose: both the refs (markdown pipeline) and the inline notes
+    (created by the script above) live outside Astro's style scoping. */}
+<style is:global>
+  a[data-footnote-ref] {
+    font-weight: 600;
+    text-decoration: none;
+    padding-inline: 2px;
+
+    &:hover,
+    &[aria-expanded="true"] {
+      color: var(--code-foreground);
+    }
+  }
+
+  .footnote-inline {
+    height: 0;
+    overflow: clip;
+    margin: 0;
+    interpolate-size: allow-keywords;
+    transition: height 180ms ease;
+
+    &.open {
+      height: auto;
+    }
+  }
+
+  .footnote-inline-body {
+    padding-block: 0.375rem 0.625rem;
+    font-size: 0.875rem;
+    color: var(--muted);
+    opacity: 0;
+    translate: 0 -2px;
+    transition:
+      opacity 120ms linear,
+      translate 160ms ease;
+
+    .open > & {
+      opacity: 1;
+      translate: 0 0;
+    }
+
+    > p {
+      margin: 0;
+    }
+  }
+
+  .footnote-label {
+    color: var(--hairline-strong);
+    margin-inline-end: 0.5rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .footnote-inline,
+    .footnote-inline-body {
+      transition: none;
+    }
+  }
+</style>
