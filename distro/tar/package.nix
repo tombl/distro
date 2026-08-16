@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz";
+    url = "mirror://gnu/tar/tar-1.35.tar.xz";
     hash = "sha256-HztPW54hxHySvdrzkpMHKyhayOsoLUfDMATshJ95rTI=";
   },
   busybox,

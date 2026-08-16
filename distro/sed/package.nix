@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz";
+    url = "mirror://gnu/sed/sed-4.9.tar.xz";
     hash = "sha256-yQTI0WzgSOolziBUNU9ayhASUT2/xFi3jt1C2z1MFZw=";
   },
   busybox,

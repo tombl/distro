@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz";
+    url = "mirror://gnu/diffutils/diffutils-3.10.tar.xz";
     hash = "sha256-R6LYAfi/lcZ+zK9SZJ5aUzYarq/VguvJbEZbWZmmnY0=";
   },
   busybox,

@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.xz";
+    url = "mirror://gnu/patch/patch-2.7.6.tar.xz";
     hash = "sha256-Ng14vbD6V0ixnoeOxERqCxIuY2JWMaCeHykoGHAHPvo=";
   },
   busybox,

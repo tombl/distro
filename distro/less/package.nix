@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://ftp.gnu.org/gnu/less/less-668.tar.gz";
+    url = "mirror://gnu/less/less-668.tar.gz";
     hash = "sha256-U3En8L4CnqlVu9Kkh3PhOQIoUyzGDl5msotNKtPn1Dk=";
   },
   ncurses,

@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "https://www.kernel.org/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz";
+    url = "mirror://kernel/pub/linux/utils/util-linux/v2.42/util-linux-2.42.2.tar.xz";
     hash = "sha256-aQeFM9uPhJTbKX0cKAY5bTXwgDoFzuKwWhGkBZ/TvQQ=";
   },
   busybox,
