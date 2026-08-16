@@ -1,0 +1,72 @@
+pty-session: drain managed-child state on wasm to survive SIGCHLD coalescing
+
+SIGCHLD is a standard signal, so its pending siginfo coalesces (kernel
+legacy_queue keeps the first delivery): a child that is stopped, continued,
+and exits before the parent wakes can have its CLD_EXITED dropped behind
+CLD_CONTINUED, leaving the proxy loop waiting forever.  The wasm kernel's
+synchronous signal model delivers all three transitions in one window, so
+this is deterministic on wasm; on native Linux it is a latent upstream
+fragility.  Query the managed child directly with waitpid(WNOHANG |
+WUNTRACED | WCONTINUED) instead of trusting the coalesced queue, which is
+immune to coalescing by construction.  This is not a wasm-kernel bug (the
+kernel runs stock upstream signalfd), and there is no upstream queued
+signalfd to port in, so this drain is the permanent fix -- and a candidate
+for upstreaming to util-linux as a pty-session robustness improvement.
+
+--- util-linux-2.42.2/lib/pty-session.c	2026-06-16 19:39:44.423424488 +0800
++++ util-linux-wasm/lib/pty-session.c	2026-08-16 17:54:43.897992672 +0800
+@@ -553,6 +553,46 @@
+ 	case SIGCHLD:
+ 		DBG(SIG, ul_debugobj(pty, " get signal SIGCHLD"));
+ 
++#ifdef __wasm__
++		/*
++		 * SIGCHLD is a standard signal, so its pending siginfo
++		 * coalesces (kernel legacy_queue keeps the first delivery):
++		 * a child that is stopped, continued, and exits before the
++		 * parent wakes can have its CLD_EXITED dropped behind
++		 * CLD_CONTINUED, leaving the proxy loop waiting forever.
++		 * The wasm kernel's synchronous signal model delivers all
++		 * three transitions in one window, making this deterministic
++		 * here (on native Linux it is a latent upstream fragility).
++		 * Query the managed child directly with waitpid instead of
++		 * trusting the coalesced queue; this is immune to coalescing
++		 * by construction and is the same fix an upstream robustness
++		 * patch would make.
++		 */
++		if (pty->child > 0) {
++			int status;
++			pid_t pid;
++
++			for (;;) {
++				pid = waitpid(pty->child, &status,
++					      WNOHANG | WUNTRACED | WCONTINUED);
++				if (pid < 0 && errno == EINTR)
++					continue;
++				if (pid <= 0)
++					break;
++				if (WIFEXITED(status) || WIFSIGNALED(status)) {
++					if (pty->callbacks.child_die)
++						pty->callbacks.child_die(pty->callback_data,
++								 pty->child, status);
++					ul_pty_set_child(pty, (pid_t) -1);
++					break;
++				}
++				if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP
++				    && pty->callbacks.child_sigstop)
++					pty->callbacks.child_sigstop(pty->callback_data,
++								     pty->child);
++			}
++		}
++#else
+ 		if (info.ssi_code == CLD_EXITED
+ 		    || info.ssi_code == CLD_KILLED
+ 		    || info.ssi_code == CLD_DUMPED) {
+@@ -567,6 +607,7 @@
+ 			pty->callbacks.child_sigstop(pty->callback_data,
+ 						     pty->child);
+ 		}
++#endif
+ 
+ 		if (pty->child <= 0) {
+ 			DBG(SIG, ul_debugobj(pty, " no child, setting leaving timeout"));

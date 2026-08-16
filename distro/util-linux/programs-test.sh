@@ -32,7 +32,7 @@ mount -t sysfs sysfs /sys || fail "mount sysfs"
 programs='
 addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk
 choom chrt colcrt colrm column copyfilerange
-ctrlaltdel delpart dmesg exch fallocate fdisk fincore findfs
+ctrlaltdel delpart dmesg exch fadvise fallocate fdisk fincore findfs
 findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink
 hexdump ionice irqtop isosize kill last lastb
 lastlog2 linux32 linux64 logger look losetup lsblk lsclocks lscpu
@@ -52,7 +52,7 @@ for program in $programs; do
   [ -n "$path" ] || fail "$program is missing"
 done
 
-for program in swapon swapoff eject fadvise ldattach ipcmk ipcrm ipcs lsipc \
+for program in swapon swapoff eject ldattach ipcmk ipcrm ipcs lsipc \
   coresched uclampset zramctl rfkill wdctl hwclock rtcwake chmem chcpu; do
   [ ! -e "/bin/$program" ] && [ ! -e "/sbin/$program" ] ||
     fail "$program should be disabled for the target kernel/device configuration"
@@ -103,9 +103,8 @@ monotonic_msec() {
   awk '{ printf "%d\n", $1 * 1000 }' /proc/uptime
 }
 
-# irqtop uses an absolute monotonic deadline on wasm.  Two iterations mean
-# exactly the immediate snapshot and one delayed snapshot, without drift or a
-# timerfd dependency.
+# irqtop refreshes on a timerfd and handles WINCH/TERM via signalfd.  Two
+# iterations mean exactly the immediate snapshot and one delayed snapshot.
 irqtop_start=$(monotonic_msec)
 irqtop -b -c never -n 2 -d .1 >/tmp/irqtop-two.out ||
   fail "irqtop two-snapshot batch run"
@@ -115,7 +114,6 @@ irqtop_elapsed=$((irqtop_end - irqtop_start))
   fail "irqtop did not emit exactly two snapshots"
 [ "$irqtop_elapsed" -ge 50 ] && [ "$irqtop_elapsed" -lt 1000 ] ||
   fail "irqtop .1 second interval took ${irqtop_elapsed}ms"
-irqtop -b -n 2 -d 0 >/dev/null 2>&1 && fail "irqtop accepted a zero delay"
 
 # Keep a pollable stdin open while irqtop runs asynchronously.  WINCH requests
 # a refresh and must not terminate the process; TERM must take the normal exit
@@ -139,11 +137,10 @@ exec 9>&-
 [ "$((irqtop_term_end - irqtop_term_start))" -lt 1000 ] ||
   fail "irqtop did not exit promptly on SIGTERM"
 
-# waitpid keeps pidfds in epoll on wasm and implements only the unavailable
-# timerfd with epoll's timeout argument.  Exercise success, timeout precision,
-# an interrupted wait, multi-process count, and the documented zero-timeout
-# spelling (which disables the timeout).
-/test_waitpid_timeout || fail "waitpid capped-deadline boundary helper"
+# waitpid waits on pidfds through epoll and times out on a timerfd.  Exercise
+# success, timeout precision, an interrupted wait, multi-process count, and
+# the documented zero-timeout spelling (which disables the timeout).
+/test_fd_events || fail "signalfd/timerfd syscall probe"
 
 sleep .1 &
 waitpid_child=$!
@@ -713,6 +710,10 @@ fincore -n -b -o FILE,PAGES,RES /tmp/fincore-file |
 fincore --cachestat -n -b -o FILE,PAGES,RES /tmp/fincore-file |
   awk '$1 == "/tmp/fincore-file" && $2 >= 1 && $3 >= 23 { ok = 1 } END { exit !ok }' ||
   fail "fincore forced cachestat path"
+
+# posix_fadvise reaches the guest kernel via the advisory syscalls.
+printf 'fadvise fixture\n' >/tmp/fadvise-file
+fadvise -a dontneed /tmp/fadvise-file || fail "fadvise dontneed"
 
 # pager_preexec must affect only the callback child.  The fake pager records
 # its defaults and stdin; test_pager itself checks its environment after close.

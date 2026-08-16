@@ -1,0 +1,267 @@
+uuidd: preserve double-fork daemonization with callback clone on wasm
+
+musl's daemon() is fork-based and unavailable.  Recreate the daemon(0, 0)
+sequence (redirect, detach session, reparent) with private-memory callback
+clones.  The service loop body moves to server_loop_service so the daemon
+continuation can start there; signalfd handling stays native.
+
+--- util-linux-2.42.2/misc-utils/uuidd.c	2026-06-16 19:39:44.443424402 +0800
++++ util-linux-wasm/misc-utils/uuidd.c	2026-08-16 14:33:07.962085433 +0800
+@@ -41,6 +41,9 @@
+ #include <getopt.h>
+ #include <sys/signalfd.h>
+ #include <poll.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ 
+ #include "uuid.h"
+ #include "uuidd.h"
+@@ -51,6 +54,9 @@
+ #include "optutils.h"
+ #include "monotonic.h"
+ #include "timer.h"
++#ifdef __wasm__
++# include "xalloc.h"
++#endif
+ 
+ #ifdef HAVE_LIBSYSTEMD
+ # include <systemd/sd-daemon.h>
+@@ -118,6 +124,87 @@
+ 	exit(EXIT_SUCCESS);
+ }
+ 
++#ifdef __wasm__
++/*
++ * musl's daemon() is fork-based and therefore unavailable.  Recreate its
++ * double-fork continuation with private-memory callback clones: the first
++ * clone detaches the session, the second becomes the service process, and
++ * each intermediate exits immediately, so the final daemon is reparented
++ * like a real double-forked child.
++ */
++struct uuidd_daemon_args {
++	const char *pidfile_path;
++	struct uuidd_cxt_t *cxt;
++	int socket_fd;
++	int pidfile_fd;
++	char *first_stack;
++};
++
++static void __attribute__((__noreturn__))
++server_loop_service(const char *pidfile_path, struct uuidd_cxt_t *uuidd_cxt,
++		    int s, int fd_pidfile);
++
++static int uuidd_daemon_second(void *data)
++{
++	struct uuidd_daemon_args *args = data;
++	uid_t euid;
++
++	/* This runs on stack #2, so stack #1 is safe to release. */
++	free(args->first_stack);
++	euid = geteuid();
++	if (setreuid(euid, euid) < 0)
++		err(EXIT_FAILURE, "setreuid");
++	server_loop_service(args->pidfile_path, args->cxt,
++			    args->socket_fd, args->pidfile_fd);
++}
++
++static int uuidd_daemon_first(void *data)
++{
++	const size_t stack_size = 128 * 1024;
++	struct uuidd_daemon_args *args = data;
++	char *stack;
++	pid_t pid;
++
++	if (setsid() < 0)
++		err(EXIT_FAILURE, "setsid");
++	stack = xmalloc(stack_size);
++	pid = clone(uuidd_daemon_second, stack + stack_size, SIGCHLD, args);
++	free(stack);
++	if (pid < 0)
++		err(EXIT_FAILURE, "clone");
++	_exit(EXIT_SUCCESS);
++}
++
++static void __attribute__((__noreturn__))
++create_daemon(struct uuidd_daemon_args *args)
++{
++	const size_t stack_size = 128 * 1024;
++	char *stack;
++	int fd;
++	pid_t pid;
++
++	/* Match musl daemon(0, 0): redirect before either clone. */
++	if (chdir("/") < 0)
++		err(EXIT_FAILURE, "chdir");
++	fd = open("/dev/null", O_RDWR);
++	if (fd < 0)
++		err(EXIT_FAILURE, "open /dev/null");
++	if (dup2(fd, STDIN_FILENO) < 0 ||
++	    dup2(fd, STDOUT_FILENO) < 0 ||
++	    dup2(fd, STDERR_FILENO) < 0)
++		err(EXIT_FAILURE, "dup2 /dev/null");
++	if (fd > STDERR_FILENO)
++		close(fd);
++
++	stack = xmalloc(stack_size);
++	args->first_stack = stack;
++	pid = clone(uuidd_daemon_first, stack + stack_size, SIGCHLD, args);
++	free(stack);
++	if (pid < 0)
++		err(EXIT_FAILURE, "clone");
++	_exit(EXIT_SUCCESS);
++}
++#else
+ static void create_daemon(void)
+ {
+ 	uid_t euid;
+@@ -129,6 +216,7 @@
+ 	if (setreuid(euid, euid) < 0)
+ 		err(EXIT_FAILURE, "setreuid");
+ }
++#endif
+ 
+ static int call_daemon(const char *socket_path, uuidd_prot_op_t op, char *buf,
+ 		       size_t buflen, uuidd_prot_num_t *num, const char **err_context)
+@@ -341,8 +429,9 @@
+ 		ul_sig_err(EXIT_FAILURE, "timed out");
+ }
+ 
+-static void server_loop(const char *socket_path, const char *pidfile_path,
+-			struct uuidd_cxt_t *uuidd_cxt)
++static void __attribute__((__noreturn__))
++server_loop_service(const char *pidfile_path, struct uuidd_cxt_t *uuidd_cxt,
++		    int s, int fd_pidfile)
+ {
+ 	struct sockaddr_un	from_addr;
+ 	socklen_t		fromlen;
+@@ -353,8 +442,6 @@
+ 	char			str[UUID_STR_LEN];
+ 	int			i, ns, len;
+ 	uuidd_prot_num_t	num;		/* intentionally uninitialized */
+-	int			s = 0;
+-	int			fd_pidfile = -1;
+ 	int			ret;
+ 	struct pollfd		pfd[2];
+ 	sigset_t		sigmask;
+@@ -364,49 +451,13 @@
+ 				POLLFD_SOCKET
+ 	};
+ 
+-#ifdef HAVE_LIBSYSTEMD
+-	if (!uuidd_cxt->no_sock)	/* no_sock implies no_fork and no_pid */
+-#endif
+-	{
+-		struct ul_timer timer;
+-		struct itimerval timeout;
+-
+-		memset(&timeout, 0, sizeof timeout);
+-		timeout.it_value.tv_sec = 30;
+-		if (setup_timer(&timer, &timeout, &timeout_handler))
+-			err(EXIT_FAILURE, _("cannot set up timer"));
+-		if (pidfile_path)
+-			fd_pidfile = create_pidfile(uuidd_cxt, pidfile_path);
+-		ret = call_daemon(socket_path, UUIDD_OP_GETPID, reply_buf,
+-				  sizeof(reply_buf), 0, NULL);
+-		cancel_timer(&timer);
+-		if (ret > 0) {
+-			if (!uuidd_cxt->quiet)
+-				warnx(_("uuidd daemon is already running at pid %s"),
+-					reply_buf);
+-			exit(EXIT_FAILURE);
+-		}
+-
+-		s = create_socket(uuidd_cxt, socket_path,
+-				  (!uuidd_cxt->debug || !uuidd_cxt->no_fork));
+-		if (listen(s, SOMAXCONN) < 0) {
+-			if (!uuidd_cxt->quiet)
+-				warn(_("couldn't listen on unix socket %s"), socket_path);
+-			exit(EXIT_FAILURE);
+-		}
+-
+-		if (!uuidd_cxt->debug && !uuidd_cxt->no_fork)
+-			create_daemon();
+-
+-		if (pidfile_path) {
+-			snprintf(reply_buf, sizeof(reply_buf), "%8d\n", getpid());
+-			if (ftruncate(fd_pidfile, 0))
+-				err(EXIT_FAILURE, _("could not truncate file: %s"), pidfile_path);
+-			write_all(fd_pidfile, reply_buf, strlen(reply_buf));
+-			if (fd_pidfile > 1 && close_fd(fd_pidfile) != 0)
+-				err(EXIT_FAILURE, _("write failed: %s"), pidfile_path);
+-		}
+-
++	if (pidfile_path) {
++		snprintf(reply_buf, sizeof(reply_buf), "%8d\n", getpid());
++		if (ftruncate(fd_pidfile, 0))
++			err(EXIT_FAILURE, _("could not truncate file: %s"), pidfile_path);
++		write_all(fd_pidfile, reply_buf, strlen(reply_buf));
++		if (fd_pidfile > 1 && close_fd(fd_pidfile) != 0)
++			err(EXIT_FAILURE, _("write failed: %s"), pidfile_path);
+ 	}
+ 
+ #ifdef HAVE_LIBSYSTEMD
+@@ -567,6 +618,63 @@
+ 	}
+ }
+ 
++static void server_loop(const char *socket_path, const char *pidfile_path,
++			struct uuidd_cxt_t *uuidd_cxt)
++{
++	char reply_buf[UUIDD_PROT_BUFSZ];
++	int s = 0, fd_pidfile = -1, ret;
++
++#ifdef HAVE_LIBSYSTEMD
++	if (!uuidd_cxt->no_sock)	/* no_sock implies no_fork and no_pid */
++#endif
++	{
++		struct ul_timer timer;
++		struct itimerval timeout;
++
++		memset(&timeout, 0, sizeof timeout);
++		timeout.it_value.tv_sec = 30;
++		if (setup_timer(&timer, &timeout, &timeout_handler))
++			err(EXIT_FAILURE, _("cannot set up timer"));
++		if (pidfile_path)
++			fd_pidfile = create_pidfile(uuidd_cxt, pidfile_path);
++		ret = call_daemon(socket_path, UUIDD_OP_GETPID, reply_buf,
++				  sizeof(reply_buf), 0, NULL);
++		cancel_timer(&timer);
++		if (ret > 0) {
++			if (!uuidd_cxt->quiet)
++				warnx(_("uuidd daemon is already running at pid %s"),
++					reply_buf);
++			exit(EXIT_FAILURE);
++		}
++
++		s = create_socket(uuidd_cxt, socket_path,
++				  (!uuidd_cxt->debug || !uuidd_cxt->no_fork));
++		if (listen(s, SOMAXCONN) < 0) {
++			if (!uuidd_cxt->quiet)
++				warn(_("couldn't listen on unix socket %s"), socket_path);
++			exit(EXIT_FAILURE);
++		}
++
++		if (!uuidd_cxt->debug && !uuidd_cxt->no_fork) {
++#ifdef __wasm__
++			struct uuidd_daemon_args args = {
++				.pidfile_path = pidfile_path,
++				.cxt = uuidd_cxt,
++				.socket_fd = s,
++				.pidfile_fd = fd_pidfile,
++				.first_stack = NULL,
++			};
++
++			create_daemon(&args);
++#else
++			create_daemon();
++#endif
++		}
++	}
++
++	server_loop_service(pidfile_path, uuidd_cxt, s, fd_pidfile);
++}
++
+ static void __attribute__ ((__noreturn__)) unexpected_size(int size)
+ {
+ 	errx(EXIT_FAILURE, _("Unexpected reply length from server %d"), size);

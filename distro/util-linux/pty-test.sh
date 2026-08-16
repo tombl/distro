@@ -336,7 +336,7 @@ contains "$(cat /tmp/mask.typescript)" PTY_MASK_RELEASED ||
   fail "PTY proxy mask child did not complete"
 
 # The callback child must receive the caller's original mask and dispositions,
-# not the bridge handlers or its temporarily blocked setup mask.
+# not the pty-session's blocked signalfd mask or its temporary setup mask.
 trap '' USR1
 script -q -c \
   'kill -USR1 $$; grep -q "^SigBlk:[[:space:]]*0000000000000000$" /proc/self/status && echo PTY_SIGNAL_RESTORE' \
@@ -345,7 +345,7 @@ restore_rc=$?
 trap - USR1
 [ "$restore_rc" -eq 0 ] || fail "PTY child signal restoration rc=$restore_rc"
 contains "$(cat /tmp/signal-restore.typescript)" PTY_SIGNAL_RESTORE ||
-  fail "PTY child inherited bridge signal state"
+  fail "PTY child inherited pty-session signal state"
 
 # A stopped child remains owned and is resumed rather than being mistaken for
 # an exited child by coalesced SIGCHLD processing.

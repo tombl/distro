@@ -1,0 +1,97 @@
+more: preserve command execution with callback clone on wasm
+
+wasm has no fork(); run more's command child with private-memory callback
+clone while retaining the native fork and signalfd paths unchanged.
+
+--- util-linux-2.42.2/text-utils/more.c	2026-06-16 19:39:44.564423877 +0800
++++ util-linux-wasm/text-utils/more.c	2026-08-16 14:28:54.258398635 +0800
+@@ -63,6 +63,9 @@
+ #include <regex.h>
+ #include <assert.h>
+ #include <poll.h>
++#ifdef __wasm__
++# include <sched.h>
++#endif
+ #include <sys/signalfd.h>
+ #include <paths.h>
+ #include <getopt.h>
+@@ -1235,9 +1238,71 @@
+ 	prepare_line_buffer(ctl);
+ }
+ 
++#ifdef __wasm__
++struct more_child_args {
++	struct more_control *ctl;
++	char **argv;
++};
++
++static int more_command_child(void *data)
++{
++	struct more_child_args *args = data;
++	int errsv;
++
++	if (!isatty(STDIN_FILENO)) {
++		close(STDIN_FILENO);
++		ignore_result( open("/dev/tty", 0) );
++	}
++	reset_tty(args->ctl);
++	if (is_privileged_execution() && drop_permissions() != 0)
++		err(EXIT_FAILURE, _("drop permissions failed"));
++	execvp(args->argv[0], args->argv);
++	errsv = errno;
++	fputs(_("exec failed\n"), stderr);
++	return errsv == ENOENT ? EX_EXEC_ENOENT : EX_EXEC_FAILED;
++}
++#endif
++
+ static void __attribute__((__format__ (__printf__, 3, 4)))
+ 	execute(struct more_control *ctl, char *filename, const char *cmd, ...)
+ {
++#ifdef __wasm__
++	const size_t stack_size = 128 * 1024;
++	struct more_child_args child_args;
++	pid_t id;
++	va_list argp;
++	char *arg;
++	char **args;
++	char *stack;
++	int argcount;
++
++	va_start(argp, cmd);
++	argcount = 0;
++	while ((arg = va_arg(argp, char *)))
++		argcount++;
++	va_end(argp);
++	args = xcalloc(argcount + 1, sizeof(char *));
++	va_start(argp, cmd);
++	argcount = 0;
++	while ((arg = va_arg(argp, char *)))
++		args[argcount++] = arg;
++	va_end(argp);
++
++	fflush(NULL);
++	stack = xmalloc(stack_size);
++	child_args = (struct more_child_args) { .ctl = ctl, .argv = args };
++	id = clone(more_command_child, stack + stack_size, SIGCHLD, &child_args);
++	free(stack);
++	if (id > 0) {
++		pid_t waited;
++
++		do {
++			waited = wait(NULL);
++		} while (waited > 0 || (waited < 0 && errno == EINTR));
++	} else
++		fputs(_("can't fork\n"), stderr);
++	free(args);
++#else
+ 	pid_t id;
+ 	va_list argp;
+ 	char *arg;
+@@ -1291,6 +1356,7 @@
+ 		}
+ 	} else
+ 		fputs(_("can't fork\n"), stderr);
++#endif
+ 	set_tty(ctl);
+ 	print_separator('-', 24);
+ 	output_prompt(ctl, filename);

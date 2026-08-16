@@ -55,13 +55,13 @@ stdenv.mkDerivation (finalAttrs: {
 
   postBuild = ''
     make test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
-      test_mount_context_mount test_waitpid_timeout
+      test_mount_context_mount test_fd_events
   '';
 
   postInstall = ''
     mkdir -p "$testSupport/libexec/util-linux-tests"
     cp test_fileutils test_pager test_switch_root test_ttymsg test_sulogin \
-      test_mount_context_mount test_waitpid_timeout \
+      test_mount_context_mount test_fd_events \
       "$testSupport/libexec/util-linux-tests/"
   '';
 
@@ -82,9 +82,11 @@ stdenv.mkDerivation (finalAttrs: {
   # Timer-backed behavior:
   #   * flock -w <timeout> uses setitimer/SIGALRM; the spawn check holds a
   #     conflicting lock and asserts both its timeout status and elapsed time.
+  # signalfd and timerfd are enabled in the wasm kernel, so the signal and
+  # timeout paths above remain upstream code; test_fd_events probes both
+  # syscalls directly.
   patches = [
     ./configure-platform-programs.patch
-    ./foreground-only.patch
     ./sulogin-callback-clone.patch
     ./readprofile-posix-spawn.patch
     ./namespace-child-management.patch
@@ -103,9 +105,13 @@ stdenv.mkDerivation (finalAttrs: {
     # script's PTY child uses callback clone so its existing setsid, TIOCSCTTY,
     # stdio attachment, and exec sequence runs on a fresh child stack.
     ./script-callback-clone.patch
-    # signalfd is absent; retain the same poll-driven signal model with a
-    # nonblocking self-pipe populated by minimal signal handlers.
-    ./pty-session-self-pipe.patch
+    # PTY sessions keep signalfd; SIGCHLD's standard-signal coalescing can
+    # drop a fast CLD_EXITED behind CLD_CONTINUED (upstream semantics; the
+    # wasm synchronous model widens the window), so wasm drains the managed
+    # child via waitpid(WUNTRACED|WCONTINUED), which is immune by construction.
+    ./pty-session-drain.patch
+    # more's command child uses callback clone; signalfd stays upstream.
+    ./more-callback-clone.patch
     # wasm has no mmap: look mapped its dictionary file read-only for a binary
     # search; read it into a heap buffer instead (same [front, back) range).
     ./look-no-mmap.patch
@@ -120,15 +126,10 @@ stdenv.mkDerivation (finalAttrs: {
     # generic double-return fork API and config-disabled idmap creation remain
     # unavailable on wasm.
     ./libmount-callback-clone.patch
-    # uuidd uses a self-pipe for its service signals and callback clones for
-    # musl's double-fork daemon continuation on wasm; native paths are intact.
-    ./uuidd-portable-service.patch
-    # irqtop retains periodic absolute-monotonic updates without timerfd and
-    # routes its explicit signal set through a lifecycle-safe self-pipe.
-    ./irqtop-portable-events.patch
-    # Keep waitpid's pidfd/epoll model; only its unavailable timerfd is
-    # replaced by an absolute monotonic epoll deadline on wasm.
-    ./waitpid-no-timerfd.patch
+    # uuidd's double-fork daemon continuation uses private-memory callback
+    # clones on wasm; signalfd stays upstream.
+    ./uuidd-callback-clone.patch
+    ./test-fd-events.patch
   ];
 
   configureFlags = [
@@ -153,13 +154,11 @@ stdenv.mkDerivation (finalAttrs: {
     "--without-user"
 
     # These interfaces have no usable backing in the shipped guest: the wasm
-    # architecture selects ARCH_NO_SWAP, CONFIG_ADVISE_SYSCALLS is disabled,
-    # virtio-blk has no eject operation, and none of ldattach's attachable
+    # architecture selects ARCH_NO_SWAP, and none of ldattach's attachable
     # protocol line disciplines is configured. Keep the independently useful
     # mkswap utility enabled.
     "--disable-swapon"
     "--disable-eject"
-    "--disable-fadvise"
     "--disable-ldattach"
 
     # The fixed guest kernel omits CONFIG_SCHED_CORE, CONFIG_UCLAMP_TASK,
@@ -235,8 +234,8 @@ stdenv.mkDerivation (finalAttrs: {
               source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_mount_context_mount";
               mode = "0755";
             };
-            "/test_waitpid_timeout" = {
-              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_waitpid_timeout";
+            "/test_fd_events" = {
+              source = "${finalAttrs.finalPackage.testSupport}/libexec/util-linux-tests/test_fd_events";
               mode = "0755";
             };
           };
