@@ -10,15 +10,15 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "9030b7bfd4bb44c6f2a459c9a502f1c21a116ce1";
-    hash = "sha256-xHPwjR6o20JdUZHvOzR/oZHSjRINBW9ghlA0oXsJnms=";
+    rev = "f06dad0dcdfbc8b48309093c9abb68ba47502b7f";
+    hash = "sha256-s22VmEIvNQxBM0ttVzdHkCN/MW/Wfd8SXR3hjGITxhQ=";
   },
 }:
 
 pkgs.stdenvNoCC.mkDerivation {
   pname = "linux";
+  version = "0.0.0";
   inherit src;
-  inherit ((builtins.fromJSON (builtins.readFile "${src}/tools/wasm/package.json"))) version;
 
   outputs = [
     "out"
@@ -52,9 +52,9 @@ pkgs.stdenvNoCC.mkDerivation {
 
     make defconfig ${lib.optionalString debug "debug.config"}
 
-    make -C tools/wasm vmlinux.wasm
+    make vmlinux.wasm
 
-    cp tools/wasm/vmlinux.wasm $out/
+    cp vmlinux.wasm $out/
 
     make headers_install INSTALL_HDR_PATH=$headers
 
