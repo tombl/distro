@@ -262,22 +262,29 @@ const toTerminal = (data: string | ArrayLike<number>) =>
   );
 
 // The kernel emits pre-console printk through the boot console stream and
-// everything after hvc0 takes over through the virtio tty console. Stream the
-// boot log into the terminal live, but hold the tty console's first output
-// until the boot stream has closed (hvc0 handoff), so the log reads as one
-// ordered block rather than interleaving with the motd.
-let releaseTty: () => void = () => {};
-const ttyGate = new Promise<void>((resolve) => {
-  releaseTty = resolve;
-});
+// everything after hvc0 takes over through the virtio tty console. Those are
+// two independent asynchronous streams, so rendering them both straight to
+// the terminal lets the tail of the boot log interleave with the guest's
+// first console output (the motd). Buffer the boot stream and flush it before
+// the first tty byte, so the log reads as a single ordered block.
+const bootChunks: Uint8Array[] = [];
+let bootFlushed = false;
+async function flushBoot() {
+  if (bootFlushed) return;
+  bootFlushed = true;
+  for (const chunk of bootChunks) await toTerminal(chunk);
+  bootChunks.length = 0;
+}
 const bootOut = new WritableStream({
   write(chunk) {
-    return toTerminal(chunk);
+    if (bootFlushed) void toTerminal(chunk);
+    else bootChunks.push(chunk);
   },
+  close: () => void flushBoot(),
 });
 const stdout = new WritableStream({
   async write(chunk) {
-    await ttyGate;
+    await flushBoot();
     return toTerminal(chunk);
   },
 });
@@ -447,13 +454,9 @@ const machine = await bootMachine({
   plugins,
 });
 // Route the kernel's boot output into the terminal, which already holds the
-// hydrated placeholder text. Releasing the tty gate lets the guest's motd
-// follow once the boot console stream closes (hvc0 handoff).
-void machine.bootConsole
-  .pipeTo(bootOut)
-  .then(releaseTty)
-  .catch(() => {});
-setTimeout(releaseTty, 5000);
+// hydrated placeholder text. The tty console writes straight through, so the
+// guest is never stalled waiting for a gate.
+void machine.bootConsole.pipeTo(bootOut).catch(() => {});
 
 if (bootDirectory) {
   await guest.fs.mkdir("/boot", { recursive: true });
