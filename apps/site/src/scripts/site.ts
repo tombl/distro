@@ -160,13 +160,38 @@ const toTerminal = (data: string | ArrayLike<number>) =>
   new Promise<void>((resolve) =>
     term.write(typeof data === "string" ? data : Uint8Array.from(data), resolve),
   );
-const stdout = new WritableStream({ write: toTerminal });
+
+// The kernel emits pre-console printk through the boot console stream and
+// everything after hvc0 takes over through the virtio tty console. Those are
+// two independent asynchronous streams, so rendering them both straight to
+// the terminal lets the tail of the boot log interleave with the guest's
+// first console output (the motd). Buffer the boot stream and flush it before
+// the first tty byte, so the log reads as a single ordered block.
+const bootChunks: Uint8Array[] = [];
+let bootFlushed = false;
+async function flushBoot() {
+  if (bootFlushed) return;
+  bootFlushed = true;
+  for (const chunk of bootChunks) await toTerminal(chunk);
+  bootChunks.length = 0;
+}
+const bootOut = new WritableStream({
+  write(chunk) {
+    if (bootFlushed) void toTerminal(chunk);
+    else bootChunks.push(chunk);
+  },
+  close: () => void flushBoot(),
+});
+const stdout = new WritableStream({
+  async write(chunk) {
+    await flushBoot();
+    return toTerminal(chunk);
+  },
+});
 const ttyConsole = consoleDevice(stdin, stdout);
 const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
 term.onResize(resizeConsole);
 resizeConsole();
-
-const bootOut = new WritableStream({ write: toTerminal });
 
 async function openLiveDisk(): Promise<BlockDeviceStorage> {
   const manifestResponse = await fetch("/rootfs.erofs.json");
