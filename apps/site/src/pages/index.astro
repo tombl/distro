@@ -32,17 +32,14 @@ import Base from "../layouts/Base.astro";
   <main class="root-stage">
     <h1 class="visually-hidden">Lowland Linux terminal</h1>
     <section class="machine" id="terminal" aria-label="Interactive Linux terminal">
-      <div class="terminal-status" data-terminal-status aria-live="polite">
-        <p data-status-title>Linux runs in this panel.</p>
-        <p data-status-detail>
-          JavaScript starts the machine and turns this panel into an interactive terminal. If it
-          does not start, the rest of this page still works.
-        </p>
-        <p>
-          Continue with the <a href="https://docs.low.land">documentation</a> or inspect the
-          <a href="https://github.com/tombl/distro">source</a>.
-        </p>
-      </div>
+      <pre class="terminal-placeholder" data-terminal-placeholder aria-live="polite">Linux runs in this panel.
+
+JavaScript starts the machine and turns this
+panel into an interactive terminal. If it does
+not start, the rest of this page still works.
+
+Continue with the <a href="https://docs.low.land">documentation</a> or inspect the
+<a href="https://github.com/tombl/distro">source</a>.</pre>
       <div class="terminal" data-terminal aria-busy="true"></div>
     </section>
   </main>
