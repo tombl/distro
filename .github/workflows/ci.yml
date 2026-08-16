@@ -210,7 +210,8 @@ jobs:
             printf '[Open the site preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/record-deployment.sh \
-            "preview-site" "$preview_url" "Site preview"
+            "preview-site" "$preview_url" "Site preview" \
+            "${{ github.event.pull_request.head.sha }}"
 
   deploy-docs:
     name: Deploy docs
@@ -261,7 +262,8 @@ jobs:
             printf '[Open the docs preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/record-deployment.sh \
-            "preview-docs" "$preview_url" "Docs preview"
+            "preview-docs" "$preview_url" "Docs preview" \
+            "${{ github.event.pull_request.head.sha }}"
 
   publish-release:
     name: Publish npm packages and GitHub release
