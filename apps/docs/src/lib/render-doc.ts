@@ -46,7 +46,10 @@ export function renderDoc(doc: string, resolve: ResolveLink): DocBlock[] {
   let cursor = 0;
   for (const match of doc.matchAll(fence)) {
     if (match.index! > cursor) {
-      blocks.push({ kind: "text", html: renderParagraphs(doc.slice(cursor, match.index), resolve) });
+      blocks.push({
+        kind: "text",
+        html: renderParagraphs(doc.slice(cursor, match.index), resolve),
+      });
     }
     blocks.push({ kind: "code", code: match[2].trim(), language: match[1] || "ts" });
     cursor = match.index! + match[0].length;
