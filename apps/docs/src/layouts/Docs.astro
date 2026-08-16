@@ -2,6 +2,7 @@
 import type { MarkdownHeading } from "astro";
 
 import DocumentationNavigation from "../components/DocumentationNavigation.astro";
+import Footnotes from "../components/Footnotes.astro";
 import TableOfContents from "../components/TableOfContents.astro";
 import Base from "./Base.astro";
 
@@ -14,7 +15,7 @@ interface Props {
 }
 
 const { title, description, current, headings, markdownHref } = Astro.props;
-// footnote-label is the GFM footnotes section rendered at the end of the page.
+// footnote-label is the GFM footnotes section, which Footnotes renders inline.
 const toc = headings
   .filter(({ depth, slug }) => depth > 1 && slug !== "footnote-label")
   .map(({ slug, text }) => ({ href: `#${slug}`, label: text }));
@@ -50,6 +51,24 @@ const toc = headings
       </aside>
     )}
   </div>
+
+  <Footnotes />
+
+  <script>
+    // Close an open panel on navigation within it or on any click outside it.
+    // (details has no native light dismiss; the popover API does, but placing
+    // the panel would need anchor positioning and this handler stays either
+    // way for same-page anchor clicks.)
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const panels = document.querySelectorAll<HTMLDetailsElement>(
+        ".mobile-header-navigation details[open]",
+      );
+      for (const details of panels) {
+        if (!target || target.closest("a") || !details.contains(target)) details.open = false;
+      }
+    });
+  </script>
 
 </Base>
 
