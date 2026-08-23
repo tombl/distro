@@ -33,7 +33,7 @@ export interface DeviceTreeBuilder {
   merge(fragment: DeviceTreeNode): void;
 }
 
-/** The configure-only surface made available to machine plugins. */
+/** Configuration available to machine plugins before boot. */
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;

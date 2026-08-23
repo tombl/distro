@@ -2,7 +2,7 @@ export const referencePackages = [
   {
     slug: "kernel",
     name: "@lowland/kernel",
-    description: "Low-level Linux virtual machine and virtio device primitives.",
+    description: "APIs for Linux virtual machines and virtio devices.",
     npm: "https://www.npmjs.com/package/@lowland/kernel",
     groups: [
       {

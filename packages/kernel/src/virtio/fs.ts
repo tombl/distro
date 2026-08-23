@@ -188,8 +188,8 @@ export interface FSCreateContext {
  *
  * `TNode` and `THandle` are the backend's node and open-file types; the device
  * never inspects them. A writable backend (one providing `write` or `create`)
- * must also provide `flush` and `fsync` — no-ops are the explicit way to
- * declare an already-durable or ephemeral store.
+ * must also provide `flush` and `fsync`. Use no-op implementations for an
+ * already-durable or ephemeral store.
  */
 export interface FS<TNode, THandle> {
   readonly root: TNode;
