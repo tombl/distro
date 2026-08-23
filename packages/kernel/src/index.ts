@@ -186,22 +186,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_closed = true;
     },
   });
-  // Closing is skipped once a reader cancelled the stream, which would throw.
-  const boot_console_close = () => {
-    if (boot_console_closed) return;
-    boot_console_closed = true;
-    boot_console_controller.close();
-  };
-  let configured;
-  try {
-    configured = await configure_machine(options.args ?? [], options.plugins ?? [], boot_console);
-  } catch (error) {
-    // Close the stream so a bootConsole() pipe ends and releases its output.
-    boot_console_close();
-    throw error;
-  }
-  const { plugins } = configured;
-  const bus = new VirtioBus(configured.devices);
+  const configured = await configure_machine(
+    options.args ?? [],
+    options.plugins ?? [],
+    boot_console,
+  );
+  const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
   let closed = false;
   let failed = false;
@@ -220,18 +210,13 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_controller.enqueue(new Uint8Array(message));
     }
   };
-  // A forced teardown stops waiting for device close, which waits for
-  // in-flight requests that may be stuck in host storage forever. It can be
-  // requested after an ordinary teardown has already started.
-  const force_requested = Promise.withResolvers<void>();
-  let forced = false;
-  // Idempotent: a device request that settles after a forced teardown can
-  // still reach fail(), which must then be a no-op.
-  const finish = (force = false) => {
-    if (force && !forced) {
-      forced = true;
-      force_requested.resolve();
-    }
+  const boot_console_close = () => {
+    if (boot_console_closed) return;
+    boot_console_closed = true;
+    boot_console_controller.close();
+  };
+
+  const finish = () => {
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
