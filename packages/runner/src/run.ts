@@ -158,10 +158,7 @@ for (const disk of args.disk) {
 const machine = await bootMachine({
   args: ["root=/dev/vda", "rootwait", "init=/init", args.cmdline, shares.cmdline].filter(Boolean),
   cpus: parseInt(args.cpus, 10),
-  plugins: [
-    bootConsole(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>),
-    ...devices,
-  ],
+  plugins: [bootConsole(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>), ...devices],
 });
 
 try {
