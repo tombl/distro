@@ -88,8 +88,8 @@ export class ChildProcess implements AsyncDisposable {
   readonly stdin: WritableStream<Uint8Array>;
   /**
    * The process's standard output, as a `ReadableStream<Uint8Array>`.
-   * `new Response(process.stdout).text()` collects the whole output;
-   * iterate the stream to handle output as it arrives.
+   * `new Response(process.stdout).text()` collects the whole output.
+   * Iterate the stream to handle output as it arrives.
    *
    * @example Stream output as it arrives
    * ```ts

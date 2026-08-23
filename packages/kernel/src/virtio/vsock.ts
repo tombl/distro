@@ -58,7 +58,7 @@ function concat_bytes(chunks: Uint8Array[]) {
 
 /** A stream connection between this process and a guest, over vsock. */
 export interface VsockConnection {
-  /** Reads the next chunk; an empty chunk means the peer closed. */
+  /** Reads the next chunk. An empty chunk means the peer closed. */
   read(): Promise<Uint8Array>;
   /** Reads `length` bytes, or fewer if the peer closes first. */
   readExactly(length: number): Promise<Uint8Array>;

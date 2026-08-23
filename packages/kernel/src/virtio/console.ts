@@ -24,7 +24,7 @@ class ConsoleConfig extends Struct({
  */
 export interface ConsoleDevice extends VirtioDevice {
   /**
-   * Changes the console's dimensions; the console boots at 80×24. The guest
+   * Changes the console's dimensions. The console boots at 80×24. The guest
    * sees the new size and delivers `SIGWINCH` to the foreground process.
    */
   resize(columns: number, rows: number): void;
