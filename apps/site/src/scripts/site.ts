@@ -174,9 +174,6 @@ const toTerminal = (data: string | ArrayLike<number>) =>
     term.write(typeof data === "string" ? data : Uint8Array.from(data), resolve),
   );
 
-const bootOut = new WritableStream({
-  write: toTerminal,
-});
 const stdout = new WritableStream({
   write: toTerminal,
 });
@@ -339,15 +336,11 @@ if (bootDirectory) {
 plugins.push(disk);
 plugins.push(networkAttachment);
 
-const machine = await bootMachine({
+await bootMachine({
   cpus: cpuCount,
   args,
   plugins,
 });
-// Route the kernel's boot output into the terminal, which already holds the
-// hydrated placeholder text. The tty console writes straight through, so the
-// guest is never stalled waiting for a gate.
-void machine.bootConsole.pipeTo(bootOut).catch(() => {});
 
 if (bootDirectory) {
   await guest.fs.mkdir("/boot", { recursive: true });
