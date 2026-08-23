@@ -82,6 +82,7 @@ let
       contents ? [ ],
       files ? { },
       format ? "erofs",
+      size ? "256M",
     }:
     let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
@@ -119,7 +120,7 @@ let
     image.mkFilesystem {
       name = "${fixtureName}-system";
       root = system;
-      inherit format;
+      inherit format size;
     };
 
   installedTest =
@@ -129,6 +130,7 @@ let
       contents ? [ ],
       files ? { },
       cpus ? 1,
+      size ? "256M",
       # Every installed test boots a VM and needs an isolated CI runner. The
       # aggregate builder can otherwise start enough guests concurrently to
       # starve unrelated tests and produce misleading failures.
@@ -144,6 +146,7 @@ let
         # to /etc, /root, and /var. Keep production image policy separate from
         # this mutable test fixture.
         format = "ext4";
+        inherit size;
       };
     in
     bootInstalledSystem {

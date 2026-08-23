@@ -11,8 +11,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "go";
-    rev = "1cb069694ffe524c4c46bd303b3657aa31a5be3e";
-    hash = "sha256-QKnr9hhUWaZdjFkY092OIeHjSrR0WcjHBxFH77PU9OY=";
+    rev = "1e03a85fde3886386560972e0e68d7e225c247a7";
+    hash = "sha256-LqzxxUKqHSIEBAXBvG9rJ7j4pMf0q/7WDfb478BqO2I=";
   },
 }:
 
@@ -20,21 +20,24 @@ let
   nativeGo = pkgs.go_1_27.overrideAttrs (
     _finalAttrs: previousAttrs: {
       pname = "go-wasm-linux";
-      version = "1.28-devel-1cb069694f";
+      version = "1.27.0-port-1e03a85fde";
       inherit src;
 
-      # Development checkouts derive this from Git history. fetchFromGitHub has
-      # no .git directory, so provide the version make.bash and cmd/go require.
+      # Undo host-specific nixpkgs data-path substitutions for binaries that
+      # will execute inside the FHS guest. The tagged source carries VERSION.
       postPatch = (previousAttrs.postPatch or "") + ''
-        printf '%s\n' 'devel go1.28-1cb069694f' > VERSION
+        # nixpkgs patches its native Go runtime to use immutable database paths.
+        # Those paths must not become runtime dependencies of FHS guest
+        # binaries installed through APK.
+        substituteInPlace src/net/lookup_unix.go \
+          --replace-fail '${pkgs.iana-etc}/etc/protocols' '/etc/protocols'
+        substituteInPlace src/net/port_unix.go \
+          --replace-fail '${pkgs.iana-etc}/etc/services' '/etc/services'
+        substituteInPlace src/mime/type_unix.go \
+          --replace-fail '${pkgs.mailcap}/etc/mime.types' '/etc/mime.types'
+        substituteInPlace src/time/zoneinfo_unix.go \
+          --replace-fail '${pkgs.tzdata}/share/zoneinfo/' '/usr/share/zoneinfo/'
       '';
-
-      env = previousAttrs.env // {
-        # Go tip requires the previous stable release as its bootstrap compiler;
-        # nixpkgs' go_1_27 expression still bootstraps with Go 1.24.
-        GOROOT_BOOTSTRAP = "${pkgs.go_1_26}/share/go";
-        GOTOOLCHAIN = "local";
-      };
     }
   );
 
@@ -53,15 +56,27 @@ let
     inherit stdenv;
   };
 
+  # Go's linker owns WebAssembly symbol/debug stripping. The wasm stdenv hook
+  # invokes llvm-strip, which rejects Go 1.27 modules containing
+  # custom sections between standard sections. Use the shell-string form so it
+  # is exported into the derivation environment under structured attributes.
+  disableHostStripping =
+    attrs:
+    {
+      doCheck = false;
+      dontStrip = "1";
+    }
+    // attrs;
+
   # Cross-built tests cannot run during a normal derivation. Packages can opt
   # back in, but platform behavior belongs in explicit vm-test checks.
   buildGoModule = lib.makeOverridable (
     args:
     nixpkgsBuilder (
       if builtins.isFunction args then
-        finalAttrs: { doCheck = false; } // args finalAttrs
+        finalAttrs: disableHostStripping (args finalAttrs)
       else
-        { doCheck = false; } // args
+        disableHostStripping args
     )
   );
 in
