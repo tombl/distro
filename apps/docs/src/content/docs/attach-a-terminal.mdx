@@ -37,9 +37,10 @@ as SIGINT; the page only moves bytes. The tty defaults to 80×24.
 `device.resize(columns, rows)` changes it and sends `SIGWINCH` to the foreground
 process so full-screen programs reflow.
 
-Kernel output from before the console device initializes goes to a separate
-stream, `machine.bootConsole`. Pipe it to the same renderer to see the
-whole boot.
+Kernel output from before the console device initializes is a debugging aid.
+Add the optional `bootConsole(output)` plugin when diagnosing early kernel
+bring-up. The Lowland homepage deliberately begins with `/dev/hvc0` output and
+does not display this early log.
 
 ## xterm.js events
 
@@ -87,8 +88,7 @@ function terminalOutput() {
 }
 ```
 
-Boot the guest with the device, keeping a handle on it for resizing, and
-fold in the boot log through a second output stream:
+Boot the guest with the device, keeping a handle on it for resizing:
 
 ```ts
 const tty = consoleDevice(input, terminalOutput());
@@ -97,9 +97,6 @@ const machine = await bootMachine({
   cpus: navigator.hardwareConcurrency,
   plugins: [guest, tty],
 });
-void machine.bootConsole
-  .pipeTo(terminalOutput())
-  .catch((error) => console.error(error));
 ```
 
 Finally, attach the emulator and translate its two event streams:

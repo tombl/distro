@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-import { bootMachine, consoleDevice, entropyDevice, workerDevice } from "@lowland/kernel";
+import {
+  bootConsole,
+  bootMachine,
+  consoleDevice,
+  entropyDevice,
+  workerDevice,
+} from "@lowland/kernel";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";
@@ -152,7 +158,10 @@ for (const disk of args.disk) {
 const machine = await bootMachine({
   args: ["root=/dev/vda", "rootwait", "init=/init", args.cmdline, shares.cmdline].filter(Boolean),
   cpus: parseInt(args.cpus, 10),
-  plugins: devices,
+  plugins: [
+    bootConsole(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>),
+    ...devices,
+  ],
 });
 
 try {
