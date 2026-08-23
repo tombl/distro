@@ -29,11 +29,10 @@ function reportError(error: unknown) {
     "",
     "Continue with the documentation or inspect the source.",
   ].join("\n");
-  // The placeholder is the no-JavaScript face of the panel; a load failure
-  // rewrites it in place. Mirror the same text into xterm in case the error
-  // lands while the hydrated terminal is painted but still hidden.
-  if (placeholderElement) placeholderElement.textContent = message;
-  activeTerminal?.write(`\x1b[2J\x1b[H${message}`);
+  // Before hydration, replace the static handoff. Afterwards, append the
+  // failure to the same terminal history as the loading message.
+  if (placeholderElement?.isConnected) placeholderElement.textContent = message;
+  else activeTerminal?.write(`\r\n${message}\r\n`);
 }
 
 addEventListener("error", (event) => reportError(event.error));
@@ -58,6 +57,9 @@ if ("serviceWorker" in navigator) {
 const parameters = Object.fromEntries(new URLSearchParams(location.search));
 const cpuCount = Math.max(1, Math.min(navigator.hardwareConcurrency || 1, 4));
 const handoffDelay = parameters.handoff === "slow" ? 1000 : 0;
+
+// The delay is a visual-test hook. Production initializes xterm immediately.
+if (handoffDelay > 0) await new Promise((resolve) => setTimeout(resolve, handoffDelay));
 
 // xterm needs resolved colors rather than CSS color functions such as
 // light-dark(). A short-lived element lets the browser resolve each shared
@@ -130,7 +132,10 @@ for (const disclosure of disclosures) {
   });
 }
 term.loadAddon(termFit);
-terminalElement.style.visibility = "hidden";
+// Populate xterm before attaching it, so its first visible paint is identical
+// to the static no-JavaScript state. Boot output then appends to this buffer.
+await new Promise<void>((resolve) => term.write(placeholderElement?.textContent ?? "", resolve));
+placeholderElement?.remove();
 term.open(terminalElement);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   term.options.theme = terminalTheme();
@@ -147,20 +152,6 @@ if (parameters.webgl !== "0") {
     console.warn(error);
   }
 }
-// Keep the no-JavaScript placeholder visible until xterm has painted the same
-// text. Visibility avoids an empty terminal frame without coupling the
-// placeholder to xterm's private cell measurements.
-term.write(placeholderElement?.textContent ?? "", () => {
-  const revealTerminal = () =>
-    requestAnimationFrame(() => {
-      placeholderElement?.remove();
-      terminalElement.style.removeProperty("visibility");
-      termFit.fit();
-    });
-  if (handoffDelay > 0) setTimeout(revealTerminal, handoffDelay);
-  else revealTerminal();
-});
-
 if (!window.crossOriginIsolated) throw new Error("This page is not cross-origin isolated.");
 
 let opfs;
@@ -183,32 +174,11 @@ const toTerminal = (data: string | ArrayLike<number>) =>
     term.write(typeof data === "string" ? data : Uint8Array.from(data), resolve),
   );
 
-// The kernel emits pre-console printk through the boot console stream and
-// everything after hvc0 takes over through the virtio tty console. Those are
-// two independent asynchronous streams, so rendering them both straight to
-// the terminal lets the tail of the boot log interleave with the guest's
-// first console output (the motd). Buffer the boot stream and flush it before
-// the first tty byte, so the log reads as a single ordered block.
-const bootChunks: Uint8Array[] = [];
-let bootFlushed = false;
-async function flushBoot() {
-  if (bootFlushed) return;
-  bootFlushed = true;
-  for (const chunk of bootChunks) await toTerminal(chunk);
-  bootChunks.length = 0;
-}
 const bootOut = new WritableStream({
-  write(chunk) {
-    if (bootFlushed) void toTerminal(chunk);
-    else bootChunks.push(chunk);
-  },
-  close: () => void flushBoot(),
+  write: toTerminal,
 });
 const stdout = new WritableStream({
-  async write(chunk) {
-    await flushBoot();
-    return toTerminal(chunk);
-  },
+  write: toTerminal,
 });
 const ttyConsole = consoleDevice(stdin, stdout);
 const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
