@@ -1,0 +1,14 @@
+diff --git a/build.rs b/build.rs
+index 34df96a..aa11dd2 100644
+--- a/build.rs
++++ b/build.rs
+@@ -116,7 +116,7 @@ fn main() {
+     let musl = target_env == "musl" || target_env == "ohos";
+ 
+     // loongarch64, hexagon, and ohos only exist with recent musl
+-    if target_arch == "loongarch64" || target_arch == "hexagon" || target_env == "ohos" {
++    if target_arch == "wasm32" || target_arch == "loongarch64" || target_arch == "hexagon" || target_env == "ohos" {
+         musl_v1_2_3 = true;
+     }
+ 
+

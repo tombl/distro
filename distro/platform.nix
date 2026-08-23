@@ -20,6 +20,16 @@ rec {
       {
         parsed.kernel.execFormat = lib.systems.parse.execFormats.wasm;
         isElf = false;
+        rust.platform = {
+          arch = "wasm32";
+          env = "musl";
+          os = "linux";
+          target-family = [
+            "unix"
+            "wasm"
+          ];
+          vendor = "unknown";
+        };
       };
 
   # Every wasm compilation needs these; the cc-wrapper bakes them in.
@@ -30,6 +40,16 @@ rec {
     # call site; libc cannot add this transformation at link time.
     "-mllvm"
     "-wasm-enable-sjlj"
+  ];
+
+  # Rust target features are LLVM features, not arbitrary clang driver flags.
+  # Keep this list separate so forwarding pairs such as
+  # `-mllvm -wasm-enable-sjlj` cannot turn into bogus rustc features.
+  rustTargetFeatures = [
+    "atomics"
+    "bulk-memory"
+    "mutable-globals"
+    "sign-ext"
   ];
 
   # Flags for linking wasm executables the kernel can load. No --fatal-warnings

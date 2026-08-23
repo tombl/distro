@@ -1,0 +1,180 @@
+diff --git a/library/std/src/sys/process/unix/unix.rs b/library/std/src/sys/process/unix/unix.rs
+index 34bf78e..c8bfc4b 100644
+--- a/library/std/src/sys/process/unix/unix.rs
++++ b/library/std/src/sys/process/unix/unix.rs
+@@ -13,6 +13,13 @@ use libc::{gid_t, uid_t};
+ use super::common::*;
+ use crate::io::{self, Error, ErrorKind};
+ use crate::num::NonZero;
++#[cfg(all(
++    target_arch = "wasm32",
++    target_os = "linux",
++    target_env = "musl",
++    target_vendor = "unknown"
++))]
++use crate::os::fd::AsRawFd;
+ use crate::process::StdioPipes;
+ use crate::sys::cvt;
+ #[cfg(target_os = "linux")]
+@@ -51,6 +58,24 @@ cfg_select! {
+ // Command
+ ////////////////////////////////////////////////////////////////////////////////
+ 
++// wasm Linux's clone ABI starts the child at a callback on a supplied stack,
++// rather than returning through the caller's stack as fork does. All pointers
++// below refer to the parent's stack, which a non-CLONE_VM clone snapshots at
++// the same addresses in the new process.
++#[cfg(all(
++    target_arch = "wasm32",
++    target_os = "linux",
++    target_env = "musl",
++    target_vendor = "unknown"
++))]
++struct CloneChild<'a> {
++    command: *mut Command,
++    stdio: *mut ChildPipes,
++    envp: Option<&'a CStringArray>,
++    input_fd: c_int,
++    output: *mut sys::net::Socket,
++}
++
+ impl Command {
+     pub fn spawn(
+         &mut self,
+@@ -74,9 +99,25 @@ impl Command {
+             return Ok((ret, ours));
+         }
+ 
++        #[cfg(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        ))]
++        let mut theirs = theirs;
++
+         #[cfg(target_os = "linux")]
+         let (input, output) = sys::net::Socket::new_pair(libc::AF_UNIX, libc::SOCK_SEQPACKET)?;
+ 
++        #[cfg(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        ))]
++        let mut output = output;
++
+         #[cfg(not(target_os = "linux"))]
+         let (input, output) = sys::pipe::pipe()?;
+ 
+@@ -88,11 +129,51 @@ impl Command {
+         // Note that as soon as we're done with the fork there's no need to hold
+         // a lock any more because the parent won't do anything and the child is
+         // in its own process. Thus the parent drops the lock guard immediately.
+-        // The child calls `mem::forget` to leak the lock, which is crucial because
+-        // releasing a lock is not async-signal-safe.
++        // A fork child calls `mem::forget` to leak the lock, which is crucial
++        // because releasing a lock is not async-signal-safe. The callback clone
++        // child starts on a fresh stack, so it has no guard there to drop.
+         let env_lock = sys::env::env_read_lock();
++
++        #[cfg(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        ))]
++        let pid = {
++            const CHILD_STACK_SIZE: usize = 64 * 1024;
++            let mut child_stack = Vec::<u8>::with_capacity(CHILD_STACK_SIZE);
++            let mut child = CloneChild {
++                command: self,
++                stdio: &mut theirs,
++                envp: envp.as_ref(),
++                input_fd: input.as_raw_fd(),
++                output: &mut output,
++            };
++            cvt(unsafe {
++                libc::clone(
++                    Self::clone_child,
++                    child_stack.as_mut_ptr().add(CHILD_STACK_SIZE).cast(),
++                    libc::SIGCHLD,
++                    (&mut child as *mut CloneChild<'_>).cast(),
++                )
++            })?
++        };
++
++        #[cfg(not(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        )))]
+         let pid = unsafe { self.do_fork()? };
+ 
++        #[cfg(not(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        )))]
+         if pid == 0 {
+             crate::panic::always_abort();
+             mem::forget(env_lock); // avoid non-async-signal-safe unlocking
+@@ -164,6 +245,43 @@ impl Command {
+         }
+     }
+ 
++    #[cfg(all(
++        target_arch = "wasm32",
++        target_os = "linux",
++        target_env = "musl",
++        target_vendor = "unknown"
++    ))]
++    extern "C" fn clone_child(argument: *mut libc::c_void) -> c_int {
++        const CLOEXEC_MSG_FOOTER: [u8; 4] = *b"NOEX";
++
++        let child = unsafe { &mut *argument.cast::<CloneChild<'_>>() };
++        crate::panic::always_abort();
++        unsafe {
++            libc::close(child.input_fd);
++        }
++        let command = unsafe { &mut *child.command };
++        if command.get_create_pidfd() {
++            command.send_pidfd(unsafe { &*child.output });
++        }
++        let stdio = unsafe { crate::ptr::read(child.stdio) };
++        let Err(err) = (unsafe { command.do_exec(stdio, child.envp) });
++        let errno = err.raw_os_error().unwrap_or(libc::EINVAL) as u32;
++        let errno = errno.to_be_bytes();
++        let bytes = [
++            errno[0],
++            errno[1],
++            errno[2],
++            errno[3],
++            CLOEXEC_MSG_FOOTER[0],
++            CLOEXEC_MSG_FOOTER[1],
++            CLOEXEC_MSG_FOOTER[2],
++            CLOEXEC_MSG_FOOTER[3],
++        ];
++        let write_result = unsafe { &mut *child.output }.write(&bytes);
++        rtassert!(write_result.is_ok());
++        1
++    }
++
+     // WatchOS and TVOS headers mark the `fork`/`exec*` functions with
+     // `__WATCHOS_PROHIBITED __TVOS_PROHIBITED`, and indicate that the
+     // `posix_spawn*` functions should be used instead. It isn't entirely clear
+@@ -184,6 +302,12 @@ impl Command {
+     // Attempts to fork the process. If successful, returns Ok((0, -1))
+     // in the child, and Ok((child_pid, -1)) in the parent.
+     #[cfg(not(any(
++        all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown"
++        ),
+         target_os = "watchos",
+         target_os = "tvos",
+         target_os = "nto",
