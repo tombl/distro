@@ -158,7 +158,7 @@ let opfs;
 try {
   opfs = await navigator.storage.getDirectory();
 } catch (error) {
-  console.warn("Persistent storage is unavailable; continuing in live-only mode", error);
+  console.warn("Persistent storage is unavailable. Continuing in live-only mode", error);
   bootMode = "live";
 }
 
@@ -315,7 +315,7 @@ if (bootMode === "live" && persistentInstallSupported && opfs) {
       timeout: 2000,
     });
   } catch (error) {
-    console.warn("Persistent installation is unavailable; continuing with the live system", error);
+    console.warn("Persistent installation is unavailable. Continuing with the live system", error);
   }
 }
 const bootDirectory = opfs ? await opfs.getDirectoryHandle("boot", { create: true }) : undefined;
