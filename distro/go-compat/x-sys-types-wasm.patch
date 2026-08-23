@@ -22,6 +22,6 @@ index 4a49cb1..71e2bd7 100644
 +	int32_t f_tfree;
 +	ino_t f_tinode;
 +#else
-  __daddr_t f_tfree;
-  __ino_t f_tinode;
+ 	__daddr_t f_tfree;
+ 	__ino_t f_tinode;
 +#endif

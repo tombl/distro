@@ -250,6 +250,7 @@ let
   guestCheck = vm-test.installedTest {
     name = "go-ecosystem";
     cpus = 2;
+    size = "1G";
     init = ./guest-test.sh;
     contents = [ busybox ] ++ lib.attrValues tests ++ lib.attrValues candidates;
   };

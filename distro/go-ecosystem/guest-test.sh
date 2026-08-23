@@ -51,10 +51,9 @@ for test_binary in /bin/*.test; do
     test_run='^(TestSecWebSocketAccept|TestHybi.*|TestParseAuthority)$'
     ;;
   */x-sys-unix.test)
-    # Exercise the supported file, descriptor, identity, and path syscall ABI.
-    # mmap, vectored I/O, epoll, and several time syscalls are not implemented
-    # or ABI-compatible yet and are deliberately outside this positive matrix.
-    test_run='^Test(Env|Uname|StatFieldNames|Devices|Auxv|ErrnoSignalName|SignalNum|FcntlInt|FcntlFlock|Rlimit|SeekFailure|Dup|Getwd|Fstatat|Fchmodat|Mkdev|Pipe|Renameat|Faccessat|Openat2)$'
+    # Exercise the supported file, descriptor, identity, path, vectored-I/O,
+    # epoll, and timer ABI. mmap remains deliberately unsupported.
+    test_run='^Test(Env|Uname|StatFieldNames|Devices|Auxv|ErrnoSignalName|SignalNum|FcntlInt|FcntlFlock|Rlimit|SeekFailure|Dup|Getwd|Fstatat|Fchmodat|Mkdev|Pipe|Renameat|Faccessat|Openat2|WritevReadv|PwritevPreadv|PwritevOffset|PwritevOffsets|ReadvAllocate|ClockNanosleep|Epoll|Timerfd)$'
     ;;
   */x-term-x-term.test)
     # devpts is not mounted in this minimal initramfs.

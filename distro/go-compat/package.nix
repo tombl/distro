@@ -34,6 +34,8 @@ let
         cp -r ${xSysUpstream} $out
         chmod -R u+w $out
         patch --ignore-whitespace -p1 -d $out < ${./x-sys-types-wasm.patch}
+        substituteInPlace $out/unix/linux/types.go \
+          --replace-fail 'defined(__aarch64__) || (defined(__mips__)' 'defined(__aarch64__) || defined(__wasm__) || (defined(__mips__)'
         substituteInPlace $out/cpu/cpu_linux.go \
           --replace-fail '!arm64' '!arm64 && !wasm'
         cd $out/unix
@@ -52,7 +54,8 @@ let
           --replace-fail '386 && linux' 'wasm && linux'
         cp zsysnum_linux_arm64.go zsysnum_linux_wasm.go
         substituteInPlace zsysnum_linux_wasm.go \
-          --replace-fail 'arm64 && linux' 'wasm && linux'
+          --replace-fail 'arm64 && linux' 'wasm && linux' \
+          --replace-fail 'SYS_CLOCK_NANOSLEEP         = 115' 'SYS_CLOCK_NANOSLEEP         = 407'
 
           # cgo cannot decode a wasm object even in -godefs mode. Generate an ELF
           # object with the equivalent little-endian ILP32 data model and 8-byte
@@ -131,8 +134,19 @@ let
           go run mksyscall.go -tags linux,wasm syscall_linux_wasm.go \
           > zsyscall_linux_wasm.go
 
+        # The merged Linux wrappers expose Go-native structs directly. Replace
+        # the vector-I/O entries with ILP32 marshalling shims for wasm.
+        substituteInPlace zsyscall_linux.go \
+          --replace-fail 'func readv(' 'func readvUnmarshaled(' \
+          --replace-fail 'func writev(' 'func writevUnmarshaled(' \
+          --replace-fail 'func preadvSyscall(' 'func preadvSyscallUnmarshaled(' \
+          --replace-fail 'func pwritevSyscall(' 'func pwritevSyscallUnmarshaled(' \
+          --replace-fail 'func preadv2Syscall(' 'func preadv2SyscallUnmarshaled(' \
+          --replace-fail 'func pwritev2Syscall(' 'func pwritev2SyscallUnmarshaled('
+        install -m644 ${./x-sys-vector-wasm.go} x_sys_vector_wasm.go
+
         gofmt -w syscall_linux_wasm.go syscall_gc_wasm.go \
-          ztypes_linux_wasm.go zsyscall_linux_wasm.go
+          ztypes_linux_wasm.go zsyscall_linux_wasm.go x_sys_vector_wasm.go
       '';
 
   xTerm = pkgs.fetchFromGitHub {
