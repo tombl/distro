@@ -89,11 +89,6 @@ body {
   overflow: hidden;
 }
 
-.terminal-placeholder a {
-  color: inherit;
-  text-decoration: none;
-}
-
 @media (max-width: 47.99rem) {
   .header-copy {
     max-width: none;
