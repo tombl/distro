@@ -14,11 +14,11 @@ const { current } = Astro.props;
     </p>
     <div class="middle"><slot name="middle" /></div>
     <ul>
-      <li>
-        <a href="https://docs.low.land" aria-current={current === "docs" ? "page" : undefined}>
-          docs
-        </a>
-      </li>
+      {current === "site" && (
+        <li>
+          <a href="https://docs.low.land">docs</a>
+        </li>
+      )}
       <li><a href="https://github.com/tombl/distro" target="_blank">github</a></li>
     </ul>
   </nav>
@@ -93,7 +93,7 @@ const { current } = Astro.props;
     font-weight: 500;
   }
 
-  @media (max-width: 47.99rem) {
+  @media (max-width: 32rem) {
     nav {
       grid-template-columns: auto minmax(0, 1fr);
       row-gap: 0.75rem;

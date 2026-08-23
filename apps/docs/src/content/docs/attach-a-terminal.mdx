@@ -7,13 +7,19 @@ order: 5
 
 # Attach a terminal
 
-This guide shows you how to give a guest an interactive console and wire it
-to xterm.js. This is the same setup as the terminal on this site's homepage. The
-work is an adaptation between two interfaces: the guest's console tty, and
-the terminal emulator in the page. Both speak bytes, but with different
-conventions, so it pays to look at each side before bridging them.
+This guide connects a guest console to xterm.js, using the same arrangement as
+the terminal on the Lowland homepage. The bridge has two directions:
 
-## The guest side: a byte pipe to a tty
+```text
+keyboard → xterm.js → TextEncoder → /dev/hvc0
+screen   ← xterm.js ← guest bytes ← /dev/hvc0
+```
+
+The guest side speaks byte streams. xterm.js renders bytes but reports input
+as strings. The rest of the guide adapts those interfaces and keeps terminal
+dimensions in sync.
+
+## Guest console streams
 
 `consoleDevice(input, output)` attaches a console to the machine, visible in
 the guest as `/dev/hvc0`:
@@ -26,18 +32,16 @@ the guest as `/dev/hvc0`:
 Either may be `null`; `consoleDevice(null, output)` is a read-only console,
 such as a boot log.
 
-Two properties of the tty shape the wiring. The guest kernel's line
-discipline does the terminal work, including echo, backspace editing, and Ctrl+C as
-SIGINT. The page moves bytes and nothing more. The tty also has a size,
-defaulting to 80×24: `device.resize(columns, rows)` changes it, and the
-guest delivers `SIGWINCH` to the foreground process, so full-screen
-programs reflow when you resize.
+The guest kernel's line discipline handles echo, backspace editing, and Ctrl+C
+as SIGINT; the page only moves bytes. The tty defaults to 80×24.
+`device.resize(columns, rows)` changes it and sends `SIGWINCH` to the foreground
+process so full-screen programs reflow.
 
 Kernel output from before the console device initializes goes to a separate
 stream, `machine.bootConsole`. Pipe it to the same renderer to see the
 whole boot.
 
-## The xterm side: an emulator with string events
+## xterm.js events
 
 xterm.js is the mirror image:
 
@@ -51,8 +55,6 @@ xterm.js is the mirror image:
 - `convertEol: true` translates the `\n` line endings programs emit into
   the `\r\n` the renderer expects. On input, Enter already arrives as `\r`,
   which is what the tty wants.
-
-The package is `@xterm/xterm` from npm.
 
 ## Bridge the two
 

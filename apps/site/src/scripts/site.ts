@@ -18,22 +18,22 @@ import { serveGuest } from "@lowland/bridge-site/client";
 
 const terminalElement = document.querySelector<HTMLElement>("[data-terminal]");
 const placeholderElement = document.querySelector<HTMLElement>("[data-terminal-placeholder]");
+let activeTerminal: Terminal | undefined;
 
 function reportError(error: unknown) {
   console.error(error);
+  const message = [
+    "The machine could not start.",
+    "",
+    String(error),
+    "",
+    "Continue with the documentation or inspect the source.",
+  ].join("\n");
   // The placeholder is the no-JavaScript face of the panel; a load failure
-  // keeps it mounted and rewrites it in place rather than losing it.
-  if (placeholderElement) {
-    placeholderElement.textContent = [
-      "The machine could not start.",
-      "",
-      String(error),
-      "",
-      "Continue with the documentation or inspect the source.",
-    ].join("\n");
-  } else {
-    term.write(`\r\nThe machine could not start: ${String(error)}\r\n`);
-  }
+  // rewrites it in place. Mirror the same text into xterm in case the error
+  // lands while the hydrated terminal is painted but still hidden.
+  if (placeholderElement) placeholderElement.textContent = message;
+  activeTerminal?.write(`\x1b[2J\x1b[H${message}`);
 }
 
 addEventListener("error", (event) => reportError(event.error));
@@ -57,6 +57,7 @@ if ("serviceWorker" in navigator) {
 
 const parameters = Object.fromEntries(new URLSearchParams(location.search));
 const cpuCount = Math.max(1, Math.min(navigator.hardwareConcurrency || 1, 4));
+const handoffDelay = parameters.handoff === "slow" ? 1000 : 0;
 
 // xterm needs resolved colors rather than CSS color functions such as
 // light-dark(). A short-lived element lets the browser resolve each shared
@@ -105,6 +106,7 @@ const term = new Terminal({
   fontSize: 15,
   theme: terminalTheme(),
 });
+activeTerminal = term;
 const termFit = new FitAddon();
 
 const disclosures = Array.from(
@@ -149,11 +151,14 @@ if (parameters.webgl !== "0") {
 // text. Visibility avoids an empty terminal frame without coupling the
 // placeholder to xterm's private cell measurements.
 term.write(placeholderElement?.textContent ?? "", () => {
-  requestAnimationFrame(() => {
-    placeholderElement?.remove();
-    terminalElement.style.removeProperty("visibility");
-    termFit.fit();
-  });
+  const revealTerminal = () =>
+    requestAnimationFrame(() => {
+      placeholderElement?.remove();
+      terminalElement.style.removeProperty("visibility");
+      termFit.fit();
+    });
+  if (handoffDelay > 0) setTimeout(revealTerminal, handoffDelay);
+  else revealTerminal();
 });
 
 if (!window.crossOriginIsolated) throw new Error("This page is not cross-origin isolated.");
