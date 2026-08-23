@@ -1,4 +1,4 @@
-import { bootMachine, consoleDevice, MachinePanicError } from "@lowland/kernel";
+import { bootConsole, bootMachine, consoleDevice, MachinePanicError } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -22,21 +22,26 @@ async function run_machine(mode: string) {
   const machine = await bootMachine({
     args: [`lifecycle=${mode}`],
     cpus: 1,
-    plugins: [lifecycle_assets.root(), consoleDevice(closed_input(), output_sink(output))],
+    plugins: [
+      bootConsole(output_sink(output)),
+      lifecycle_assets.root(),
+      consoleDevice(closed_input(), output_sink(output)),
+    ],
     initcpio: lifecycle_assets.initramfs,
   });
-  return machine;
+  return { machine, output };
 }
 
 test("guest lifecycle terminates the host", async (t) => {
   await t.test("resolves after poweroff", async () => {
-    const machine = await run_machine("poweroff");
+    const { machine } = await run_machine("poweroff");
     await machine.closed;
   });
 
-  await t.test("rejects after a panic", async () => {
-    const machine = await run_machine("panic");
+  await t.test("rejects after a panic with diagnostics visible", async () => {
+    const { machine, output } = await run_machine("panic");
     await assert.rejects(machine.closed, MachinePanicError);
+    assert.match(output.text, /Kernel panic - not syncing/);
   });
 });
 
