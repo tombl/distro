@@ -195,7 +195,7 @@ export interface NetworkOptions {
    * Handles one TCP session whenever a guest connects outside the virtual
    * subnet. The callback starts at SYN receipt and lives for the whole
    * connection. Its first stream read, write, or writable close starts the
-   * handshake; merely acquiring a reader or writer does not. Throwing before
+   * handshake. Merely acquiring a reader or writer does not. Throwing before
    * first I/O rejects the pending connection, while throwing afterwards resets
    * it.
    *
@@ -226,7 +226,7 @@ export interface Network extends Disposable {
   attach(agent: GuestAgent): NetworkAttachment;
   /**
    * Connects from the host to a port on an attached guest. Resolves once
-   * the guest accepts the connection; rejects if nothing is listening there
+   * the guest accepts the connection. It rejects if nothing is listening there
    * or no guest has the address. If the guest may not be listening yet,
    * retry.
    *
@@ -571,7 +571,7 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
 /**
  * Creates a private IPv4 network: an Ethernet switch in this process plus a
  * userspace TCP/IP endpoint at `192.0.2.1`. Attach every guest agent that
- * should be on the network; guests on the same network reach each other over
+ * should be on the network. Guests on the same network reach each other over
  * real TCP and UDP.
  *
  * Guest traffic beyond the subnet goes through the adapters: outbound TCP

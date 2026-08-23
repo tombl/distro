@@ -13,7 +13,7 @@ There is no bundler, build step, or application server.
 
 You need a modern browser and a static file server that can add two response
 headers. The example uses `npx serve`, but the files themselves are ordinary
-HTML and JSON; any equivalent server works.
+HTML and JSON. Any equivalent server works.
 
 ## Create the page
 
@@ -108,7 +108,7 @@ console.log("exit code:", (await process.status).code);
 
 A process exposes `stdout` and `stderr` as web `ReadableStream` values, plus a
 `status` promise for its exit. `new Response(...)` is the shortest way to
-collect a small stream; read long-running output incrementally instead.
+collect a small stream. Read long-running output incrementally instead.
 
 ## Work with files
 

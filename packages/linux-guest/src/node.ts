@@ -228,7 +228,7 @@ export interface NodeFSOptions {
 /**
  * A virtio-fs backend rooted at a host `node:fs` directory.
  *
- * Symbolic links are returned without following their final targets; the guest
+ * Symbolic links are returned without following their final targets. The guest
  * kernel resolves them inside the guest namespace. Path and symlink escapes are
  * rejected when the host directory is stable.
  *

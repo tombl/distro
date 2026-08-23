@@ -25,7 +25,7 @@ export default defineConfig({
         dark: "github-dark-default",
       },
     },
-    processor: unified({ rehypePlugins: [externalLinkTargets] }),
+    processor: unified({ smartypants: false, rehypePlugins: [externalLinkTargets] }),
   },
   integrations: [
     mdx({

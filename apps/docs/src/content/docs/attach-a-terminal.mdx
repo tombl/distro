@@ -29,11 +29,11 @@ the guest as `/dev/hvc0`:
 - `output` is a `WritableStream<Uint8Array>`. It carries the bytes a terminal would
   render. Everything a program writes to the console comes out here.
 
-Either may be `null`; `consoleDevice(null, output)` is a read-only console,
+Either may be `null`. `consoleDevice(null, output)` is a read-only console,
 such as a boot log.
 
 The guest kernel's line discipline handles echo, backspace editing, and Ctrl+C
-as SIGINT; the page only moves bytes. The tty defaults to 80×24.
+as SIGINT. The page only moves bytes. The tty defaults to 80×24.
 `device.resize(columns, rows)` changes it and sends `SIGWINCH` to the foreground
 process so full-screen programs reflow.
 
@@ -47,7 +47,7 @@ does not display this early log.
 xterm.js provides the other side:
 
 - `terminal.write(data, callback)` renders plain text and VT escape
-  sequences alike, as bytes or strings. Rendering is asynchronous; the
+  sequences alike, as bytes or strings. Rendering is asynchronous. The
   callback runs once xterm has processed the data.
 - `terminal.onData((data) => ...)` reports input as strings: printable
   characters, `\r` for Enter, escape sequences for arrow and function keys.
@@ -132,10 +132,10 @@ for (;;) {
 }
 ```
 
-The redirects wire its stdio to `/dev/hvc0`; `setsid cttyhack` gives it a
+The redirects wire its stdio to `/dev/hvc0`. `setsid cttyhack` gives it a
 controlling terminal. Without one there is no job control, so Ctrl+C would
 kill nothing. The loop respawns the shell when it exits, so typing `exit`
-gets you a fresh shell rather than a dead console; the short delay keeps a
+gets you a fresh shell rather than a dead console. The short delay keeps a
 failing shell from spinning. `guest.exec` merges the exported
 `TERM=xterm-256color` with its default environment, allowing full-screen
 programs to select the escape sequences supported by xterm.js.
@@ -143,5 +143,5 @@ programs to select the escape sequences supported by xterm.js.
 ## Check the related APIs
 
 The [`@lowland/kernel` reference](/reference/kernel/) documents `consoleDevice`
-and the other devices; the [browser tutorial](/getting-started/) covers the
+and the other devices. The [browser tutorial](/getting-started/) covers the
 higher-level guest API used here.

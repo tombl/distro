@@ -72,7 +72,7 @@ export interface ExecOptions {
  * File operations in the guest, available as `guest.fs`.
  *
  * Paths are guest paths. The packaged root image mounts writable space at
- * `/tmp`; the system directories are read-only. A failed
+ * `/tmp`. The system directories are read-only. A failed
  * operation rejects with a `SystemError` carrying the errno code. For
  * example, a missing path returns `"ENOENT"`.
  */
@@ -184,7 +184,7 @@ export interface FileSystem {
  * Takes an argv array rather than a command string: the array is the argv
  * the program receives, exactly as `execve` would see it, with no shell in
  * between to quote, split, or expand. An argument containing spaces is one
- * element. The first element is looked up on the guest's `PATH`; if the
+ * element. The first element is looked up on the guest's `PATH`. If the
  * program does not exist, the promise rejects with a `SystemError` whose
  * code is `"ENOENT"`.
  *
