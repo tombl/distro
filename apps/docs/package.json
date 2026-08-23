@@ -9,8 +9,6 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@fontsource/adwaita-mono": "^5.3.0",
-    "@fontsource/adwaita-sans": "^5.3.0",
     "@lowland/guest": "workspace:*",
     "@lowland/kernel": "workspace:*",
     "@lowland/web-ui": "workspace:*"
@@ -22,8 +20,6 @@
     "@deno/doc": "jsr:0.202.0",
     "@types/node": "^26.1.1",
     "astro": "^7.1.1",
-    "defuddle": "0.19.1",
-    "linkedom": "^0.18.12",
     "typescript": "^6.0.3"
   }
 }
