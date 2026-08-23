@@ -1,0 +1,121 @@
+diff --git a/c.zig b/c.zig
+index 9f84729..2a02971 100644
+--- a/c.zig
++++ b/c.zig
+@@ -62,25 +62,27 @@ comptime {
+ }
+
+ comptime {
+-    _ = @import("c/ctype.zig");
+-    _ = @import("c/fcntl.zig");
+-    _ = @import("c/inttypes.zig");
+-    if (!builtin.target.isMinGW()) {
+-        _ = @import("c/malloc.zig");
+-    }
+-    _ = @import("c/math.zig");
+-    _ = @import("c/search.zig");
+-    _ = @import("c/stdlib.zig");
+-    _ = @import("c/string.zig");
+-    _ = @import("c/strings.zig");
+-    _ = @import("c/stropts.zig");
++    if (!(builtin.cpu.arch == .wasm32 and builtin.os.tag == .linux and builtin.target.isMuslLibC())) {
++        _ = @import("c/ctype.zig");
++        _ = @import("c/fcntl.zig");
++        _ = @import("c/inttypes.zig");
++        if (!builtin.target.isMinGW()) {
++            _ = @import("c/malloc.zig");
++        }
++        _ = @import("c/math.zig");
++        _ = @import("c/search.zig");
++        _ = @import("c/stdlib.zig");
++        _ = @import("c/string.zig");
++        _ = @import("c/strings.zig");
++        _ = @import("c/stropts.zig");
+
+-    _ = @import("c/sys/capability.zig");
+-    _ = @import("c/sys/file.zig");
+-    _ = @import("c/sys/mman.zig");
+-    _ = @import("c/sys/reboot.zig");
+-    _ = @import("c/sys/utsname.zig");
++        _ = @import("c/sys/capability.zig");
++        _ = @import("c/sys/file.zig");
++        _ = @import("c/sys/mman.zig");
++        _ = @import("c/sys/reboot.zig");
++        _ = @import("c/sys/utsname.zig");
+
+-    _ = @import("c/unistd.zig");
+-    _ = @import("c/wchar.zig");
++        _ = @import("c/unistd.zig");
++        _ = @import("c/wchar.zig");
++    }
+ }
+diff --git a/std/heap.zig b/std/heap.zig
+index d20ce56..49e3d2b 100644
+--- a/std/heap.zig
++++ b/std/heap.zig
+@@ -833,6 +833,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
+         .sparc64 => 8 << 10,
+         .x86, .x86_64 => 4 << 10,
+         .xtensa, .xtensaeb => 4 << 10,
++        .wasm32 => 64 << 10,
+         else => null,
+     },
+     .freestanding, .other => switch (builtin.cpu.arch) {
+@@ -996,6 +997,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
+         .sparc64 => 8 << 10,
+         .x86, .x86_64 => 4 << 10,
+         .xtensa, .xtensaeb => 4 << 10,
++        .wasm32 => 64 << 10,
+         else => null,
+     },
+     .freestanding => switch (builtin.cpu.arch) {
+diff --git a/std/os/linux.zig b/std/os/linux.zig
+index 4c8c691..cb8db8b 100644
+--- a/std/os/linux.zig
++++ b/std/os/linux.zig
+@@ -53,6 +53,7 @@ const arch_bits = switch (native_arch) {
+         .gnux32, .muslx32 => @import("linux/x32.zig"),
+         else => @import("linux/x86_64.zig"),
+     },
++    .wasm32 => @import("linux/wasm32.zig"),
+     else => struct {},
+ };
+
+@@ -138,5 +139,6 @@ pub const SYS = switch (native_arch) {
+         else => syscalls.X64,
+     },
+     .xtensa, .xtensaeb => syscalls.Xtensa,
++    .wasm32 => syscalls.Arm64, // Linux's architecture-independent syscall ABI.
+     else => @compileError("The Zig Standard Library is missing syscall definitions for the target CPU architecture"),
+ };
+@@ -170,7 +172,7 @@ pub const MAP = switch (native_arch) {
+         UNINITIALIZED: bool = false,
+         _: u5 = 0,
+     },
+-    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb => packed struct(u32) {
++    .aarch64, .aarch64_be, .arm, .armeb, .thumb, .thumbeb, .wasm32 => packed struct(u32) {
+         TYPE: MAP_TYPE,
+         FIXED: bool = false,
+         ANONYMOUS: bool = false,
+@@ -330,7 +332,7 @@ pub const O = switch (native_arch) {
+         TMPFILE: bool = false,
+         _23: u9 = 0,
+     },
+-    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
++    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64, .wasm32 => packed struct(u32) {
+         ACCMODE: ACCMODE = .RDONLY,
+         _2: u4 = 0,
+         CREAT: bool = false,
+diff --git a/std/start.zig b/std/start.zig
+index 44041b6..75f96d1 100644
+--- a/std/start.zig
++++ b/std/start.zig
+@@ -664,7 +664,7 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, envp: [*:null]?[*:0]c_char) call
+
+ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
+     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
+-    const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
++    const environ: [:null]const ?[*:0]const u8 = switch (builtin.os.tag) {
+         .wasi, .emscripten => environ: {
+             const c_environ = std.c.environ;
+             var env_count: usize = 0;
