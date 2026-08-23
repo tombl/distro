@@ -7,21 +7,13 @@ order: 1
 
 # Run Linux in your browser
 
-This tutorial builds a web page that boots a Linux machine and controls it
-from JavaScript. The kernel is a real Linux kernel compiled to WebAssembly,
-and everything runs inside the page. There is no server behind it.
+This tutorial starts with an empty folder and ends with Linux printing its
+kernel version into a web page. You will create two text files and serve them.
+There is no bundler, build step, or application server.
 
-For example, this runs `uname` inside the guest and reads its output:
-
-```js
-const process = await guest.exec(["uname", "-a"]);
-console.log(await new Response(process.stdout).text());
-```
-
-The rest of the page makes you a page that can do the same.
-You need a modern browser and any static file server that can send custom
-headers. You do not need a bundler or a build step. The library loads as a native ES module
-from a CDN.
+You need a modern browser and a static file server that can add two response
+headers. The example uses `npx serve`, but the files themselves are ordinary
+HTML and JSON; any equivalent server works.
 
 ## Create the page
 
@@ -51,44 +43,18 @@ Save this as `index.html`:
 </script>
 ```
 
-The import map lets the page use bare package names, the same specifiers you
-would use with a bundler, and points them at unpkg. `@lowland/guest` is
-the machine API you will spend most of your time with. It pulls in
-`@lowland/kernel`, which is the kernel itself. If your application already has a
-build tool, `npm install @lowland/kernel @lowland/guest` and the same
-imports work. Configure the same cross-origin isolation headers described
-below in the bundler's development and production servers.
+The import map points the package names at unpkg. The module then does three
+things:
 
-`guestAgent()` supplies the packaged root filesystem and the process and file
-APIs. `bootMachine()` loads the kernel, applies each plug-in, and resolves once
-the guest agent can run commands.
+1. `guestAgent()` prepares a bootable root filesystem and the process and file APIs.
+2. `bootMachine()` starts one virtual CPU and attaches the guest agent.
+3. `guest.exec()` runs `uname` inside Linux and reads its output as a web stream.
 
 ## Serve the page
 
-Any static server works, with one requirement: the page must be served with
-two headers:
+Save this next to `index.html` as `serve.json`:
 
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-Together these make the page
-[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
-which the machine needs because its virtual CPUs share memory.[^why]
-
-[^why]:
-    After the Spectre and Meltdown vulnerabilities, browsers locked
-    shared-memory multithreading behind this opt-in. Each Linux thread is
-    a Web Worker and they all share the machine's memory, which is exactly
-    what the gate exists for. `require-corp` also means everything the page
-    embeds must opt in to being embedded; unpkg sends the right headers, so
-    the imports above work as-is.
-
-For example, `npx serve` picks up headers from a `serve.json` next to
-`index.html`:
-
-```json
+```json title="serve.json"
 {
   "headers": [
     {
@@ -102,25 +68,37 @@ For example, `npx serve` picks up headers from a `serve.json` next to
 }
 ```
 
-Open the page. After a few seconds of boot it shows the kernel identifying
-itself, the same line the example at the top of this page printed.
+From that folder, run:
 
-If nothing appears, evaluate `crossOriginIsolated` in the console. It must be
-`true`. If it is `false`, the headers did not reach the browser. Check both
-names and values in the server config, and that the document response in the
-network panel actually carries them.[^coi]
+```sh
+npx serve .
+```
 
-[^coi]:
-    On a host that cannot send headers, such as GitHub Pages,
-    [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) adds
-    them from a service worker. It works, but real headers are simpler and
-    take effect on the very first load, so prefer them when you can.
+Open the local address it prints. After a few seconds, the page is replaced by
+the output of `uname -a`. That output came from the Linux machine running in
+the page.
 
-## Run programs
+## Why those headers?
+
+Each virtual CPU is a Web Worker, and the CPUs share the machine's WebAssembly
+memory. Browsers make shared memory available only to a
+[cross-origin-isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated)
+page. These are the required response headers:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+If the example stays blank, evaluate `crossOriginIsolated` in the browser
+console. It must be `true`. If it is `false`, inspect the document response in
+the network panel and check both header names and values.
+
+## Run another program
 
 `guest.exec` takes an argv array. There is no shell in between, so nothing
 quotes, splits, or expands. The first element is looked up on the guest's
-`PATH`. When you want shell behaviour, run a shell and say so explicitly:
+`PATH`. When you want shell behaviour, run a shell explicitly:
 
 ```js
 const process = await guest.exec(["sh", "-c", "echo hello; date"]);
@@ -128,17 +106,15 @@ console.log(await new Response(process.stdout).text());
 console.log("exit code:", (await process.status).code);
 ```
 
-A process hands you three things: `stdout` and `stderr` as web
-`ReadableStream` values, and `status`, a promise for its exit. `new Response(...)`
-is the shortest way to collect a whole stream, but for a long-running program
-you can read the stream incrementally instead of buffering it all.
+A process exposes `stdout` and `stderr` as web `ReadableStream` values, plus a
+`status` promise for its exit. `new Response(...)` is the shortest way to
+collect a small stream; read long-running output incrementally instead.
 
 ## Work with files
 
-The filesystem starts from the packaged root image. The system directories
-are read-only, and writable space is mounted at `/tmp` and `/workspace`, in
-memory and private to this machine. `guest.fs` reads and writes it directly
-from JavaScript, no exec required:
+The packaged system directories are read-only. Writable space is mounted at
+`/tmp` and `/workspace`, in memory and private to this machine. `guest.fs`
+works with that filesystem directly from JavaScript:
 
 ```js
 await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\n");
@@ -147,10 +123,9 @@ const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
 console.log(await new Response(cat.stdout).text());
 ```
 
-Files written from the host are immediately visible to guest programs and the
-other way around, because there is only one filesystem. `guest.fs` also has
-`readTextFile`, `readDir`, `stat`, `mkdir`, and related methods. The
-[reference](/reference/linux-guest/) lists them all.
+Files written from JavaScript are immediately visible to guest programs, and
+the inverse is also true. The [`FileSystem` reference](/reference/linux-guest/#FileSystem)
+lists the complete API.
 
 ## Shut down
 
@@ -159,14 +134,17 @@ machine.close();
 ```
 
 Closing terminates the machine's processes and releases its workers and
-memory. Keep the guest for as long as anything inside it should stay
-running.
+memory. Keep it open for as long as anything inside it should stay running.
+
+## Using a bundler
+
+The example above uses an import map so every dependency is visible. In an
+existing application, install `@lowland/kernel` and `@lowland/guest` from npm
+and keep the same JavaScript imports. Your development and production servers
+still need the two cross-origin-isolation headers.
 
 ## Where next
 
-You now have Linux as a library. The
-[`@lowland/guest` reference](/reference/linux-guest/) covers the full
-process and filesystem API with runnable examples. How-to guides for the next
-steps include running under Node, wiring the console to xterm.js, persisting the
-filesystem, networking between guests and out to the internet, and building a
-custom root filesystem. These guides are on the way.
+Read the [`@lowland/guest` reference](/reference/linux-guest/) for the complete
+process and filesystem API, or [attach an interactive terminal](/attach-a-terminal/)
+to the machine you just built.

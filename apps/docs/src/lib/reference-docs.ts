@@ -81,7 +81,9 @@ export async function generateReferenceMarkdown(pkg: ReferencePackage): Promise<
   });
 
   const modules = [...sources]
-    .toSorted(([a], [b]) => Number(b === entrypoint) - Number(a === entrypoint) || a.localeCompare(b))
+    .toSorted(
+      ([a], [b]) => Number(b === entrypoint) - Number(a === entrypoint) || a.localeCompare(b),
+    )
     .flatMap(([specifier, source]) => [
       `## ${sourceLabel(specifier)}`,
       "",

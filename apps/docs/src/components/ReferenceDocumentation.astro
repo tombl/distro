@@ -12,7 +12,7 @@ import type {
 } from "@deno/doc";
 
 import CodeBlock from "./CodeBlock.astro";
-import { referenceSymbolId } from "../lib/reference-packages";
+import { referenceGroupId, referenceSymbolId } from "../lib/reference-packages";
 import { renderDoc } from "../lib/render-doc";
 
 interface Props {
@@ -20,9 +20,14 @@ interface Props {
   description: string;
   npm: string;
   document: Document;
+  groups: readonly {
+    title: string;
+    description: string;
+    symbols: readonly string[];
+  }[];
 }
 
-const { name, description, npm, document } = Astro.props;
+const { name, description, npm, document, groups } = Astro.props;
 
 function typeParams(params: TsTypeParamDef[] | undefined): string {
   if (!params?.length) return "";
@@ -254,64 +259,125 @@ const renderDocumentation = (doc: string | undefined) => {
   if (!doc) return undefined;
   return renderDoc(doc, resolveLink);
 };
+
+const symbolsByGroup: {
+  title: string;
+  description: string;
+  symbols: Document["symbols"];
+}[] = groups.map((group) => ({
+  ...group,
+  symbols: group.symbols.flatMap((name) => {
+    const symbol = symbolsByName.get(name);
+    return symbol ? [symbol] : [];
+  }),
+}));
+const groupedNames = new Set<string>(groups.flatMap((group) => group.symbols));
+const remainingSymbols = document.symbols.filter((symbol) => !groupedNames.has(symbol.name));
+if (remainingSymbols.length > 0) {
+  symbolsByGroup.push({
+    title: "Other exports",
+    description: "Additional types and low-level primitives exported by this package.",
+    symbols: remainingSymbols,
+  });
+}
 ---
 
 <header class="reference-header">
   <p class="eyebrow">Reference</p>
   <h1><code>{name}</code></h1>
   <p class="description">{description}</p>
-  <p class="package-links"><a href={npm} target="_blank">npm</a></p>
+  <p class="package-links">
+    <a href={npm} target="_blank">npm package</a>
+    <span aria-hidden="true">·</span>
+    <a href="#reference">browse the API</a>
+  </p>
 </header>
 
-<div class="symbols">
-  {document.symbols.map((symbol) => (
-    <section>
-      <h2 id={referenceSymbolId(symbol.name)}><code>{symbol.name}</code></h2>
-      {symbol.declarations.map((declaration) => {
-        const members = declarationMembers(declaration);
-        const examples = parseExamples(declaration.jsDoc);
-        return (
-          <div class="declaration">
-            <p class="kind">{kindLabel(declaration)}</p>
-            <pre><code>{declarationText(symbol.name, declaration)}</code></pre>
-            {renderDocumentation(declaration.jsDoc?.doc)?.map((block) =>
-              block.kind === "code" ? (
-                <CodeBlock code={block.code!} language={block.language} />
-              ) : (
-                <div class="documentation" set:html={block.html} />
-              ),
-            )}
-            {examples.map((example) => (
-              <div class="example">
-                {example.description && <p class="example-description">{example.description}</p>}
-                <CodeBlock code={example.code} language={example.language} />
-              </div>
+<nav class="reference-overview" aria-label="API groups">
+  <p>In this package</p>
+  <ul>
+    {symbolsByGroup.map((group) => (
+      <li>
+        <a href={`#${referenceGroupId(group.title)}`}>{group.title}</a>
+        <div>
+          <span>{group.description}</span>
+          <p class="symbol-links">
+            {group.symbols.map((symbol, index) => (
+              <>
+                {index > 0 && <span aria-hidden="true"> · </span>}
+                <a href={`#${referenceSymbolId(symbol.name)}`}><code>{symbol.name}</code></a>
+              </>
             ))}
-            {members.length > 0 && (
-              <ul class="members">
-                {members.map((member) => (
-                  <li id={referenceSymbolId(`${symbol.name}.${member.name}`)}>
-                    <code>{member.signature}</code>
-                    {renderDocumentation(member.doc)?.map((block) =>
-                      block.kind === "code" ? (
-                        <CodeBlock code={block.code!} language={block.language} />
-                      ) : (
-                        <div class="documentation" set:html={block.html} />
-                      ),
-                    )}
-                    {member.examples.map((example) => (
-                      <div class="example">
-                        {example.description && <p class="example-description">{example.description}</p>}
-                        <CodeBlock code={example.code} language={example.language} />
-                      </div>
-                    ))}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })}
+          </p>
+        </div>
+      </li>
+    ))}
+  </ul>
+</nav>
+
+<div class="reference-groups" id="reference">
+  {symbolsByGroup.map((group) => (
+    <section class="reference-group">
+      <header class="group-header">
+        <h2 id={referenceGroupId(group.title)}>{group.title}</h2>
+        <p>{group.description}</p>
+      </header>
+      <div class="symbols">
+        {group.symbols.map((symbol) => (
+          <section class="symbol">
+            <h3 id={referenceSymbolId(symbol.name)}><code>{symbol.name}</code></h3>
+            {symbol.declarations.map((declaration) => {
+              const members = declarationMembers(declaration);
+              const examples = parseExamples(declaration.jsDoc);
+              return (
+                <div class="declaration">
+                  <p class="kind">{kindLabel(declaration)}</p>
+                  <pre><code>{declarationText(symbol.name, declaration)}</code></pre>
+                  {renderDocumentation(declaration.jsDoc?.doc)?.map((block) =>
+                    block.kind === "code" ? (
+                      <CodeBlock code={block.code!} language={block.language} />
+                    ) : (
+                      <div class="documentation" set:html={block.html} />
+                    ),
+                  )}
+                  {examples.map((example) => (
+                    <div class="example">
+                      {example.description && (
+                        <p class="example-description">{example.description}</p>
+                      )}
+                      <CodeBlock code={example.code} language={example.language} />
+                    </div>
+                  ))}
+                  {members.length > 0 && (
+                    <ul class="members">
+                      {members.map((member) => (
+                        <li id={referenceSymbolId(`${symbol.name}.${member.name}`)}>
+                          <code>{member.signature}</code>
+                          {renderDocumentation(member.doc)?.map((block) =>
+                            block.kind === "code" ? (
+                              <CodeBlock code={block.code!} language={block.language} />
+                            ) : (
+                              <div class="documentation" set:html={block.html} />
+                            ),
+                          )}
+                          {member.examples.map((example) => (
+                            <div class="example">
+                              {example.description && (
+                                <p class="example-description">{example.description}</p>
+                              )}
+                              <CodeBlock code={example.code} language={example.language} />
+                            </div>
+                          ))}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        ))}
+      </div>
     </section>
   ))}
 </div>
@@ -343,15 +409,80 @@ const renderDocumentation = (doc: string | undefined) => {
 
   .package-links {
     margin-block-start: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
   }
 
   .reference-header h1 code,
-  section h2 code {
+  .symbol h3 code {
     font-size: inherit;
   }
 
-  .symbols section {
-    padding-block-start: 0.01rem;
+  .reference-overview {
+    margin-block-start: 2.5rem;
+    padding-block: 1rem;
+    border-block: 1px solid var(--hairline);
+
+    > p {
+      margin-block-end: 0.75rem;
+      color: var(--muted);
+      font-size: 0.8125rem;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    li {
+      display: grid;
+      grid-template-columns: minmax(9rem, 0.55fr) 1fr;
+      gap: 1rem;
+    }
+
+    li > div > span {
+      color: var(--muted);
+    }
+
+    .symbol-links {
+      margin-block: 0.3rem 0;
+      color: var(--muted);
+      font-size: 0.8125rem;
+      line-height: 1.7;
+
+      a {
+        color: var(--code-foreground);
+      }
+    }
+  }
+
+  .reference-group {
+    margin-block-start: 3.5rem;
+  }
+
+  .group-header {
+    padding-block-end: 0.85rem;
+    border-block-end: 1px solid var(--hairline-strong);
+
+    h2 {
+      margin: 0 0 0.35rem;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+    }
+  }
+
+  .symbol {
+    padding-block-start: 1.75rem;
+
+    h3 {
+      margin-block: 0 0.75rem;
+      font-size: 1.125rem;
+    }
   }
 
   .declaration + .declaration {
@@ -389,5 +520,12 @@ const renderDocumentation = (doc: string | undefined) => {
 
   .members .example-description {
     font-size: 0.875rem;
+  }
+
+  @media (max-width: 32rem) {
+    .reference-overview li {
+      grid-template-columns: 1fr;
+      gap: 0.1rem;
+    }
   }
 </style>

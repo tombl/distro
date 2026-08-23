@@ -11,17 +11,15 @@ import Base from "../layouts/Base.astro";
       <summary>about</summary>
       <div class="header-copy plain-copy">
         <p>
-          Linux is compiled for wasm32. Each virtual CPU runs in a Web Worker. The browser supplies
-          virtio block, console, network, entropy, and file system devices. This is not CPU
-          emulation.
+          A real Linux kernel, compiled for wasm32. Each virtual CPU runs in a Web Worker; the
+          browser supplies its memory and virtio devices. This is not CPU emulation.
         </p>
         <p>
-          The system uses our own wasm32 packages. APK installs and updates them. Use the shell
-          below to inspect the running system.
+          The terminal below is the machine. Use the shell to inspect it, run programs, and install
+          packages with APK.
         </p>
         <p class="header-links">
-          <a href="https://docs.low.land">documentation →</a>
-          <a href="https://github.com/tombl/distro">userspace source →</a>
+          <a href="https://docs.low.land/getting-started/">build a page →</a>
           <a href="https://github.com/tombl/linux">kernel source →</a>
         </p>
       </div>
