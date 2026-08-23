@@ -11,8 +11,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "go";
-    rev = "fec8900c16bfaf7a3d36a5cf282fc10e135df53a";
-    hash = "sha256-mawqs8ePLrvvqTSLB99teIuCaZLZLUa8OuOrUq1bxEU=";
+    rev = "5e45acd80db72474e5863a5ef65dad8507fe67e8";
+    hash = "sha256-xqKNXg60iFw2lIpci8JPmCYjdVs4mYuUAocRCK1god4=";
   },
 }:
 
@@ -20,7 +20,7 @@ let
   nativeGo = pkgs.go_1_27.overrideAttrs (
     _finalAttrs: previousAttrs: {
       pname = "go-wasm-linux";
-      version = "1.27.0-port-fec8900c16";
+      version = "1.27.0-port-5e45acd80d";
       inherit src;
 
       # Undo host-specific nixpkgs data-path substitutions for binaries that
@@ -51,8 +51,22 @@ let
     };
   };
 
+  # Static cgo uses the same native Go tools and target stdenv. The stdenv's
+  # cc-wrapper supplies the wasm32 Linux triple, sysroot, atomics, shared
+  # memory, and SJLJ flags; cgo then hands its relocatable wasm objects to the
+  # forked Go linker. Keep this opt-in so packages without C dependencies retain
+  # the reproducible pure-Go path and do not acquire libc startup implicitly.
+  targetGoCgo = targetGo // {
+    CGO_ENABLED = 1;
+  };
+
   nixpkgsBuilder = pkgs.buildGo127Module.override {
     go = targetGo;
+    inherit stdenv;
+  };
+
+  nixpkgsCgoBuilder = pkgs.buildGo127Module.override {
+    go = targetGoCgo;
     inherit stdenv;
   };
 
@@ -67,6 +81,31 @@ let
       dontStrip = "1";
     }
     // attrs;
+
+  # The Go linker asks clang for a single relocatable wasm object before doing
+  # the final executable link itself. stdenv's final-link flags in
+  # NIX_CFLAGS_LINK, such as --export-table and --import-memory, are rejected
+  # by wasm-ld with -r. The cc-wrapper still supplies the target sysroot and
+  # compiler features. Keep only the dependency search paths from NIX_LDFLAGS
+  # so `#cgo LDFLAGS: -lfoo` finds buildInputs.
+  configureCgoPrelink =
+    attrs:
+    let
+      configured = disableHostStripping attrs;
+    in
+    configured
+    // {
+      preBuild = (configured.preBuild or "") + ''
+        unset NIX_CFLAGS_LINK
+        cgoLibraryPaths=()
+        for flag in ''${NIX_LDFLAGS-}; do
+          case "$flag" in
+            -L*) cgoLibraryPaths+=("$flag") ;;
+          esac
+        done
+        export NIX_LDFLAGS="''${cgoLibraryPaths[*]}"
+      '';
+    };
 
   # Apply our defaults to every package while keeping the builder itself
   # overridable like nixpkgs' (`buildGoModule.override { stdenv = ...; }`).
@@ -84,8 +123,15 @@ let
   # platform, so doCheck = true cannot run these cross-built tests either.
   # Platform behavior belongs in explicit vm-test checks.
   buildGoModule = wrapBuilder disableHostStripping nixpkgsBuilder;
+  buildGoModuleCgo = wrapBuilder configureCgoPrelink nixpkgsCgoBuilder;
 in
 {
   package = nativeGo;
-  inherit src targetGo buildGoModule;
+  inherit
+    src
+    targetGo
+    targetGoCgo
+    buildGoModule
+    buildGoModuleCgo
+    ;
 }

@@ -1,10 +1,13 @@
 {
   buildGoModule,
+  buildGoModuleCgo,
   busybox,
   go-compat,
+  go-toolchain,
   lib,
   pkgs,
   vm-test,
+  zlib,
 }:
 
 let
@@ -69,13 +72,22 @@ let
       src,
       packages,
       vendorHash ? null,
+      builder ? buildGoModule,
+      tags ? [ ],
+      env ? { },
+      patches ? [ ],
     }:
-    buildGoModule {
+    builder {
       pname = "go-${name}-tests";
       version = "0.0.0";
-      inherit src vendorHash;
+      inherit
+        src
+        vendorHash
+        env
+        patches
+        ;
 
-      postConfigure = lib.optionalString (name != "x-sys") ''
+      postConfigure = lib.optionalString (name != "x-sys" && vendorHash != null) ''
         ${replaceXSys}
       '';
 
@@ -86,7 +98,9 @@ let
           let
             binary = if package == "." then name else lib.replaceStrings [ "./" "/" ] [ "" "-" ] package;
           in
-          "go test -c -ldflags=-buildid= -o ${name}-${binary}.test ${package}"
+          "go test -c ${
+            lib.optionalString (tags != [ ]) "-tags=${lib.concatStringsSep "," tags}"
+          } -ldflags=-buildid= -o ${name}-${binary}.test ${package}"
         ) packages}
         runHook postBuild
       '';
@@ -140,6 +154,21 @@ let
   };
 
   applicationTests = {
+    go-sqlite3 = mkTests {
+      name = "go-sqlite3";
+      src = pkgs.fetchFromGitHub {
+        owner = "mattn";
+        repo = "go-sqlite3";
+        rev = "v1.14.50";
+        hash = "sha256-8MBHaa9DYeXn2D9QARW4AR4l8gmhqAE5+XaRXyvjP5Q=";
+      };
+      packages = [ "." ];
+      builder = buildGoModuleCgo;
+      tags = [ "sqlite_omit_load_extension" ];
+      env.NIX_CFLAGS_COMPILE = "-DSQLITE_OMIT_WAL=1 -DSQLITE_MAX_MMAP_SIZE=0";
+      patches = [ ./go-sqlite3-wasm.patch ];
+    };
+
     yq = mkTests {
       name = "yq";
       src = pkgs.yq-go.src;
@@ -182,6 +211,48 @@ let
     };
   };
 
+  cgoPrototype = buildGoModuleCgo {
+    pname = "go-static-cgo-prototype";
+    version = "0.0.0";
+    src = go-toolchain.src + "/misc/wasm/linux/cgo-prototype";
+    vendorHash = null;
+
+    buildPhase = ''
+      runHook preBuild
+      go build -ldflags=-buildid= -o static-cgo-prototype .
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/bin
+      install -m755 static-cgo-prototype $out/bin/
+      runHook postInstall
+    '';
+  };
+
+  # A cgo program linking a distro C library from buildInputs.
+  cgoZlib = buildGoModuleCgo {
+    pname = "go-cgo-zlib";
+    version = "0.0.0";
+    src = ./cgo-zlib;
+    vendorHash = null;
+    buildInputs = [ zlib ];
+
+    buildPhase = ''
+      runHook preBuild
+      go build -ldflags=-buildid= -o cgo-zlib .
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/bin
+      install -m755 cgo-zlib $out/bin/
+      runHook postInstall
+    '';
+  };
+
   tests = libraryTests // applicationTests;
 
   mkCandidate =
@@ -208,6 +279,9 @@ let
     };
 
   candidates = {
+    cgo-prototype = cgoPrototype;
+    cgo-zlib = cgoZlib;
+
     yq = mkCandidate {
       name = "yq";
       upstream = pkgs.yq-go;
@@ -247,12 +321,25 @@ let
     };
   };
 
+  # The compiler deliberately uses the conventional FHS zoneinfo path in the
+  # guest. Include the database so cgo ecosystem tests exercise named local
+  # time zones rather than inheriting a minimal-initramfs omission.
+  zoneinfo = pkgs.runCommand "go-ecosystem-zoneinfo" { } ''
+    mkdir -p $out/usr/share
+    cp -r ${pkgs.tzdata}/share/zoneinfo $out/usr/share/zoneinfo
+  '';
+
   guestCheck = vm-test.installedTest {
     name = "go-ecosystem";
     cpus = 2;
     size = "1G";
     init = ./guest-test.sh;
-    contents = [ busybox ] ++ lib.attrValues tests ++ lib.attrValues candidates;
+    contents = [
+      busybox
+      zoneinfo
+    ]
+    ++ lib.attrValues tests
+    ++ lib.attrValues candidates;
   };
 in
 {
