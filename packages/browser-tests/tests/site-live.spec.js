@@ -97,13 +97,13 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
     dialogs.push(dialog.message());
     await dialog.dismiss();
   });
-  await page.goto("/?webgl=0");
+  await page.goto("/?webgl=0&cmdline=lowland.test%3Da%2Bb");
 
   const { input, terminal } = await waitForGuestReady(page);
   await expect(terminal).not.toContainText("install-lowland");
 
   await input.pressSequentially(
-    "! grep -qw 'lowland.install=1' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
+    "! grep -qw 'lowland.install=1' /proc/cmdline && grep -qw 'lowland.test=a+b' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
   );
   await input.press("Enter");
   await expect(terminal).toContainText("live-only-ready");

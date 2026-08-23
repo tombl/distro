@@ -36,7 +36,7 @@
   }
 
   .astro-code {
-    font-family: var(--font-mono);
+    font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.9375rem;
     padding: 1rem;
     border: 1px solid var(--hairline);

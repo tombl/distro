@@ -51,3 +51,52 @@ export async function generateReferenceDocs(pkg: ReferencePackage): Promise<Docu
   if (!document) throw new Error(`@deno/doc did not return ${pkg.name}`);
   return document;
 }
+
+function sourceLabel(specifier: string): string {
+  for (const [name, declaration] of declarations) {
+    const directory = new URL("./", declaration).href;
+    if (specifier.startsWith(directory)) return `${name}/${specifier.slice(directory.length)}`;
+  }
+  return new URL(specifier).pathname.split("/").at(-1) ?? specifier;
+}
+
+export async function generateReferenceMarkdown(pkg: ReferencePackage): Promise<string> {
+  const entrypoint = declarations.get(pkg.name);
+  if (!entrypoint) throw new Error(`No declaration entrypoint for ${pkg.name}`);
+
+  const sources = new Map<string, string>();
+  await doc([entrypoint], {
+    resolve,
+    async load(specifier) {
+      const response = await load(specifier);
+      if (response?.kind === "module") {
+        const content =
+          typeof response.content === "string"
+            ? response.content
+            : new TextDecoder().decode(response.content);
+        sources.set(specifier, content.trim());
+      }
+      return response;
+    },
+  });
+
+  const modules = [...sources]
+    .toSorted(([a], [b]) => Number(b === entrypoint) - Number(a === entrypoint) || a.localeCompare(b))
+    .flatMap(([specifier, source]) => [
+      `## ${sourceLabel(specifier)}`,
+      "",
+      "```ts",
+      source,
+      "```",
+      "",
+    ]);
+  return [
+    `# ${pkg.name} reference`,
+    "",
+    `> ${pkg.description}`,
+    "",
+    "These are the TypeScript declarations used to generate the human-readable reference.",
+    "",
+    ...modules,
+  ].join("\n");
+}

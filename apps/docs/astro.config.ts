@@ -1,6 +1,6 @@
 import { unified } from "@astrojs/markdown-remark";
 import mdx from "@astrojs/mdx";
-import { defineConfig, fontProviders } from "astro/config";
+import { defineConfig } from "astro/config";
 
 // External links in rendered markdown open in a new tab; the global
 // a[target="_blank"]::after rule then annotates them with an arrow.
@@ -15,25 +15,6 @@ function externalLinkTargets() {
   };
 }
 
-type LocalVariant = {
-  src: [string];
-  weight: number;
-  style: "normal" | "italic";
-};
-
-function fontsourceVariants(
-  family: string,
-  weights: [number, ...number[]],
-): [LocalVariant, ...LocalVariant[]] {
-  return weights.flatMap((weight) =>
-    (["normal", "italic"] as const).map((style) => ({
-      src: [`@fontsource/${family}/files/${family}-latin-${weight}-${style}.woff2`],
-      weight,
-      style,
-    })),
-  ) as [LocalVariant, ...LocalVariant[]];
-}
-
 export default defineConfig({
   site: "https://docs.low.land",
   markdown: {
@@ -46,28 +27,6 @@ export default defineConfig({
     },
     processor: unified({ rehypePlugins: [externalLinkTargets] }),
   },
-  fonts: [
-    {
-      provider: fontProviders.local(),
-      name: "Adwaita Sans",
-      cssVariable: "--font-sans",
-      weights: [400, 500, 600, 700],
-      fallbacks: ["system-ui", "sans-serif"],
-      options: {
-        variants: fontsourceVariants("adwaita-sans", [400, 500, 600, 700]),
-      },
-    },
-    {
-      provider: fontProviders.local(),
-      name: "Adwaita Mono",
-      cssVariable: "--font-mono",
-      weights: [400, 700],
-      fallbacks: ["ui-monospace", "SFMono-Regular", "Consolas", "monospace"],
-      options: {
-        variants: fontsourceVariants("adwaita-mono", [400, 700]),
-      },
-    },
-  ],
   integrations: [
     mdx({
       optimize: {

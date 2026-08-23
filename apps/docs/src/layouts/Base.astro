@@ -1,5 +1,4 @@
 ---
-import { Font } from "astro:assets";
 import SiteHeader from "@lowland/web-ui/SiteHeader.astro";
 
 import "../styles/global.css";
@@ -26,8 +25,6 @@ const pageTitle = title ? `${title}: lowland` : "lowland";
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <Font cssVariable="--font-sans" preload />
-    <Font cssVariable="--font-mono" />
     <title>{pageTitle}</title>
   </head>
   <body>
