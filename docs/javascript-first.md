@@ -179,6 +179,7 @@ export interface MachinePlugin {
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
+  readonly deviceTree: DeviceTreeBuilder;
   readonly bootConsole: ReadableStream<Uint8Array>;
 }
 ```
