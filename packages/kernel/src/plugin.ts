@@ -30,6 +30,7 @@ export interface MachineDevices {
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
+  readonly deviceTree: DeviceTreeBuilder;
   /**
    * Early kernel output. Consume this stream during configuration, before the
    * machine boots.

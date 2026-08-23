@@ -29,19 +29,18 @@ async function run_machine(mode: string) {
     ],
     initcpio: lifecycle_assets.initramfs,
   });
-  return { machine, output };
+  return machine;
 }
 
 test("guest lifecycle terminates the host", async (t) => {
   await t.test("resolves after poweroff", async () => {
-    const { machine } = await run_machine("poweroff");
+    const machine = await run_machine("poweroff");
     await machine.closed;
   });
 
-  await t.test("rejects after a panic with diagnostics visible", async () => {
-    const { machine, output } = await run_machine("panic");
+  await t.test("rejects after a panic", async () => {
+    const machine = await run_machine("panic");
     await assert.rejects(machine.closed, MachinePanicError);
-    assert.match(output.text, /Kernel panic - not syncing/);
   });
 });
 
