@@ -18,6 +18,7 @@ mkdir -p "$HOME" || fail "creating HOME failed"
 for test_binary in /bin/*.test; do
   printf 'running %s\n' "$test_binary"
   test_skip='$^'
+  test_verbose=
   case "$test_binary" in
   */age-age.test)
     # The examples open source-tree-relative fixtures which are intentionally
@@ -38,6 +39,14 @@ for test_binary in /bin/*.test; do
     # available yet, and the randomized ANSI stress tests currently overflow
     # Go's wasm split stack on SMP guests.
     test_skip='^(TestHistory|TestReadFromCommand|TestNextAnsiEscapeSequence_Fuzz_)'
+    ;;
+  */go-sqlite3-go-sqlite3.test)
+    # Embedded SQLite is the real-world static-cgo stress test. WAL is omitted
+    # because the platform intentionally has no mmap; ordinary files,
+    # transactions, callbacks, aggregates, and backup remain supported.
+    test_run='^Test(Open|OpenNoCreate|Readonly|ForeignKeys|DeferredForeignKey|RecursiveTriggers|Close|Insert|Upsert|Update|Delete|Boolean|Timestamp|Float32|Null|Transaction|TimezoneConversion|Execer|Queryer|Stress|Version|StringContainingZero|BindErrorPaths|FunctionRegistration|AggregatorRegistration|CollationRegistration|DeclTypes|Pinger|UpdateAndTransactionHooks|Authorizer|SetFileControlInt|NonColumnString|NilAndEmptyBytes|InsertNilByteSlice|NamedParam|QueryCommentOnly|Backup)'
+    test_skip='^TestSetFileControlInt/PERSIST_WAL$'
+    test_verbose=-test.v
     ;;
   */x-crypto-ssh.test)
     test_run='Test(Buffer|ParseCert|ValidateCert|CheckCert|CertSign|MinPayload|WriteExtended|DefaultCiphers|PacketCiphers|CBCOracle|CVE|CompatibleAlgo|PickSignature|VerifyHostKeySignature|FindAgreedAlgorithms|KeyFormatAlgorithms|HandshakeErrorHandling|HandshakePendingPackets|PickIncompatible|ParseGSSAPI|BuildMIC|AutoPortListenBroken|ClientImplements|ClientDialContext|ReadVersion|ExchangeVersions|TransportMax)'
@@ -67,7 +76,7 @@ for test_binary in /bin/*.test; do
     ;;
   *) test_run='.' ;;
   esac
-  "$test_binary" -test.run="$test_run" -test.skip="$test_skip" -test.timeout=120s ||
+  "$test_binary" $test_verbose -test.run="$test_run" -test.skip="$test_skip" -test.timeout=120s ||
     fail "$test_binary exited with $?"
 done
 
@@ -109,6 +118,12 @@ echo 'alpha
 needle
 omega' | fzf --filter=need >/tmp/fzf.out || fail "fzf failed"
 grep -qx needle /tmp/fzf.out || fail "fzf returned the wrong match"
+
+printf 'smoking static cgo ABI\n'
+static-cgo-prototype >/tmp/static-cgo.out 2>&1 ||
+  fail "static cgo prototype failed: $(cat /tmp/static-cgo.out)"
+grep -q 'C-created pthread callbacks passed' /tmp/static-cgo.out ||
+  fail "static cgo prototype did not finish: $(cat /tmp/static-cgo.out)"
 
 echo "::vm-test::pass"
 while :; do :; done

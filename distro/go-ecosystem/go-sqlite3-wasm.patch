@@ -1,0 +1,112 @@
+diff --git a/sqlite3.go b/sqlite3.go
+index 9e1a767..e2c7f61 100644
+--- a/sqlite3.go
++++ b/sqlite3.go
+@@ -76,11 +76,13 @@ _sqlite3_bind_blob(sqlite3_stmt *stmt, int n, void *p, sqlite3_uint64 np) {
+   return sqlite3_bind_blob64(stmt, n, p, np, SQLITE_TRANSIENT);
+ }
+ 
++#include <stdint.h>
++
+ typedef struct {
+   int typ;
+   sqlite3_int64 i64;
+   double f64;
+-  const void *ptr;
++  uintptr_t ptr;
+   int n;
+ } sqlite3_go_col;
+ 
+@@ -101,11 +103,11 @@ _sqlite3_column_values(sqlite3_stmt *stmt, int ncol, sqlite3_go_col *cols) {
+       col->f64 = sqlite3_column_double(stmt, i);
+       break;
+     case SQLITE_BLOB:
+-      col->ptr = sqlite3_column_blob(stmt, i);
++      col->ptr = (uintptr_t)sqlite3_column_blob(stmt, i);
+       col->n = sqlite3_column_bytes(stmt, i);
+       break;
+     case SQLITE_TEXT:
+-      col->ptr = sqlite3_column_text(stmt, i);
++      col->ptr = (uintptr_t)sqlite3_column_text(stmt, i);
+       col->n = sqlite3_column_bytes(stmt, i);
+       break;
+     default:
+@@ -2659,20 +2661,21 @@ func (rc *SQLiteRows) nextSyncLocked(dest []driver.Value) error {
+ 		case C.SQLITE_FLOAT:
+ 			dest[i] = float64(col.f64)
+ 		case C.SQLITE_BLOB:
+-			p := col.ptr
+-			if p == nil {
++			p := uintptr(col.ptr)
++			if p == 0 {
+ 				dest[i] = []byte{}
+ 				continue
+ 			}
+ 			n := col.n
+-			dest[i] = C.GoBytes(p, n)
++			dest[i] = C.GoBytes(unsafe.Pointer(p), n)
+ 		case C.SQLITE_NULL:
+ 			dest[i] = nil
+ 		case C.SQLITE_TEXT:
+ 			var err error
+ 			var timeVal time.Time
+ 
+ 			n := int(col.n)
+-			s := C.GoStringN((*C.char)(unsafe.Pointer(col.ptr)), C.int(n))
++			p := uintptr(col.ptr)
++			s := C.GoStringN((*C.char)(unsafe.Pointer(p)), C.int(n))
+ 
+ 			switch decltype[i] {
+diff --git a/callback.go b/callback.go
+index 94c58af..de27344 100644
+--- a/callback.go
++++ b/callback.go
+@@ -22,20 +22,33 @@ void _sqlite3_result_text(sqlite3_context* ctx, const char* s, int n);
+ void _sqlite3_result_blob(sqlite3_context* ctx, const void* b, int l);
++
++static uintptr_t _sqlite3_value_at(sqlite3_value **argv, int i) {
++	return (uintptr_t)argv[i];
++}
+ */
+ import "C"
+ 
+ import (
+ 	"errors"
+ 	"fmt"
+ 	"math"
+ 	"reflect"
+ 	"sync"
+ 	"sync/atomic"
+ 	"unsafe"
+ )
+ 
++func callbackArgs(argc C.int, argv **C.sqlite3_value) []*C.sqlite3_value {
++	args := make([]*C.sqlite3_value, int(argc))
++	for i := range args {
++		p := uintptr(C._sqlite3_value_at(argv, C.int(i)))
++		args[i] = (*C.sqlite3_value)(unsafe.Pointer(p))
++	}
++	return args
++}
++
+ //export callbackTrampoline
+ func callbackTrampoline(ctx *C.sqlite3_context, argc C.int, argv **C.sqlite3_value) {
+-	args := (*[(math.MaxInt32 - 1) / unsafe.Sizeof((*C.sqlite3_value)(nil))]*C.sqlite3_value)(unsafe.Pointer(argv))[:int(argc):int(argc)]
++	args := callbackArgs(argc, argv)
+ 	fi := lookupHandle(C.sqlite3_user_data(ctx)).(*functionInfo)
+ 	fi.Call(ctx, args)
+ }
+@@ -43,6 +56,6 @@ func callbackTrampoline(ctx *C.sqlite3_context, argc C.int, argv **C.sqlite3_val
+ //export stepTrampoline
+ func stepTrampoline(ctx *C.sqlite3_context, argc C.int, argv **C.sqlite3_value) {
+-	args := (*[(math.MaxInt32 - 1) / unsafe.Sizeof((*C.sqlite3_value)(nil))]*C.sqlite3_value)(unsafe.Pointer(argv))[:int(argc):int(argc)]
++	args := callbackArgs(argc, argv)
+ 	ai := lookupHandle(C.sqlite3_user_data(ctx)).(*aggInfo)
+ 	ai.Step(ctx, args)
+ }
+@@ -80,4 +93,4 @@ func updateHookTrampoline(handle unsafe.Pointer, op C.int, db *C.char, table *C.
+ //export authorizerTrampoline
+-func authorizerTrampoline(handle unsafe.Pointer, op C.int, arg1 *C.char, arg2 *C.char, arg3 *C.char) C.int {
++func authorizerTrampoline(handle unsafe.Pointer, op C.int, arg1 *C.char, arg2 *C.char, arg3 *C.char, _ *C.char) C.int {
+ 	callback := lookupHandle(handle).(func(int, string, string, string) int)
+ 	return C.int(callback(int(op), C.GoString(arg1), C.GoString(arg2), C.GoString(arg3)))

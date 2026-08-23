@@ -11,8 +11,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "go";
-    rev = "1e03a85fde3886386560972e0e68d7e225c247a7";
-    hash = "sha256-LqzxxUKqHSIEBAXBvG9rJ7j4pMf0q/7WDfb478BqO2I=";
+    rev = "f6cf684d24c4d5fb5b396196eaff2a1f28a1ce7c";
+    hash = "sha256-/tZtTfMf0J3gJLZO1zUyGtiUQZCC6+50LgVrKxy7ljk=";
   },
 }:
 
@@ -20,7 +20,7 @@ let
   nativeGo = pkgs.go_1_27.overrideAttrs (
     _finalAttrs: previousAttrs: {
       pname = "go-wasm-linux";
-      version = "1.27.0-port-1e03a85fde";
+      version = "1.27.0-port-f6cf684d24";
       inherit src;
 
       # Undo host-specific nixpkgs data-path substitutions for binaries that
@@ -51,8 +51,22 @@ let
     };
   };
 
+  # Static cgo uses the same native Go tools and target stdenv. The stdenv's
+  # cc-wrapper supplies the wasm32 Linux triple, sysroot, atomics, shared
+  # memory, and SJLJ flags; cgo then hands its relocatable wasm objects to the
+  # forked Go linker. Keep this opt-in so packages without C dependencies retain
+  # the reproducible pure-Go path and do not acquire libc startup implicitly.
+  targetGoCgo = targetGo // {
+    CGO_ENABLED = 1;
+  };
+
   nixpkgsBuilder = pkgs.buildGo127Module.override {
     go = targetGo;
+    inherit stdenv;
+  };
+
+  nixpkgsCgoBuilder = pkgs.buildGo127Module.override {
+    go = targetGoCgo;
     inherit stdenv;
   };
 
@@ -68,6 +82,23 @@ let
     }
     // attrs;
 
+  # The Go linker asks clang for a single relocatable wasm object before doing
+  # the final executable link itself. stdenv's final-link environment contains
+  # flags such as --export-table and --import-memory which wasm-ld rejects with
+  # -r. The cc-wrapper still supplies the target sysroot and compiler features;
+  # remove only the executable-shaping link variables for Go-driven builds.
+  configureCgoPrelink =
+    attrs:
+    let
+      configured = disableHostStripping attrs;
+    in
+    configured
+    // {
+      preBuild = (configured.preBuild or "") + ''
+        unset NIX_CFLAGS_LINK NIX_LDFLAGS
+      '';
+    };
+
   # Cross-built tests cannot run during a normal derivation. Packages can opt
   # back in, but platform behavior belongs in explicit vm-test checks.
   buildGoModule = lib.makeOverridable (
@@ -79,8 +110,24 @@ let
         disableHostStripping args
     )
   );
+
+  buildGoModuleCgo = lib.makeOverridable (
+    args:
+    nixpkgsCgoBuilder (
+      if builtins.isFunction args then
+        finalAttrs: configureCgoPrelink (args finalAttrs)
+      else
+        configureCgoPrelink args
+    )
+  );
 in
 {
   package = nativeGo;
-  inherit src targetGo buildGoModule;
+  inherit
+    src
+    targetGo
+    targetGoCgo
+    buildGoModule
+    buildGoModuleCgo
+    ;
 }
