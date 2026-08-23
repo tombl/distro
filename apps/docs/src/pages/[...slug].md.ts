@@ -1,11 +1,5 @@
 import type { APIRoute } from "astro";
-import { loadRenderers } from "astro:container";
-import { experimental_AstroContainer as AstroContainer } from "astro/container";
 import type { CollectionEntry } from "astro:content";
-import { render } from "astro:content";
-import { getContainerRenderer } from "@astrojs/mdx/container-renderer";
-import { Defuddle } from "defuddle/node";
-import { parseHTML } from "linkedom";
 
 import { getPublishedDocs } from "../lib/docs";
 
@@ -21,21 +15,8 @@ export async function getStaticPaths() {
   }));
 }
 
-const renderers = await loadRenderers([getContainerRenderer()]);
-const container = await AstroContainer.create({ renderers });
-
-export const GET = (async ({ props: { entry }, request }) => {
-  const { Content } = await render(entry);
-  const content = await container.renderToString(Content);
-  const { document } = parseHTML(`<main>${content}</main>`);
-  const pageUrl = new URL(`/${entry.id}/`, request.url).href;
-  const result = await Defuddle(document, pageUrl, {
-    contentSelector: "main",
-    markdown: true,
-  });
-  const markdown = `# ${entry.data.title}\n\n${result.content.trim()}\n`;
-
-  return new Response(markdown, {
+export const GET = (({ props: { entry } }) => {
+  return new Response(`${entry.body?.trim() ?? ""}\n`, {
     headers: { "Content-Type": "text/markdown; charset=utf-8" },
   });
 }) satisfies APIRoute<Props>;

@@ -5,9 +5,6 @@ section: tutorials
 order: 1
 ---
 
-import CodeBlock from "../../components/CodeBlock.astro";
-import { bytesVersion, guestVersion, linuxVersion } from "../../lib/versions";
-
 # Run Linux in your browser
 
 This tutorial builds a web page that boots a Linux machine and controls it
@@ -16,10 +13,10 @@ and everything runs inside the page. There is no server behind it.
 
 For example, this runs `uname` inside the guest and reads its output:
 
-<CodeBlock language="javascript"
-  code={`const process = await guest.exec(["uname", "-a"]);
-console.log(await new Response(process.stdout).text());`}
-/>
+```js
+const process = await guest.exec(["uname", "-a"]);
+console.log(await new Response(process.stdout).text());
+```
 
 The rest of the page makes you a page that can do the same.
 You need a modern browser and any static file server that can send custom
@@ -30,17 +27,16 @@ from a CDN.
 
 Save this as `index.html`:
 
-<CodeBlock
-  language="html"
-  code={`<!doctype html>
+```html
+<!doctype html>
 <title>linux</title>
 <script type="importmap">
   {
     "imports": {
-      "@lowland/bytes": "https://unpkg.com/@lowland/bytes@${bytesVersion}/dist/index.js",
-      "@lowland/kernel": "https://unpkg.com/@lowland/kernel@${linuxVersion}/dist/index.js",
-      "@lowland/kernel/plugin": "https://unpkg.com/@lowland/kernel@${linuxVersion}/dist/plugin.js",
-      "@lowland/guest": "https://unpkg.com/@lowland/guest@${guestVersion}/dist/index.js"
+      "@lowland/bytes": "https://unpkg.com/@lowland/kernel/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "https://unpkg.com/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "https://unpkg.com/@lowland/kernel/dist/plugin.js",
+      "@lowland/guest": "https://unpkg.com/@lowland/guest/dist/index.js"
     }
   }
 </script>
@@ -52,8 +48,8 @@ Save this as `index.html`:
   const machine = await bootMachine({ cpus: 1, plugins: [guest] });
   const process = await guest.exec(["uname", "-a"]);
   document.body.textContent = await new Response(process.stdout).text();
-</script>`}
-/>
+</script>
+```
 
 The import map lets the page use bare package names, the same specifiers you
 would use with a bundler, and points them at unpkg. `@lowland/guest` is
@@ -126,11 +122,11 @@ network panel actually carries them.[^coi]
 quotes, splits, or expands. The first element is looked up on the guest's
 `PATH`. When you want shell behaviour, run a shell and say so explicitly:
 
-<CodeBlock language="javascript"
-  code={`const process = await guest.exec(["sh", "-c", "echo hello; date"]);
+```js
+const process = await guest.exec(["sh", "-c", "echo hello; date"]);
 console.log(await new Response(process.stdout).text());
-console.log("exit code:", (await process.status).code);`}
-/>
+console.log("exit code:", (await process.status).code);
+```
 
 A process hands you three things: `stdout` and `stderr` as web
 `ReadableStream` values, and `status`, a promise for its exit. `new Response(...)`
@@ -144,12 +140,12 @@ are read-only, and writable space is mounted at `/tmp` and `/workspace`, in
 memory and private to this machine. `guest.fs` reads and writes it directly
 from JavaScript, no exec required:
 
-<CodeBlock language="javascript"
-  code={`await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\\n");
+```js
+await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\n");
 
 const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
-console.log(await new Response(cat.stdout).text());`}
-/>
+console.log(await new Response(cat.stdout).text());
+```
 
 Files written from the host are immediately visible to guest programs and the
 other way around, because there is only one filesystem. `guest.fs` also has

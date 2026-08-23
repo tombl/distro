@@ -39,6 +39,7 @@ const headings = document.symbols.map(({ name }) => ({
   description={pkg.description}
   current={`reference:${pkg.slug}`}
   headings={headings}
+  markdownHref={`/reference/${pkg.slug}.md`}
 >
   <ReferenceDocumentation
     name={pkg.name}
