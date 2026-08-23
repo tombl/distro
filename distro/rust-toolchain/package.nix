@@ -5,9 +5,9 @@
 # -Zbuild-std. Everything unstable is confined to this file; `buildRustPackage`
 # consumers run plain `cargo build --target wasm32-unknown-linux-musl`.
 #
-# The libc crate needs a real fork (upstream's wasm32+musl support is WALI's
-# b64 ABI with syscalls as host imports; ours is ILP32 through musl), pinned as
-# the libc-src input. The std patches are small enough to live in patches/.
+# libc 0.2.189 is patched locally because upstream's wasm32+musl support is
+# WALI's b64 ABI with syscalls as host imports, while ours is ILP32 through
+# musl. The std patches are small enough to live in patches/.
 {
   lib,
   pkgs,
@@ -26,16 +26,68 @@
         inherit pkgs;
         inherit (pkgs) system;
       },
-  libc-src ? pkgs.fetchFromGitHub {
-    owner = "tombl";
-    repo = "libc";
-    rev = "fc8cc62b93f1c374e944d7880e71aa16434b7c6e";
-    hash = "sha256-s2qZCiyVgLGZh6x5E4pmVT3mnoEF8q4M3bWdXVqGclQ=";
-  },
 }:
 
 let
   inherit (platform) targetTriple;
+
+  libcReleases = {
+    "0.2.177" = {
+      hash = "sha256-KHSir0eiMlwgAabm+tmxalO4AhArUoFjiFFxz5KxWXY=";
+      patches = [ ./libc-0.2.177-compat.patch ];
+    };
+    "0.2.180" = {
+      hash = "sha256-vMNaOFRKiRpffIZaylSKmCzLO4ZQpbBtD9M6ECg8Vvw=";
+      patches = [ ./libc-0.2.180-compat.patch ];
+    };
+    "0.2.182" = {
+      hash = "sha256-aAC622yyCC/9e2pn5hJbs58YeC95NSDK7oy4hGvgYRI=";
+      patches = [ ./libc-0.2.182-compat.patch ];
+    };
+    "0.2.186" = {
+      hash = "sha256-aKuRAX/hbGIkhoQOTIPJo3r+/5eL0jm1KT1h7OWH3mY=";
+      patches = [ ./libc-0.2.186-compat.patch ];
+    };
+    "0.2.189" = {
+      hash = "sha256-Pq8+3j/ubbGkwu4JG/iotNzNxtF/ZW+weJbucoZ2EvI=";
+      patches = [ ./libc-0.2.189-compat.patch ];
+    };
+  };
+
+  # Patch every libc release already locked by the acceptance graphs. Cargo
+  # can then substitute an exact version without rewriting consumer locks.
+  mkLibcSrc =
+    version:
+    {
+      hash,
+      patches,
+    }:
+    let
+      archive = pkgs.fetchurl {
+        url = "https://static.crates.io/crates/libc/libc-${version}.crate";
+        inherit hash;
+      };
+    in
+    pkgs.runCommand "libc-${version}-wasm32-linux"
+      {
+        nativeBuildInputs = [
+          pkgs.gnutar
+          pkgs.gzip
+          pkgs.patch
+        ];
+      }
+      ''
+        mkdir $out
+        tar -xzf ${archive} --strip-components=1 -C $out
+        chmod -R u+w $out
+        ${lib.concatMapStrings (patch: ''
+          patch --fuzz=0 --no-backup-if-mismatch -p1 -d $out < ${patch}
+        '') patches}
+        patch --fuzz=0 --no-backup-if-mismatch -p1 -d $out < ${./libc-wasm32-linux.patch}
+      '';
+
+  libcSrcs = lib.mapAttrs mkLibcSrc libcReleases;
+  libcSrc = libcSrcs."0.2.189";
 
   toolchain = fenix.complete.withComponents [
     "rustc"
@@ -47,10 +99,7 @@ let
   # -m<feature> compiler flags and LLVM target features are the same set spelled
   # differently; mutable-globals and sign-ext are clang defaults the sysroot is
   # compiled with, so rustc must match.
-  features = map (f: "+" + lib.removePrefix "-m" f) platform.compilerFlags ++ [
-    "+mutable-globals"
-    "+sign-ext"
-  ];
+  features = map (feature: "+${feature}") platform.rustTargetFeatures;
 
   # The spec mirrors wasm32-wali-linux-musl where our platforms agree (both are
   # musl on a wasm32 Linux kernel) and diverges where the ABIs do: ILP32, musl
@@ -109,11 +158,13 @@ let
     ./patches/0001-core-gate-wali-c_long-on-vendor.patch
     ./patches/0002-std-args-gate-wali-on-vendor.patch
     ./patches/0003-std-no-stack-overflow-handler-on-wasm32.patch
+    ./patches/0004-std-process-use-posix-spawn-on-wasm-linux.patch
   ];
 
   # Registry dependencies of the std workspace, resolved by ./Cargo.lock. The
   # lock is the toolchain's own library/Cargo.lock with libc re-locked to the
-  # fork; regenerate it when bumping fenix or libc-src:
+  # exact locally patched crates.io source; regenerate it when bumping fenix or
+  # libc:
   #   cp -rL $(nix build --print-out-paths .#rust-toolchain.toolchain)/lib/rustlib/src/rust/library lib
   #   chmod -R u+w lib && cd lib
   #   sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = '$PWD/../checkouts/libc' }|" Cargo.toml
@@ -122,12 +173,18 @@ let
 
   mkRustcWrapper =
     { name, sysroot }:
-    pkgs.writeShellScriptBin name ''
+    (pkgs.writeShellScriptBin name ''
       export RUST_TARGET_PATH="${targetSpecDir}''${RUST_TARGET_PATH:+:$RUST_TARGET_PATH}"
       exec ${toolchain}/bin/rustc ${
         lib.optionalString (sysroot != null) "--sysroot ${sysroot}"
       } -Zunstable-options "$@"
-    '';
+    '').overrideAttrs
+      (old: {
+        passthru = (old.passthru or { }) // {
+          inherit (toolchain) badTargetPlatforms;
+          targetPlatforms = toolchain.targetPlatforms ++ [ stdenv.hostPlatform.system ];
+        };
+      });
 
   stdSysroot =
     pkgs.runCommand "rust-std-${targetTriple}"
@@ -147,7 +204,7 @@ let
           patch -p1 -d src < ${patch}
         '') patches}
 
-        sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = \"${libc-src}\" }|" \
+        sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = \"${libcSrc}\" }|" \
           src/library/Cargo.toml
         install -m644 ${./Cargo.lock} src/library/Cargo.lock
 
@@ -162,7 +219,7 @@ let
         # build-std-features = [] drops std's default backtrace machinery,
         # which needs mmap and an unwinder; the platform has neither.
         [unstable]
-        build-std = ["std", "panic_abort"]
+        build-std = ["std", "panic_abort", "test"]
         build-std-features = []
         EOF
 
@@ -217,84 +274,6 @@ let
   };
 
   cargo = fenix.complete.cargo;
-
-  # The wasm stdenv exports executable-shaping linker flags globally. Cargo's
-  # build scripts are host binaries, so keep those flags away from their host
-  # links while retaining them for the target linker.
-  hostLinker = pkgs.writeShellScript "rust-host-linker" ''
-    unset NIX_CFLAGS_LINK NIX_LDFLAGS
-    exec ${pkgs.stdenv.cc}/bin/cc "$@"
-  '';
-
-  buildRustPackage = lib.makeOverridable (
-    {
-      cargoLock ? null,
-      cargoPathOverrides ? [ ],
-      ...
-    }@args:
-    stdenv.mkDerivation (
-      removeAttrs args [
-        "cargoLock"
-        "cargoPathOverrides"
-      ]
-      // {
-        nativeBuildInputs = [
-          rustc
-          cargo
-        ]
-        ++ (args.nativeBuildInputs or [ ]);
-
-        buildPhase =
-          args.buildPhase or ''
-            runHook preBuild
-
-            export CARGO_HOME=$TMPDIR/cargo-home
-            mkdir -p $CARGO_HOME
-            # Cargo's path override keeps the target's libc fork local to this
-            # Rust platform instead of requiring every consumer manifest to
-            # repeat a [patch.crates-io] entry. Path overrides deliberately
-            # require the fork's name and version to match Cargo.lock.
-            cat > $CARGO_HOME/config.toml <<EOF
-            paths = ${builtins.toJSON (map (path: "${path}") ([ libc-src ] ++ cargoPathOverrides))}
-
-            [target.${pkgs.stdenv.hostPlatform.rust.rustcTarget}]
-            linker = "${hostLinker}"
-
-            EOF
-            export CC_${pkgs.stdenv.hostPlatform.rust.cargoEnvVarTarget}=${pkgs.stdenv.cc}/bin/cc
-            export CXX_${pkgs.stdenv.hostPlatform.rust.cargoEnvVarTarget}=${pkgs.stdenv.cc}/bin/c++
-            ${lib.optionalString (cargoLock != null) ''
-              cat >> $CARGO_HOME/config.toml <<EOF
-              [source.crates-io]
-              replace-with = "vendored-sources"
-              [source.vendored-sources]
-              directory = "${pkgs.rustPlatform.importCargoLock cargoLock}"
-              EOF
-            ''}
-            # Rust keeps source locations used by panic reporting in live data,
-            # so stripping debug sections cannot remove store paths from the
-            # resulting guest binary. Remap the store namespace while compiling
-            # so diagnostics remain useful without claiming build-only sources
-            # will exist in the guest at runtime.
-            export RUSTFLAGS="''${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=/nix/store=/usr/src/nix"
-            export CARGO_BUILD_JOBS=$NIX_BUILD_CORES
-            cargo build --release --offline --target ${targetTriple}
-
-            runHook postBuild
-          '';
-
-        installPhase =
-          args.installPhase or ''
-            runHook preInstall
-
-            find target/${targetTriple}/release -maxdepth 1 -type f -executable \
-              -exec install -Dm755 -t $out/bin {} +
-
-            runHook postInstall
-          '';
-      }
-    )
-  );
 in
 {
   inherit
@@ -303,8 +282,8 @@ in
     sysroot
     rustc
     cargo
-    buildRustPackage
     ;
+  inherit libcSrc libcSrcs;
   # `nix build .#rust-toolchain` builds the substantial artifact.
   package = stdSysroot;
 }

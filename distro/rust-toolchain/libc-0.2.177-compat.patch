@@ -1,0 +1,50 @@
+diff --git a/build.rs b/build.rs
+index 802ea7a..a31bd1e 100644
+--- a/build.rs
++++ b/build.rs
+@@ -22,6 +22,7 @@ const ALLOWED_CFGS: &[&str] = &[
+     // Corresponds to `__USE_TIME_BITS64` in UAPI
+     "linux_time_bits64",
+     "musl_v1_2_3",
++    "musl32_time64",
+ ];
+ 
+ // Extra values to allow for check-cfg.
+@@ -90,9 +91,12 @@ fn main() {
+     let musl_v1_2_3 = env::var("RUST_LIBC_UNSTABLE_MUSL_V1_2_3").is_ok();
+     println!("cargo:rerun-if-env-changed=RUST_LIBC_UNSTABLE_MUSL_V1_2_3");
+     // loongarch64 and ohos have already updated
+-    if musl_v1_2_3 || target_arch == "loongarch64" || target_env == "ohos" {
++    if musl_v1_2_3 || target_arch == "wasm32" || target_arch == "loongarch64" || target_env == "ohos" {
+         // FIXME(musl): enable time64 api as well
+         set_cfg("musl_v1_2_3");
++        if target_arch == "wasm32" {
++            set_cfg("musl32_time64");
++        }
+     }
+     let linux_time_bits64 = env::var("RUST_LIBC_UNSTABLE_LINUX_TIME_BITS64").is_ok();
+     println!("cargo:rerun-if-env-changed=RUST_LIBC_UNSTABLE_LINUX_TIME_BITS64");
+diff --git a/src/unix/linux_like/linux/musl/mod.rs b/src/unix/linux_like/linux/musl/mod.rs
+index 4bc1144..7584f6a 100644
+--- a/src/unix/linux_like/linux/musl/mod.rs
++++ b/src/unix/linux_like/linux/musl/mod.rs
+@@ -3,6 +3,9 @@ use crate::prelude::*;
+ 
+ pub type pthread_t = *mut c_void;
+ pub type clock_t = c_long;
++#[cfg(musl32_time64)]
++pub type time_t = i64;
++#[cfg(not(musl32_time64))]
+ #[cfg_attr(
+     not(feature = "rustc-dep-of-std"),
+     deprecated(
+@@ -13,6 +16,9 @@ pub type clock_t = c_long;
+     )
+ )]
+ pub type time_t = c_long;
++#[cfg(musl32_time64)]
++pub type suseconds_t = i64;
++#[cfg(not(musl32_time64))]
+ pub type suseconds_t = c_long;
+ pub type ino_t = u64;
+ pub type off_t = i64;

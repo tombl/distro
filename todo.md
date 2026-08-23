@@ -55,3 +55,17 @@
 - Fix System V IPC on wasm. The defconfig currently omits `CONFIG_SYSVIPC`.
   Enabling it builds the generic implementation, but `shmget` traps in
   `ipcget()`. Once fixed, restore util-linux's IPC tools and VM coverage.
+
+## Deferred toolchain distribution
+
+- Assemble a standalone Lowland SDK after the Nix-native Rust platform is
+  complete. Bundle the patched Cargo and rustc, `lowland-clang`, the C/C++ and
+  Rust sysroots, compiler runtimes, crate patch catalog, and CMake/Autoconf
+  integration in one derivation. Leave Cargo runner configuration disabled
+  until `lowland-run` exists.
+- Turn the standalone SDK into a relocatable toolchain. Remove absolute Nix
+  store references, make launchers and private shared libraries resolve paths
+  relative to the SDK root, reduce the installed LLVM tools, and validate the
+  extracted SDK in an environment without Nix. Prefer static host tools where
+  practical, while allowing rustc's codegen and proc-macro loading to use
+  SDK-private shared libraries.
