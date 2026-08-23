@@ -1,0 +1,163 @@
+---
+import Docs from "../layouts/Docs.astro";
+---
+
+<Docs
+  title="Documentation"
+  description="Learn how to run and control Lowland Linux machines in browsers and Node.js."
+  current=""
+  headings={[]}
+>
+  <article class="docs-home">
+    <p class="eyebrow">Lowland documentation</p>
+    <h1>Linux is a JavaScript library.</h1>
+    <p class="lede">
+      Boot a wasm32 Linux system in a browser or Node.js. Start with the guest API, or configure a
+      machine and its virtio devices directly.
+    </p>
+
+    <section class="first-step">
+      <div>
+        <p class="step-number">01 · Tutorial</p>
+        <h2>Boot your first machine</h2>
+        <p>
+          Start with one HTML file and no build tools. Add the required headers, boot Linux, and run
+          <code>uname</code> from JavaScript.
+        </p>
+        <a class="strong-link" href="/getting-started/">Run Linux in your browser →</a>
+      </div>
+      <pre><code>{`const guest = guestAgent();
+await bootMachine({
+  cpus: 1,
+  plugins: [guest],
+});`}</code></pre>
+    </section>
+
+    <section class="paths" aria-labelledby="choose-a-path">
+      <p class="step-number">02 · Choose a path</p>
+      <h2 id="choose-a-path">Choose an API</h2>
+      <div class="path-list">
+        <article>
+          <h3>Control a Linux guest</h3>
+          <p>Run processes, read and write files, mount storage, and connect networks.</p>
+          <ul>
+            <li><a href="/reference/linux-guest/"><code>@lowland/guest</code> reference →</a></li>
+            <li><a href="/attach-a-terminal/">Attach an interactive terminal →</a></li>
+          </ul>
+        </article>
+        <article>
+          <h3>Assemble a machine</h3>
+          <p>Configure CPUs and memory, attach virtio devices, and control the boot lifecycle.</p>
+          <ul>
+            <li><a href="/reference/kernel/"><code>@lowland/kernel</code> reference →</a></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </article>
+
+</Docs>
+
+<style>
+  .eyebrow {
+    margin-block: 0 0.75rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .docs-home h1 {
+    max-width: 16ch;
+    margin-block-start: 0;
+    font-size: clamp(2.15rem, 5vw, 3.25rem);
+    letter-spacing: -0.035em;
+  }
+
+  .lede {
+    max-width: 60ch;
+    font-size: 1.0625rem;
+  }
+
+  .first-step {
+    margin-block-start: 2.75rem;
+    padding-block: 1.5rem;
+    border-block: 1px solid var(--hairline);
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  .first-step h2,
+  .paths h2 {
+    margin-block-start: 0;
+  }
+
+  .step-number {
+    margin-block-end: 0.5rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .first-step pre {
+    margin: 0;
+    align-self: center;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    font-size: 0.875rem;
+  }
+
+  .strong-link {
+    color: var(--code-foreground);
+    font-weight: 600;
+  }
+
+  .paths {
+    margin-block-start: 2.75rem;
+  }
+
+  .path-list {
+    margin-block-start: 1.25rem;
+    border-block-start: 1px solid var(--hairline);
+  }
+
+  .path-list article {
+    padding-block: 1.25rem;
+    border-block-end: 1px solid var(--hairline);
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.65fr) 1fr;
+    column-gap: 1.5rem;
+
+    > h3 {
+      grid-row: 1 / span 2;
+      margin: 0;
+    }
+
+    > p {
+      margin-block-end: 0.65rem;
+    }
+  }
+
+  .path-list ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  @media (max-width: 32rem) {
+    .path-list article {
+      grid-template-columns: 1fr;
+
+      > h3 {
+        grid-row: auto;
+        margin-block-end: 0.4rem;
+      }
+    }
+  }
+
+</style>

@@ -72,9 +72,9 @@ export interface ExecOptions {
  * File operations in the guest, available as `guest.fs`.
  *
  * Paths are guest paths. The packaged root image mounts writable space at
- * `/tmp`; the system directories are read-only. A failed
- * operation rejects with a `SystemError` carrying the errno code — for
- * example `"ENOENT"` when a path does not exist.
+ * `/tmp`. The system directories are read-only. A failed
+ * operation rejects with a `SystemError` carrying the errno code. For
+ * example, a missing path returns `"ENOENT"`.
  */
 export interface FileSystem {
   /** Reads the whole file into memory. */
@@ -83,8 +83,8 @@ export interface FileSystem {
   readTextFile(path: string, options?: { signal?: AbortSignal }): Promise<string>;
   /**
    * Writes data to a file, creating or truncating it by default. Accepts
-   * bytes, a `Blob`, or a `ReadableStream` — streaming is the way to move
-   * large data into the guest without buffering it all on the host.
+   * bytes, a `Blob`, or a `ReadableStream`. Use a stream to move large data
+   * into the guest without buffering all of it on the host.
    *
    * @example Copy a download straight into the guest
    * ```ts
@@ -184,12 +184,12 @@ export interface FileSystem {
  * Takes an argv array rather than a command string: the array is the argv
  * the program receives, exactly as `execve` would see it, with no shell in
  * between to quote, split, or expand. An argument containing spaces is one
- * element. The first element is looked up on the guest's `PATH`; if the
+ * element. The first element is looked up on the guest's `PATH`. If the
  * program does not exist, the promise rejects with a `SystemError` whose
  * code is `"ENOENT"`.
  *
- * A guest runs a bounded number of processes at once — currently eight —
- * and further calls wait for a slot rather than failing.
+ * A guest currently runs up to eight processes at once. Further calls wait
+ * for a slot rather than failing.
  *
  * @example Run a command and collect its output
  * ```ts

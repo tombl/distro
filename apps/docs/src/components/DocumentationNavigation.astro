@@ -1,0 +1,123 @@
+---
+import { getPublishedDocs } from "../lib/docs";
+import { referencePackages } from "../lib/reference-packages";
+
+interface Props {
+  current: string;
+}
+
+const { current } = Astro.props;
+const docs = await getPublishedDocs();
+
+interface Item {
+  id: string;
+  href: string;
+  label: string;
+  code?: boolean;
+}
+
+function section(name: (typeof docs)[number]["data"]["section"]): Item[] {
+  return docs
+    .filter((doc) => doc.data.section === name)
+    .sort((left, right) => left.data.order - right.data.order)
+    .map((doc) => ({
+      id: doc.id,
+      href: `/${doc.id}/`,
+      label: doc.data.title,
+    }));
+}
+
+const sections: { heading: string; items: Item[] }[] = [
+  { heading: "Tutorials", items: section("tutorials") },
+  { heading: "How-to guides", items: section("howtos") },
+  {
+    heading: "Reference",
+    items: [
+      ...referencePackages.map((pkg) => ({
+        id: `reference:${pkg.slug}`,
+        href: `/reference/${pkg.slug}/`,
+        label: pkg.name,
+        code: true,
+      })),
+      ...section("reference"),
+    ],
+  },
+  { heading: "Explanation", items: section("explanation") },
+].filter(({ items }) => items.length > 0);
+---
+
+<nav aria-label="Documentation">
+  {sections.map(({ heading, items }) => (
+    <div>
+      <h3>{heading}</h3>
+      <ul>
+        {items.map((item) => (
+          <li>
+            <a href={item.href} aria-current={item.id === current ? "page" : undefined}>
+              {item.code ? <code>{item.label}</code> : item.label}
+            </a>
+            {item.id === current && (
+              <div class="current-toc">
+                <slot />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))}
+</nav>
+
+<style>
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 1.375rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: 0.8125rem;
+    font-weight: inherit;
+    letter-spacing: 0;
+    color: var(--muted);
+    margin-block-end: 0.5rem;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4375rem;
+    color: var(--prose);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 120ms;
+
+    &:hover,
+    &[aria-current="page"] {
+      color: var(--code-foreground);
+    }
+
+    &[aria-current="page"] {
+      font-weight: 500;
+    }
+  }
+
+  /* "On this page", folded under the current page's link wherever the
+     dedicated table-of-contents column doesn't fit. */
+  .current-toc {
+    padding: 0.4375rem 0 0.1875rem 0.875rem;
+  }
+
+  @media (min-width: 72rem) {
+    .current-toc {
+      display: none;
+    }
+  }
+</style>

@@ -1,0 +1,11 @@
+name = "lowland-docs"
+account_id = "7d87194d9d4af2959fb81de343dd63d9"
+compatibility_date = "2026-08-07"
+preview_urls = true
+
+[assets]
+directory = "../../docs-deploy"
+
+[[routes]]
+pattern = "docs.low.land"
+custom_domain = true

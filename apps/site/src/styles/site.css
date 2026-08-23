@@ -1,0 +1,98 @@
+@import "@lowland/web-ui/base.css";
+@import "@xterm/xterm/css/xterm.css";
+
+body {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.root-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.root-header-info {
+  padding-block: 0;
+}
+
+.header-disclosure summary {
+  width: fit-content;
+  margin-inline: auto;
+  cursor: pointer;
+  color: var(--code-foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  user-select: none;
+}
+
+.header-copy {
+  max-width: var(--content-column);
+  margin-inline: auto;
+  padding-block-start: 1rem;
+  color: var(--prose);
+  font-size: 0.9375rem;
+}
+
+.header-copy p + p {
+  margin-block-start: 0.35rem;
+}
+
+.header-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+}
+
+.machine {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--terminal-foreground);
+  background: var(--code-background);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  scroll-margin-block-start: 0;
+}
+
+/* xterm's own element also carries the `terminal` class, so target the host
+   by its data attribute rather than the shared class name. */
+[data-terminal],
+.terminal-placeholder {
+  position: absolute;
+  inset: 0.5rem;
+  margin: 0;
+}
+
+.terminal-placeholder {
+  z-index: 1;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 15px;
+  line-height: 1.2;
+  color: var(--terminal-foreground);
+  white-space: pre;
+  overflow: hidden;
+}
+
+@media (max-width: 47.99rem) {
+  .header-copy {
+    max-width: none;
+    max-height: 45dvh;
+    overflow-y: auto;
+  }
+}

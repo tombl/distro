@@ -5,14 +5,18 @@ import test from "node:test";
 import type { DeviceTreeNode } from "../src/devicetree.ts";
 import type { Machine } from "../src/index.ts";
 import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts";
-import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../src/plugin.ts";
+import {
+  bootConsole,
+  getMachinePlugin,
+  type MachinePlugin,
+  type MachinePluginProvider,
+} from "../src/plugin.ts";
 import { VirtioController } from "../src/virtio/core.ts";
 
 function machine_stub(): Machine {
   const closed = Promise.resolve();
   return {
     memory: {} as WebAssembly.Memory,
-    bootConsole: new ReadableStream(),
     closed,
     close() {},
     [Symbol.dispose]() {},
@@ -57,6 +61,27 @@ test("plugins configure a machine in array order", async () => {
   assert.deepEqual(configured.deviceTree, {
     chosen: { mode: "second", nested: { one: 1, two: 2 } },
   } satisfies DeviceTreeNode);
+});
+
+test("boot console output attaches during configuration", async () => {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({
+    start(next) {
+      controller = next;
+    },
+  });
+  const received = Promise.withResolvers<Uint8Array>();
+  const output = new WritableStream<Uint8Array>({
+    write(chunk) {
+      received.resolve(chunk);
+    },
+  });
+
+  await configure_machine([], [bootConsole(output)], stream);
+  controller.enqueue(new Uint8Array([1, 2, 3]));
+
+  assert.deepEqual(await received.promise, new Uint8Array([1, 2, 3]));
+  controller.close();
 });
 
 test("virtio devices provide plugins without changing their device API", async () => {

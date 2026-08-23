@@ -184,12 +184,12 @@ export interface FSCreateContext {
  * The host-side filesystem contract used by virtio-fs.
  *
  * Names are single, valid UTF-8 path components. Methods which are absent are
- * reported to the guest as unsupported; sync methods may return promises.
+ * reported to the guest as unsupported. Sync methods may return promises.
  *
- * `TNode` and `THandle` are the backend's node and open-file types; the device
+ * `TNode` and `THandle` are the backend's node and open-file types. The device
  * never inspects them. A writable backend (one providing `write` or `create`)
- * must also provide `flush` and `fsync` — no-ops are the explicit way to
- * declare an already-durable or ephemeral store.
+ * must also provide `flush` and `fsync`. Use no-op implementations for an
+ * already-durable or ephemeral store.
  */
 export interface FS<TNode, THandle> {
   readonly root: TNode;
@@ -677,7 +677,7 @@ async function async_iterable<T>(source: Iterable<T> | AsyncIterable<T>): Promis
 /**
  * Creates a virtio-fs device backed by a JavaScript filesystem object.
  *
- * Cached devices use one-second metadata/name validity; `cache: false` uses
+ * Cached devices use one-second metadata/name validity. `cache: false` uses
  * zero validity. Both retain the guest data page cache. This transport does not
  * advertise direct I/O: upstream virtio-fs extracts the caller's user pages,
  * while wasm process memory is private to its owner worker and cannot be placed

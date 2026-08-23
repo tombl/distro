@@ -1,19 +1,48 @@
 {
-  assets,
   bootMode,
+  bytes,
+  kernel,
+  linux-guest,
+  node-workspace,
   pkgs,
 }:
 
-let
-  # The store hash identifies the bundle's builder and all referenced inputs.
-  assetDirectory = builtins.substring 0 32 (builtins.baseNameOf assets);
-in
-pkgs.runCommand "site-files-${bootMode}" { } ''
-  mkdir -p $out/static/${assetDirectory}
-  cp -rL ${assets}/. $out/static/${assetDirectory}/
-  cp -r ${../../apps/site/vendor} $out/vendor
-  cp ${../../apps/site/index.html} $out/index.html
-  substituteInPlace $out/index.html \
-    --replace-fail __ASSET_DIRECTORY__ ${assetDirectory} \
-    --replace-fail __BOOT_MODE__ ${bootMode}
-''
+pkgs.stdenvNoCC.mkDerivation {
+  pname = "site-files-${bootMode}";
+  version = "0.0.0";
+  src = ../..;
+  env = {
+    CI = "true";
+    PUBLIC_BOOT_MODE = bootMode;
+  };
+  pnpmDeps = node-workspace.deps;
+  nativeBuildInputs = [
+    pkgs.nodejs
+    pkgs.pnpmConfigHook
+    node-workspace.pnpm
+  ];
+
+  buildPhase = ''
+    runHook preBuild
+
+    cp -r ${bytes}/dist packages/bytes/dist
+    cp -r ${kernel}/dist packages/kernel/dist
+    cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
+    cp -r ${linux-guest.package}/dist packages/linux-guest/dist
+    cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
+
+    pnpm --filter=@lowland/site check
+    pnpm --filter=@lowland/site build
+
+    runHook postBuild
+  '';
+
+  installPhase = ''
+    runHook preInstall
+
+    mkdir -p $out
+    cp -r apps/site/dist/. $out/
+
+    runHook postInstall
+  '';
+}

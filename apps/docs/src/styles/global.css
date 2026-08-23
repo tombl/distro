@@ -1,0 +1,56 @@
+@import "@lowland/web-ui/base.css";
+
+@layer reset {
+  main [id] {
+    scroll-margin-block-start: 1rem;
+  }
+}
+
+@layer typography {
+  main :where(p, ul, ol, dl, pre, figure, aside) {
+    margin-block-end: 1rem;
+  }
+
+  main :where(p, ul, ol, dl) {
+    color: var(--prose);
+  }
+
+  main :where(h1, h2, h3, h4, h5, h6) {
+    margin-block-end: 0.6em;
+  }
+
+  main h1 {
+    margin-block-start: 0.5em;
+  }
+
+  main :where(h3, h4, h5, h6) {
+    margin-block-start: 2em;
+  }
+
+  main h2 {
+    margin-block-start: 3.5rem;
+  }
+
+  main li + li {
+    margin-block-start: 0.25em;
+  }
+
+  .astro-code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.9375rem;
+    padding: 1rem;
+    border: 1px solid var(--hairline);
+    transition: border-color 120ms;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .astro-code,
+    .astro-code span {
+      color: var(--shiki-dark) !important;
+      background-color: var(--shiki-dark-bg) !important;
+      font-style: var(--shiki-dark-font-style) !important;
+      font-weight: var(--shiki-dark-font-weight) !important;
+      text-decoration: var(--shiki-dark-text-decoration) !important;
+    }
+  }
+}

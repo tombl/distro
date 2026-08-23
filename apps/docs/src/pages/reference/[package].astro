@@ -1,0 +1,59 @@
+---
+import type { Document } from "@deno/doc";
+import type { MarkdownHeading } from "astro";
+
+import ReferenceDocumentation from "../../components/ReferenceDocumentation.astro";
+import Docs from "../../layouts/Docs.astro";
+import { generateReferenceDocs } from "../../lib/reference-docs";
+import {
+  referenceGroupId,
+  referencePackages,
+  type ReferencePackage,
+} from "../../lib/reference-packages";
+
+interface Props {
+  pkg: ReferencePackage;
+  document: Document;
+}
+
+export async function getStaticPaths() {
+  const paths = [];
+  for (const pkg of referencePackages) {
+    paths.push({
+      params: { package: pkg.slug },
+      props: { pkg, document: await generateReferenceDocs(pkg) },
+    });
+  }
+  return paths;
+}
+
+const { pkg, document } = Astro.props;
+const groupedNames = new Set<string>(pkg.groups.flatMap((group) => group.symbols));
+const headings: MarkdownHeading[] = pkg.groups.map((group) => ({
+  depth: 2,
+  slug: referenceGroupId(group.title),
+  text: group.title,
+}));
+const remainingSymbols = document.symbols.filter((symbol) => !groupedNames.has(symbol.name));
+if (remainingSymbols.length > 0) {
+  headings.push(
+    { depth: 2, slug: referenceGroupId("Other exports"), text: "Other exports" },
+  );
+}
+---
+
+<Docs
+  title={`${pkg.name} reference`}
+  description={pkg.description}
+  current={`reference:${pkg.slug}`}
+  headings={headings}
+  markdownHref={`/reference/${pkg.slug}.md`}
+>
+  <ReferenceDocumentation
+    name={pkg.name}
+    description={pkg.description}
+    npm={pkg.npm}
+    document={document}
+    groups={pkg.groups}
+  />
+</Docs>
