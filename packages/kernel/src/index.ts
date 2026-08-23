@@ -77,8 +77,6 @@ export interface BootMachineOptions {
 export interface Machine extends Disposable, AsyncDisposable {
   /** The machine's physical memory. */
   readonly memory: WebAssembly.Memory;
-  /** Kernel output from before the console device is available. */
-  readonly bootConsole: ReadableStream<Uint8Array>;
   /** Settles when closed, rejecting if the machine failed unexpectedly. */
   readonly closed: Promise<void>;
   /** Idempotently shuts down the workers and owned devices. */
@@ -171,7 +169,21 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
  * ```
  */
 export async function bootMachine(options: BootMachineOptions): Promise<Machine> {
-  const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
+  let boot_console_controller!: ReadableStreamDefaultController<Uint8Array>;
+  let boot_console_closed = false;
+  const boot_console = new ReadableStream<Uint8Array>({
+    start(controller) {
+      boot_console_controller = controller;
+    },
+    cancel() {
+      boot_console_closed = true;
+    },
+  });
+  const configured = await configure_machine(
+    options.args ?? [],
+    options.plugins ?? [],
+    boot_console,
+  );
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
   let closed = false;
@@ -184,13 +196,17 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   // merely because a consumer chooses not to observe them.
   void closed_promise.promise.catch(() => {});
 
-  const boot_console = new TransformStream<Uint8Array, Uint8Array>();
-  const boot_console_writer = boot_console.writable.getWriter();
   const boot_console_write = (message: ArrayBuffer) => {
-    void boot_console_writer.write(new Uint8Array(message)).catch(() => {});
+    // Boot output is diagnostic and synchronous from the kernel's point of
+    // view. Discard it unless a plugin attached a reader before boot.
+    if (!boot_console_closed && boot_console.locked) {
+      boot_console_controller.enqueue(new Uint8Array(message));
+    }
   };
   const boot_console_close = () => {
-    void boot_console_writer.close().catch(() => {});
+    if (boot_console_closed) return;
+    boot_console_closed = true;
+    boot_console_controller.close();
   };
 
   const finish = () => {
@@ -439,7 +455,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
 
     const machine: Machine = {
       memory: wasm_memory,
-      bootConsole: boot_console.readable,
       closed: closed_promise.promise,
       close,
       [Symbol.dispose]: close,

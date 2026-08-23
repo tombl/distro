@@ -39,11 +39,13 @@ function machine_plugin(input: MachinePluginInput): MachinePlugin {
 export async function configure_machine(
   args: readonly string[],
   inputs: readonly MachinePluginInput[],
+  bootConsole: ReadableStream<Uint8Array> = new ReadableStream(),
 ): Promise<ConfiguredMachine> {
   const configured_args = [...args];
   const devices: VirtioDevice[] = [];
   const device_tree: DeviceTreeNode = {};
   const setup: MachineSetup = {
+    bootConsole,
     args: {
       add(...next) {
         configured_args.push(...next);

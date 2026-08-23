@@ -47,7 +47,6 @@ test("console preserves input queued before boot", { timeout: 45_000 }, async (t
     initcpio: readFile(initramfs),
   });
   t.after(() => machine.close());
-  void machine.bootConsole.pipeTo(output_sink(output)).catch(() => {});
 
   await machine.closed;
   assert.match(output.text, /console-input: queued before boot/, output.text);

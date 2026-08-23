@@ -54,14 +54,12 @@ async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) =
     ],
   });
   const guest = Object.assign(agent, { network: attachment });
-  const console_done = machine.bootConsole.pipeTo(console_output());
   try {
     await fn(guest);
   } finally {
     network.close();
     machine.close();
     await machine.closed;
-    await console_done;
   }
 }
 
