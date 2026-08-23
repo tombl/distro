@@ -1,0 +1,15 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -39,6 +39,12 @@
+         target_arch = "sparc64",
+         target_arch = "x86",
+         target_arch = "x86_64",
++        all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_env = "musl",
++            target_vendor = "unknown",
++        ),
+         target_arch = "xtensa",
+     ))]
+     pub type c_char = c_schar;
