@@ -1,0 +1,75 @@
+diff --git a/lib/std/zig/system.zig b/lib/std/zig/system.zig
+index ea32030..20be09d 100644
+--- a/lib/std/zig/system.zig
++++ b/lib/std/zig/system.zig
+@@ -408,6 +408,14 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
+         },
+         else => {},
+     }
++    if (query_cpu_arch == .wasm32 and query_os_tag == .linux and query_abi == .musl) {
++        cpu.features.addFeatureSet(Target.wasm.featureSet(&.{
++            .atomics,
++            .bulk_memory,
++            .mutable_globals,
++            .sign_ext,
++        }));
++    }
+     updateCpuFeatures(
+         &cpu.features,
+         cpu.arch.allFeaturesList(),
+diff --git a/src/Compilation.zig b/src/Compilation.zig
+index ccb351a..47fabcb 100644
+--- a/src/Compilation.zig
++++ b/src/Compilation.zig
+@@ -6706,7 +6706,13 @@ pub fn addCCArgs(
+         try argv.append("-integrated-as");
+     }
+ 
+-    const llvm_triple = try @import("codegen/llvm.zig").targetTriple(arena, target);
++    // LLVM can codegen Wasm objects for Linux, but Clang's Wasm driver only
++    // accepts the generic target spelling. The linked executable still uses
++    // the distro Linux ABI, CRT, headers, and libc.
++    const llvm_triple = if (target.cpu.arch == .wasm32 and target.os.tag == .linux and target.abi == .musl)
++        "wasm32-unknown-unknown"
++    else
++        try @import("codegen/llvm.zig").targetTriple(arena, target);
+     try argv.appendSlice(&[_][]const u8{ "-target", llvm_triple });
+ 
+     if (target.cpu.arch.isThumb()) {
+diff --git a/src/main.zig b/src/main.zig
+index 08ac61b..20e2e71 100644
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -4104,6 +4104,17 @@ fn createModule(
+             for (paths.lib_dirs.items) |path| addLibDirectoryWarn2(io, &create_module.lib_directories, path, true);
+         }
+ 
++        if (create_module.libc_paths_file == null and
++            (create_module.opts.link_libc orelse false) and
++            target.cpu.arch == .wasm32 and target.os.tag == .linux and target.abi == .musl)
++        {
++            const zig_lib_path = create_module.dirs.zig_lib.path orelse
++                fatal("unable to locate the Zig library directory", .{});
++            create_module.libc_paths_file = try fs.path.join(arena, &.{
++                zig_lib_path, "libc", "wasm32-linux-musl.conf",
++            });
++        }
++
+         if (create_module.libc_paths_file) |paths_file| {
+             create_module.libc_installation = LibCInstallation.parse(arena, io, paths_file, target) catch |err|
+                 fatal("unable to parse libc paths file at path {s}: {t}", .{ paths_file, err });
+diff --git a/src/target.zig b/src/target.zig
+index 507f4cd..8e439e8 100644
+--- a/src/target.zig
++++ b/src/target.zig
+@@ -96,8 +96,11 @@ pub fn alwaysSingleThreaded(target: *const std.Target) bool {
+ }
+ 
+ pub fn defaultSingleThreaded(target: *const std.Target) bool {
++    if (target.cpu.arch == .wasm32 and target.os.tag == .linux and target.abi == .musl) {
++        return false;
++    }
+     switch (target.cpu.arch) {
+         .wasm32, .wasm64 => return true,
+         else => {},
+     }

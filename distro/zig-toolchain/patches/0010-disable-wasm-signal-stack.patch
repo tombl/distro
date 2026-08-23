@@ -1,0 +1,12 @@
+diff --git a/std/Thread.zig b/std/Thread.zig
+index 0a28665..227928d 100644
+--- a/std/Thread.zig
++++ b/std/Thread.zig
+@@ -1723,6 +1723,7 @@ pub fn maybeAttachSignalStack() void {
+         // TODO: Windows vectored exception handlers always run on the main stack, but we could use
+         // some target-specific inline assembly to swap the stack pointer.
+         .windows => return,
++        .linux => if (target.cpu.arch.isWasm() and target.isMuslLibC()) return,
+         .wasi => return,
+         else => {},
+     }
