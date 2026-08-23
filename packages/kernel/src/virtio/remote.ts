@@ -14,13 +14,11 @@ import {
 import { publish_virtqueue_completion, type VirtqueueCompletion } from "./queue.ts";
 
 /*
- * The queue protocol deliberately has no request IDs. Transport operations
- * flow to the worker in MessagePort order. Completions flow back in the other
- * direction. Cross-direction queue coordination is the shared revocation array
- * used by reset, plus one acknowledgement per reset once the worker has
- * finished with guest memory. Copied descriptor payloads are transferred back,
- * then committed to guest memory by the main thread; a device with views
- * writes guest memory in place from the worker.
+ * The queue protocol deliberately has no request IDs or acknowledgements.
+ * Transport operations flow to the worker in MessagePort order. Completions
+ * flow back in the other direction. The only cross-direction queue coordination
+ * is the shared revocation array used by reset. Descriptor payloads are
+ * transferred back, then committed to guest memory by the main thread.
  */
 
 interface SerializedError {
@@ -91,7 +89,7 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
  * The endpoint may instead be a MessagePort. That form is useful when the
  * caller needs to initialize a worker with other data, or serve several
  * devices from one worker. Closing the device closes this protocol and its
- * driver; ownership of the Worker or MessagePort remains with the caller. The
+ * driver. Ownership of the Worker or MessagePort remains with the caller. The
  * caller must keep that endpoint alive until `device.closed` settles.
  *
  * @example
@@ -322,7 +320,7 @@ function connect_remote_device(
 
 /**
  * Serves `device` over `endpoint` for `workerDevice` to attach to a machine.
- * In a dedicated worker, the usual endpoint is `self`; a MessagePort is useful
+ * In a dedicated worker, the usual endpoint is `self`. A MessagePort is useful
  * when the worker needs other initialization or serves more than one device.
  *
  * @example
