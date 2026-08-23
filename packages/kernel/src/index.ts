@@ -18,10 +18,20 @@ import {
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
+export type { DeviceTreeNode } from "./devicetree.ts";
 export { bootConsole } from "./plugin.ts";
-export type { Device } from "./virtio/device.ts";
-export { blockDevice, type BlockStorage } from "./virtio/block.ts";
-export { type Endpoint, serveDevice, serveDeviceError, workerDevice } from "./virtio/remote.ts";
+export {
+  VirtioController,
+  type VirtioDevice,
+  type VirtioDeviceOptions,
+  type VirtioDriver,
+  type Virtqueue,
+  type VirtqueueBuffer,
+  type VirtqueueChain,
+  type VirtqueueHandler,
+} from "./virtio/core.ts";
+export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
+export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
 export {

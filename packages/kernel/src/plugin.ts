@@ -64,3 +64,12 @@ export function bootConsole(output: WritableStream<Uint8Array>): MachinePlugin {
     },
   };
 }
+
+/** Routes early kernel output to a writable stream before the machine boots. */
+export function bootConsole(output: WritableStream<Uint8Array>): MachinePlugin {
+  return {
+    configure(setup) {
+      void setup.bootConsole.pipeTo(output, { preventClose: true }).catch(() => {});
+    },
+  };
+}

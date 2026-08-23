@@ -27,8 +27,9 @@ if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
   throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk ...]");
 }
 
-const { blockDevice, bootConsole, bootMachine, consoleDevice, entropyDevice, vsockDevice } =
-  await import(pathToFileURL(linuxPath).href);
+const { blockDevice, bootConsole, bootMachine, consoleDevice, entropyDevice } = await import(
+  pathToFileURL(linuxPath).href
+);
 
 let resolveResult;
 const result = new Promise((resolve) => {
