@@ -251,7 +251,6 @@ async function runInstalledSystem(path, cpus) {
     plugins: [root, consoleDevice(input, outputStream())],
     initcpio,
   });
-  void machine.bootConsole.pipeTo(outputStream()).catch(reject);
   void machine.closed.then(
     () => reject(new Error("machine closed before scheduler handoff test completed")),
     reject,

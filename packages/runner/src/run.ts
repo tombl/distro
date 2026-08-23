@@ -155,12 +155,6 @@ const machine = await bootMachine({
   plugins: devices,
 });
 
-const bootConsole = machine.bootConsole
-  .pipeTo(Writable.toWeb(process.stderr) as WritableStream<Uint8Array>, {
-    preventClose: true,
-  })
-  .catch(() => {});
-
 try {
   await machine.closed;
 } catch (error) {
@@ -169,5 +163,4 @@ try {
 } finally {
   restoreTerminal();
   if (args.console) process.stdin.pause();
-  await bootConsole;
 }

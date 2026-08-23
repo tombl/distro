@@ -52,8 +52,6 @@ export function guest_test(
       resolveDns: resolve4,
     });
     const guests: TestGuest[] = [];
-    const consoles: Promise<void>[] = [];
-
     async function spawn(extra_devices: readonly VirtioDevice[] = []) {
       const agent = guestAgent();
       const attachment = network.attach(agent);
@@ -73,7 +71,6 @@ export function guest_test(
       });
       const guest: TestGuest = Object.assign(agent, { machine, network: attachment });
       guests.push(guest);
-      consoles.push(machine.bootConsole.pipeTo(console_output()));
       await guest.fs.writeFile("/tmp/network-test", network_test);
       await guest.fs.chmod("/tmp/network-test", 0o755);
       await guest.fs.writeFile("/tmp/user-trap", user_trap);
@@ -90,7 +87,6 @@ export function guest_test(
       network.close();
       for (const guest of guests) guest.machine.close();
       await Promise.all(guests.map((guest) => guest.machine.closed));
-      await Promise.all(consoles);
     }
   });
 }

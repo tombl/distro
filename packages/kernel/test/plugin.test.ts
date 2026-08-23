@@ -12,7 +12,6 @@ function machine_stub(): Machine {
   const closed = Promise.resolve();
   return {
     memory: {} as WebAssembly.Memory,
-    bootConsole: new ReadableStream(),
     closed,
     close() {},
     [Symbol.dispose]() {},
