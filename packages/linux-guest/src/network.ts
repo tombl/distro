@@ -200,8 +200,7 @@ export interface NetworkOptions {
    * it.
    *
    * In Node, implement it with `net.connect`. A browser has no raw TCP, so
-   * there it bridges to whatever transport you control — a WebSocket proxy,
-   * say.
+   * there it uses a transport you control, such as a WebSocket proxy.
    */
   connectTcp: (session: TcpSession) => void | PromiseLike<void>;
   /** Answers guest DNS A queries with the IPv4 addresses for `hostname`. */
@@ -261,7 +260,7 @@ export interface Network extends Disposable {
 export interface NetworkAttachment extends MachinePluginProvider {
   /** The guest's address on the network, e.g. `"192.0.2.2"`. */
   readonly address: string;
-  /** Connects to a port on this guest — `network.connect` with the address filled in. */
+  /** Connects to a port on this guest by calling `network.connect` with its address. */
   connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
   connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
 }
@@ -577,8 +576,8 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *
  * Guest traffic beyond the subnet goes through the adapters: outbound TCP
  * is proxied with `connectTcp`, DNS is answered with `resolveDns`, and UDP
- * is delivered to the gateway only. The network is disposable — closing it
- * (or ending an `await using` scope) tears down every connection.
+ * is delivered to the gateway only. Closing the network, or ending an
+ * `await using` scope, tears down every connection.
  *
  * @example Give guests internet access from Node
  * ```ts

@@ -44,12 +44,12 @@ does not display this early log.
 
 ## xterm.js events
 
-xterm.js is the mirror image:
+xterm.js provides the other side:
 
 - `terminal.write(data, callback)` renders plain text and VT escape
   sequences alike, as bytes or strings. Rendering is asynchronous; the
   callback runs once xterm has processed the data.
-- `terminal.onData((data) => ...)` reports input as **strings**: printable
+- `terminal.onData((data) => ...)` reports input as strings: printable
   characters, `\r` for Enter, escape sequences for arrow and function keys.
 - `terminal.cols` and `terminal.rows` hold its dimensions, and
   `terminal.onResize` fires when they change.
@@ -59,7 +59,7 @@ xterm.js is the mirror image:
 
 ## Bridge the two
 
-Four connections make the bridge. First, create an input pipe that you can
+Connect the streams in four steps. First, create an input pipe that you can
 enqueue into from anywhere:
 
 ```ts
@@ -140,7 +140,7 @@ failing shell from spinning. `guest.exec` merges the exported
 `TERM=xterm-256color` with its default environment, allowing full-screen
 programs to select the escape sequences supported by xterm.js.
 
-## Where next
+## Check the related APIs
 
 The [`@lowland/kernel` reference](/reference/kernel/) documents `consoleDevice`
 and the other devices; the [browser tutorial](/getting-started/) covers the

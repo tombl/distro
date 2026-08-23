@@ -43,8 +43,8 @@ Save this as `index.html`:
 </script>
 ```
 
-The import map points the package names at unpkg. The module then does three
-things:
+The import map points the package names at unpkg. Each call in the module has
+one job:
 
 1. `guestAgent()` prepares a bootable root filesystem and the process and file APIs.
 2. `bootMachine()` starts one virtual CPU and attaches the guest agent.
@@ -143,8 +143,8 @@ existing application, install `@lowland/kernel` and `@lowland/guest` from npm
 and keep the same JavaScript imports. Your development and production servers
 still need the two cross-origin-isolation headers.
 
-## Where next
+## Add more guest controls
 
-Read the [`@lowland/guest` reference](/reference/linux-guest/) for the complete
-process and filesystem API, or [attach an interactive terminal](/attach-a-terminal/)
-to the machine you just built.
+Use the [`@lowland/guest` reference](/reference/linux-guest/) to add process and
+filesystem operations, or [attach an interactive terminal](/attach-a-terminal/)
+to this machine.

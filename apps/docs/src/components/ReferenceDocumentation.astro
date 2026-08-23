@@ -276,7 +276,7 @@ const remainingSymbols = document.symbols.filter((symbol) => !groupedNames.has(s
 if (remainingSymbols.length > 0) {
   symbolsByGroup.push({
     title: "Other exports",
-    description: "Additional types and low-level primitives exported by this package.",
+    description: "Types and lower-level exports not grouped above.",
     symbols: remainingSymbols,
   });
 }
