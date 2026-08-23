@@ -1,0 +1,84 @@
+--- a/crates/core/flags/hiargs.rs
++++ b/crates/core/flags/hiargs.rs
+@@ -230,6 +230,15 @@
+         });
+
+         let mmap_choice = {
++            #[cfg(all(
++                target_arch = "wasm32",
++                target_os = "linux",
++                target_vendor = "unknown"
++            ))]
++            if matches!(low.mmap, MmapMode::AlwaysTryMmap) {
++                anyhow::bail!("--mmap is not supported on wasm32 Linux");
++            }
++
+             // SAFETY: Memory maps are difficult to impossible to encapsulate
+             // safely in a portable way that doesn't simultaneously negate some
+             // of the benefits of using memory maps. For ripgrep's use, we never
+--- a/crates/searcher/Cargo.toml
++++ b/crates/searcher/Cargo.toml
+@@ -21,7 +21,9 @@
+ grep-matcher = { version = "0.1.8", path = "../matcher" }
+ log = "0.4.20"
+ memchr = "2.6.3"
++
++[target.'cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))'.dependencies]
+ memmap = { package = "memmap2", version = "0.9.0" }
+
+ [dev-dependencies]
+ grep-regex = { version = "0.1.14", path = "../regex" }
+--- a/crates/searcher/src/searcher/mmap.rs
++++ b/crates/searcher/src/searcher/mmap.rs
+@@ -1,5 +1,11 @@
++#[cfg(not(all(
++    target_arch = "wasm32",
++    target_os = "linux",
++    target_vendor = "unknown"
++)))]
+ use std::{fs::File, path::Path};
+
++#[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+ use memmap::Mmap;
+
+ /// Controls the strategy used for determining when to use memory maps.
+@@ -58,5 +64,10 @@
++    #[cfg(not(all(
++        target_arch = "wasm32",
++        target_os = "linux",
++        target_vendor = "unknown"
++    )))]
+     /// Return a memory map if memory maps are enabled and if creating a
+     /// memory from the given file succeeded and if memory maps are believed
+     /// to be advantageous for performance.
+     ///
+     /// If this does attempt to open a memory map and it fails, then `None`
+@@ -116,6 +127,14 @@
+
+     /// Whether this strategy may employ memory maps or not.
+     pub(crate) fn is_enabled(&self) -> bool {
++        #[cfg(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_vendor = "unknown"
++        ))]
++        return false;
++
++        #[cfg(not(all(target_arch = "wasm32", target_os = "linux", target_vendor = "unknown")))]
+         match self.0 {
+             MmapChoiceImpl::Auto => true,
+             MmapChoiceImpl::Never => false,
+--- a/crates/searcher/src/searcher/mod.rs
++++ b/crates/searcher/src/searcher/mod.rs
+@@ -686,6 +686,11 @@
+         M: Matcher,
+         S: Sink,
+     {
++        #[cfg(not(all(
++            target_arch = "wasm32",
++            target_os = "linux",
++            target_vendor = "unknown"
++        )))]
+         if let Some(mmap) = self.config.mmap.open(file, path) {
+             log::trace!("{:?}: searching via memory map", path);
+             return self.search_slice(matcher, &mmap, write_to);
