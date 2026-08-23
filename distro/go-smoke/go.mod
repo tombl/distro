@@ -1,3 +1,3 @@
 module go-smoke
 
-go 1.28
+go 1.27
