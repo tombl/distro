@@ -69,6 +69,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rust-compat = callPackage ./rust-compat/package.nix { };
     rust-crate-patches = callPackage ./rust-crate-patches/package.nix { };
     rustPlatform = callPackage ./rust-platform/package.nix { };
+    rust-cli-matrix = callPackage ./rust-cli-matrix/package.nix { };
 
     # userland:
     apk-tools = callPackage ./apk-tools/package.nix {
