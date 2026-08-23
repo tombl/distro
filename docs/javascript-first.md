@@ -143,7 +143,6 @@ export interface BootMachineOptions {
 
 export interface Machine extends AsyncDisposable {
   readonly memory: WebAssembly.Memory;
-  readonly bootConsole: ReadableStream<Uint8Array>;
   readonly closed: Promise<void>;
   close(): void;
 }
@@ -180,6 +179,7 @@ export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
   readonly deviceTree: DeviceTreeBuilder;
+  readonly bootConsole: ReadableStream<Uint8Array>;
 }
 ```
 

@@ -52,3 +52,12 @@ export interface MachinePlugin {
   /** Runs after boot; `bootMachine()` does not resolve until this hook does. */
   booted?(machine: Machine): void | Promise<void>;
 }
+
+/** Routes early kernel output to a writable stream before the machine boots. */
+export function bootConsole(output: WritableStream<Uint8Array>): MachinePlugin {
+  return {
+    configure(setup) {
+      void setup.bootConsole.pipeTo(output, { preventClose: true }).catch(() => {});
+    },
+  };
+}

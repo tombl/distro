@@ -18,6 +18,7 @@ import {
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
 export type { DeviceTreeNode } from "./devicetree.ts";
+export { bootConsole } from "./plugin.ts";
 export {
   VirtioController,
   type VirtioDevice,
