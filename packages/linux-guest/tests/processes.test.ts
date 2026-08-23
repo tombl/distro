@@ -131,6 +131,16 @@ guest_test("processes", async (t, fixture) => {
       assert.equal(new TextDecoder().decode(await output), `custom-bin:${directory}`);
     });
 
+    await t.test("resolves commands from the standard system PATH", async () => {
+      const child = await guest.exec(["httpd", "-f", "-p", "127.0.0.1:18081", "-h", "/tmp"]);
+      await child.kill("SIGTERM");
+      assert.deepEqual(await child.status, {
+        success: false,
+        code: 0,
+        signal: "SIGTERM",
+      });
+    });
+
     await t.test("aborts processes", async () => {
       const abort_controller = new AbortController();
       const aborted = await guest.exec(["sleep", "30"], {
