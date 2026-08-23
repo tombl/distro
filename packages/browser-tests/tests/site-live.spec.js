@@ -97,7 +97,9 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
     dialogs.push(dialog.message());
     await dialog.dismiss();
   });
-  await page.goto("/?webgl=0&cmdline=lowland.test%3Da%2Bb");
+  await page.goto("/?webgl=0&handoff=slow&cmdline=lowland.test%3Da%2Bb");
+  await expect(page.locator("[data-terminal-placeholder]")).toBeVisible();
+  await expect(page.locator("[data-terminal-placeholder]")).toHaveCount(0);
 
   const { input, terminal } = await waitForGuestReady(page);
   await expect(terminal).not.toContainText("install-lowland");

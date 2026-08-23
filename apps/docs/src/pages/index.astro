@@ -10,40 +10,49 @@ import Docs from "../layouts/Docs.astro";
 >
   <article class="docs-home">
     <p class="eyebrow">Lowland documentation</p>
-    <h1>Run Linux from JavaScript.</h1>
+    <h1>Linux is a JavaScript library.</h1>
     <p class="lede">
-      Lowland compiles Linux for wasm32. It boots a complete system in a browser or Node.js. Use
-      the guest API to run processes, move files, attach devices, and connect machines.
+      Boot a complete wasm32 Linux system in a browser or Node.js. Start with the guest API, or
+      assemble a machine from kernel and virtio primitives.
     </p>
 
     <section class="first-step">
       <div>
-        <h2>Start with a working machine</h2>
+        <p class="step-number">01 · Tutorial</p>
+        <h2>Boot your first machine</h2>
         <p>
-          The tutorial starts with an empty page. It adds the required headers, boots a guest, and
-          runs a command.
+          Start with one HTML file and no build tools. Add the required headers, boot Linux, and run
+          <code>uname</code> from JavaScript.
         </p>
         <a class="strong-link" href="/getting-started/">Run Linux in your browser →</a>
       </div>
-      <pre><code>npm install @lowland/guest</code></pre>
+      <pre><code>{`const guest = guestAgent();
+await bootMachine({
+  cpus: 1,
+  plugins: [guest],
+});`}</code></pre>
     </section>
 
-    <section class="next-steps">
-      <h2>Go further</h2>
-      <ul>
-        <li>
-          <a href="/attach-a-terminal/">Attach a terminal</a>
-          <span>Connect a guest shell to xterm.js.</span>
-        </li>
-        <li>
-          <a href="/reference/linux-guest/"><code>@lowland/guest</code></a>
-          <span>Run processes, transfer files, and manage a prepared system.</span>
-        </li>
-        <li>
-          <a href="/reference/kernel/"><code>@lowland/kernel</code></a>
-          <span>Build a machine from memory, CPUs, and virtio devices.</span>
-        </li>
-      </ul>
+    <section class="paths" aria-labelledby="choose-a-path">
+      <p class="step-number">02 · Choose a path</p>
+      <h2 id="choose-a-path">Work at the level you need</h2>
+      <div class="path-list">
+        <article>
+          <h3>Control a Linux guest</h3>
+          <p>Run processes, read and write files, mount storage, and connect networks.</p>
+          <ul>
+            <li><a href="/reference/linux-guest/"><code>@lowland/guest</code> reference →</a></li>
+            <li><a href="/attach-a-terminal/">Attach an interactive terminal →</a></li>
+          </ul>
+        </article>
+        <article>
+          <h3>Assemble a machine</h3>
+          <p>Configure CPUs and memory, attach virtio devices, and control the boot lifecycle.</p>
+          <ul>
+            <li><a href="/reference/kernel/"><code>@lowland/kernel</code> reference →</a></li>
+          </ul>
+        </article>
+      </div>
     </section>
   </article>
 
@@ -59,10 +68,10 @@ import Docs from "../layouts/Docs.astro";
   }
 
   .docs-home h1 {
-    max-width: 18ch;
+    max-width: 16ch;
     margin-block-start: 0;
-    font-size: clamp(2.25rem, 5vw, 3.75rem);
-    letter-spacing: -0.04em;
+    font-size: clamp(2.15rem, 5vw, 3.25rem);
+    letter-spacing: -0.035em;
   }
 
   .lede {
@@ -71,7 +80,7 @@ import Docs from "../layouts/Docs.astro";
   }
 
   .first-step {
-    margin-block-start: 3.5rem;
+    margin-block-start: 2.75rem;
     padding-block: 1.5rem;
     border-block: 1px solid var(--hairline);
     display: grid;
@@ -79,8 +88,16 @@ import Docs from "../layouts/Docs.astro";
   }
 
   .first-step h2,
-  .next-steps h2 {
+  .paths h2 {
     margin-block-start: 0;
+  }
+
+  .step-number {
+    margin-block-end: 0.5rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   .first-step pre {
@@ -97,40 +114,83 @@ import Docs from "../layouts/Docs.astro";
     font-weight: 600;
   }
 
-  .next-steps {
-    margin-block-start: 3rem;
+  .paths {
+    margin-block-start: 2.75rem;
   }
 
-  .next-steps ul {
-    list-style: none;
-    padding: 0;
+  .path-list {
+    margin-block-start: 1.25rem;
     border-block-start: 1px solid var(--hairline);
   }
 
-  .next-steps li {
-    margin: 0;
-    padding-block: 0.7rem;
+  .path-list article {
+    padding-block: 1.25rem;
     border-block-end: 1px solid var(--hairline);
     display: grid;
-    grid-template-columns: minmax(10rem, 0.7fr) 1fr;
-    gap: 1rem;
-  }
+    grid-template-columns: minmax(10rem, 0.65fr) 1fr;
+    column-gap: 1.5rem;
 
-  .next-steps li > :last-child {
-    color: var(--muted);
-  }
-
-  @media (min-width: 42rem) {
-    .first-step {
-      grid-template-columns: 1fr auto;
-      align-items: start;
+    > h3 {
+      grid-row: 1 / span 2;
+      margin: 0;
     }
+
+    > p {
+      margin-block-end: 0.65rem;
+    }
+  }
+
+  .path-list ul {
+    list-style: none;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    font-size: 0.875rem;
   }
 
   @media (max-width: 32rem) {
-    .next-steps li {
+    .path-list article {
       grid-template-columns: 1fr;
-      gap: 0.2rem;
+
+      > h3 {
+        grid-row: auto;
+        margin-block-end: 0.4rem;
+      }
     }
   }
+
+  /* Put the working artifact before the explanation: the code is the shortest
+     proof of what Lowland does. */
+  .docs-home h1 {
+    max-width: none;
+    font-size: 2.45rem;
+  }
+
+  .lede {
+    font-size: 1rem;
+  }
+
+  .first-step {
+    display: flex;
+    flex-direction: column;
+    margin-block-start: 2rem;
+  }
+
+  .first-step pre {
+    order: -1;
+    padding: 1.35rem;
+    border-color: var(--code-foreground);
+    color: var(--code-background);
+    background: var(--code-foreground);
+  }
+
+  .paths {
+    margin-block-start: 2rem;
+  }
+
+  .path-list article {
+    padding-block: 0.9rem;
+  }
+
 </style>
