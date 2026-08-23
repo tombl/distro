@@ -9,8 +9,6 @@
     "check": "astro check && tsc --noEmit -p tsconfig.workers.json && tsc --noEmit -p tsconfig.service-worker.json"
   },
   "dependencies": {
-    "@fontsource/adwaita-mono": "^5.3.0",
-    "@fontsource/adwaita-sans": "^5.3.0",
     "@lowland/bridge-site": "workspace:*",
     "@lowland/guest": "workspace:*",
     "@lowland/kernel": "workspace:*",

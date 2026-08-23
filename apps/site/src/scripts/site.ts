@@ -107,12 +107,14 @@ const term = new Terminal({
 });
 const termFit = new FitAddon();
 
-const disclosures = Array.from(document.querySelectorAll("[data-persist-disclosure]")).filter(
-  (element) => element instanceof HTMLDetailsElement,
+const disclosures = Array.from(
+  document.querySelectorAll<HTMLDetailsElement>("[data-persist-disclosure]"),
 );
 const storedDisclosure = localStorage.getItem("detailsOpen");
 if (storedDisclosure !== null) {
   for (const disclosure of disclosures) disclosure.open = storedDisclosure === "true";
+} else if (matchMedia("(max-width: 47.99rem)").matches) {
+  for (const disclosure of disclosures) disclosure.open = false;
 }
 let synchronizingDisclosures = false;
 for (const disclosure of disclosures) {
@@ -126,6 +128,7 @@ for (const disclosure of disclosures) {
   });
 }
 term.loadAddon(termFit);
+terminalElement.style.visibility = "hidden";
 term.open(terminalElement);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   term.options.theme = terminalTheme();
@@ -133,7 +136,6 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 termFit.fit();
 addEventListener("resize", () => {
   termFit.fit();
-  mirrorPlaceholderMetrics();
 });
 
 if (parameters.webgl !== "0") {
@@ -143,101 +145,16 @@ if (parameters.webgl !== "0") {
     console.warn(error);
   }
 }
-// The placeholder and the terminal must share the same text metrics so the
-// swap is invisible. xterm renders into fixed-width cells whose geometry is
-// authoritative; mirror the measured row height and cell width back into the
-// CSS custom properties the placeholder styles read. The cell width in turn
-// determines the placeholder's letter spacing: xterm pads each glyph to its
-// cell, so the placeholder must add the same spacing to advance identically.
-const machineElement = terminalElement.closest<HTMLElement>(".machine");
-
-function measureCellWidth(): number | undefined {
-  if (!terminalElement) return undefined;
-  const screen = terminalElement.querySelector<HTMLElement>(".xterm-screen");
-  if (screen && term.cols > 0) {
-    const width = screen.getBoundingClientRect().width / term.cols;
-    if (width > 0) return width;
-  }
-  // Fall back to xterm's own cell dimensions when the screen isn't painted.
-  const internal = (
-    term as unknown as {
-      _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number } } } } };
-    }
-  )._core?._renderService?.dimensions?.css?.cell?.width;
-  return internal && internal > 0 ? internal : undefined;
-}
-
-function measureNaturalAdvance(): number | undefined {
-  if (!placeholderElement) return undefined;
-  const probe = document.createElement("span");
-  probe.textContent = "M".repeat(20);
-  probe.style.cssText = [
-    "position: absolute",
-    "visibility: hidden",
-    "white-space: pre",
-    `font-family: var(--font-mono, ui-monospace, monospace)`,
-    `font-size: ${term.options.fontSize}px`,
-    `line-height: ${term.options.lineHeight}`,
-    "letter-spacing: 0",
-  ].join(";");
-  placeholderElement.append(probe);
-  const width = probe.getBoundingClientRect().width / 20;
-  probe.remove();
-  return width;
-}
-
-function mirrorPlaceholderMetrics() {
-  if (!machineElement || !terminalElement) return;
-  const screen = terminalElement.querySelector<HTMLElement>(".xterm-screen");
-  if (screen && term.rows > 0) {
-    const lineHeight = screen.getBoundingClientRect().height / term.rows;
-    machineElement.style.setProperty("--terminal-line-height", `${lineHeight}px`);
-  }
-  machineElement.style.setProperty("--terminal-font-size", `${term.options.fontSize}px`);
-  const cellWidth = measureCellWidth();
-  const advance = measureNaturalAdvance();
-  if (cellWidth !== undefined && advance !== undefined) {
-    const spacing = cellWidth - advance;
-    machineElement.style.setProperty("--terminal-letter-spacing", `${spacing}px`);
-  }
-}
-// Measure after the terminal has actually painted (WebGL needs a frame), so
-// the mirrored geometry reflects the real cell size rather than a pre-layout
-// guess.
-requestAnimationFrame(() => mirrorPlaceholderMetrics());
-
-// The placeholder is a stand-in for a server-rendered terminal: the `<pre>`
-// shows the message when JavaScript cannot run. The handover happens at the
-// first frame of JavaScript — xterm mounts and is given the placeholder's
-// exact text, then the `<pre>` is removed only once that write has actually
-// rendered (so the exposed terminal already shows identical cells). It is a
-// hydration stand-in, not a loading screen: the terminal never starts empty,
-// and the boot log streams in after the swap.
-let terminalReady = false;
-function swapToTerminal() {
-  if (terminalReady) return;
-  terminalReady = true;
-  const text = placeholderElement?.textContent ?? "";
-  if (text) {
-    term.write(text, () => {
-      // Let the terminal paint the placeholder text before exposing it, and
-      // re-measure its geometry now that it has actually rendered.
-      requestAnimationFrame(() => {
-        mirrorPlaceholderMetrics();
-        placeholderElement?.remove();
-        termFit.fit();
-      });
-    });
-  } else {
+// Keep the no-JavaScript placeholder visible until xterm has painted the same
+// text. Visibility avoids an empty terminal frame without coupling the
+// placeholder to xterm's private cell measurements.
+term.write(placeholderElement?.textContent ?? "", () => {
+  requestAnimationFrame(() => {
     placeholderElement?.remove();
-  }
-}
-
-// Normal flow: hydrate the placeholder into the terminal at the first frame
-// of JavaScript — xterm is given the placeholder's exact text and the `<pre>`
-// is removed once that text has rendered, as if the terminal had been
-// server-rendered and then hydrated. The boot log streams in after.
-swapToTerminal();
+    terminalElement.style.removeProperty("visibility");
+    termFit.fit();
+  });
+});
 
 if (!window.crossOriginIsolated) throw new Error("This page is not cross-origin isolated.");
 
@@ -436,8 +353,7 @@ const networkAttachment = network.attach(guest);
 const args: string[] = [];
 if (bootMode === "live") args.push("lowland.root.overlay=tmpfs");
 if (installDisk) args.push("lowland.install=1");
-const extraArgs = cmdline.replace(/\+/g, " ");
-if (extraArgs) args.push(extraArgs);
+if (cmdline) args.push(cmdline);
 
 const plugins: MachinePluginInput[] = [guest, ttyConsole];
 if (installDisk) plugins.push(installDisk);
