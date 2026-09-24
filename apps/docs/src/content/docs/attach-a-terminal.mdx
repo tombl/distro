@@ -1,0 +1,147 @@
+---
+title: Attach a terminal
+description: Wire an interactive shell in a guest to xterm.js.
+section: howtos
+order: 5
+---
+
+# Attach a terminal
+
+This guide connects a guest console to xterm.js, using the same arrangement as
+the terminal on the Lowland homepage. The bridge has two directions:
+
+```text
+keyboard → xterm.js → TextEncoder → /dev/hvc0
+screen   ← xterm.js ← guest bytes ← /dev/hvc0
+```
+
+The guest side speaks byte streams. xterm.js renders bytes but reports input
+as strings. The rest of the guide adapts those interfaces and keeps terminal
+dimensions in sync.
+
+## Guest console streams
+
+`consoleDevice(input, output)` attaches a console to the machine, visible in
+the guest as `/dev/hvc0`:
+
+- `input` is a `ReadableStream<Uint8Array>`. It carries the bytes a keyboard would
+  send. Everything you enqueue arrives at the tty's input queue.
+- `output` is a `WritableStream<Uint8Array>`. It carries the bytes a terminal would
+  render. Everything a program writes to the console comes out here.
+
+Either may be `null`. `consoleDevice(null, output)` is a read-only console,
+such as a boot log.
+
+The guest kernel's line discipline handles echo, backspace editing, and Ctrl+C
+as SIGINT. The page only moves bytes. The tty defaults to 80×24.
+`device.resize(columns, rows)` changes it and sends `SIGWINCH` to the foreground
+process so full-screen programs reflow.
+
+Kernel output from before the console device initializes is a debugging aid.
+Add the optional `bootConsole(output)` plugin when diagnosing early kernel
+bring-up. The Lowland homepage deliberately begins with `/dev/hvc0` output and
+does not display this early log.
+
+## xterm.js events
+
+xterm.js provides the other side:
+
+- `terminal.write(data, callback)` renders plain text and VT escape
+  sequences alike, as bytes or strings. Rendering is asynchronous. The
+  callback runs once xterm has processed the data.
+- `terminal.onData((data) => ...)` reports input as strings: printable
+  characters, `\r` for Enter, escape sequences for arrow and function keys.
+- `terminal.cols` and `terminal.rows` hold its dimensions, and
+  `terminal.onResize` fires when they change.
+- `convertEol: true` translates the `\n` line endings programs emit into
+  the `\r\n` the renderer expects. On input, Enter already arrives as `\r`,
+  which is what the tty wants.
+
+## Bridge the two
+
+Connect the streams in four steps. First, create an input pipe that you can
+enqueue into from anywhere:
+
+```ts
+const encoder = new TextEncoder();
+let consoleInput: ReadableStreamDefaultController<Uint8Array>;
+const input = new ReadableStream<Uint8Array>({
+  start(controller) {
+    consoleInput = controller;
+  },
+});
+```
+
+Then the output pipe. Resolve each write only when xterm calls back, so stream
+backpressure reaches the guest rather than accumulating output in xterm's
+internal buffer. This is a function because each producer locks its writable
+stream and therefore needs its own:
+
+```ts
+const terminal = new Terminal({ convertEol: true });
+function terminalOutput() {
+  return new WritableStream<Uint8Array>({
+    write(data) {
+      return new Promise<void>((resolve) => terminal.write(data, resolve));
+    },
+  });
+}
+```
+
+Boot the guest with the device, keeping a handle on it for resizing:
+
+```ts
+const tty = consoleDevice(input, terminalOutput());
+const guest = guestAgent();
+const machine = await bootMachine({
+  cpus: navigator.hardwareConcurrency,
+  plugins: [guest, tty],
+});
+```
+
+Finally, attach the emulator and translate its two event streams:
+keystrokes become bytes for the tty, and the xterm's size becomes the tty's
+size:
+
+```ts
+terminal.open(document.querySelector("#terminal")!);
+
+terminal.onData((data) => consoleInput.enqueue(encoder.encode(data)));
+
+function resize() {
+  tty.resize(terminal.cols, terminal.rows);
+}
+terminal.onResize(resize);
+resize();
+```
+
+## Start a shell on the console
+
+The guest agent is init and starts nothing on the console, so the
+interactive shell is a process you spawn, bound to the console tty:
+
+```ts
+for (;;) {
+  const shell = await guest.exec([
+    "sh",
+    "-c",
+    "clear >/dev/hvc0; exec setsid cttyhack sh </dev/hvc0 >/dev/hvc0 2>&1",
+  ], { env: { TERM: "xterm-256color" } });
+  await shell.status;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+```
+
+The redirects wire its stdio to `/dev/hvc0`. `setsid cttyhack` gives it a
+controlling terminal. Without one there is no job control, so Ctrl+C would
+kill nothing. The loop respawns the shell when it exits, so typing `exit`
+gets you a fresh shell rather than a dead console. The short delay keeps a
+failing shell from spinning. `guest.exec` merges the exported
+`TERM=xterm-256color` with its default environment, allowing full-screen
+programs to select the escape sequences supported by xterm.js.
+
+## Check the related APIs
+
+The [`@lowland/kernel` reference](/reference/kernel/) documents `consoleDevice`
+and the other devices. The [browser tutorial](/getting-started/) covers the
+higher-level guest API used here.

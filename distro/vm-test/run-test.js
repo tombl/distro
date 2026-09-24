@@ -27,7 +27,7 @@ if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
   throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk ...]");
 }
 
-const { blockDevice, bootMachine, consoleDevice, entropyDevice } = await import(
+const { blockDevice, bootConsole, bootMachine, consoleDevice, entropyDevice } = await import(
   pathToFileURL(linuxPath).href
 );
 
@@ -134,6 +134,7 @@ function consoleOutput({ failWhenClosed }) {
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
 const devices = [
+  bootConsole(consoleOutput({ failWhenClosed: false })),
   consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
   entropyDevice(),
 ];
@@ -178,9 +179,6 @@ machine = await bootMachine({
 
 if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
-void machine?.bootConsole
-  .pipeTo(consoleOutput({ failWhenClosed: false }), { preventClose: true })
-  .catch((error) => finish({ passed: false, reason: `boot console failed: ${error}` }));
 void machine?.closed.catch((error) => {
   finish({ passed: false, reason: `machine failed: ${error}` });
 });

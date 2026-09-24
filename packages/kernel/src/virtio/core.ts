@@ -277,7 +277,7 @@ type RaiseConfigInterrupt = () => void;
 export interface VirtioDeviceOptions {
   /** The virtio device ID: 1 is net, 3 is console, 4 is entropy. */
   deviceId: number;
-  /** Device-specific feature bits; transport features are added automatically. */
+  /** Device-specific feature bits. Transport features are added automatically. */
   features?: bigint;
   /** The device's configuration space, read by the guest driver. */
   config?: Uint8Array;
@@ -290,7 +290,7 @@ export interface VirtioDeviceOptions {
  * therefore never await guest activity - more chains, or another kick -
  * because kicks only reach a settled handler. Host-side data that awaits
  * guest buffers belongs in device state (JS-side queues, matched up as
- * kicks arrive, as in `console.ts`); awaiting host-side I/O within a call
+ * kicks arrive, as in `console.ts`). Awaiting host-side I/O within a call
  * is fine. Errors thrown or rejected here are reported to the machine's
  * error handler.
  */
@@ -378,7 +378,7 @@ export class VirtioController {
   readonly updateConfig: (config: Uint8Array) => void;
   /** Idempotently starts closing the device. */
   readonly close: () => void;
-  /** Merges extra methods into the public device object; callable once. */
+  /** Merges extra methods into the public device object. Call this once. */
   readonly expose: <API extends object>(api: API) => VirtioDevice & API;
 
   /** Creates a virtio device backed by `driver`. */

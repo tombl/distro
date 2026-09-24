@@ -1,0 +1,150 @@
+---
+title: Run Linux in your browser
+description: Boot a Linux machine in a plain web page and control it from JavaScript.
+section: tutorials
+order: 1
+---
+
+# Run Linux in your browser
+
+This tutorial starts with an empty folder and ends with Linux printing its
+kernel version into a web page. You will create two text files and serve them.
+There is no bundler, build step, or application server.
+
+You need a modern browser and a static file server that can add two response
+headers. The example uses `npx serve`, but the files themselves are ordinary
+HTML and JSON. Any equivalent server works.
+
+## Create the page
+
+Save this as `index.html`:
+
+```html
+<!doctype html>
+<title>linux</title>
+<script type="importmap">
+  {
+    "imports": {
+      "@lowland/bytes": "https://unpkg.com/@lowland/kernel/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "https://unpkg.com/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "https://unpkg.com/@lowland/kernel/dist/plugin.js",
+      "@lowland/guest": "https://unpkg.com/@lowland/guest/dist/index.js"
+    }
+  }
+</script>
+<script type="module">
+  import { bootMachine } from "@lowland/kernel";
+  import { guestAgent } from "@lowland/guest";
+
+  const guest = guestAgent();
+  const machine = await bootMachine({ cpus: 1, plugins: [guest] });
+  const process = await guest.exec(["uname", "-a"]);
+  document.body.textContent = await new Response(process.stdout).text();
+</script>
+```
+
+The import map points the package names at unpkg. Each call in the module has
+one job:
+
+1. `guestAgent()` prepares a bootable root filesystem and the process and file APIs.
+2. `bootMachine()` starts one virtual CPU and attaches the guest agent.
+3. `guest.exec()` runs `uname` inside Linux and reads its output as a web stream.
+
+## Serve the page
+
+Save this next to `index.html` as `serve.json`:
+
+```json title="serve.json"
+{
+  "headers": [
+    {
+      "source": "**",
+      "headers": [
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Cross-Origin-Embedder-Policy", "value": "require-corp" }
+      ]
+    }
+  ]
+}
+```
+
+From that folder, run:
+
+```sh
+npx serve .
+```
+
+Open the local address it prints. After a few seconds, the page is replaced by
+the output of `uname -a`. That output came from the Linux machine running in
+the page.
+
+## Why those headers?
+
+Each virtual CPU is a Web Worker, and the CPUs share the machine's WebAssembly
+memory. Browsers make shared memory available only to a
+[cross-origin-isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated)
+page. These are the required response headers:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+If the example stays blank, evaluate `crossOriginIsolated` in the browser
+console. It must be `true`. If it is `false`, inspect the document response in
+the network panel and check both header names and values.
+
+## Run another program
+
+`guest.exec` takes an argv array. There is no shell in between, so nothing
+quotes, splits, or expands. The first element is looked up on the guest's
+`PATH`. When you want shell behaviour, run a shell explicitly:
+
+```js
+const process = await guest.exec(["sh", "-c", "echo hello; date"]);
+console.log(await new Response(process.stdout).text());
+console.log("exit code:", (await process.status).code);
+```
+
+A process exposes `stdout` and `stderr` as web `ReadableStream` values, plus a
+`status` promise for its exit. `new Response(...)` is the shortest way to
+collect a small stream. Read long-running output incrementally instead.
+
+## Work with files
+
+The packaged system directories are read-only. Writable space is mounted at
+`/tmp` and `/workspace`, in memory and private to this machine. `guest.fs`
+works with that filesystem directly from JavaScript:
+
+```js
+await guest.fs.writeTextFile("/tmp/hello.txt", "hello from JavaScript\n");
+
+const cat = await guest.exec(["cat", "/tmp/hello.txt"]);
+console.log(await new Response(cat.stdout).text());
+```
+
+Files written from JavaScript are immediately visible to guest programs, and
+the inverse is also true. The [`FileSystem` reference](/reference/linux-guest/#FileSystem)
+lists the complete API.
+
+## Shut down
+
+```js
+machine.close();
+```
+
+Closing terminates the machine's processes and releases its workers and
+memory. Keep it open for as long as anything inside it should stay running.
+
+## Using a bundler
+
+The example above uses an import map so every dependency is visible. In an
+existing application, install `@lowland/kernel` and `@lowland/guest` from npm
+and keep the same JavaScript imports. Your development and production servers
+still need the two cross-origin-isolation headers.
+
+## Add more guest controls
+
+Use the [`@lowland/guest` reference](/reference/linux-guest/) to add process and
+filesystem operations, or [attach an interactive terminal](/attach-a-terminal/)
+to this machine.

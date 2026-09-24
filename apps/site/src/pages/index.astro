@@ -1,0 +1,41 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="lowland: Linux in your browser"
+  description="Linux compiled for wasm32, with Web Workers as virtual CPUs and browser-provided virtio devices."
+>
+  <div slot="middle" class="root-header-info">
+    <details open class="header-disclosure" data-persist-disclosure>
+      <summary>how it works</summary>
+      <div class="header-copy plain-copy">
+        <p>
+          Lowland runs a Linux kernel compiled for wasm32. Each virtual CPU runs in a Web Worker.
+          JavaScript provides shared memory and virtio devices. No CPU emulator is involved.
+        </p>
+        <p>
+          The terminal is connected to <code>/dev/hvc0</code> in the guest. Use the shell to inspect
+          the system, run programs, or install packages with <code>apk</code>.
+        </p>
+        <p class="header-links">
+          <a href="https://docs.low.land/getting-started/">browser tutorial →</a>
+          <a href="https://github.com/tombl/linux">kernel source →</a>
+        </p>
+      </div>
+    </details>
+
+  </div>
+
+  <main class="root-stage">
+    <h1 class="visually-hidden">Lowland Linux terminal</h1>
+    <section class="machine" id="terminal" aria-label="Interactive Linux terminal">
+      <pre class="terminal-placeholder" data-terminal-placeholder aria-live="polite">Loading Lowland Linux...
+Fetching the kernel and root filesystem.
+
+</pre>
+      <div class="terminal" data-terminal aria-busy="true"></div>
+    </section>
+  </main>
+  <script src="../scripts/site.ts"></script>
+</Base>

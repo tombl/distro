@@ -1,28 +1,26 @@
 // SPDX-License-Identifier: MIT
 
-const types = {
+const serviceWorker = self as unknown as ServiceWorkerGlobalScope;
+
+const types: Record<string, string> = {
   css: "text/css; charset=utf-8",
+  erofs: "application/octet-stream",
   html: "text/html; charset=utf-8",
   js: "text/javascript; charset=utf-8",
   json: "application/json",
   mjs: "text/javascript; charset=utf-8",
+  svg: "image/svg+xml",
   wasm: "application/wasm",
+  woff: "font/woff",
+  woff2: "font/woff2",
 };
 
-// Existing Firefox installations may still start this worker after the page
-// becomes live-only. Retire their registration during the normal update cycle;
-// see https://bugzilla.mozilla.org/show_bug.cgi?id=1613912.
-if (navigator.userAgent.includes("Firefox/")) {
-  self.addEventListener("install", () => self.skipWaiting());
-  self.addEventListener("activate", (event) => event.waitUntil(self.registration.unregister()));
-}
-
-function contentType(name) {
+function contentType(name: string): string {
   const extension = name.split(".").at(-1)?.toLowerCase();
-  return types[extension] ?? "application/octet-stream";
+  return (extension === undefined ? undefined : types[extension]) ?? "application/octet-stream";
 }
 
-async function bootFile(pathname) {
+async function bootFile(pathname: string): Promise<File | undefined> {
   const path = pathname.endsWith("/") ? `${pathname}index.html` : pathname;
   const parts = path.slice(1).split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return undefined;
@@ -32,23 +30,23 @@ async function bootFile(pathname) {
   for (const part of parts.slice(0, -1)) {
     directory = await directory.getDirectoryHandle(part);
   }
-  return await (await directory.getFileHandle(parts.at(-1))).getFile();
+  return await (await directory.getFileHandle(parts.at(-1)!)).getFile();
 }
 
-async function liveRequest(event, url) {
+async function liveRequest(event: FetchEvent, url: URL): Promise<boolean> {
   if (url.searchParams.get("live") === "1") return true;
   if (!event.clientId) return false;
-  const client = await self.clients.get(event.clientId);
+  const client = await serviceWorker.clients.get(event.clientId);
   return client !== undefined && new URL(client.url).searchParams.get("live") === "1";
 }
 
-async function serve(event) {
+async function serve(event: FetchEvent): Promise<Response> {
   const { request } = event;
   const url = new URL(request.url);
   if (
-    url.origin !== location.origin ||
+    url.origin !== serviceWorker.location.origin ||
     !["GET", "HEAD"].includes(request.method) ||
-    url.pathname === "/service-worker.js" ||
+    url.pathname === serviceWorker.location.pathname ||
     (await liveRequest(event, url))
   ) {
     return fetch(request);
@@ -70,4 +68,4 @@ async function serve(event) {
   }
 }
 
-self.addEventListener("fetch", (event) => event.respondWith(serve(event)));
+serviceWorker.addEventListener("fetch", (event) => event.respondWith(serve(event)));

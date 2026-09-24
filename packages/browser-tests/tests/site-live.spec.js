@@ -1,9 +1,16 @@
 import { expect, test } from "@playwright/test";
 
-async function waitForGuest(page) {
+async function waitForGuestReady(page) {
+  await expect(page.locator("[data-terminal]")).toHaveAttribute("aria-busy", "false", {
+    timeout: 30_000,
+  });
   const terminal = page.locator(".xterm-rows");
-  await expect(terminal).toContainText("root@lowland", { timeout: 30_000 });
   const input = page.locator(".xterm-helper-textarea");
+  return { input, terminal };
+}
+
+async function waitForGuest(page) {
+  const { input, terminal } = await waitForGuestReady(page);
   await input.pressSequentially(
     "until grep -q ' /boot virtiofs ' /proc/mounts; do sleep 1; done; printf 'boot-%s\\n' mounted",
   );
@@ -12,7 +19,11 @@ async function waitForGuest(page) {
   return { input, terminal };
 }
 
-test("boots and formats a blank persistent disk into the canonical system", async ({ page }) => {
+test("boots and formats a blank persistent disk into the canonical system", async ({
+  browserName,
+  page,
+}) => {
+  test.skip(browserName === "firefox", "persistent installation is not supported in Firefox");
   test.setTimeout(300_000);
   const rootfsRequests = [];
   page.on("pageerror", (error) => console.log(`browser error: ${error.stack ?? error}`));
@@ -86,15 +97,17 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
     dialogs.push(dialog.message());
     await dialog.dismiss();
   });
-  await page.goto("/?webgl=0");
+  await page.goto("/?webgl=0&handoff=slow&cmdline=lowland.test%3Da%2Bb");
+  await expect(page.locator("[data-terminal-placeholder]")).toBeVisible();
+  await expect(page.locator("[data-terminal-placeholder]")).toHaveCount(0);
+  await expect(page.locator("[data-terminal]")).toBeVisible();
+  await expect(page.locator(".xterm-rows")).toContainText("Loading Lowland Linux");
 
-  const terminal = page.locator(".xterm-rows");
-  await expect(terminal).toContainText("root@lowland", { timeout: 30_000 });
+  const { input, terminal } = await waitForGuestReady(page);
   await expect(terminal).not.toContainText("install-lowland");
 
-  const input = page.locator(".xterm-helper-textarea");
   await input.pressSequentially(
-    "! grep -qw 'lowland.install=1' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
+    "! grep -qw 'lowland.install=1' /proc/cmdline && grep -qw 'lowland.test=a+b' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
   );
   await input.press("Enter");
   await expect(terminal).toContainText("live-only-ready");

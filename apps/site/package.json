@@ -1,0 +1,26 @@
+{
+  "name": "@lowland/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.service-worker.json && astro build",
+    "dev": "tsc -p tsconfig.service-worker.json && astro dev",
+    "check": "astro check && tsc --noEmit -p tsconfig.workers.json && tsc --noEmit -p tsconfig.service-worker.json"
+  },
+  "dependencies": {
+    "@lowland/bridge-site": "workspace:*",
+    "@lowland/guest": "workspace:*",
+    "@lowland/kernel": "workspace:*",
+    "@lowland/web-ui": "workspace:*",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@types/node": "^26.1.1",
+    "astro": "^7.1.1",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@lowland/web-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./SiteHeader.astro": "./src/SiteHeader.astro",
+    "./base.css": "./src/base.css"
+  }
+}

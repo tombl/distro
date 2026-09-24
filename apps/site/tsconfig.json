@@ -1,0 +1,7 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"]
+  },
+  "exclude": ["src/scripts/opfs-disk-worker.ts", "src/scripts/service-worker.ts"]
+}
