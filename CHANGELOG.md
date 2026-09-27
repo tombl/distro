@@ -38,3 +38,7 @@
   process and virtio handoffs.
 - Preserved console input supplied during early boot and made console ownership
   transfers and resets reliable.
+- The host TCP stack retransmits unacknowledged SYN, data, and FIN segments on
+  an RFC 6298 timer, so a frame dropped by a full guest receive queue no longer
+  stalls the connection for 30 seconds and then fails it. A retransmitted guest
+  SYN-ACK is acknowledged again.
