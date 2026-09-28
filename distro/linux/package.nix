@@ -10,8 +10,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "f06dad0dcdfbc8b48309093c9abb68ba47502b7f";
-    hash = "sha256-s22VmEIvNQxBM0ttVzdHkCN/MW/Wfd8SXR3hjGITxhQ=";
+    rev = "f2a512c0d4a34021f3331b77d28992add6d8e7ab";
+    hash = "sha256-1tof96XOKraZ5gGQs0PgE5oXLaLH8IM8qLMwFNoQl/Q=";
   },
 }:
 
@@ -52,7 +52,7 @@ pkgs.stdenvNoCC.mkDerivation {
 
     make defconfig ${lib.optionalString debug "debug.config"}
 
-    make vmlinux.wasm
+    make vmlinux.wasm ${lib.optionalString pkgs.stdenv.buildPlatform.isDarwin ''"HOSTCFLAGS_gen_init_cpio.o=-include ${./gen-init-cpio-darwin.h}"''}
 
     cp vmlinux.wasm $out/
 
