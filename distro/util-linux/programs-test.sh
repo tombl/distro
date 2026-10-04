@@ -67,6 +67,12 @@ wait_uuidd_ready() {
     i=$((i + 1))
   done
   [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
+
+  # The pidfile is written before signalfd setup. A protocol reply proves
+  # the service loop is ready before we send any test signals.
+  ready_uuid=$(timeout 5 uuidd -s "$socket" -r) ||
+    fail "uuidd readiness request failed for $socket"
+  check_uuid "$ready_uuid" 4
 }
 
 wait_uuidd_exit() {
