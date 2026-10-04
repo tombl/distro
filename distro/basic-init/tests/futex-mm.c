@@ -10,7 +10,6 @@
 #include <time.h>
 #include <unistd.h>
 
-static int source_word;
 static int word;
 static int ready_pipe[2];
 static int release_pipe[2];
@@ -18,7 +17,7 @@ static int release_pipe[2];
 static void *waiter(void *unused)
 {
 	(void)unused;
-	if (syscall(SYS_futex, &source_word, FUTEX_WAIT_PRIVATE, 0, NULL) == -1)
+	if (syscall(SYS_futex, &word, FUTEX_WAIT_PRIVATE, 42, NULL) == -1)
 		test_perror("futex wait");
 	return NULL;
 }
@@ -37,11 +36,12 @@ static int child(void *unused)
 		test_fail("create futex waiter");
 	if (clock_gettime(CLOCK_MONOTONIC, &start))
 		test_perror("clock_gettime");
-	/* A successful requeue proves the thread is queued on word, without
-	 * waking it. The pipe notification alone would not prove readiness. */
+	/* Requeue onto the same word to observe a queued waiter without waking
+	 * it. Moving to another address would lose readiness if WAIT restarted
+	 * on its original address after a signal or spurious kernel wake. */
 	do {
-		moved = syscall(SYS_futex, &source_word, FUTEX_CMP_REQUEUE_PRIVATE,
-				0, 1, &word, 0);
+		moved = syscall(SYS_futex, &word, FUTEX_CMP_REQUEUE_PRIVATE,
+				0, 1, &word, 42);
 		if (moved == -1)
 			test_perror("requeue futex waiter");
 		if (clock_gettime(CLOCK_MONOTONIC, &now))
