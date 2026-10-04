@@ -67,6 +67,12 @@ wait_uuidd_ready() {
     i=$((i + 1))
   done
   [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
+
+  # The pidfile is written before signalfd setup. A protocol reply proves
+  # the service loop is ready before we send any test signals.
+  ready_uuid=$(timeout 5 uuidd -s "$socket" -r) ||
+    fail "uuidd readiness request failed for $socket"
+  check_uuid "$ready_uuid" 4
 }
 
 wait_uuidd_exit() {
@@ -296,8 +302,8 @@ rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -F -T 1 -s "$uuidd_socket" -p "$uuidd_pidfile" &
 uuidd_launcher_pid=$!
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
-uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
-wait_uuidd_exit "$uuidd_pid" foreground-inactivity
+# The short-lived service may already have removed its pidfile.
+wait_uuidd_exit "$uuidd_launcher_pid" foreground-inactivity
 reap_uuidd_foreground "$uuidd_launcher_pid" inactivity
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd inactivity did not clean socket and pidfile"
