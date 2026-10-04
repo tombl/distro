@@ -302,8 +302,8 @@ rm -f "$uuidd_socket" "$uuidd_pidfile"
 uuidd -F -T 1 -s "$uuidd_socket" -p "$uuidd_pidfile" &
 uuidd_launcher_pid=$!
 wait_uuidd_ready "$uuidd_socket" "$uuidd_pidfile"
-uuidd_pid=$(awk '{ print $1 }' "$uuidd_pidfile")
-wait_uuidd_exit "$uuidd_pid" foreground-inactivity
+# The short-lived service may already have removed its pidfile.
+wait_uuidd_exit "$uuidd_launcher_pid" foreground-inactivity
 reap_uuidd_foreground "$uuidd_launcher_pid" inactivity
 [ ! -e "$uuidd_socket" ] && [ ! -e "$uuidd_pidfile" ] ||
   fail "uuidd inactivity did not clean socket and pidfile"
