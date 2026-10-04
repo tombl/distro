@@ -165,6 +165,7 @@ in
       eventfd-unix = installedCheck { name = "eventfd-unix"; };
       exec-args = installedCheck { name = "exec-args"; };
       futex = installedCheck { name = "futex"; };
+      futex-mm = installedCheck { name = "futex-mm"; };
       initcpio = initcpioCheck;
       kernel-memory-growth = kernelMemoryGrowthCheck;
       large-executable = installedCheck { name = "large-executable"; };
