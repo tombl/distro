@@ -16,6 +16,8 @@ The wasm stdenv keeps the usual single-output derivations; Nix remains the build
 
 WebAssembly Linux has no `fork()`, `vfork()`, or `mmap()` family. Programs spawn children through an explicit `clone()` entry point followed by `execve()`, normally exposed as `posix_spawn()`. Ports should replace private allocation or file-reading uses of `mmap()` with the operation they require rather than provide an incomplete mmap emulation.
 
+C++ exceptions and `setjmp`/`longjmp` both use WebAssembly exception handling in its legacy encoding (`try`/`catch`/`delegate`), not the standardized exnref one (`try_table`). Every engine we test runs both: Node 24 and current Chromium, Firefox and WebKit. Legacy also runs on older engines that predate exnref (Safari before 18.4, Chrome before 137, Firefox before 131), is what LLVM 22 emits by default, and is what `setjmp` already compiled to before C++ exceptions were enabled. exnref buys nothing functional here. Revisit when LLVM changes its default or an engine we support drops the legacy encoding; switching means rebuilding the whole package set, because libc++abi, libunwind and every `setjmp` call site carry the encoding. Guest handlers, including `catch (...)` and the cleanups that run destructors, cannot intercept the kernel ending a process image on `exit()` or `execve()`, because those halts are traps.
+
 ## Networking
 
 `@lowland/kernel` provides a virtio-net NIC and a small learning Ethernet switch.
