@@ -30,6 +30,17 @@ rec {
     # call site; libc cannot add this transformation at link time.
     "-mllvm"
     "-wasm-enable-sjlj"
+    # C++ is compiled with exceptions, as on every Linux target. This selects
+    # wasm exception handling, which sjlj already uses, instead of compiling
+    # `throw` but discarding every catch. C has no landing pads unless it opts
+    # in with -fexceptions. Spelled as the backend option rather than
+    # -fwasm-exceptions, which assembler-only invocations report as unused.
+    "-mllvm"
+    "-wasm-enable-eh"
+    # The legacy EH encoding, chosen over exnref in "Userspace" in
+    # docs/architecture.md. Spelled out so an LLVM default flip can't change it.
+    "-mllvm"
+    "-wasm-use-legacy-eh"
   ];
 
   # Default declared maximum of a process's shared memory, in bytes. WebKit
