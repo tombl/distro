@@ -6,6 +6,8 @@ import { assert } from "./util.ts";
 import { read_wasm_memories } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
+  assert_worker_active,
+  create_halt_error,
   HALT_KERNEL,
   type Imports,
   type Instance,
@@ -63,7 +65,7 @@ function user_imports({
   prepare(): void;
   imports: Imports["user"];
 } {
-  const HALT_USER = Symbol("halt user");
+  const HALT_USER = create_halt_error("halt user");
 
   let context: UserContext | null = parent;
   let instance: WebAssembly.Instance | null = null;
@@ -131,6 +133,7 @@ function user_imports({
           arg4: number,
           arg5: number,
         ) => {
+          assert_worker_active();
           const original_instance = instance;
           const ret = kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
           if (instance !== original_instance) {

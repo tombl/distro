@@ -190,7 +190,38 @@ export interface Imports {
   };
 }
 
-export const HALT_KERNEL = Symbol("halt kernel");
+// A JS value thrown through a guest built with wasm exception handling can be
+// caught by C++ catch (...) or a cleanup pad. A real wasm trap retains its
+// uncatchable status when rethrown from a host import.
+const halt_trap = new WebAssembly.Instance(
+  new WebAssembly.Module(
+    Uint8Array.from([
+      // (module (func (export "trap") unreachable))
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+      0x03, 0x02, 0x01, 0x00, 0x07, 0x08, 0x01, 0x04, 0x74, 0x72, 0x61, 0x70, 0x00, 0x00,
+      0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b,
+    ]),
+  ),
+).exports.trap as () => void;
+
+export function create_halt_error(label: string): WebAssembly.RuntimeError {
+  try {
+    halt_trap();
+  } catch (error) {
+    const trap = error as WebAssembly.RuntimeError;
+    trap.message = label;
+    return trap;
+  }
+  throw new Error("halt trap returned");
+}
+
+export const HALT_KERNEL = create_halt_error("halt kernel");
+
+// Once the kernel halts this worker, no later guest syscall may re-enter it.
+let worker_halted = false;
+export function assert_worker_active(): void {
+  if (worker_halted) throw HALT_KERNEL;
+}
 
 export function kernel_imports({
   is_worker,
@@ -227,6 +258,7 @@ export function kernel_imports({
     halt_worker: () => {
       if (!is_worker) throw new Error("Halt called in main thread");
       // Messages posted after platform.quit() are not guaranteed to arrive.
+      worker_halted = true;
       worker_exit();
       platform.quit();
       throw HALT_KERNEL;
@@ -235,6 +267,7 @@ export function kernel_imports({
       if (!is_worker) {
         throw new Error("Machine termination called in main thread");
       }
+      worker_halted = true;
       terminate_machine(reason);
       throw HALT_KERNEL;
     },
