@@ -60,6 +60,8 @@ llvmPackages.stdenv.mkDerivation {
   version = llvmPackages.release_version;
   inherit src;
 
+  patches = [ ./wasm-linux-cxx-abi.patch ];
+
   nativeBuildInputs = [
     pkgs.cmake
     pkgs.ninja

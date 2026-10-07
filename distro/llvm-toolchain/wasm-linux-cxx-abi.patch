@@ -1,0 +1,14 @@
+--- a/clang/lib/Basic/Targets/WebAssembly.h
++++ b/clang/lib/Basic/Targets/WebAssembly.h
+@@ -80,6 +80,11 @@
+ public:
+   explicit WebAssemblyTargetInfo(const llvm::Triple &T, const TargetOptions &)
+       : TargetInfo(T) {
++    // The OS wrappers for wasi, emscripten, WALI and bare wasm all select the
++    // WebAssembly C++ ABI (constructors and destructors return `this`), and
++    // libc++abi assumes it whenever __wasm__ is defined. Generic Linux does
++    // not choose an ABI, so set it here for every wasm target.
++    TheCXXABI.set(TargetCXXABI::WebAssembly);
+     AddrSpaceMap = &WebAssemblyAddrSpaceMap;
+     NoAsmVariants = true;
+     SuitableAlign = 128;
