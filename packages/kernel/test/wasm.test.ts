@@ -12,6 +12,8 @@ import { VirtioController, close_virtio_device, virtio_imports } from "../src/vi
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
 import {
   allocate_shared_memory,
+  create_halt_error,
+  HALT_KERNEL,
   memory_bytes,
   user_module_imports_supported,
 } from "../src/wasm.ts";
@@ -26,6 +28,27 @@ const memory = new WebAssembly.Memory({
   initial: 1,
   maximum: 1,
   shared: true,
+});
+
+test("guest exception handlers cannot catch exit or exec halts", () => {
+  // (module (import "host" "stop" (func $stop))
+  //   (func (export "caught") (result i32)
+  //     (try (result i32) (do (call $stop) (i32.const 0))
+  //       (catch_all (i32.const 1)))))
+  // Built with wat2wasm --enable-exceptions; catch_all models C++ catch (...).
+  const guest = wasm_module(
+    "0061736d010000000108026000006000017f020d0104686f73740473746f700000" +
+      "03020101070a010663617567687400010a0e010c00067f100041001941010b0b",
+  );
+  const run = (value: unknown) =>
+    (new WebAssembly.Instance(guest, {
+      host: { stop: () => { throw value; } },
+    }).exports.caught as () => number)();
+
+  assert.equal(run(Symbol("old halt")), 1);
+  for (const halt of [HALT_KERNEL, create_halt_error("halt user")]) {
+    assert.throws(() => run(halt), (error) => error === halt);
+  }
 });
 
 function allocator_succeeding_at(successful_maximum: number, attempts: number[]) {
