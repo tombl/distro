@@ -14,7 +14,7 @@ let
 
       buildPhase = ''
         runHook preBuild
-        $CC ${extraFlags} -Wl,--fatal-warnings -o init ${source}
+        ${if pkgs.lib.hasSuffix ".cpp" source then "$CXX" else "$CC"} ${extraFlags} -Wl,--fatal-warnings -o init ${source}
         runHook postBuild
       '';
 
@@ -162,6 +162,10 @@ in
       clone-tls = installedCheck { name = "clone-tls"; };
       credentials = installedCheck { name = "credentials"; };
       cwd = installedCheck { name = "cwd"; };
+      cxx-exceptions = installedCheck {
+        name = "cxx-exceptions";
+        source = "tests/cxx-exceptions.cpp";
+      };
       eventfd-unix = installedCheck { name = "eventfd-unix"; };
       exec-args = installedCheck { name = "exec-args"; };
       futex = installedCheck { name = "futex"; };

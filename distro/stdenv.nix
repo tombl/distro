@@ -32,7 +32,12 @@ let
     useCcForLibs = false;
     gccForLibs = null;
     extraBuildCommands = ''
-      echo "--sysroot=${sysroot} ${toString platform.compilerFlags}" >> $out/nix-support/cc-cflags
+      echo "--sysroot=${sysroot} ${toString (platform.compilerFlags ++ platform.exceptionFlags)}" >> $out/nix-support/cc-cflags
+      # -nostdlibinc hides the sysroot's libc++ headers from the driver, and
+      # the fork's driver defaults wasm-linux C++ to libstdc++. -cxx-isystem
+      # keeps libc++'s C wrapper headers out of C compiles.
+      echo "-cxx-isystem ${sysroot}/include/${platform.multiarchTriple}/c++/v1 -cxx-isystem ${sysroot}/include/c++/v1" >> $out/nix-support/libcxx-cxxflags
+      echo "-stdlib=libc++" >> $out/nix-support/libcxx-ldflags
     '';
   };
   # Autoconf answers for probes that lie under cross-compilation: AC_FUNC_MMAP
@@ -91,6 +96,17 @@ pkgs.stdenv.override (old: {
       --libdir=lib --libexecdir=libexec --bindir=bin --sbindir=sbin
       --includedir=include --mandir=share/man --infodir=share/info
       --localedir=share/locale
+    )
+
+    # The CMake hook likewise passes absolute install directories under the
+    # Nix output; relative ones resolve against the FHS prefix instead.
+    cmakeFlagsArray+=(
+      -DCMAKE_INSTALL_PREFIX=/
+      -DCMAKE_INSTALL_BINDIR=bin -DCMAKE_INSTALL_SBINDIR=sbin
+      -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_INSTALL_LIBEXECDIR=libexec
+      -DCMAKE_INSTALL_INCLUDEDIR=include -DCMAKE_INSTALL_MANDIR=share/man
+      -DCMAKE_INSTALL_INFODIR=share/info -DCMAKE_INSTALL_DOCDIR=share/doc
+      -DCMAKE_INSTALL_LOCALEDIR=share/locale
     )
 
     stageFhsInstall() {

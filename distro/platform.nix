@@ -32,6 +32,12 @@ rec {
     "-wasm-enable-sjlj"
   ];
 
+  # Clang enables C++ exceptions by default, as it does on every Linux target;
+  # this selects wasm exception handling, the same model sjlj already uses,
+  # rather than the default of compiling `throw` but never unwinding. C is
+  # unaffected unless it opts in with -fexceptions.
+  exceptionFlags = [ "-fwasm-exceptions" ];
+
   # Flags for linking wasm executables the kernel can load. No --fatal-warnings
   # here: wasm-ld warns on the wrong-prototype probes autoconf-style configure
   # scripts link, and promoting that to an error breaks every such probe.
