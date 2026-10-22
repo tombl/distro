@@ -480,11 +480,13 @@ export class NodeFS implements FS<Node, Handle> {
     return bytesWritten;
   }
 
+  // FLUSH comes with every close() of a descriptor (each dup's too), which
+  // doesn't make data durable on Linux either: fsync() does (FSYNC, below).
+  // virtiofsd's flush syncs nothing as well.
   async flush(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
       throw new FSError("EBADF");
     }
-    await node_call(handle.file.datasync());
   }
 
   async fsync(_node: Node, handle: Handle, dataOnly: boolean) {
