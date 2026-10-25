@@ -13,6 +13,7 @@
   diffutils,
   dropbear,
   e2fsprogs,
+  erofs-utils,
   file,
   findutils,
   gawk,
@@ -60,6 +61,7 @@ apk.mkRepository {
       diffutils
       dropbear
       e2fsprogs
+      erofs-utils
       file
       findutils
       gawk

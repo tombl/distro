@@ -1,0 +1,51 @@
+Pack fragments through the existing copy path on wasm.
+
+wasm musl has no mmap() family, so <sys/mman.h> declares neither mmap() nor
+munmap() and fragments.c fails to compile. The packer already falls back to
+copying the file into the packed inode with erofs_io_sendfile() and reading
+the tail back into a heap buffer when mapping fails; always take that path on
+wasm. Only -Efragments/-Eall-fragments reach this code.
+
+--- a/lib/fragments.c
++++ b/lib/fragments.c
+@@ -11,7 +11,9 @@
+ #endif
+ #include <stdlib.h>
+ #include <unistd.h>
++#ifndef __wasm__
+ #include <sys/mman.h>
++#endif
+ #include "erofs/err.h"
+ #include "erofs/inode.h"
+ #include "erofs/print.h"
+@@ -249,12 +251,18 @@
+ 	if (offset < 0)
+ 		return -errno;
+ 
++#ifdef __wasm__
++	memblock = NULL;
++#else
+ 	if (vf->ops)
+ 		memblock = NULL;
+ 	else
+ 		memblock = mmap(NULL, inode->i_size, PROT_READ,
+ 				MAP_SHARED, vf->fd, fpos);
+-	if (memblock == MAP_FAILED || !memblock) {
++	if (memblock == MAP_FAILED)
++		memblock = NULL;
++#endif
++	if (!memblock) {
+ 		erofs_off_t remaining = inode->i_size;
+ 		struct erofs_vfile vout = { .fd = epi->fd };
+ 		bool noseek = vf->ops && !vf->ops->pread;
+@@ -304,8 +312,10 @@
+ out:
+ 	if (onheap)
+ 		free(memblock);
++#ifndef __wasm__
+ 	else if (memblock)
+ 		munmap(memblock, inode->i_size);
++#endif
+ 	return rc;
+ }
+ 
