@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, type BlockDeviceStorage } from "@lowland/kernel";
+import { blockDevice, type BlockStorage } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { file_storage, platform, type ImageFileHandle } from "./platform.ts";
 import { check_bytes, check_writable } from "./validate.ts";
@@ -13,8 +13,8 @@ export type ResolvedSource =
   | { kind: "bytes"; bytes: Uint8Array }
   | { kind: "blob"; blob: Blob | Response };
 
-function memory_storage(bytes: Uint8Array, writable: boolean): BlockDeviceStorage {
-  const storage: BlockDeviceStorage = {
+function memory_storage(bytes: Uint8Array, writable: boolean): BlockStorage {
+  const storage: BlockStorage = {
     capacity: bytes.byteLength,
     read(offset, target) {
       const source = bytes.subarray(offset, offset + target.byteLength);
@@ -65,7 +65,7 @@ export function image_plugin(source: ResolvedSource, writable: boolean): Machine
   // A blob or response is read once, and a response body cannot be read twice.
   let blob_bytes: Promise<Uint8Array> | undefined;
 
-  async function open(): Promise<BlockDeviceStorage> {
+  async function open(): Promise<BlockStorage> {
     switch (source.kind) {
       case "path":
         return platform.open_path(source.path, writable);

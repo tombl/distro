@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import type { VirtioDevice } from "@lowland/kernel";
+import type { Device } from "@lowland/kernel";
 import type { MachinePlugin, MachineSetup } from "@lowland/kernel/plugin";
 import { rootImage } from "../src/index.ts";
 
@@ -21,11 +21,11 @@ function ext4_image(size = 4096) {
 }
 
 async function configure(plugin: MachinePlugin) {
-  const devices: VirtioDevice[] = [];
+  const devices: Device[] = [];
   const setup: MachineSetup = {
     args: { add() {} },
     devices: { add: (...added) => devices.push(...added) },
-    deviceTree: { merge() {} },
+    bootConsole: new ReadableStream(),
   };
   await plugin.configure(setup);
   return devices;

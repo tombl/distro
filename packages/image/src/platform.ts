@@ -4,7 +4,7 @@
 // presence of process.getBuiltinModule, so bundlers only ever see the web path
 // and never try to resolve Node builtins.
 
-import type { BlockDeviceStorage } from "@lowland/kernel";
+import type { BlockStorage } from "@lowland/kernel";
 import { check_image, check_writable, HEADER_OFFSET, HEADER_SIZE } from "./validate.ts";
 
 /**
@@ -33,7 +33,7 @@ interface Platform {
   /** Resolves a string source to a path in Node or a URL in browsers. */
   resolve(source: string): string | URL;
   /** Opens a file path as block storage. */
-  open_path(path: string | URL, writable: boolean): Promise<BlockDeviceStorage>;
+  open_path(path: string | URL, writable: boolean): Promise<BlockStorage>;
 }
 
 const web: Platform = {
@@ -53,7 +53,7 @@ export async function file_storage(
   name: string,
   handle: ImageFileHandle,
   writable: boolean,
-): Promise<BlockDeviceStorage> {
+): Promise<BlockStorage> {
   async function read(offset: number, target: Uint8Array) {
     let total = 0;
     while (total < target.byteLength) {
@@ -75,7 +75,7 @@ export async function file_storage(
   const filesystem = check_image(`${name} is not`, header.subarray(0, length), size);
   if (writable) check_writable(name, filesystem);
 
-  const storage: BlockDeviceStorage = { capacity: size, read };
+  const storage: BlockStorage = { capacity: size, read };
   if (writable) {
     storage.write = async (offset, data) => {
       let total = 0;

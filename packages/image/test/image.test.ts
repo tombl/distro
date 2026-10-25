@@ -5,7 +5,7 @@ import { open, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { bootMachine, type VirtioDevice } from "@lowland/kernel";
+import { bootMachine, type Device } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "../src/index.ts";
@@ -17,7 +17,6 @@ const success = { success: true, code: 0, signal: null };
 async function boot(image: MachinePlugin) {
   const guest = guestAgent();
   const machine = await bootMachine({ cpus: 1, plugins: [image, guest] });
-  void machine.bootConsole.pipeTo(new WritableStream());
   return { guest, machine };
 }
 
@@ -27,20 +26,20 @@ async function boot(image: MachinePlugin) {
 const VIRTIO_BLK_F_RO = 1n << 5n;
 
 async function read_only(image: MachinePlugin) {
-  const devices: VirtioDevice[] = [];
+  const devices: Device[] = [];
   await image.configure({
     args: { add() {} },
     devices: { add: (...added) => devices.push(...added) },
-    deviceTree: { merge() {} },
+    bootConsole: new ReadableStream(),
   });
   assert.equal(devices.length, 1);
   const device = devices[0] as unknown as Record<symbol, unknown>;
   const transport = Object.getOwnPropertySymbols(device)
-    .map((symbol) => device[symbol] as { features?: unknown; close?(): Promise<void> })
+    .map((symbol) => device[symbol] as { features?: unknown; shutdown?(): Promise<void> })
     .find((value) => typeof value?.features === "bigint");
   assert.ok(transport);
   // Closing the device releases a file opened from a path.
-  await transport.close!();
+  await transport.shutdown!();
   return ((transport.features as bigint) & VIRTIO_BLK_F_RO) !== 0n;
 }
 
@@ -201,7 +200,7 @@ test("closes a file whose device the machine refuses", async () => {
               throw new Error("refused");
             },
           },
-          deviceTree: { merge() {} },
+          bootConsole: new ReadableStream(),
         }),
       new Error("refused"),
     );
