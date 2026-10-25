@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: MIT
 
 import { platform } from "./platform.ts";
+import { read_wasm_function_imports } from "./wasm_binary.ts";
 
 export interface Instance extends WebAssembly.Instance {
   exports: {
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
+    // Linked directly into each user instance as linux.syscall, so a syscall
+    // never passes through JS. The number, every argument slot and the result
+    // are user words.
     syscall(
-      nr: number,
-      arg0: number,
-      arg1: number,
-      arg2: number,
-      arg3: number,
-      arg4: number,
-      arg5: number,
-    ): number;
-    get_thread_area(): number;
-    copy_siginfo(to: number): number;
+      nr: UserWord,
+      arg0: UserWord,
+      arg1: UserWord,
+      arg2: UserWord,
+      arg3: UserWord,
+      arg4: UserWord,
+      arg5: UserWord,
+    ): UserWord;
+    get_thread_area(): UserWord;
+    copy_siginfo(to: UserWord): number;
     clear_siginfo(): void;
   };
 }
@@ -36,10 +40,52 @@ const supported_user_module_imports = new Set([
   "linux\0copy_siginfo\0function",
 ]);
 
-/** Whether every import can be supplied when a userspace module is instantiated. */
-export function user_module_imports_supported(module: WebAssembly.Module): boolean {
-  return WebAssembly.Module.imports(module).every(({ module, name, kind }) =>
-    supported_user_module_imports.has(`${module}\0${name}\0${kind}`),
+/**
+ * The address type of a user memory. Pointers, longs and syscall argument
+ * slots cross the user ABI at this width.
+ */
+export type UserWidth = "i32" | "i64";
+
+/**
+ * A pointer or long crossing the user ABI: a number where the user width is
+ * i32, and a bigint where it is i64.
+ */
+export type UserWord = number | bigint;
+
+/** Converts a user word, such as a function table index, to a number. */
+export function user_word_number(word: UserWord): number {
+  return typeof word === "bigint" ? Number(word) : word >>> 0;
+}
+
+// The signature of each kernel function a user module may import. A 64-bit
+// syscall argument spans two slots where the width is i32; the kernel's
+// asm/syscall_wrapper.h reassembles it.
+function user_module_function_types(width: UserWidth) {
+  return new Map([
+    ["linux\0syscall", `${Array(7).fill(width).join(",")}->${width}`],
+    ["linux\0get_thread_area", `->${width}`],
+    ["linux\0copy_siginfo", `${width}->i32`],
+  ]);
+}
+
+/**
+ * Whether every import can be supplied when a userspace module of the given
+ * width is instantiated. A binary built for another ABI fails here, so exec
+ * reports ENOEXEC rather than failing to link after the point of no return.
+ */
+export function user_module_imports_supported(
+  module: WebAssembly.Module,
+  bytes: Uint8Array,
+  width: UserWidth,
+): boolean {
+  const function_types = user_module_function_types(width);
+  return (
+    WebAssembly.Module.imports(module).every(({ module, name, kind }) =>
+      supported_user_module_imports.has(`${module}\0${name}\0${kind}`),
+    ) &&
+    read_wasm_function_imports(bytes).every(
+      ({ module, name, type }) => function_types.get(`${module}\0${name}`) === type,
+    )
   );
 }
 
@@ -153,19 +199,11 @@ export interface Imports {
     compile_abort(): void;
     instantiate(fresh_memory: number): void;
     call(): void;
-    switch_entry(fn: number, arg: number): void;
-    call_signal_handler(fn: number, sig: number): void;
-    call_siginfo_handler(
-      trampoline: number,
-      fn: number,
-      sig: number,
-      code: number,
-      pid: number,
-      uid: number,
-      value: number,
-      timerid: number,
-      overrun: number,
-    ): void;
+    switch_entry(fn: UserWord, arg: UserWord): void;
+    call_signal_handler(fn: UserWord, sig: number): void;
+    /** Abandons the user stack after an execve replaced the instance. */
+    unwind(): never;
+    call_siginfo_handler(trampoline: UserWord, fn: UserWord, sig: number): number;
     read(to: number, from: number, n: number): number;
     write(to: number, from: number, n: number): number;
     write_zeroes(to: number, n: number): number;

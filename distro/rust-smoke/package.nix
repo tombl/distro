@@ -4,13 +4,13 @@
 # and the sleep/park_timeout assertions catch time64 timespec mismatches,
 # which corrupt timeouts silently rather than failing loudly.
 {
-  rust-toolchain,
+  rustPlatform,
   busybox,
   vm-test,
 }:
 
 let
-  rust-smoke = rust-toolchain.buildRustPackage {
+  rust-smoke = rustPlatform.buildRustPackage {
     pname = "rust-smoke";
     version = "0.0.0";
     src = ./.;

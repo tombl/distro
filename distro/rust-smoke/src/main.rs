@@ -1,5 +1,9 @@
+use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::mem::{align_of, size_of};
+use std::os::unix::process::CommandExt;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -11,14 +15,175 @@ thread_local! {
 
 static ATOMIC: AtomicUsize = AtomicUsize::new(0);
 
+// std leaks thread-local values at thread exit on wasm unless the platform
+// runs pthread key destructors; count drops to prove it does.
+static TLS_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+struct CountDrop;
+
+impl Drop for CountDrop {
+    fn drop(&mut self) {
+        TLS_DROPS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+thread_local! {
+    static TLS_DROP: CountDrop = const { CountDrop };
+}
+
+fn process_child(args: &[String]) -> bool {
+    match args.get(1).map(String::as_str) {
+        Some("--process-child") => {
+            let mut stdin = String::new();
+            std::io::stdin().read_to_string(&mut stdin).unwrap();
+            println!("argv={:?}", &args[2..]);
+            println!("env={}", env::var("RUST_SPAWN_ENV").unwrap());
+            println!("cwd={}", env::current_dir().unwrap().display());
+            println!("stdin={stdin}");
+            eprintln!("child stderr");
+            true
+        }
+        Some("--process-exit") => {
+            std::process::exit(37);
+        }
+        Some("--process-exec") => {
+            let error = Command::new("/bin/busybox")
+                .args(["printf", "EXEC OK"])
+                .exec();
+            panic!("exec failed: {error}");
+        }
+        _ => false,
+    }
+}
+
+fn test_process() {
+    println!("testing std::process::Command through posix_spawn...");
+
+    let mut child = Command::new("/bin/rust-smoke")
+        .args(["--process-child", "plain", "two words"])
+        .env("RUST_SPAWN_ENV", "env value")
+        .current_dir("/tmp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"piped input")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{:?}", output.status);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "argv=[\"plain\", \"two words\"]\nenv=env value\ncwd=/tmp\nstdin=piped input\n"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "child stderr\n"
+    );
+
+    for iteration in 0..32 {
+        assert!(
+            Command::new("/bin/busybox")
+                .arg("true")
+                .status()
+                .unwrap_or_else(|error| panic!("spawn {iteration} failed: {error}"))
+                .success()
+        );
+    }
+
+    let missing = Command::new("/definitely/missing-rust-command")
+        .spawn()
+        .unwrap_err();
+    assert_eq!(missing.kind(), std::io::ErrorKind::NotFound, "{missing}");
+
+    let status = Command::new("/bin/rust-smoke")
+        .arg("--process-exit")
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(37));
+
+    let spawn_threads: Vec<_> = (0..4)
+        .map(|_| {
+            thread::spawn(|| {
+                for _ in 0..16 {
+                    let status = Command::new("/bin/busybox")
+                        .arg("true")
+                        .status()
+                        .unwrap();
+                    assert!(status.success());
+                }
+            })
+        })
+        .collect();
+    for handle in spawn_threads {
+        handle.join().unwrap();
+    }
+
+    let uid_child = Command::new("/bin/busybox")
+        .args(["printf", "UID OK"])
+        .uid(unsafe { libc::getuid() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let uid_output = uid_child.wait_with_output().unwrap();
+    assert!(uid_output.status.success());
+    assert_eq!(uid_output.stdout, b"UID OK");
+    assert!(uid_output.stderr.is_empty());
+
+    let pre_exec_child = unsafe {
+        Command::new("/bin/busybox")
+            .arg("true")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .pre_exec(|| {
+                let message = b"PRE_EXEC OK\n";
+                let written = libc::write(
+                    libc::STDERR_FILENO,
+                    message.as_ptr().cast(),
+                    message.len(),
+                );
+                if written == message.len() as isize {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            })
+            .spawn()
+            .unwrap()
+    };
+    let pre_exec_output = pre_exec_child.wait_with_output().unwrap();
+    assert!(pre_exec_output.status.success());
+    assert_eq!(pre_exec_output.stderr, b"PRE_EXEC OK\n");
+
+    // posix_spawnp resolves the executable with the parent's PATH, so a PATH
+    // supplied only to the child requires the fork/exec fallback to preserve
+    // Command's established behavior.
+    let child_path_status = Command::new("true")
+        .env("PATH", "/bin")
+        .status()
+        .unwrap();
+    assert!(child_path_status.success());
+
+    println!("PROCESS OK");
+}
+
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    if process_child(&args) {
+        return;
+    }
+
     println!("hello from rust on wasm linux!");
-    let args: Vec<String> = std::env::args().collect();
     println!("args: {args:?}");
     assert_eq!(&args[1..], ["one", "two", "three"]);
 
     // core and a consumer's libc crate must agree on the port's ILP32/time64
-    // ABI. SYS_futex distinguishes the fork's asm-generic table from WALI's
+    // ABI. SYS_futex distinguishes this port's asm-generic table from WALI's
     // x86_64-like syscall table, so this also proves Cargo used the path
     // override rather than the registry source from Cargo.lock.
     assert_eq!(size_of::<std::ffi::c_long>(), 4);
@@ -39,7 +204,7 @@ fn main() {
     // std assumes wasm32 has no OS and refuses to duplicate descriptors
     // unless patched. A clone shares the file offset with the original.
     {
-        use std::io::{Read, Seek, SeekFrom};
+        use std::io::{Seek, SeekFrom};
         let mut file = fs::File::open(path).unwrap();
         let mut clone = file.try_clone().unwrap();
         file.seek(SeekFrom::Start(5)).unwrap();
@@ -70,6 +235,7 @@ fn main() {
                         TLS_COUNTER.with(|c| c.set(c.get() + 1));
                     }
                     let tls = TLS_COUNTER.with(|c| c.get());
+                    TLS_DROP.with(|_| {});
                     tx.send((thread::current().name().unwrap().to_owned(), tls))
                         .unwrap();
                     i as u64
@@ -95,6 +261,10 @@ fn main() {
     assert_eq!(atomic, n_threads * iters, "atomic count wrong");
     let main_tls = TLS_COUNTER.with(|c| c.get());
     assert_eq!(main_tls, 0, "main thread TLS should be untouched");
+    // pthread_join returns after the thread's key destructors have run.
+    let tls_drops = TLS_DROPS.load(Ordering::Relaxed);
+    println!("thread-local destructors run: {tls_drops}");
+    assert_eq!(tls_drops, n_threads, "thread-local destructors did not run");
 
     // timed futex waits: sleep and park_timeout must actually take ~their duration
     let t0 = Instant::now();
@@ -123,6 +293,8 @@ fn main() {
     });
     assert_eq!(scoped_sum, 10);
     println!("scoped threads: sum={scoped_sum}");
+
+    test_process();
 
     println!("total elapsed: {:?}", start.elapsed());
     println!("THREADS OK");
