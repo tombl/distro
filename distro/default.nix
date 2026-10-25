@@ -163,6 +163,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     playwright = callPackage ./npm/playwright.nix { };
     linux-guest = callPackage ./npm/linux-guest { };
     lowland-image = callPackage ./npm/image { };
+    lowland = callPackage ./npm/lowland.nix { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
     test-assets = callPackage ./npm/test-assets.nix { };

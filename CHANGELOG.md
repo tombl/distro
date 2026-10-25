@@ -10,6 +10,9 @@
 - `@lowland/guest` provides a bootable guest SDK with process execution and
   streaming I/O, filesystem and mount operations, labeled EROFS or ext4 root
   disks, and optional temporary writable overlays.
+- The `lowland` command line builds system images from apk packages and host
+  files with `npx lowland build`, which takes the same options as
+  `buildImage()` from `@lowland/image/build`.
 - Node and browser virtio-fs adapters share host directories with guests,
   including backend-enforced read-only mounts and support for OPFS and the
   browser File System Access API.
