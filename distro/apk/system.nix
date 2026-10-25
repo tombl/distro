@@ -1,5 +1,4 @@
 {
-  pkgs,
   lib,
   tools,
   platform,
@@ -40,7 +39,6 @@ let
 
   mkSystem =
     {
-      name,
       repositories,
       packages,
       files ? { },
@@ -81,23 +79,21 @@ let
     assert lib.assertMsg (
       invalidModes == [ ]
     ) "APK system file modes must be octal strings: ${lib.concatStringsSep ", " invalidModes}";
-    pkgs.runCommand "${name}-apk-system"
-      {
-        nativeBuildInputs = [
-          pkgs.fakeroot
-          tools
-        ];
-        passthru = {
-          isApkSystem = true;
-          inherit apkPackages repositories;
-        };
-      }
-      ''
-        mkdir -p $out
+    # The result is not a derivation but the shell that installs the system
+    # into "$root". mkImage runs it in the same fakeroot session that encodes
+    # the image: a store path would normalise every mode to 0444 or 0555, so
+    # a requested mode such as 0600 or 4755 only survives if install and
+    # encode share one build.
+    {
+      isApkSystem = true;
+      inherit apkPackages repositories;
+      nativeBuildInputs = [ tools ];
+      install = ''
+        mkdir -p "$root"
         # Build-time repositories are unsigned: signing happens only at
         # publication, outside Nix, so the key never enters the store.
-        fakeroot apk \
-          --root $out \
+        apk \
+          --root "$root" \
           --arch ${platform.apkArch} \
           --allow-untrusted \
           ${repositoryArgs} \
@@ -106,24 +102,42 @@ let
         # apk records the build command, including the temporary Nix repository
         # paths and a wall-clock timestamp. The log has no runtime purpose and
         # would otherwise make filesystem images impure and non-relocatable.
-        rm $out/var/log/apk.log
+        rm "$root/var/log/apk.log"
 
         # Product configuration is layered on the installed packages after the
         # install; image encoding applies root ownership to the whole tree.
+        # Sources come from the store without write permission, so copied
+        # entries gain owner write: 0644, or 0755 when executable. A directory
+        # onto an existing directory merges into it, where cp -a would nest it
+        # under its store name, and the existing directory keeps its mode.
+        # A requested mode applies to the destination itself, never to the
+        # entries copied beneath it.
+        place() {
+          mkdir -p "$(dirname "$2")"
+          if [ -d "$1" ] && [ -d "$2" ]; then
+            existing=$(stat -c %a "$2")
+            cp -a "$1/." "$2"
+            chmod "$existing" "$2"
+            (cd "$1" && find . -mindepth 1 ! -type l -print0) | (cd "$2" && xargs -0 -r chmod u+w)
+          else
+            cp -a "$1" "$2"
+            chmod -R u+w "$2"
+          fi
+        }
         ${lib.concatMapStringsSep "\n" (path: ''
-          destination=$out/${lib.escapeShellArg (lib.removePrefix "/" path)}
-          mkdir -p "$(dirname "$destination")"
-          cp -a ${lib.escapeShellArg (toString normalizedFiles.${path}.source)} "$destination"
+          destination="$root"/${lib.escapeShellArg (lib.removePrefix "/" path)}
+          place ${lib.escapeShellArg (toString normalizedFiles.${path}.source)} "$destination"
           ${lib.optionalString (normalizedFiles.${path}.mode != null) ''
             chmod ${lib.escapeShellArg normalizedFiles.${path}.mode} "$destination"
           ''}
         '') (builtins.attrNames normalizedFiles)}
         ${lib.concatMapStringsSep "\n" (path: ''
-          destination=$out/${lib.escapeShellArg (lib.removePrefix "/" path)}
+          destination="$root"/${lib.escapeShellArg (lib.removePrefix "/" path)}
           mkdir -p "$(dirname "$destination")"
           ln -s ${lib.escapeShellArg links.${path}} "$destination"
         '') (builtins.attrNames links)}
       '';
+    };
 in
 {
   inherit mkSystem;
