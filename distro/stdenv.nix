@@ -35,26 +35,8 @@ let
       echo "--sysroot=${sysroot} ${toString platform.compilerFlags}" >> $out/nix-support/cc-cflags
     '';
   };
-  # Autoconf answers for probes that lie under cross-compilation: AC_FUNC_MMAP
-  # hard-codes yes for linux hosts though wasm has no mmap, and musl's static
-  # dlopen stub links though dynamic loading can never work, so configures
-  # enable code paths that fail at compile time or runtime. A site file states
-  # the platform truth once for every port.
-  configSite = pkgs.writeText "wasm-config.site" ''
-    # wasm musl does not provide fork/vfork. The *_works forms are gnulib's
-    # runtime-probe cache names; both spellings are platform-wide facts.
-    ac_cv_func_fork=no
-    ac_cv_func_vfork=no
-    ac_cv_func_fork_works=no
-    ac_cv_func_vfork_works=no
-    ac_cv_func_mmap_fixed_mapped=no
-    ac_cv_func_dlopen=no
-    ac_cv_search_dlopen=no
-    ac_cv_lib_dl_dlopen=no
-    # wasm reports sigaltstack as ENOSYS: alternate signal stacks remain
-    # unsupported, so configure probes must keep the function disabled.
-    ac_cv_func_sigaltstack=no
-  '';
+  # Every configure in the stdenv sees the platform's autoconf answers.
+  configSite = pkgs.writeText "wasm-config.site" (builtins.readFile platform.configSite);
 in
 
 pkgs.stdenv.override (old: {

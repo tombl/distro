@@ -112,6 +112,10 @@
             env.sysroot = "${wasmpkgs.sysroot}";
           };
 
+          # The porting shell: CC, CXX, CONFIG_SITE, and CMake/Meson cross
+          # files target the guest, so ad-hoc builds need no wasm flags.
+          sdk = wasmpkgs.sdk.devShell;
+
           # The deploy shell: sign the apk repository and publish the site to
           # Cloudflare. apk-tools-host is the repo's own apk, so the signed
           # index matches what the wasm client expects.

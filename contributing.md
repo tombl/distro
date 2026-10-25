@@ -2,8 +2,12 @@
 
 ## Prerequisites
 
-- A Linux host with flake-enabled [Nix](https://nixos.org/download). Nix
-  bootstraps every other dependency, including the toolchains.
+- Flake-enabled [Nix](https://nixos.org/download) on any Linux distribution.
+  Nix bootstraps every other dependency, including the toolchains.
+- On macOS, every package is a Linux derivation. Run nixpkgs'
+  [Linux builder](https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-builder)
+  and select a Linux system explicitly, e.g.
+  `nix build --system aarch64-linux .#busybox`.
 - Clone this repository and enter `nix develop` (or
   `echo 'use flake' > .envrc && direnv allow`, if you use direnv) to get the
   pinned environment.
@@ -48,6 +52,9 @@ depending on image composition order.
   you can poke it locally with browser devtools.
 - `nix build .#<pkg>` builds one package; `nix flake check` builds every VM and
   formatting check.
+- `nix develop .#sdk` is a shell for porting outside Nix: `$CC`, `$CXX`,
+  `./configure`, CMake, and `meson setup --cross-file wasm32-unknown-linux-musl`
+  all target the guest with no extra flags.
 
 ## Formatting
 
