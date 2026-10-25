@@ -241,7 +241,9 @@ filesystem is read-only when its block device is. The agent mounts a read-only
 root beneath a temporary OverlayFS upper layer, so the system behaves like a
 normal writable root for one boot without claiming persistence. An ext4
 filesystem on a writable block device is persistent and mounts read-write
-directly. There is no option to disable the overlay.
+directly. There is no option to disable the overlay. A read-only ext4 root is
+mounted without replaying its journal, so it shows the filesystem as of its last
+checkpoint.
 
 The canonical live site attaches one `LOWLAND_ROOT` EROFS image, which the
 agent mounts beneath the temporary overlay. It also attaches an unformatted
