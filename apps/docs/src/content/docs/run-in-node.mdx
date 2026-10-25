@@ -41,25 +41,27 @@ these workers itself. [How it works](/how-it-works/) explains what runs in them.
 
 ## Read the root image from disk
 
-The [`@lowland/guest` usage example](/reference/guest/#usage) reads the whole image into
-memory with `readFile()`. To read only the blocks the kernel asks for, use a file handle
-instead. `read` may return a promise:
+In Node.js, `rootImage()` takes a file path and reads the image from disk as the kernel asks
+for blocks, so a large image is never loaded into memory whole:
+
+```ts
+import { rootImage } from "@lowland/image";
+
+const root = rootImage("app.erofs");
+```
+
+A relative path is resolved against the current working directory. A `file:` URL also works,
+such as `new URL("./app.erofs", import.meta.url)` for an image next to the script.
+
+To open the file yourself, pass a `FileHandle` from `node:fs/promises`. `rootImage()` does not
+close it, so close it after the machine has closed:
 
 ```ts
 import { open } from "node:fs/promises";
 
-const file = await open("rootfs.erofs");
-const { size } = await file.stat();
-const root = blockDevice({
-  capacity: size,
-  async read(offset, target) {
-    const { bytesRead } = await file.read(target, 0, target.byteLength, offset);
-    return bytesRead;
-  },
-});
+await using file = await open("app.erofs");
+const root = rootImage(file);
 ```
-
-Close the file handle after the machine has closed.
 
 ## Process lifetime
 
