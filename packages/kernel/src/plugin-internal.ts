@@ -87,3 +87,11 @@ export async function run_machine_booted(
 ): Promise<void> {
   for (const plugin of plugins) await plugin.booted?.(machine);
 }
+
+export async function run_machine_closing(plugins: readonly MachinePlugin[]): Promise<void> {
+  for (const result of await Promise.allSettled(
+    plugins.map(async (plugin) => plugin.closing?.()),
+  )) {
+    if (result.status === "rejected") throw result.reason;
+  }
+}

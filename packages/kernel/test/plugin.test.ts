@@ -4,7 +4,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DeviceTreeNode } from "../src/devicetree.ts";
 import type { Machine } from "../src/index.ts";
-import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts";
+import {
+  configure_machine,
+  run_machine_booted,
+  run_machine_closing,
+} from "../src/plugin-internal.ts";
 import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../src/plugin.ts";
 import { VirtioController } from "../src/virtio/core.ts";
 
@@ -140,4 +144,31 @@ test("booted hooks finish in plugin order", async () => {
   first.resolve();
   await booted;
   assert.deepEqual(calls, ["first started", "first finished", "second"]);
+});
+
+test("closing hooks all settle before the first failure is reported", async () => {
+  const failure = new Error("closing failed");
+  const slow = Promise.withResolvers<void>();
+  let slow_finished = false;
+  const plugins: MachinePlugin[] = [
+    {
+      configure() {},
+      closing() {
+        throw failure;
+      },
+    },
+    { configure() {} },
+    {
+      configure() {},
+      async closing() {
+        await slow.promise;
+        slow_finished = true;
+      },
+    },
+  ];
+
+  const closing = run_machine_closing(plugins);
+  slow.resolve();
+  await assert.rejects(closing, (error) => error === failure);
+  assert(slow_finished);
 });
