@@ -107,6 +107,7 @@
               pkgs.ninja
               pkgs.nodejs
               pkgs.pnpm_11
+              pkgs.wasm-tools
             ];
             env.sysroot = "${wasmpkgs.sysroot}";
           };

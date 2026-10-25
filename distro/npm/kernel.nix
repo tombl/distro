@@ -14,6 +14,7 @@ pkgs.stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     pkgs.nodejs
     pkgs.pnpmConfigHook
+    pkgs.wasm-tools
     node-workspace.pnpm
   ];
 
