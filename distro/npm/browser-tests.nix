@@ -4,6 +4,8 @@
   lib,
   kernel,
   linux-guest,
+  lowland,
+  lowland-image,
   pkgs,
   playwright,
   repository,
@@ -18,7 +20,9 @@ let
     mkdir -p \
       $out/node_modules/@lowland/bytes \
       $out/node_modules/@lowland/kernel \
-      $out/node_modules/@lowland/guest
+      $out/node_modules/@lowland/guest \
+      $out/node_modules/@lowland/image \
+      $out/node_modules/lowland
     ${playwright.linkRuntime "$out"}
     cp ${source}/app.js $out/app.js
     cp ${source}/index.html $out/index.html
@@ -32,6 +36,7 @@ let
     cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
     mkdir $out/tests
     cp ${source}/tests/boot.spec.js $out/tests/
+    cp ${source}/tests/lowland.spec.js $out/tests/
     cp ${source}/tests/opfs-disk.spec.js $out/tests/
     cp ${source}/tests/posix-spawn-stress.spec.js $out/tests/
     cp ${source}/tests/remote-memory.spec.js $out/tests/
@@ -40,6 +45,11 @@ let
     cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
     cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
     tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
+    # The facade's own code only: the specs pass their root image explicitly.
+    cp ${lowland-image.package}/package.json $out/node_modules/@lowland/image/
+    cp -r ${lowland-image.package}/dist $out/node_modules/@lowland/image/
+    cp ${lowland}/package.json $out/node_modules/lowland/
+    cp -r ${lowland}/dist $out/node_modules/lowland/
   '';
 
   suite = baseSuite // {
