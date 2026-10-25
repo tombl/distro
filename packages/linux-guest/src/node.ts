@@ -9,7 +9,7 @@ import {
   type FSSetAttributes,
   type FSStat,
 } from "@lowland/kernel";
-import { constants, type BigIntStats } from "node:fs";
+import { constants, type BigIntStats, type Dirent } from "node:fs";
 import {
   access,
   chmod,
@@ -201,6 +201,18 @@ function may_write(flags: number) {
       (linux_open.create | linux_open.truncate | linux_open.append | linux_open.temporaryFile)) !==
       0
   );
+}
+
+/** A directory entry's file type, as mode bits (S_IFMT), from readdir's own types. */
+function dirent_mode(entry: Dirent): number | undefined {
+  if (entry.isFile()) return 0o100000;
+  if (entry.isDirectory()) return 0o040000;
+  if (entry.isSymbolicLink()) return 0o120000;
+  if (entry.isFIFO()) return 0o010000;
+  if (entry.isSocket()) return 0o140000;
+  if (entry.isCharacterDevice()) return 0o020000;
+  if (entry.isBlockDevice()) return 0o060000;
+  return undefined;
 }
 
 class Node {
@@ -506,6 +518,7 @@ export class NodeFS implements FS<Node, Handle> {
         result.push({
           name: entry.name,
           node: this.#node([...parts, entry.name]),
+          mode: dirent_mode(entry),
         });
       }
       return result;
