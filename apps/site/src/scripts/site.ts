@@ -111,26 +111,6 @@ const term = new Terminal({
 activeTerminal = term;
 const termFit = new FitAddon();
 
-const disclosures = Array.from(
-  document.querySelectorAll<HTMLDetailsElement>("[data-persist-disclosure]"),
-);
-const storedDisclosure = localStorage.getItem("detailsOpen");
-if (storedDisclosure !== null) {
-  for (const disclosure of disclosures) disclosure.open = storedDisclosure === "true";
-} else if (matchMedia("(max-width: 47.99rem)").matches) {
-  for (const disclosure of disclosures) disclosure.open = false;
-}
-let synchronizingDisclosures = false;
-for (const disclosure of disclosures) {
-  disclosure.addEventListener("toggle", () => {
-    if (synchronizingDisclosures) return;
-    synchronizingDisclosures = true;
-    for (const peer of disclosures) peer.open = disclosure.open;
-    synchronizingDisclosures = false;
-    localStorage.setItem("detailsOpen", String(disclosure.open));
-    requestAnimationFrame(() => termFit.fit());
-  });
-}
 term.loadAddon(termFit);
 // Populate xterm before attaching it, so its first visible paint is identical
 // to the static no-JavaScript state. Boot output then appends to this buffer.

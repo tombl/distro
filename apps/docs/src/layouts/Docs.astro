@@ -18,12 +18,12 @@ const { title, description, current, headings, markdownHref } = Astro.props;
 // footnote-label is the GFM footnotes section, which Footnotes renders inline.
 const toc = headings
   .filter(({ depth, slug }) => depth > 1 && slug !== "footnote-label")
-  .map(({ slug, text }) => ({ href: `#${slug}`, label: text }));
+  .map(({ depth, slug, text }) => ({ href: `#${slug}`, label: text, depth }));
 ---
 
 <Base title={title} description={description}>
   <div slot="header" class="mobile-header-navigation">
-    <details class="mobile-disclosure">
+    <details>
       <summary>Contents</summary>
       <div class="mobile-disclosure-panel">
         <DocumentationNavigation current={current}>
@@ -55,18 +55,11 @@ const toc = headings
   <Footnotes />
 
   <script>
-    // Close an open panel on navigation within it or on any click outside it.
-    // (details has no native light dismiss; the popover API does, but placing
-    // the panel would need anchor positioning and this handler stays either
-    // way for same-page anchor clicks.)
-    document.addEventListener("click", (event) => {
+    // Close the panel when one of its links is followed, so same-page anchor
+    // jumps land on the heading rather than below the expanded panel.
+    document.querySelector(".mobile-header-navigation")?.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null;
-      const panels = document.querySelectorAll<HTMLDetailsElement>(
-        ".mobile-header-navigation details[open]",
-      );
-      for (const details of panels) {
-        if (!target || target.closest("a") || !details.contains(target)) details.open = false;
-      }
+      if (target?.closest("a")) target.closest("details")?.removeAttribute("open");
     });
   </script>
 
@@ -95,7 +88,7 @@ const toc = headings
     inset-inline-end: 0;
     /* Baseline-aligned with the h1: main's top padding + the h1's margin,
        ascent, minus this line's own ascent. */
-    inset-block-start: 3.95rem;
+    inset-block-start: 3.35rem;
     font-size: 0.8125rem;
     color: var(--muted);
     text-decoration: none;
@@ -108,98 +101,24 @@ const toc = headings
   }
 
   .mobile-header-navigation {
-    position: relative;
-    margin-block-start: 0.75rem;
+    margin-block-start: 0.5rem;
 
-    .mobile-disclosure {
-      position: static;
-      interpolate-size: allow-keywords;
-
-      > summary {
-        min-height: 2.75rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        padding-inline: 0.75rem;
-        border: 1px solid var(--hairline);
-        color: var(--code-foreground);
-        cursor: pointer;
-        font-weight: 700;
-        list-style: none;
-        -webkit-user-select: none;
-        user-select: none;
-        /* Above the panel, so the open button's background covers the panel's
-           top border and the two read as one surface. */
-        position: relative;
-        z-index: 2;
-        transition:
-          border-color 120ms,
-          background-color 120ms;
-
-        &:hover {
-          background: var(--surface);
-        }
-
-        &::-webkit-details-marker {
-          display: none;
-        }
-
-        &::after {
-          content: "+";
-          font-weight: 400;
-          transition: rotate 160ms ease;
-        }
-      }
-
-      &[open] > summary {
-        border-block-end-color: transparent;
-        background: var(--surface);
-
-        &::after {
-          rotate: 45deg;
-        }
-      }
-
-      &::details-content {
-        position: absolute;
-        z-index: 1;
-        inset-block-start: calc(100% - 1px);
-        inset-inline: 0;
-        height: 0;
-        overflow: clip;
-        opacity: 0;
-        transition:
-          height 180ms ease,
-          opacity 120ms linear,
-          content-visibility 180ms allow-discrete;
-      }
-
-      &[open]::details-content {
-        height: auto;
-        opacity: 1;
-      }
+    > details > summary {
+      width: fit-content;
+      color: var(--muted);
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .mobile-disclosure-panel {
-      max-height: calc(100dvh - 7rem);
-      padding: 1.25rem 1rem;
-      border: 1px solid var(--hairline);
-      overflow-y: auto;
-      background: var(--surface);
+      padding-block: 1rem 0.5rem;
 
       > :global(nav) {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
         gap: 1.5rem;
       }
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .mobile-disclosure > summary::after,
-    .mobile-disclosure::details-content {
-      transition: none;
     }
   }
 
@@ -237,7 +156,7 @@ const toc = headings
       /* Sidebars start below the page h1: main's top padding plus the h1's
          margin and line box. The sticky top is negative so the offset scrolls
          away, leaving --stuck-inset of breathing room when pinned. */
-      --below-h1: 5.4rem;
+      --below-h1: 4.625rem;
       --stuck-inset: 1.5rem;
       padding-block: var(--below-h1) 1.5rem;
       align-self: start;

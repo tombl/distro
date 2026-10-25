@@ -1,49 +1,12 @@
 ---
-import { getPublishedDocs } from "../lib/docs";
-import { referencePackages } from "../lib/reference-packages";
+import { getDocsSections } from "../lib/docs";
 
 interface Props {
   current: string;
 }
 
 const { current } = Astro.props;
-const docs = await getPublishedDocs();
-
-interface Item {
-  id: string;
-  href: string;
-  label: string;
-  code?: boolean;
-}
-
-function section(name: (typeof docs)[number]["data"]["section"]): Item[] {
-  return docs
-    .filter((doc) => doc.data.section === name)
-    .sort((left, right) => left.data.order - right.data.order)
-    .map((doc) => ({
-      id: doc.id,
-      href: `/${doc.id}/`,
-      label: doc.data.title,
-    }));
-}
-
-const sections: { heading: string; items: Item[] }[] = [
-  { heading: "Tutorials", items: section("tutorials") },
-  { heading: "How-to guides", items: section("howtos") },
-  {
-    heading: "Reference",
-    items: [
-      ...referencePackages.map((pkg) => ({
-        id: `reference:${pkg.slug}`,
-        href: `/reference/${pkg.slug}/`,
-        label: pkg.name,
-        code: true,
-      })),
-      ...section("reference"),
-    ],
-  },
-  { heading: "Explanation", items: section("explanation") },
-].filter(({ items }) => items.length > 0);
+const sections = await getDocsSections();
 ---
 
 <nav aria-label="Documentation">
