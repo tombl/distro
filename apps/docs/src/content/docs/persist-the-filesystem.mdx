@@ -38,10 +38,22 @@ async function openStorage(): Promise<BlockStorage> {
   return {
     capacity: access.getSize(),
     read(offset, target) {
-      return access.read(target, { at: offset });
+      let done = 0;
+      while (done < target.byteLength) {
+        const n = access.read(target.subarray(done), { at: offset + done });
+        if (n === 0) break;
+        done += n;
+      }
+      return done;
     },
     write(offset, data) {
-      return access.write(data, { at: offset });
+      let done = 0;
+      while (done < data.byteLength) {
+        const n = access.write(data.subarray(done), { at: offset + done });
+        if (n === 0) break;
+        done += n;
+      }
+      return done;
     },
     flush() {
       access.flush();
@@ -60,7 +72,8 @@ openStorage().then(
 ```
 
 `read` and `write` receive views of the guest's memory and pass them to the access handle
-directly, without copying. The views are valid until the call returns.
+directly, without copying. The views are valid until the call returns. Each one loops until the
+whole view is done, because the guest treats a short read or write as an I/O error.
 
 `truncate()` gives a new file its full size at once, and the browser counts that size against
 the origin's storage quota from the start. Choose the capacity before the first run. Changing
