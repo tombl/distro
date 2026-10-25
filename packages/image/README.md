@@ -138,6 +138,15 @@ the builder downloads them through the host network. Paths to local `.apk`
 files are installed without signature checks. A build whose packages are all
 local files uses no network.
 
+Files and links are layered over the installed packages, as in the Nix
+`mkImage`. A file mode is an octal string applied exactly, setuid, setgid, and
+sticky bits included; without one an entry keeps its host mode and gains owner
+write. A directory source onto an existing directory, such as `/etc` or
+`/usr`, merges its contents into it; its mode, if given, applies to the
+destination directory alone, and a merge otherwise keeps the existing
+directory's mode. Entries apply in path order, so a file inside a directory
+entry overrides what it copied.
+
 The default format is EROFS, which the guest agent mounts read-only. Pass
 `format: "ext4"` for a writable image, with `size` setting its capacity. The
 label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach

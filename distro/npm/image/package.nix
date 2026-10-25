@@ -1,6 +1,7 @@
 {
   builderImage,
   bytes,
+  busybox,
   ext4Root,
   jq,
   kernel,
@@ -19,15 +20,20 @@ let
     map (package: lib.nameValuePair package.name package)
       (mkImage {
         name = "lowland-image-test-packages";
-        packages = [ jq ];
+        packages = [
+          busybox
+          jq
+        ];
       }).packages
   );
+  busyboxPackage = testPackages.busybox;
   jqPackage = testPackages.jq;
 
   # The directory layout test/assets.ts consumes, via LOWLAND_IMAGE_TEST_ASSETS
   # or by building this attribute itself. A local package keeps the build
   # helper test hermetic in the network-less Nix sandbox.
   test-assets = pkgs.linkFarm "lowland-image-test-assets" {
+    "busybox.apk" = "${busyboxPackage}/${busyboxPackage.filename}";
     "jq.apk" = "${jqPackage}/${jqPackage.filename}";
     "rootfs.ext4" = ext4Root;
   };
