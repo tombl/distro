@@ -2,14 +2,14 @@
 
 import assert from "node:assert/strict";
 import { lookup } from "node:dns/promises";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { blockDevice, bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { buildImage, type BuildImageOptions } from "../src/build.ts";
-import { jq_package } from "./assets.ts";
+import { busybox_package, jq_package } from "./assets.ts";
 
 const decoder = new TextDecoder();
 
@@ -87,24 +87,37 @@ for (const format of ["erofs", "ext4"] as const) {
   });
 }
 
-test("merges a directory into an existing one", async (t) => {
-  const stage = await mkdtemp(join(tmpdir(), "lowland-image-stage-"));
-  t.after(() => rm(stage, { recursive: true, force: true }));
-  await mkdir(join(stage, "bin"));
-  await writeFile(join(stage, "bin", "hello"), "#!/bin/sh\necho hello\n");
-  const kept = join(stage, "kept");
-  await writeFile(kept, "kept\n");
-  // The first entry creates /opt/app, so the directory lands on an existing one.
-  const output = await build(t, {
-    packages: [jq_package],
-    files: { "/opt/app/kept": kept, "/opt/app": join(stage, "bin") },
-  });
-  const guest = await boot(t, output);
+// Mirrors mkImage's modes check: a 0700 staged directory merged onto /usr.
+for (const mode of [undefined, "0750"]) {
+  test(`merges a directory into an existing one ${mode ? `with mode ${mode}` : "without a mode"}`, async (t) => {
+    const stage = await mkdtemp(join(tmpdir(), "lowland-image-stage-"));
+    t.after(() => rm(stage, { recursive: true, force: true }));
+    await mkdir(join(stage, "bin"));
+    await writeFile(join(stage, "bin", "tool"), "staged\n");
+    await writeFile(join(stage, "bin", "readonly"), "readonly\n", { mode: 0o444 });
+    await chmod(join(stage, "bin"), 0o755);
+    await chmod(stage, 0o700);
+    const tool = join(stage, "..", `${basename(stage)}-tool`);
+    await writeFile(tool, "override\n");
+    t.after(() => rm(tool, { force: true }));
+    const output = await build(t, {
+      packages: [busybox_package],
+      // Listed child first: entries still apply parent before child.
+      files: { "/usr/bin/tool": tool, "/usr": mode ? { source: stage, mode } : stage },
+    });
+    const guest = await boot(t, output);
+    const permissions = async (path: string) =>
+      ((await guest.fs.stat(path)).mode & 0o7777).toString(8);
 
-  assert.equal(await guest.fs.readTextFile("/opt/app/kept"), "kept\n");
-  assert.equal(await guest.fs.readTextFile("/opt/app/hello"), "#!/bin/sh\necho hello\n");
-  await assert.rejects(guest.fs.stat("/opt/app/2"));
-});
+    assert.equal(await permissions("/usr"), mode ? "750" : "755");
+    assert.equal(await permissions("/usr/bin"), "755");
+    assert.equal(await permissions("/usr/bin/readonly"), "644");
+    assert.equal(await guest.fs.readTextFile("/usr/bin/tool"), "override\n");
+    // The merge lands beside the existing contents rather than nested.
+    assert.ok((await guest.fs.stat("/usr/sbin")).isDirectory);
+    await assert.rejects(guest.fs.stat("/usr/1"));
+  });
+}
 
 test("builds an image from the public repository", { skip: !online && "offline" }, async (t) => {
   const output = await build(t, {

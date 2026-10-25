@@ -38,7 +38,15 @@ export interface BuildImageOptions {
    * to local package files, which are installed without signature checks.
    */
   packages: readonly string[];
-  /** Host files to copy into the image, keyed by absolute guest path. */
+  /**
+   * Host files to copy into the image, keyed by absolute guest path. A mode
+   * is applied exactly, setuid, setgid, and sticky bits included; without
+   * one an entry keeps its host mode and gains owner write. A directory onto
+   * an existing directory, such as `/etc` or `/usr`, merges its contents into
+   * it; its mode, if given, applies to the destination directory alone, and a
+   * merge otherwise keeps the existing directory's mode. Entries apply in
+   * path order, so a file inside a directory entry overrides what it copied.
+   */
   files?: Readonly<Record<string, ImageFile>>;
   /** Symbolic links to create, keyed by absolute guest path, with their targets as values. */
   links?: Readonly<Record<string, string>>;
@@ -180,7 +188,10 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
   }
   const size = parse_size(options.size ?? "256M");
   if (options.packages.length === 0) throw new TypeError("an image requires at least one package");
-  const files = Object.entries(options.files ?? {});
+  // Sorted like mkImage's attribute names, so parents apply before children.
+  const files = Object.entries(options.files ?? {}).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
   const links = Object.entries(options.links ?? {});
   for (const [path] of [...files, ...links]) {
     if (!valid_path(path))

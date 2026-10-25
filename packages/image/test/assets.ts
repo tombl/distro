@@ -25,6 +25,9 @@ async function build() {
 
 const directory = process.env.LOWLAND_IMAGE_TEST_ASSETS ?? (await build());
 
+/** A local BusyBox package with no dependencies, which creates /usr/bin. */
+export const busybox_package = join(directory, "busybox.apk");
+
 /** A local jq package with no dependencies. */
 export const jq_package = join(directory, "jq.apk");
 

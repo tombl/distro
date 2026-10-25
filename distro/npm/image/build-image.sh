@@ -6,7 +6,9 @@
 #   lowland-build-image --format F --label L --input DIR [--repository URL]
 #     [--allow-untrusted] OPERATION...
 #
-# Packages are installed first, then files and links are applied in order:
+# Packages are installed first, then files and links are applied in order.
+# The build helper passes files sorted by path, so a parent comes before its
+# children:
 #   --package NAME        install NAME from the repository
 #   --local PATH          install the .apk at PATH, relative to the input
 #   --file DEST SRC MODE  copy SRC, relative to the input, to DEST; MODE - keeps it.
@@ -76,21 +78,33 @@ packages() {
   done
 }
 
+# Like apk.mkSystem's files: copied entries are owned by root and gain owner
+# write. A directory onto an existing directory merges into it, where cp -a
+# would nest it under its staged name, and the existing directory keeps its
+# mode. Only the copied entries are touched. A requested mode applies to the
+# destination itself, never to the entries copied beneath it.
+place() {
+  mkdir -p "$(dirname "$2")"
+  if [ -d "$1" ] && [ -d "$2" ]; then
+    existing=$(stat -c %a "$2")
+    cp -a "$1/." "$2"
+    chmod "$existing" "$2"
+    (cd "$1" && find . -mindepth 1 -print0) | (cd "$2" && xargs -0 -r chown -h 0:0)
+    (cd "$1" && find . -mindepth 1 ! -type l -print0) | (cd "$2" && xargs -0 -r chmod u+w)
+  else
+    cp -a "$1" "$2"
+    chown -R -h 0:0 "$2"
+    find "$2" ! -type l -exec chmod u+w {} +
+  fi
+}
+
 contents() {
   while :; do
     case "$1" in
     '') break ;;
     --package | --local) shift 2 ;;
     --file)
-      mkdir -p "$(dirname "$root$2")"
-      # A directory onto an existing directory merges into it. cp -a would
-      # otherwise nest it under its staged name.
-      if [ -d "$input/$3" ] && [ -d "$root$2" ]; then
-        cp -a "$input/$3/." "$root$2"
-      else
-        cp -a "$input/$3" "$root$2"
-      fi
-      chown -R 0:0 "$root$2"
+      place "$input/$3" "$root$2"
       [ "$4" = - ] || chmod "$4" "$root$2"
       shift 4
       ;;
