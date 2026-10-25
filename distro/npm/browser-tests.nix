@@ -13,7 +13,6 @@ let
     {
       project,
       browser ? project,
-      built ? { },
       assets ? [ ],
     }:
     playwright.mkCheck {
@@ -25,14 +24,17 @@ let
       inherit project browser built;
     };
 
+  # `pnpm check` typechecks src/app.ts against the workspace packages, so
+  # every project needs them built.
+  built = {
+    inherit bytes kernel;
+    linux-guest = linux-guest.package;
+  };
+
   engine =
     project:
     check {
       inherit project;
-      built = {
-        inherit bytes kernel;
-        linux-guest = linux-guest.package;
-      };
       assets = [
         "boot.cpio"
         "opfs-disk-worker.js"

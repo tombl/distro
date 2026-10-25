@@ -40,7 +40,9 @@ const bridge = createServer((request, response) => {
     relative === "_bridge/bridge.html" ||
     relative === "_bridge/bridge.js" ||
     relative === "_bridge/provider.html" ||
-    relative === "_bridge/requester.html"
+    relative === "_bridge/provider.js" ||
+    relative === "_bridge/requester.html" ||
+    relative === "_bridge/requester.js"
   ) {
     headers["Cross-Origin-Resource-Policy"] = "cross-origin";
     headers["Cross-Origin-Embedder-Policy"] = "require-corp";

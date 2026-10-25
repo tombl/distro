@@ -73,7 +73,8 @@ result at both `hub.localhost.low.land` and `*.localhost.low.land`. The host mus
 - serve files from the derivation at every hostname in that family;
 - fall back to `index.html` for paths which are not real files; and
 - add these headers to `/_bridge/bridge.html`, `/_bridge/bridge.js`,
-  `/_bridge/provider.html`, and `/_bridge/requester.html`:
+  `/_bridge/provider.html`, `/_bridge/provider.js`,
+  `/_bridge/requester.html`, and `/_bridge/requester.js`:
 
   ```text
   Cross-Origin-Resource-Policy: cross-origin
