@@ -22,6 +22,7 @@ import {
   renameat,
   spawn,
   symlinkat,
+  sync as sync_all,
   unlinkat,
   umount2,
   write,
@@ -157,6 +158,12 @@ export interface FileSystem {
   chown(path: string, uid: number, gid: number): Promise<void>;
   /** Truncates a file to `length` bytes, defaulting to empty. */
   truncate(path: string, length?: number): Promise<void>;
+  /**
+   * Writes every filesystem's cached data to its device, like `sync(1)`.
+   * It needs no process, so it works even while commands hold every
+   * process slot.
+   */
+  sync(): Promise<void>;
   /**
    * Opens a file for incremental or random-access I/O. The whole-file
    * methods above are simpler when you do not need either.
@@ -528,6 +535,10 @@ class GuestClient {
     await fchownat(await this.#connect(), path, uid, gid);
   }
 
+  async sync() {
+    await sync_all(await this.#connect());
+  }
+
   async truncate(path: string, length = 0) {
     const session = await this.#connect();
     await using fd = await openat(session, path, O.WRONLY, 0);
@@ -605,6 +616,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
       chmod: client.chmod.bind(client),
       chown: client.chown.bind(client),
       truncate: client.truncate.bind(client),
+      sync: client.sync.bind(client),
       open: client.open.bind(client),
     },
     exec: client.exec.bind(client),
