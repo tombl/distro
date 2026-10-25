@@ -2,7 +2,7 @@
   pkgs,
   stdenv,
   src ? pkgs.fetchzip {
-    url = "mirror://kernel/pub/software/scm/git/git-2.55.0.tar.xz";
+    url = "mirror://kernel/software/scm/git/git-2.55.0.tar.xz";
     hash = "sha256-aTL1jVJ8xz4CMocAzzHaEepLgUO/7OXTb/Ao0GR5AVQ=";
   },
   busybox,
