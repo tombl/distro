@@ -415,10 +415,8 @@ export class BrowserFS implements FS<Node, Handle> {
     const current = this.#open_handle(node, handle);
     const result: FSDirectoryEntry<Node>[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
-      result.push({
-        name,
-        node: this.#remember([...current.parts, name], handle),
-      });
+      const child = this.#remember([...current.parts, name], handle);
+      result.push({ name, node: child, mode: child.metadata.mode });
     }
     return result;
   }
