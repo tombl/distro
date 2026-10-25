@@ -47,7 +47,10 @@ let
       "APK repository ${name} contains duplicate packages: ${lib.concatStringsSep ", " duplicateIdentities}";
     pkgs.runCommand "${name}-apk-repository"
       {
-        nativeBuildInputs = [ tools ];
+        nativeBuildInputs = [
+          tools
+          pkgs.jq
+        ];
         passthru = {
           isApkRepository = true;
           inherit arch name pkgnameSpec;
@@ -65,13 +68,11 @@ let
         # bytes always get a new URL. The first index exists only to compute
         # those identities.
         apk --allow-untrusted mkndx --output identities.adb staging/*.apk
-        apk adbdump identities.adb | awk '
-          $1 == "-" && $2 == "name:" { name = $3 }
-          $1 == "version:" { version = $2 }
-          $1 == "hashes:" { print name, version, substr($2, 1, ${toString hashLength}) }
-        ' | while read -r name version hash; do
-          mv "staging/$name-$version.apk" "$out/${arch}/$name-$version.$hash.apk"
-        done
+        apk adbdump --format json identities.adb \
+          | jq -r '.packages[] | "\(.name)-\(.version) \(.hashes[:${toString hashLength}])"' \
+          | while read -r base hash; do
+            mv "staging/$base.apk" "$out/${arch}/$base.$hash.apk"
+          done
         rmdir staging
         # mkndx resolves --pkgname-spec against index field names, where the
         # identity is "hashes" rather than apk's ''${hash}, so it warns that every

@@ -10,6 +10,10 @@
 # and is served with no-cache. Each replaced index is kept under retired/ for
 # a grace period, and APKs stay published while any retained index names them,
 # so clients holding a recently fetched index can still download from it.
+# Older indexes need `apk update`.
+#
+# Rolling back must keep this publisher: the earlier `rclone sync` one deletes
+# every hashed APK and retired index that live guests still depend on.
 set -euo pipefail
 
 grace_days=7
@@ -32,34 +36,23 @@ printf '%s' "$APK_SIGNING_KEY" | base64 -d >"$work/site.key"
 # the site checks tested, plus a signature.
 apk --allow-untrusted adbsign --sign-key "$work/site.key" "$work/wasm32/Packages.adb"
 
-# Prints the package file names an index refers to. Indexes published before
-# content addressing carry no pkgname-spec and use apk's default.
+# Prints the package file names an index refers to, applying its pkgname-spec
+# the way apk does. Indexes published before content addressing carry no spec
+# and use apk's default. The identity is the index field "hashes". Anything this
+# cannot resolve to a plain top-level file name fails the publish before the
+# prune, rather than silently protecting nothing.
 index_files() {
-  apk --allow-untrusted adbdump "$1" | awk '
-    BEGIN { spec = "${name}-${version}.apk" }
-    /^pkgname-spec: / { spec = $2 }
-    /^  - name: / { field[++n, "name"] = $3 }
-    /^    (version|hashes|arch): / { field[n, substr($1, 1, length($1) - 1)] = $2 }
-    # adbdump prints pkgname-spec after the packages.
-    END {
-      for (i = 1; i <= n; i++) {
-        out = ""
-        rest = spec
-        while (match(rest, /\$\{[a-z]+(:[0-9]+)?\}/)) {
-          key = substr(rest, RSTART + 2, RLENGTH - 3)
-          len = 0
-          if (index(key, ":")) {
-            len = substr(key, index(key, ":") + 1) + 0
-            key = substr(key, 1, index(key, ":") - 1)
-          }
-          value = field[i, key == "hash" ? "hashes" : key]
-          if (len) value = substr(value, 1, len)
-          out = out substr(rest, 1, RSTART - 1) value
-          rest = substr(rest, RSTART + RLENGTH)
-        }
-        print out rest
-      }
-    }
+  apk --allow-untrusted adbdump --format json "$1" | jq -r '
+    (.["pkgname-spec"] // "${name}-${version}.apk") as $spec
+    | .packages[] as $pkg
+    | $spec
+    | gsub("\\$\\{(?<key>[a-z]+)(:(?<len>[0-9]+))?\\}";
+        ($pkg[if .key == "hash" then "hashes" else .key end]) as $value
+        | if ($value | type) != "string" or $value == "" then
+            error("\($pkg.name // "?"): no \(.key) for pkgname-spec")
+          elif .len then $value[:(.len | tonumber)]
+          else $value end)
+    | if test("^[^/$]+\\.apk$") then . else error("unsupported package file name \(.)") end
   '
 }
 
@@ -114,12 +107,11 @@ if [ -s "$work/expired" ]; then
   rclone delete "$remote/retired" --files-from-raw "$work/expired"
 fi
 
-{
-  index_files "$work/wasm32/Packages.adb"
-  for index in "$work"/retired/*.adb; do
-    if [ -e "$index" ]; then index_files "$index"; fi
-  done
-} | sort -u >"$work/keep"
+index_files "$work/wasm32/Packages.adb" >"$work/named"
+for index in "$work"/retired/*.adb; do
+  if [ -e "$index" ]; then index_files "$index" >>"$work/named"; fi
+done
+sort -u "$work/named" >"$work/keep"
 # Every APK uploaded in step 1 is named by the live index, so the listing taken
 # before the index swap covers everything prunable.
 { grep '\.apk$' "$work/published" || true; } | sort | comm -23 - "$work/keep" >"$work/unreferenced"

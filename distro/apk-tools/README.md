@@ -55,6 +55,12 @@ without bumping its version still gets a new file name. The publish script
 therefore uploads APKs once and serves them as immutable. `Packages.adb` is the
 only object it replaces.
 
+A replaced index stays under `retired/` for 7 days, and its APKs stay published
+until then. A guest whose cached index is older than that, or whose refresh
+failed, gets 404s until it runs `apk update`. apk only refreshes an index older
+than 4 hours during writable operations such as `apk add`, so `apk fetch` keeps
+using a cached index however old it is.
+
 Build the complete repository with:
 
 ```console

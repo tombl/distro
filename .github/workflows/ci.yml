@@ -268,7 +268,9 @@ jobs:
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
       github.event.pull_request.head.repo.full_name == 'tombl/distro')
     # Production publishes prune the apk repository against its live index, so
-    # they must not interleave. Previews stay independent.
+    # they must not interleave. Previews stay independent. The group gives
+    # mutual exclusion, not ordering, so production steps also check that this
+    # run is still main's head.
     concurrency:
       group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.run_id) }}
       cancel-in-progress: false
@@ -280,8 +282,21 @@ jobs:
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      - name: Publish apk repository
+      # A slower run for an older commit, or a rerun of one, must not replace
+      # what a newer commit published. If main has moved on, its own run
+      # deploys instead.
+      - name: Check production is current
+        id: production
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        run: |
+          head=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+          if [ "$head" = "$GITHUB_SHA" ]; then
+            echo current=true >>"$GITHUB_OUTPUT"
+          else
+            echo "::notice::main is now at $head; skipping the deploy of $GITHUB_SHA"
+          fi
+      - name: Publish apk repository
+        if: steps.production.outputs.current == 'true'
         env:
           APK_SIGNING_KEY: ${{secrets.APK_SIGNING_KEY}}
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
@@ -294,7 +309,7 @@ jobs:
         run: |
           distro/site/scripts/publish-apk-repo.sh
       - name: Deploy production
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        if: steps.production.outputs.current == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
         run: |
