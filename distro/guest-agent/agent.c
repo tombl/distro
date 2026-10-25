@@ -40,6 +40,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <linux/vm_sockets.h>
 #include <unistd.h>
 
@@ -52,6 +53,7 @@ enum {
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
 	max_boot_failure = 256,
+	boot_failure_timeout_ms = 1000,
 	max_string = 4096,
 	max_arguments = 256,
 	max_environment = 256,
@@ -590,19 +592,82 @@ static int serve_reap(int fd)
 }
 
 /* Handshake: 8 bytes { magic u32, version u16, failure u16 }, echoed with
- * failure set to the length of the boot failure message that follows it. */
+ * failure 0. See report_boot_failure for the nonzero case. */
 static int handshake(int fd)
 {
-	size_t length = strlen(boot_failure);
 	uint8_t hs[8];
 
 	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic ||
 	    load_u16(hs + 4) != protocol_version)
 		return -1;
+	store_u16(hs + 6, 0);
+	return write_all(fd, hs, sizeof(hs));
+}
+
+static int64_t monotonic_ms(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* read_all or write_all on a nonblocking fd, giving up at deadline. */
+static int transfer_by(int fd, void *buffer, size_t length, bool output,
+		       int64_t deadline)
+{
+	uint8_t *p = buffer;
+
+	while (length) {
+		struct pollfd pfd = {
+			.fd = fd,
+			.events = output ? POLLOUT : POLLIN,
+		};
+		int64_t remaining = deadline - monotonic_ms();
+		ssize_t n;
+
+		if (remaining <= 0) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+		if (poll(&pfd, 1, (int)remaining) == -1) {
+			if (errno == EINTR)
+				continue;
+			return -1;
+		}
+		n = output ? write(fd, p, length) : read(fd, p, length);
+		if (n == 0 && !output) {
+			errno = ECONNRESET;
+			return -1;
+		}
+		if (n < 0) {
+			if (errno == EINTR || errno == EAGAIN)
+				continue;
+			return -1;
+		}
+		p += n;
+		length -= n;
+	}
+	return 0;
+}
+
+/* A failed boot is served by PID 1 alone, so one stalled client must not hold
+ * the session port: the whole exchange shares one deadline. The echo carries
+ * the diagnostic's length in place of failure 0, and the diagnostic follows. */
+static void report_boot_failure(int fd)
+{
+	int64_t deadline = monotonic_ms() + boot_failure_timeout_ms;
+	size_t length = strlen(boot_failure);
+	uint8_t hs[8];
+
+	if (transfer_by(fd, hs, sizeof(hs), false, deadline) ||
+	    load_u32(hs) != protocol_magic ||
+	    load_u16(hs + 4) != protocol_version)
+		return;
 	store_u16(hs + 6, length);
-	if (write_all(fd, hs, sizeof(hs)))
-		return -1;
-	return write_all(fd, boot_failure, length);
+	if (transfer_by(fd, hs, sizeof(hs), true, deadline))
+		return;
+	transfer_by(fd, boot_failure, length, true, deadline);
 }
 
 static void serve_lane(int fd)
@@ -1030,7 +1095,8 @@ int main(void)
 		printf("linux-guest-agent: ready on vsock port %d\n",
 		       session_port);
 	for (;;) {
-		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
+		int fd = accept4(session_listener, NULL, NULL,
+				 SOCK_CLOEXEC | (*boot_failure ? SOCK_NONBLOCK : 0));
 		pid_t worker, waited;
 		int status;
 		struct session_worker_args args;
@@ -1043,7 +1109,7 @@ int main(void)
 			continue;
 		}
 		if (*boot_failure) {
-			handshake(fd);
+			report_boot_failure(fd);
 			close(fd);
 			continue;
 		}

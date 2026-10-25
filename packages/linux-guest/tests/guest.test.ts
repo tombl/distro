@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { blockDevice, bootMachine } from "@lowland/kernel";
+import { blockDevice, bootMachine, type VsockDevice, vsockDevice } from "@lowland/kernel";
+import { GuestSession } from "../src/conn.ts";
 import { GuestBootError, guestAgent, SystemError } from "../src/index.ts";
-import { ext4_root_device, root_device, wrong_root_device } from "./assets.ts";
+import { agent_device, ext4_root_device, root_device, wrong_root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
 
@@ -151,4 +152,38 @@ test("rejects a system disk without a label", async () => {
       ),
     no_root,
   );
+});
+
+test("a stalled client does not hide the boot failure from the next", async () => {
+  const vsock = vsockDevice();
+  const machine = await bootMachine({
+    cpus: 1,
+    args: ["root=PARTLABEL=LOWLAND_AGENT", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
+    plugins: [agent_device(), vsock],
+  });
+  try {
+    let stalled: Awaited<ReturnType<VsockDevice["connect"]>> | undefined;
+    const deadline = Date.now() + 30_000;
+    while (!stalled) {
+      try {
+        stalled = await vsock.connect(1024, { timeoutMs: 1000 });
+      } catch (error) {
+        if (Date.now() >= deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    try {
+      // One byte of a handshake, then silence, with the connection held open.
+      await stalled.write(new Uint8Array([0x54]));
+      const started = performance.now();
+      await assert.rejects(GuestSession.connect(vsock, { timeoutMs: 5000 }), no_root);
+      assert.ok(performance.now() - started < 5000);
+      assert.equal((await stalled.read()).byteLength, 0);
+    } finally {
+      stalled.close();
+    }
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
 });

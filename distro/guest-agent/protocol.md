@@ -20,7 +20,8 @@ If the agent could not enter the system root (no or several filesystems
 labeled `LOWLAND_ROOT`, a failed mount, a failed system init), it stays alive
 as PID 1 without serving requests. Its session echo then sets `failure` to
 the length of a UTF-8 diagnostic that follows the echo, and the agent closes
-the connection. The host treats this as a terminal boot error, not as an
+the connection. The whole exchange has a 1 s deadline so a stalled client
+cannot hold the session port. The host treats this as a terminal boot error, not as an
 agent that is not ready yet.
 
 - **Session, port 1024.** One connection, opened first and pinned for the
