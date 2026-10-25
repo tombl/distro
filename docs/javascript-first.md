@@ -280,15 +280,22 @@ export class Linux implements AsyncDisposable {
 
   static create(options?: LinuxOptions): Promise<Linux>;
 
-  readonly fs: GuestFileSystem;
+  readonly fs: FileSystem;
+  readonly network: NetworkAttachment | undefined;
+  readonly closed: Promise<void>;
 
-  run(args: readonly string[], options?: RunOptions): Promise<RunResult>;
-  spawn(args: readonly string[], options?: SpawnOptions): Promise<Process>;
+  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult>;
+  spawn(argv: readonly string[], options?: ExecOptions): Promise<ChildProcess>;
   close(): void;
   [Symbol.asyncDispose](): Promise<void>;
 }
 
 export interface LinuxOptions {
+  image?: ImageSource;
+  disks?: readonly { source: ImageSource; path: string; readOnly?: boolean }[];
+  mounts?: readonly { source: FS; path: string; readOnly?: boolean }[];
+  network?: Network;
+  cpus?: number;
   plugins?: readonly MachinePluginInput[];
 }
 ```
@@ -296,8 +303,24 @@ export interface LinuxOptions {
 `run()` is the foreground convenience operation and returns collected status
 and output. `spawn()` returns a live process with streaming standard I/O. Both
 take a complete argv array; neither combines an `argv[0]` parameter with a
-second arguments array. The facade forwards extra plugins but does not expose
-a special image option.
+second arguments array. Both reuse the guest agent's `ExecOptions`, `RunResult`,
+and `ChildProcess` rather than defining parallel types.
+
+The options are the `lowland run` flags in object form, but they take objects
+rather than host paths, so `Linux` runs unchanged in Node and in browsers. Only
+the CLI is Node-specific: it turns paths into these objects and checks them
+before boot. `image` accepts any source `rootImage()` accepts and is always
+attached read-only beneath a tmpfs overlay, so a `Linux` never writes to its
+root image. `disks` take the same sources, attach EROFS or ext4 images, and
+mount them at guest paths, persisting ext4 writes unless `readOnly` is set. The
+guest reads each disk's filesystem type from its superblock. `mounts` take any
+virtio-fs backend, such as `NodeFS` for a host directory or `BrowserFS` for
+the origin private file system. `network` takes a network from
+`createNetwork()`, which `Linux` attaches its guest agent to. Further plugins
+follow the facade's own devices. Commands run in `/` unless their `cwd` says
+otherwise. Disposing a `Linux` flushes and unmounts its disks before closing
+the machine, so their writes reach their sources; `close()` stops it
+immediately.
 
 ## CLI shape
 
@@ -319,12 +342,19 @@ machine:
 Usage: lowland run [options] [--] [command...]
 
 Options:
-  --image <path>             Boot this root image instead of the canonical one
-  --disk <path:guest[:ro]>   Attach a block device and mount it (repeatable)
-  --mount <host:guest[:ro]>  Share a host directory into the machine (repeatable)
-  --cwd <path>               Set the command working directory
-  --env <name=value>         Set an environment variable (repeatable)
+      --image <path>             Boot this root image instead of the canonical one
+      --disk <path:guest[:ro]>   Attach a disk image and mount it (repeatable)
+  -v, --mount <host:guest[:ro]>  Share a host directory into the machine (repeatable)
+  -w, --cwd <path>               Set the command working directory (default: /)
+  -e, --env <name[=value]>       Set or pass through an environment variable (repeatable)
+      --cpus <count>             Boot this many virtual CPUs (default: 1)
+      --network <none|host>      Connect the machine to the host's network (default: none)
 ```
+
+The short flags follow `docker run`. `--network host` gives the guest a
+network whose TCP connections and DNS lookups go out through the host, with
+the gateway address reaching the host's loopback. There is no network by
+default.
 
 `build` produces an image file that `run --image`, `rootImage(source)`, or any
 block device can use. Its flags mirror `buildImage()` from `@lowland/image/build`
@@ -344,9 +374,16 @@ emulator switch in the product CLI. Kernel tests use the lower-level JavaScript
 API rather than turning product flags into a second testing API.
 
 `run` proxies the command's stdin, stdout, stderr, and exit status directly.
+Every `lowland` command shares one exit status convention, `docker run`'s.
+125 is lowland's own failure, including argument errors, a failed build, and a
+machine that cannot run. `lowland run` reports 126 and 127 when the command
+cannot be executed or is not found, 128 plus the signal number when a signal
+kills it, and otherwise the command's own status.
 Command mode uses ordinary pipes and preserves separate stdout and stderr.
-No-command interactive shell mode uses a guest PTY so terminal signals, job
-control, and resize events have real terminal semantics.
+With no command, `lowland run` starts `sh -i` when stdin is a terminal and
+`sh` otherwise. The guest agent has no PTY yet, so this shell runs over pipes,
+without job control or resize events. Ctrl-C reaches the shell as SIGINT.
+Interactive mode moves to a guest PTY once the agent provides one.
 
 `@lowland/image` remains a library without a command of its own. `lowland`
 depends on it and owns every command-line entry point.

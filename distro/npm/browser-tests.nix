@@ -3,6 +3,8 @@
   lib,
   kernel,
   linux-guest,
+  lowland,
+  lowland-image,
   pkgs,
   playwright,
   test-assets,
@@ -30,8 +32,10 @@ let
     check {
       inherit project;
       built = {
-        inherit bytes kernel;
+        inherit bytes kernel lowland;
         linux-guest = linux-guest.package;
+        # lowland.spec.js imports the facade; it boots /rootfs.erofs itself.
+        lowland-image = lowland-image.package;
       };
       assets = [
         "boot.cpio"

@@ -44,9 +44,15 @@ importers:
       '@lowland/guest':
         specifier: workspace:*
         version: link:../linux-guest
+      '@lowland/image':
+        specifier: workspace:*
+        version: link:../image
       '@lowland/kernel':
         specifier: workspace:*
         version: link:../kernel
+      lowland:
+        specifier: workspace:*
+        version: link:../lowland
     devDependencies:
       '@playwright/test':
         specifier: 'catalog:'

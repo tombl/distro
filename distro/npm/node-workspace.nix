@@ -35,6 +35,8 @@ rec {
       bytes ? null,
       kernel ? null,
       linux-guest ? null,
+      lowland-image ? null,
+      lowland ? null,
     }:
     lib.concatStringsSep "\n" (
       lib.optional (bytes != null) "cp -rT ${bytes}/dist packages/bytes/dist"
@@ -46,6 +48,9 @@ rec {
         "cp -rT ${linux-guest}/dist packages/linux-guest/dist"
         "cp ${linux-guest}/agent.img packages/linux-guest/agent.img"
       ]
+      # The JavaScript only; callers that need the images pass them explicitly.
+      ++ lib.optional (lowland-image != null) "cp -rT ${lowland-image}/dist packages/image/dist"
+      ++ lib.optional (lowland != null) "cp -rT ${lowland}/dist packages/lowland/dist"
     );
 
   # A check that runs a package's own scripts against the source tree, the
