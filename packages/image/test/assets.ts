@@ -31,6 +31,9 @@ export const busybox_package = join(directory, "busybox.apk");
 /** A local jq package with no dependencies. */
 export const jq_package = join(directory, "jq.apk");
 
+/** A repository directory whose `wasm32/Packages.adb` index of jq is unsigned. */
+export const unsigned_repository = join(directory, "unsigned-repository");
+
 /** The canonical image shipped in this package. */
 export const canonical_image = fileURLToPath(new URL("../rootfs.erofs", import.meta.url));
 

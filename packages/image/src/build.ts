@@ -7,14 +7,15 @@ import {
   entropyDevice,
   fileSystemDevice,
 } from "@lowland/kernel";
-import { createNetwork, guestAgent } from "@lowland/guest";
+import { createNetwork, guestAgent, type Network } from "@lowland/guest";
 import { NodeFS } from "@lowland/guest/node";
+import { randomUUID } from "node:crypto";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
-import { cp, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { chmod, cp, lstat, mkdtemp, open, readdir, realpath, rename, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, posix, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { Duplex } from "node:stream";
 import { rootImage } from "./index.ts";
 
@@ -34,8 +35,11 @@ export type ImageFile = string | { source: string; mode?: string };
 export interface BuildImageOptions {
   /**
    * apk packages to install. Names such as `"curl"` resolve from the public
-   * Lowland repository. Values that end in `.apk` or contain a slash are paths
-   * to local package files, which are installed without signature checks.
+   * Lowland repository, which must sign them. Values that end in `.apk` or
+   * contain a slash are paths to local package files, which are trusted
+   * because you supplied them and are installed without signature checks.
+   * Local packages install after the named ones and never use the network,
+   * so their dependencies must be named or local packages too.
    */
   packages: readonly string[];
   /**
@@ -90,6 +94,34 @@ function parse_size(size: number | string) {
 
 function is_local_package(name: string) {
   return name.endsWith(".apk") || name.includes("/");
+}
+
+// An apk dependency atom: a name, optionally with a provider prefix such as
+// `cmd:` and a version constraint such as `>=1.7`. A leading hyphen would be
+// read as an apk option.
+function valid_package_name(name: string) {
+  return /^[A-Za-z0-9_][A-Za-z0-9_.+:-]*(?:(?:[<>]=?|=|~|=~|>~|<~)[A-Za-z0-9_.+-]+)?$/.test(name);
+}
+
+// Staged copies must be removable afterwards, so a read-only source directory
+// gains owner write in its copy. Symbolic links are left as they are.
+async function make_owner_writable(path: string): Promise<void> {
+  const stats = await lstat(path);
+  if (stats.isSymbolicLink()) return;
+  await chmod(path, stats.mode | 0o200);
+  if (stats.isDirectory()) {
+    for (const entry of await readdir(path)) await make_owner_writable(join(path, entry));
+  }
+}
+
+// Runs every cleanup step even if an earlier one fails, collecting failures
+// after any error from the build itself.
+async function attempt(errors: unknown[], step: () => unknown) {
+  try {
+    await step();
+  } catch (error) {
+    errors.push(error);
+  }
 }
 
 function output_storage(handle: Awaited<ReturnType<typeof open>>, capacity: number) {
@@ -154,6 +186,14 @@ function node_network() {
   });
 }
 
+/** @internal Where named packages come from: the public repository, or a test fixture. */
+export interface PackageRepository {
+  url: string;
+  network(): Network;
+}
+
+const PUBLIC_REPOSITORY: PackageRepository = { url: REPOSITORY, network: node_network };
+
 /**
  * Builds a filesystem image from apk packages and host files.
  *
@@ -162,7 +202,10 @@ function node_network() {
  * files, creates the links, and adds the directories the guest agent needs.
  * The result boots with `@lowland/guest` when it keeps the default label.
  * The machine uses the host network only when a package is named rather than
- * given as a local file. This module requires Node.
+ * given as a local file. Named packages must be signed by the public
+ * repository, while local package files are trusted as given. The output is
+ * written to a temporary file beside it and renamed into place, so a failed
+ * build leaves any existing output untouched. This module requires Node.
  *
  * @example Build an image with curl and an application
  * ```ts
@@ -173,7 +216,15 @@ function node_network() {
  * });
  * ```
  */
-export async function buildImage(options: BuildImageOptions): Promise<void> {
+export function buildImage(options: BuildImageOptions): Promise<void> {
+  return build_image(options, PUBLIC_REPOSITORY);
+}
+
+/** @internal `buildImage()` with named packages from `repository`. */
+export async function build_image(
+  options: BuildImageOptions,
+  repository: PackageRepository,
+): Promise<void> {
   const format = options.format ?? FORMATS[0];
   if (!FORMATS.includes(format)) {
     throw new TypeError(
@@ -188,6 +239,11 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
   }
   const size = parse_size(options.size ?? "256M");
   if (options.packages.length === 0) throw new TypeError("an image requires at least one package");
+  for (const name of options.packages) {
+    if (!is_local_package(name) && !valid_package_name(name)) {
+      throw new TypeError(`invalid package name: ${JSON.stringify(name)}`);
+    }
+  }
   // Sorted like mkImage's attribute names, so parents apply before children.
   const files = Object.entries(options.files ?? {}).sort(([a], [b]) =>
     a < b ? -1 : a > b ? 1 : 0,
@@ -207,11 +263,14 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     }
   }
 
-  // Inputs are staged into one read-only share so arbitrary host paths reach
-  // the guest under names that need no quoting.
+  // Inputs are staged into one read-only share under generated names, so
+  // arbitrary host paths reach the guest without quoting.
   const input = await mkdtemp(join(tmpdir(), "lowland-image-"));
   const output = resolve(options.output);
+  const temporary = join(dirname(output), `.${basename(output)}.${randomUUID()}.tmp`);
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
   let built = false;
+  const errors: unknown[] = [];
   try {
     const args = [
       "lowland-build-image",
@@ -223,14 +282,13 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       "/tmp/input",
     ];
     const operations: string[] = [];
-    let local = false;
     let remote = false;
     for (const [index, name] of options.packages.entries()) {
       if (is_local_package(name)) {
-        const staged = posix.join("packages", `${index}-${basename(name)}`);
+        const staged = posix.join("packages", `${index}.apk`);
         await cp(await realpath(name), join(input, staged));
+        await make_owner_writable(join(input, staged));
         operations.push("--local", staged);
-        local = true;
       } else {
         operations.push("--package", name);
         remote = true;
@@ -244,49 +302,55 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
         recursive: true,
         verbatimSymlinks: true,
       });
+      await make_owner_writable(join(input, staged));
       operations.push("--file", path, staged, mode ?? "-");
     }
     for (const [path, target] of links) operations.push("--link", path, target);
-    if (remote) args.push("--repository", REPOSITORY);
-    if (local) args.push("--allow-untrusted");
+    if (remote) args.push("--repository", repository.url);
     args.push(...operations);
 
-    const handle = await open(output, "w+");
+    handle = await open(temporary, "wx+");
+    await handle.truncate(size);
+    const guest = guestAgent();
+    const network = remote ? repository.network() : undefined;
     try {
-      await handle.truncate(size);
-      const guest = guestAgent();
-      const network = remote ? node_network() : undefined;
-      try {
-        await using machine = await bootMachine({
-          cpus: 1,
-          plugins: [
-            rootImage(new URL("../builder.erofs", import.meta.url)),
-            blockDevice(output_storage(handle, size)),
-            fileSystemDevice(new NodeFS(input, { readOnly: true }), { tag: "input" }),
-            entropyDevice(),
-            guest,
-            ...(network ? [network.attach(guest)] : []),
-          ],
-        });
-        await guest.fs.mkdir("/tmp/input");
-        await guest.mount("input", "/tmp/input", { type: "virtiofs" });
-        const result = await guest.run(args);
-        if (!result.status.success) {
-          const decoder = new TextDecoder();
-          const log = decoder.decode(result.stdout) + decoder.decode(result.stderr);
-          throw new Error(`image build failed:\n${log.trimEnd()}`);
-        }
-      } finally {
-        network?.close();
+      await using machine = await bootMachine({
+        cpus: 1,
+        plugins: [
+          rootImage(new URL("../builder.erofs", import.meta.url)),
+          blockDevice(output_storage(handle, size)),
+          fileSystemDevice(new NodeFS(input, { readOnly: true }), { tag: "input" }),
+          entropyDevice(),
+          guest,
+          ...(network ? [network.attach(guest)] : []),
+        ],
+      });
+      await guest.fs.mkdir("/tmp/input");
+      await guest.mount("input", "/tmp/input", { type: "virtiofs" });
+      const result = await guest.run(args);
+      if (!result.status.success) {
+        const decoder = new TextDecoder();
+        const log = decoder.decode(result.stdout) + decoder.decode(result.stderr);
+        throw new Error(`image build failed:\n${log.trimEnd()}`);
       }
-      if (format === "erofs") await handle.truncate(await erofs_size(handle));
-      await handle.datasync();
-      built = true;
     } finally {
-      await handle.close();
+      network?.close();
     }
-  } finally {
-    await rm(input, { recursive: true, force: true });
-    if (!built) await rm(output, { force: true });
+    if (format === "erofs") await handle.truncate(await erofs_size(handle));
+    await handle.datasync();
+    await handle.close();
+    handle = undefined;
+    await rename(temporary, output);
+    built = true;
+  } catch (error) {
+    errors.push(error);
+  }
+  await attempt(errors, () => handle?.close());
+  await attempt(errors, () => rm(input, { recursive: true, force: true }));
+  if (!built) await attempt(errors, () => rm(temporary, { force: true }));
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    const first = errors[0] instanceof Error ? errors[0].message : String(errors[0]);
+    throw new AggregateError(errors, `${first}\n(cleaning up also failed)`);
   }
 }
