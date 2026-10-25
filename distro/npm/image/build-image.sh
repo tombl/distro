@@ -63,8 +63,8 @@ esac
 mkdir -p "$root/etc/apk/keys"
 cp /etc/apk/keys/site.rsa.pub "$root/etc/apk/keys/"
 
-# BusyBox hush trips set -e when a while condition ends the loop, so these
-# loops end with break instead.
+# Some shells, such as BusyBox hush, trip set -e when a while condition ends the
+# loop, so these loops end with break instead.
 packages() {
   while :; do
     case "$1" in
