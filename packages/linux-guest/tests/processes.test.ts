@@ -213,6 +213,26 @@ test("guest without a console", async (t) => {
     plugins: [bootConsole(console_output()), root_device(), guest],
   });
   try {
+    await t.test("streams stdin, stdout, and stderr separately", async () => {
+      const child = await guest.exec(["sh", "-c", "cat; printf error >&2"]);
+      const output = collect(child.stdout);
+      const error = collect(child.stderr);
+      const stdin = child.stdin.getWriter();
+      await stdin.write(new TextEncoder().encode("input"));
+      await stdin.close();
+      const [stdout, stderr, status] = await Promise.all([output, error, child.status]);
+      assert.equal(new TextDecoder().decode(stdout), "input");
+      assert.equal(new TextDecoder().decode(stderr), "error");
+      assert.deepEqual(status, { success: true, code: 0, signal: null });
+    });
+
+    await t.test("collects successful runs", async () => {
+      const result = await guest.run(["sh", "-c", "printf output; printf error >&2"]);
+      assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+      assert.equal(new TextDecoder().decode(result.stdout), "output");
+      assert.equal(new TextDecoder().decode(result.stderr), "error");
+    });
+
     await t.test("rejects missing programs", () => assert_missing_program(guest));
   } finally {
     machine.close();
