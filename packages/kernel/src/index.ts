@@ -2,7 +2,7 @@
 
 import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
-import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
+import { configure_machine, run_machine_booted, run_machine_closing } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
@@ -70,7 +70,10 @@ export interface Machine extends Disposable, AsyncDisposable {
   readonly memory: WebAssembly.Memory;
   /** Settles when closed, rejecting if the machine failed unexpectedly. */
   readonly closed: Promise<void>;
-  /** Idempotently shuts down the workers and owned devices. */
+  /**
+   * Idempotently shuts down the workers and owned devices, after giving
+   * plugins a chance to quiesce the guest.
+   */
   close(): void;
 }
 
@@ -237,7 +240,14 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     }
     return finish();
   };
-  const close = () => void finish();
+  let closing = false;
+  const close = () => {
+    if (closing || closed) return;
+    closing = true;
+    // A guest that powers off or fails while plugins are closing has already
+    // finished the machine; only an orderly close reports a closing failure.
+    void run_machine_closing(plugins).then(finish, (error) => (closed ? finish() : fail(error)));
+  };
 
   try {
     const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
