@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { blockDevice, bootMachine } from "@lowland/kernel";
 import { guestAgent, SystemError } from "../src/index.ts";
-import { ext4_root_device, root_device, wrong_root_device } from "./assets.ts";
+import { ext4_root_device, ext4_rootfs, root_device, wrong_root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
 
@@ -116,6 +116,40 @@ test("boots a writable ext4 system disk", async () => {
     machine.close();
     await machine.closed;
   }
+});
+
+test("closing the machine keeps writes to an ext4 system disk", async (t) => {
+  async function read_back(disk: Uint8Array<ArrayBuffer>) {
+    const { agent: guest, machine } = await boot(ext4_root_device(disk));
+    try {
+      return await guest.fs.readTextFile("/close-sync-test");
+    } finally {
+      machine.close();
+      await machine.closed;
+    }
+  }
+
+  await t.test("with close()", async () => {
+    const disk = new Uint8Array(ext4_rootfs);
+    const { agent: guest, machine } = await boot(ext4_root_device(disk));
+    await guest.fs.writeTextFile("/close-sync-test", "closed\n");
+    machine.close();
+    await machine.closed;
+    assert.equal(await read_back(disk), "closed\n");
+  });
+
+  await t.test("with await using", async () => {
+    const disk = new Uint8Array(ext4_rootfs);
+    {
+      const guest = guestAgent();
+      await using _machine = await bootMachine({
+        cpus: 1,
+        plugins: [ext4_root_device(disk), guest],
+      });
+      await guest.fs.writeTextFile("/close-sync-test", "disposed\n");
+    }
+    assert.equal(await read_back(disk), "disposed\n");
+  });
 });
 
 test("rejects a system disk with the wrong label", async () => {
