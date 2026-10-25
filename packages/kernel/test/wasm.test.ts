@@ -1381,6 +1381,58 @@ test("a device with views works on guest memory in place", async () => {
   await close_device(device.handle);
 });
 
+test("a copied chain writes back only the bytes the device reports", async () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const seen = Promise.withResolvers<Uint8Array[]>();
+  const device = new TestDevice({
+    queues: [
+      (queue) => {
+        const [chain] = queue;
+        assert(chain);
+        const [readable, first, second] = chain;
+        assert(readable && !readable.writable && first?.writable && second?.writable);
+        assert.deepEqual([...readable.array], [1, 2, 3, 4]);
+        // The guest's contents of writable buffers are not copied in.
+        seen.resolve([first.array.slice(), second.array.slice()]);
+        first.array.fill(0x11);
+        second.array.fill(0x22);
+        chain.release(6);
+      },
+    ],
+  });
+  const imports = attach_devices({
+    memory,
+    devices: [device.handle],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const descriptor = (index: number, address: number, flags: number) => {
+    const view = new DataView(memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, 4, true);
+    view.setUint16(14, (1 << 7) | flags, true);
+  };
+  const guest = new Uint8Array(memory.buffer);
+  guest.set([1, 2, 3, 4], 0x100);
+  guest.fill(0xee, 0x200, 0x204);
+  guest.fill(0xee, 0x300, 0x304);
+  descriptor(0, 0x100, 1);
+  descriptor(1, 0x200, 1 | (1 << 1));
+  descriptor(2, 0x300, 1 << 1);
+  imports.enable_vring(0, 0, 4, 0, 1);
+  imports.notify(0, 0);
+
+  const [first, second] = await seen.promise;
+  assert.deepEqual([...first!], [0, 0, 0, 0]);
+  assert.deepEqual([...second!], [0, 0, 0, 0]);
+  assert.deepEqual([...guest.subarray(0x200, 0x204)], [0x11, 0x11, 0x11, 0x11]);
+  assert.deepEqual([...guest.subarray(0x300, 0x304)], [0x22, 0x22, 0xee, 0xee]);
+  assert.equal(new DataView(memory.buffer).getUint32(8, true), 6);
+  await close_device(device.handle);
+});
+
 test("a virtqueue rejects an indirect table longer than the queue", async () => {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   let kicked = false;
