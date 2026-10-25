@@ -35,6 +35,31 @@
     margin-block-start: 0.25em;
   }
 
+  main table {
+    display: block;
+    overflow-x: auto;
+    margin-block-end: 1rem;
+    border-collapse: collapse;
+    color: var(--prose);
+    font-size: 0.9375rem;
+  }
+
+  main :is(th, td) {
+    padding: 0.5rem 1rem 0.5rem 0;
+    border-block-end: 1px solid var(--hairline);
+    text-align: start;
+    vertical-align: top;
+  }
+
+  main th {
+    color: var(--code-foreground);
+    font-weight: 600;
+  }
+
+  main td:first-child {
+    white-space: nowrap;
+  }
+
   .astro-code {
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.9375rem;
