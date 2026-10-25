@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { getMachinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
+import { machinePlugin, type MachinePlugin, type MachinePluginProvider } from "../plugin.ts";
 import { assert } from "../util.ts";
 import {
   PackedVirtqueue,
@@ -72,7 +72,7 @@ export function public_handle<API extends object>(device: BusDevice, api: API): 
     ...api,
     closed: device.closed,
     [bus_device]: device,
-    [getMachinePlugin]: () => plugin,
+    [machinePlugin]: () => plugin,
   });
   return handle;
 }

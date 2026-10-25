@@ -10,7 +10,13 @@ export const referencePackages = [
       {
         title: "Boot a machine",
         description: "Configure CPUs and boot assets, start Linux, and control its lifecycle.",
-        symbols: ["bootMachine", "BootMachineOptions", "Machine", "MachinePanicError"],
+        symbols: [
+          "bootMachine",
+          "BootMachineOptions",
+          "Machine",
+          "MachinePanicError",
+          "bootConsole",
+        ],
       },
       {
         title: "Attach devices",
@@ -49,6 +55,19 @@ export const referencePackages = [
         title: "Run devices in workers",
         description: "Serve a device from a worker so its storage I/O stays off the main thread.",
         symbols: ["Endpoint", "serveDevice", "workerDevice"],
+      },
+      {
+        title: "Write plugins",
+        description: "Contribute devices, kernel arguments, and lifecycle hooks to a machine.",
+        symbols: [
+          "MachinePlugin",
+          "MachinePluginInput",
+          "MachinePluginProvider",
+          "machinePlugin",
+          "MachineSetup",
+          "KernelArguments",
+          "MachineDevices",
+        ],
       },
     ],
   },

@@ -162,10 +162,10 @@ plugin like any other integration.
 The advanced plugin surface can live at `@lowland/kernel/plugin`:
 
 ```ts
-export const getMachinePlugin: unique symbol;
+export const machinePlugin: unique symbol;
 
 export interface MachinePluginProvider {
-  [getMachinePlugin](): MachinePlugin;
+  [machinePlugin](): MachinePlugin;
 }
 
 export type MachinePluginInput = MachinePlugin | MachinePluginProvider;
@@ -182,7 +182,7 @@ export interface MachineSetup {
 }
 ```
 
-`bootMachine()` normalizes a provider by checking for `getMachinePlugin`, runs
+`bootMachine()` normalizes a provider by checking for `machinePlugin`, runs
 each `configure()` callback against a private in-progress setup, boots once,
 then awaits each `booted()` callback. A guest-agent provider can therefore add
 its EROFS and vsock devices during configuration and make `bootMachine()`

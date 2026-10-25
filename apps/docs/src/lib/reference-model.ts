@@ -152,7 +152,7 @@ function paramName(param: ParamDef): string {
   return `{ ${param.props.map((prop) => ("key" in prop ? prop.key : "…")).join(", ")} }`;
 }
 
-// Computed keys such as `[getMachinePlugin]` keep their brackets.
+// Computed keys such as `[machinePlugin]` keep their brackets.
 function memberName(member: { name: string; computed?: true }): string {
   return member.computed ? `[${member.name}]` : member.name;
 }

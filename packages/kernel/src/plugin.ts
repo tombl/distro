@@ -4,11 +4,11 @@ import type { Machine } from "./index.ts";
 import type { Device } from "./virtio/device.ts";
 
 /** Returns the machine plugin represented by a higher-level object. */
-export const getMachinePlugin: unique symbol = Symbol("getMachinePlugin");
+export const machinePlugin: unique symbol = Symbol("machinePlugin");
 
 /** An object that can contribute to a machine without exposing its plugin hooks directly. */
 export interface MachinePluginProvider {
-  [getMachinePlugin](): MachinePlugin;
+  [machinePlugin](): MachinePlugin;
 }
 
 /** A machine plugin or an object that provides one. */
