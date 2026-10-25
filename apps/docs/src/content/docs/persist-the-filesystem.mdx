@@ -65,9 +65,9 @@ async function openStorage(): Promise<BlockStorage> {
   };
 }
 
-openStorage().then(
-  (storage) => serveDevice(self, blockDevice(storage)),
-  (error) => postMessage({ diskError: error }),
+serveDevice(
+  self,
+  openStorage().then((storage) => blockDevice(storage)),
 );
 ```
 
@@ -79,13 +79,13 @@ whole view is done, because the guest treats a short read or write as an I/O err
 the origin's storage quota from the start. Choose the capacity before the first run. Changing
 `capacity` later has no effect on a file that already exists.
 
-If the file cannot be opened, the worker posts the error in its own message, so that the page
-can report the actual reason.
+`serveDevice()` accepts a promise of the device. If the file cannot be opened, the promise
+rejects, and the page receives the same error.
 
 ## Attach the disk
 
 On the page, start the worker and pass it to `workerDevice()`. It resolves with a device once
-the worker has called `serveDevice()`. The page also listens for the worker's error message:
+the worker is serving it, and rejects with the worker's error if the file could not be opened:
 
 ```ts
 import { bootMachine, type Device, workerDevice } from "@lowland/kernel";
@@ -94,13 +94,8 @@ import { rootImage } from "@lowland/image";
 
 async function openDisk(): Promise<Device> {
   const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), { type: "module" });
-  const failed = new Promise<never>((_, reject) => {
-    worker.addEventListener("message", (event) => {
-      if (event.data?.diskError) reject(event.data.diskError);
-    });
-  });
   try {
-    const disk = await Promise.race([workerDevice(worker), failed]);
+    const disk = await workerDevice(worker);
     disk.closed.finally(() => worker.terminate()).catch(() => {});
     return disk;
   } catch (error) {
