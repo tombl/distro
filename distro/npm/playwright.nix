@@ -58,6 +58,7 @@ in
           exit 1
         fi
 
+        pnpm --filter=${package} check
         pnpm --filter=${package} test --project=${project} --reporter=line
       '';
     };
