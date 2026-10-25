@@ -36,6 +36,56 @@ The image ships inside this package and is loaded relative to the module, so
 it needs no configuration in Node, browsers, or bundlers. Node reads the file
 on demand. Browsers fetch it once and share it between machines.
 
+## Custom images
+
+Pass a source to `rootImage()` to attach your own EROFS or ext4 image instead:
+
+```js
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("app.erofs"), guest],
+});
+```
+
+In Node, a string is a file path, and `rootImage()` also accepts a `file:` URL
+or a `FileHandle` from `node:fs/promises`. Node reads files on demand. In
+browsers, a string is a URL relative to the page, and the image is fetched once
+and shared between machines. Every platform accepts a `Uint8Array`,
+`ArrayBuffer`, `Blob`, or `Response` that holds the whole image.
+
+The guest agent mounts the filesystem labeled `LOWLAND_ROOT` as the root, so a
+custom root image needs that label. A source that contains neither an EROFS
+nor an ext4 filesystem fails `bootMachine()` with an error that names it. This
+catches a development server that answers a mistyped asset URL with an HTML
+page.
+
+## Writable images
+
+Images are read-only by default. Pass `writable: true` to let the guest write
+to an ext4 image:
+
+```js
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("app.ext4", { writable: true }), guest],
+});
+```
+
+A path is opened for reading and writing. A `FileHandle` must already be open
+for writing, and it stays open after the machine closes. A `Uint8Array` or
+`ArrayBuffer` is modified in place. Fetched images, blobs, and responses cannot
+be writable. Attach a writable image to only one running machine at a time.
+
+The guest decides when its writes reach the image. Data is written once the
+guest flushes it, for example by running `sync` or unmounting the filesystem,
+so run `sync` in the guest before closing the machine to keep recent changes.
+
+The guest agent mounts an ext4 root read-write. To boot a read-only ext4 image
+as the root, pass the `lowland.root.overlay=tmpfs` kernel argument described in
+the `@lowland/guest` README.
+
 ## Installing packages
 
 The image trusts the signing key of the public repository at
