@@ -92,7 +92,6 @@
       } from "@lowland/guest";
       import {
         blockDevice,
-        bootConsole,
         bootMachine,
         consoleDevice,
         entropyDevice,
@@ -166,8 +165,34 @@
       // fills its own virtio console queue instead of buffering inside xterm.
       const toTerminal = (data) => new Promise((resolve) => term.write(data, resolve));
 
+      // The kernel's pre-console log reaches the page by a separate route that
+      // can trail the virtio console, so console output queues until the boot
+      // console closes; otherwise the boot log lands after the guest's first
+      // output and scrolls it away. The queue never makes the guest wait: the
+      // kernel writes to the virtio console before it closes the boot console,
+      // so blocking those writes on the close could deadlock. keep_bootcon
+      // keeps the boot console open as long as the machine runs, so output
+      // isn't queued then.
+      // Split options as the kernel does: on whitespace outside double quotes,
+      // which it strips, with - matching _ in the name and any value.
+      const kernelOptions = (line) =>
+        Array.from(line.matchAll(/(?:[^\s"]|"[^"]*(?:"|$))+/g), ([option]) =>
+          option.replaceAll('"', "").split("=")[0].replaceAll("-", "_"),
+        );
+      const keepBootcon = kernelOptions(cmdline.replace(/\+/g, " ")).includes("keep_bootcon");
+      let earlyOutput = keepBootcon ? null : [];
+      const flushEarlyOutput = () => {
+        for (const chunk of earlyOutput ?? []) term.write(chunk);
+        earlyOutput = null;
+      };
+
       const stdout = new WritableStream({
         write(chunk) {
+          if (earlyOutput) {
+            // chunk views guest memory that is released once write returns.
+            earlyOutput.push(chunk.slice());
+            return;
+          }
           return toTerminal(chunk);
         },
       });
@@ -322,7 +347,17 @@
       const extraArgs = cmdline.replace(/\+/g, " ");
       if (extraArgs) args.push(extraArgs);
 
-      const plugins = [bootConsole(bootOut), guest, ttyConsole];
+      // bootConsole() doesn't report when the boot log ends, and the queued
+      // console output has to be written after it, so pipe it here instead.
+      const bootLog = {
+        configure(setup) {
+          void setup.bootConsole
+            .pipeTo(bootOut)
+            .catch(() => {})
+            .finally(flushEarlyOutput);
+        },
+      };
+      const plugins = [bootLog, guest, ttyConsole];
       if (installDisk) plugins.push(installDisk);
       plugins.push(entropyDevice());
       if (bootDirectory) {
