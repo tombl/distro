@@ -54,8 +54,30 @@ export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
  */
 export interface Virtqueue extends Iterable<VirtqueueChain> {}
 
+/**
+ * A device-writable buffer: its guest bytes are never read (the device only
+ * writes them), so it is allocated when the device first touches it, and
+ * only touched buffers are written back. Copying every one eagerly cost a
+ * console 16 MiB per kick (256 receive buffers of a 64 KiB page).
+ */
+class WritableBuffer implements VirtqueueBuffer {
+  readonly writable = true;
+  readonly address: number;
+  #length: number;
+  touched: Uint8Array<ArrayBuffer> | null = null;
+
+  constructor(address: number, length: number) {
+    this.address = address;
+    this.#length = length;
+  }
+
+  get array() {
+    return (this.touched ??= new Uint8Array(this.#length));
+  }
+}
+
 class Chain implements VirtqueueChain {
-  #buffers: Array<VirtqueueBuffer & { address?: number }>;
+  #buffers: Array<VirtqueueBuffer | WritableBuffer>;
   #release: (written: number, outputs: VirtqueueOutput[]) => void;
 
   constructor(
@@ -65,13 +87,14 @@ class Chain implements VirtqueueChain {
   ) {
     this.#buffers = desc.map((descriptor) => {
       const address = Number(descriptor.addr);
-      const target = new Uint8Array(memory.buffer, address, descriptor.len);
-      const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
       // Device work may outlive the queue generation across an await. Keep
       // guest memory isolated until release proves the chain is still valid.
-      return writable
-        ? { array: target.slice(), writable, address }
-        : { array: target.slice(), writable };
+      if (descriptor.flags & DescriptorFlags.WRITE)
+        return new WritableBuffer(address, descriptor.len);
+      return {
+        array: new Uint8Array(memory.buffer, address, descriptor.len).slice(),
+        writable: false,
+      };
     });
     this.#release = release;
   }
@@ -79,8 +102,10 @@ class Chain implements VirtqueueChain {
   release(written: number) {
     this.#release(
       written,
-      this.#buffers.flatMap(({ address, array }) =>
-        address === undefined ? [] : [{ address, data: array }],
+      this.#buffers.flatMap((buffer) =>
+        buffer instanceof WritableBuffer && buffer.touched
+          ? [{ address: buffer.address, data: buffer.touched }]
+          : [],
       ),
     );
   }
