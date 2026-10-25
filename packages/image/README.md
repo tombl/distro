@@ -150,7 +150,8 @@ entry overrides what it copied.
 The default format is EROFS, which the guest agent mounts read-only. Pass
 `format: "ext4"` for a writable image, with `size` setting its capacity. The
 label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
-it with `blockDevice()` from `@lowland/kernel`.
+it with `rootImage("app.erofs")`, or with
+`rootImage("app.ext4", { writable: true })` for an ext4 image.
 
 The same build is available from the command line:
 
