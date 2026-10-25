@@ -90,6 +90,12 @@ export interface VirtioDeviceOptions {
   features?: bigint;
   /** The device's configuration space, at most 256 bytes. */
   config?: Uint8Array;
+  /**
+   * Present readable descriptors as views of guest memory instead of copies.
+   * Writable descriptors are always copied, so a device can never write to
+   * memory the guest reused after a reset.
+   */
+  views?: boolean;
 }
 
 interface QueueState {
@@ -113,9 +119,18 @@ export abstract class VirtioDevice implements BusDevice {
   #active = new Set<Promise<void>>();
   #attached: { config: Uint8Array; raise(): void } | undefined;
   #config_pending = false;
+  #views: boolean;
+  #on_error: (error: unknown) => void = () => {};
 
-  constructor({ id, queues, features = 0n, config = new Uint8Array() }: VirtioDeviceOptions) {
+  constructor({
+    id,
+    queues,
+    features = 0n,
+    config = new Uint8Array(),
+    views = false,
+  }: VirtioDeviceOptions) {
     this.id = id;
+    this.#views = views;
     this.queues = queues;
     this.features =
       TransportFeatures.VERSION_1 |
@@ -164,6 +179,16 @@ export abstract class VirtioDevice implements BusDevice {
     this.#attached.raise();
   }
 
+  /**
+   * Runs work that outlives its kick, such as a request processed
+   * concurrently with later ones. Shutdown waits for it before `close()`, and
+   * a failure is reported to the machine like a failed kick.
+   */
+  protected spawn(work: Promise<void>) {
+    this.#active.add(work);
+    void work.catch((error) => this.#on_error(error)).finally(() => this.#active.delete(work));
+  }
+
   shutdown(): Promise<void> {
     if (this.#stopped) return this.closed;
     this.#stopped = true;
@@ -174,8 +199,11 @@ export abstract class VirtioDevice implements BusDevice {
       } catch (reason) {
         failure = { status: "rejected", reason };
       }
-      const results = await Promise.allSettled(this.#active);
-      failure ??= results.find((result) => result.status === "rejected");
+      // Work in flight may spawn more before it settles.
+      while (this.#active.size > 0) {
+        const results = await Promise.allSettled(this.#active);
+        failure ??= results.find((result) => result.status === "rejected");
+      }
       try {
         await this.close();
       } catch (reason) {
@@ -205,6 +233,7 @@ export abstract class VirtioDevice implements BusDevice {
   attach(context: VirtioConnectionContext): ConnectedVirtioDevice {
     assert(!this.#stopped, "cannot attach a closed virtio device");
     assert(!this.#attached, "virtio device is already attached");
+    this.#on_error = context.on_error;
     const queues: QueueState[] = [];
     const queue_state = (vq: number) =>
       (queues[vq] ??= { queue: undefined, pending: false, notifying: false });
@@ -274,6 +303,7 @@ export abstract class VirtioDevice implements BusDevice {
             });
           },
           () => state.queue === queue && (context.queue_is_current?.(vq) ?? true),
+          this.#views,
         );
         state.queue = queue;
         if (state.pending) void drain(vq);

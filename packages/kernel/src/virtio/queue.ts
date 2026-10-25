@@ -33,6 +33,12 @@ interface Descriptor {
 
 /** One descriptor's view into the machine's memory. */
 export interface VirtqueueBuffer {
+  /**
+   * The descriptor's bytes. Writable buffers are always private copies,
+   * written back on release. Readable buffers are copies too, unless the
+   * queue was created with views, in which case they alias guest memory and
+   * are only meaningful until the chain is released or the queue is reset.
+   */
   readonly array: Uint8Array;
   /** Whether the guest driver allows the device to write to this buffer. */
   readonly writable: boolean;
@@ -59,17 +65,30 @@ class Chain implements VirtqueueChain {
   constructor(
     memory: WebAssembly.Memory,
     desc: Descriptor[],
+    views: boolean,
     release: (written: number, outputs: VirtqueueOutput[]) => void,
   ) {
+    // Copies share one allocation in chain order, so adjacent descriptors
+    // are adjacent views a device can hand to storage in one call.
+    const is_writable = (descriptor: Descriptor) =>
+      (descriptor.flags & DescriptorFlags.WRITE) !== 0;
+    const copied = (descriptor: Descriptor) => is_writable(descriptor) || !views;
+    const scratch = new ArrayBuffer(
+      desc.reduce((total, descriptor) => total + (copied(descriptor) ? descriptor.len : 0), 0),
+    );
+    let scratch_offset = 0;
     this.#buffers = desc.map((descriptor) => {
       const address = Number(descriptor.addr);
       const target = new Uint8Array(memory.buffer, address, descriptor.len);
-      const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
+      const writable = is_writable(descriptor);
       // Device work may outlive the queue generation across an await. Keep
-      // guest memory isolated until release proves the chain is still valid.
-      return writable
-        ? { array: target.slice(), writable, address }
-        : { array: target.slice(), writable };
+      // writes isolated from guest memory until release proves the chain is
+      // still valid: after a reset the guest may already have reused it.
+      if (!copied(descriptor)) return { array: target, writable };
+      const copy = new Uint8Array(scratch, scratch_offset, descriptor.len);
+      scratch_offset += descriptor.len;
+      copy.set(target);
+      return writable ? { array: copy, writable, address } : { array: copy, writable };
     });
     this.#release = release;
   }
@@ -134,6 +153,7 @@ export class PackedVirtqueue implements Virtqueue {
   #desc_addr: number;
   #publish: (completion: VirtqueueCompletion) => void;
   #is_current: () => boolean;
+  #views: boolean;
   #avail_wrap = true;
   #used_wrap = true;
   #used_idx = 0;
@@ -146,6 +166,7 @@ export class PackedVirtqueue implements Virtqueue {
     desc_addr: number,
     publish: (completion: VirtqueueCompletion) => void,
     is_current: () => boolean = () => true,
+    views = false,
   ) {
     assert(size !== 0);
     assert(desc_addr % VirtqDescriptor.size === 0, "packed ring must be 16-byte aligned");
@@ -154,6 +175,7 @@ export class PackedVirtqueue implements Virtqueue {
     this.#desc_addr = desc_addr;
     this.#publish = publish;
     this.#is_current = is_current;
+    this.#views = views;
   }
 
   invalidate() {
@@ -214,7 +236,7 @@ export class PackedVirtqueue implements Virtqueue {
       chain_desc = this.#indirect_descriptors(Number(desc.addr), desc.len / VirtqDescriptor.size);
     }
 
-    const chain = new Chain(this.#memory, chain_desc, (written, outputs) =>
+    const chain = new Chain(this.#memory, chain_desc, this.#views, (written, outputs) =>
       this.#release(id, skip, written, outputs),
     );
     // A remote reset can revoke this queue while its descriptors are being

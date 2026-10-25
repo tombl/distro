@@ -9,6 +9,7 @@ export type TestQueueHandler = (queue: Virtqueue) => void | PromiseLike<void>;
 export interface TestDeviceOptions {
   id?: number;
   config?: Uint8Array;
+  views?: boolean;
   queues?: readonly TestQueueHandler[];
   reset?(): void;
   stop?(): void;
@@ -21,7 +22,12 @@ export class TestDevice extends VirtioDevice {
   readonly handle: Device;
 
   constructor(options: TestDeviceOptions = {}) {
-    super({ id: options.id ?? 1, queues: options.queues?.length ?? 0, config: options.config });
+    super({
+      id: options.id ?? 1,
+      queues: options.queues?.length ?? 0,
+      config: options.config,
+      views: options.views,
+    });
     this.#options = options;
     this.handle = public_handle(this, {});
   }
