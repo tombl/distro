@@ -1,15 +1,25 @@
 // The seam between web APIs and Node builtins. Keeping the runtime probe here
 // prevents guest integrations from depending directly on either environment.
 
-interface Platform {
-  load_asset(url: URL): Promise<Uint8Array<ArrayBuffer>>;
+/** @internal A packaged asset and the content type it was served with, if any. */
+export interface Asset {
+  bytes: Uint8Array<ArrayBuffer>;
+  content_type: string | null;
 }
 
-const web: Platform = {
+interface Platform {
+  load_asset(url: URL): Promise<Asset>;
+}
+
+/** @internal */
+export const web: Platform = {
   async load_asset(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`failed to load guest asset: ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      content_type: response.headers.get("content-type"),
+    };
   },
 };
 
@@ -25,7 +35,11 @@ interface NodeProcess {
 
 function node(getBuiltinModule: GetBuiltinModule): Platform {
   const { readFile } = getBuiltinModule("node:fs/promises");
-  return { load_asset: readFile };
+  return {
+    async load_asset(url) {
+      return { bytes: await readFile(url), content_type: null };
+    },
+  };
 }
 
 const getBuiltinModule = (globalThis as { process?: NodeProcess }).process?.getBuiltinModule;
