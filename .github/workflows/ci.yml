@@ -49,13 +49,17 @@ jobs:
           # identical derivation, so it gets a status instead of a runner.
           outputs=$(nix eval --json '.#ciJobs.x86_64-linux.heavyChecks' --apply '
             builtins.mapAttrs (
-              _: derivation: map (output: (builtins.getAttr output derivation).outPath) derivation.outputs
+              _: derivation:
+              {
+                drv = derivation.drvPath;
+                outputs = map (output: (builtins.getAttr output derivation).outPath) derivation.outputs;
+              }
             )
           ')
 
           pending=()
           while read -r check; do
-            mapfile -t paths < <(jq --raw-output --arg check "$check" '.[$check][]' <<< "$outputs")
+            mapfile -t paths < <(jq --raw-output --arg check "$check" '.[$check].outputs[]' <<< "$outputs")
             if .github/ci/cached.sh "${paths[@]}"; then
               status "$check" success "Cached result"
             else
@@ -64,8 +68,30 @@ jobs:
           done < <(jq --raw-output 'keys[]' <<< "$outputs")
 
           echo "${#pending[@]} of $(jq length <<< "$outputs") heavy checks need a runner"
-          echo "heavy-checks=$(jq --compact-output --null-input '$ARGS.positional' --args -- "${pending[@]}")" \
-            >> "$GITHUB_OUTPUT"
+          jq --compact-output '[$ARGS.positional[] as $check | {check: $check, drv: .[$check].drv}]' \
+            --args -- "${pending[@]}" <<< "$outputs" > "$RUNNER_TEMP/heavy-checks.json"
+          echo "heavy-checks=$(cat "$RUNNER_TEMP/heavy-checks.json")" >> "$GITHUB_OUTPUT"
+
+          # Heavy jobs build these derivations directly. Fetching nixpkgs and
+          # instantiating the flake again would cost each of them ~15s.
+          mapfile -t drvs < <(jq --raw-output '.[].drv' "$RUNNER_TEMP/heavy-checks.json")
+          mkdir -p "$RUNNER_TEMP/heavy-derivations"
+          if [ "${#drvs[@]}" -gt 0 ]; then
+            # --requisites lists dependencies first, the order --import needs.
+            closure=$(nix-store --query --requisites "${drvs[@]}")
+            mapfile -t closure <<< "$closure"
+            set -o pipefail
+            nix-store --export "${closure[@]}" |
+              zstd --quiet -T0 > "$RUNNER_TEMP/heavy-derivations/derivations.nar.zst"
+          fi
+      - if: steps.plan.outputs.heavy-checks != '[]'
+        uses: actions/upload-artifact@v4
+        with:
+          name: heavy-derivations
+          path: ${{ runner.temp }}/heavy-derivations/derivations.nar.zst
+          if-no-files-found: error
+          # "Re-run failed jobs" reuses this run's plan for up to 30 days.
+          retention-days: 30
 
   build:
     name: Build packages and checks
@@ -203,21 +229,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: ${{ fromJSON(needs.plan.outputs.heavy-checks) }}
+        include: ${{ fromJSON(needs.plan.outputs.heavy-checks) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
       - uses: cachix/cachix-action@v17
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - uses: actions/download-artifact@v4
+        with:
+          name: heavy-derivations
+          path: ${{ runner.temp }}/heavy-derivations
       - name: Build isolated check
+        env:
+          DRV: ${{ matrix.drv }}
         run: |
-          installable=".#ciJobs.x86_64-linux.heavyChecks.${{ matrix.check }}"
-          nix build --no-link --print-build-logs "$installable"
+          zstd --decompress --stdout "$RUNNER_TEMP/heavy-derivations/derivations.nar.zst" |
+            nix-store --import >/dev/null
+          nix build --no-link --print-build-logs "$DRV^*"
 
   deploy-site:
     name: Deploy site
