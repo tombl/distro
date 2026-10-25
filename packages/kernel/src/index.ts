@@ -180,11 +180,15 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_closed = true;
     },
   });
-  const configured = await configure_machine(
-    options.args ?? [],
-    options.plugins ?? [],
-    boot_console,
-  );
+  let configured;
+  try {
+    configured = await configure_machine(options.args ?? [], options.plugins ?? [], boot_console);
+  } catch (error) {
+    // Close the stream so a bootConsole() pipe ends and releases its output.
+    boot_console_closed = true;
+    boot_console_controller.close();
+    throw error;
+  }
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
   let closed = false;
