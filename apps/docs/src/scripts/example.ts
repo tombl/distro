@@ -1,7 +1,8 @@
 import type { FrameMessage, RunMessage } from "./example-protocol";
 
 interface Run {
-  frame: HTMLIFrameElement;
+  // Unset while the source is still being prepared.
+  frame?: HTMLIFrameElement;
   code: string;
   quiet: boolean;
 }
@@ -37,7 +38,7 @@ function finish(example: HTMLElement) {
   const run = runs.get(example);
   if (!run) return;
   runs.delete(example);
-  run.frame.remove();
+  run.frame?.remove();
   const { button, output } = parts(example);
   if (run.quiet) output.replaceChildren();
   button.textContent = "Run";
@@ -60,33 +61,40 @@ async function run(example: HTMLElement) {
   output.replaceChildren();
   button.textContent = "Stop";
   example.dataset.running = "";
+  // The placeholder stays until the example prints something.
+  status(example, "Running...");
+
+  // Registered before any await, so Stop or a rerun during preparation
+  // supersedes this run instead of racing it.
+  const current: Run = { code: "", quiet: true };
+  runs.set(example, current);
 
   const source = sources.get(example)?.() ?? example.dataset.source ?? "";
   let code;
   try {
     code = await strip(source, example.dataset.lang ?? "ts");
   } catch (error) {
+    if (runs.get(example) !== current) return;
+    finish(example);
     print(example, "error", String(error instanceof Error ? error.message : error));
-    button.textContent = "Run";
-    delete example.dataset.running;
     return;
   }
+  if (runs.get(example) !== current) return;
 
   const frame = document.createElement("iframe");
   frame.src = "/example-frame/";
   frame.title = "Example runner";
   frame.hidden = true;
   frame.allow = "cross-origin-isolated";
-  // The placeholder stays until the example prints something.
-  status(example, "Running...");
-  runs.set(example, { frame, code, quiet: true });
+  current.frame = frame;
+  current.code = code;
   example.append(frame);
 }
 
 addEventListener("message", (event: MessageEvent<FrameMessage>) => {
   if (event.origin !== location.origin) return;
   for (const [example, run] of runs) {
-    if (run.frame.contentWindow !== event.source) continue;
+    if (!run.frame || run.frame.contentWindow !== event.source) continue;
     const message = event.data;
     if (message.type === "ready") {
       run.frame.contentWindow!.postMessage(
