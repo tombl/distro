@@ -68,9 +68,13 @@ export async function run_machine_booted(
 }
 
 export async function run_machine_closing(plugins: readonly MachinePlugin[]): Promise<void> {
-  for (const result of await Promise.allSettled(
-    plugins.map(async (plugin) => plugin.closing?.()),
-  )) {
-    if (result.status === "rejected") throw result.reason;
+  let failure: { error: unknown } | undefined;
+  for (const plugin of plugins.toReversed()) {
+    try {
+      await plugin.closing?.();
+    } catch (error) {
+      failure ??= { error };
+    }
   }
+  if (failure) throw failure.error;
 }
