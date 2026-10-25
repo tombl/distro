@@ -12,6 +12,9 @@ export const HEADER_SIZE = 64;
 // The smallest image that can hold a 1024-byte ext4 superblock after the boot
 // block. EROFS images are always larger.
 const MINIMUM_SIZE = 2048;
+// Block devices count their capacity in whole sectors, and dropping a partial
+// final sector would truncate the filesystem.
+const SECTOR_SIZE = 512;
 const EROFS_MAGIC = 0xe0f5e1e2;
 const EXT4_MAGIC = 0xef53;
 const EXT4_MAGIC_OFFSET = 56;
@@ -55,6 +58,11 @@ export function check_image(
   const filesystem = filesystem_of(header);
   if (!filesystem) {
     throw new Error(`${subject} a filesystem image: got ${got} with no EROFS or ext4 superblock`);
+  }
+  if (size % SECTOR_SIZE !== 0) {
+    throw new Error(
+      `${subject} a filesystem image: got ${got}, which is not a multiple of ${SECTOR_SIZE}`,
+    );
   }
   return filesystem;
 }

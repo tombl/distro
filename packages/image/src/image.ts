@@ -87,7 +87,15 @@ export function image_plugin(source: ResolvedSource, writable: boolean): Machine
 
   return {
     async configure(setup) {
-      setup.devices.add(blockDevice(await open()));
+      const storage = await open();
+      try {
+        setup.devices.add(blockDevice(storage));
+      } catch (error) {
+        // The device never reached the machine, so nothing else will close a
+        // file this plugin opened.
+        await storage.close?.();
+        throw error;
+      }
     },
   };
 }
