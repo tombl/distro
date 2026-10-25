@@ -33,8 +33,24 @@ as the root filesystem. Changes to the root filesystem last only for the life
 of the machine.
 
 The image ships inside this package and is loaded relative to the module, so
-it needs no configuration in Node, browsers, or bundlers. Node reads the file
-on demand. Browsers fetch it once and share it between machines.
+it needs no configuration in Node or browsers. Node reads the file on demand.
+Browsers fetch it once and share it between machines.
+
+Bundlers that keep `new URL(..., import.meta.url)` next to the module, such as
+Vite production builds, need no configuration either. The Vite 7 development
+server moves prebundled dependencies into `node_modules/.vite/deps` without
+the image, so the request returns the dev server's HTML fallback and
+`bootMachine()` rejects it. Exclude the Lowland packages from dependency
+optimization:
+
+```js
+// vite.config.js
+export default {
+  optimizeDeps: {
+    exclude: ["@lowland/image", "@lowland/kernel", "@lowland/guest"],
+  },
+};
+```
 
 ## Custom images
 
@@ -56,9 +72,9 @@ and shared between machines. Every platform accepts a `Uint8Array`,
 
 The guest agent mounts the filesystem labeled `LOWLAND_ROOT` as the root, so a
 custom root image needs that label. A source that contains neither an EROFS
-nor an ext4 filesystem fails `bootMachine()` with an error that names it. This
-catches a development server that answers a mistyped asset URL with an HTML
-page.
+nor an ext4 filesystem, or whose size is not a whole number of 512-byte
+sectors, fails `bootMachine()` with an error that names it. This catches a
+development server that answers a mistyped asset URL with an HTML page.
 
 ## Writable images
 
