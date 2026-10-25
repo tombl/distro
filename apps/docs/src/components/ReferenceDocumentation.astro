@@ -4,7 +4,7 @@ import { Code } from "astro:components";
 import type { Document } from "@deno/doc";
 
 import DocProse from "./DocProse.astro";
-import { linkResolver, type Group } from "../lib/reference-model";
+import { linkResolver, renderedAnchors, type Group } from "../lib/reference-model";
 import { renderDoc, renderInlineDoc } from "../lib/render-doc";
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
 }
 
 const { document, groups } = Astro.props;
-const resolveLink = linkResolver(document);
+const resolveLink = linkResolver(document, renderedAnchors(groups));
 const symbolNames = new Set(document.symbols.map(({ name }) => name));
 
 type Transformers = NonNullable<ComponentProps<typeof Code>["transformers"]>;
