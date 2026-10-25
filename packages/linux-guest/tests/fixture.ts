@@ -3,7 +3,7 @@ import {
   consoleDevice,
   entropyDevice,
   type Machine,
-  type VirtioDevice,
+  type Device,
 } from "@lowland/kernel";
 import {
   createNetwork,
@@ -22,7 +22,7 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(devices?: readonly VirtioDevice[]): Promise<TestGuest>;
+  spawn(devices?: readonly Device[]): Promise<TestGuest>;
 }
 
 export interface TestGuest extends GuestAgent {
@@ -52,9 +52,7 @@ export function guest_test(
       resolveDns: resolve4,
     });
     const guests: TestGuest[] = [];
-    const consoles: Promise<void>[] = [];
-
-    async function spawn(extra_devices: readonly VirtioDevice[] = []) {
+    async function spawn(extra_devices: readonly Device[] = []) {
       const agent = guestAgent();
       const attachment = network.attach(agent);
       const machine = await bootMachine({
@@ -73,7 +71,6 @@ export function guest_test(
       });
       const guest: TestGuest = Object.assign(agent, { machine, network: attachment });
       guests.push(guest);
-      consoles.push(machine.bootConsole.pipeTo(console_output()));
       await guest.fs.writeFile("/tmp/network-test", network_test);
       await guest.fs.chmod("/tmp/network-test", 0o755);
       await guest.fs.writeFile("/tmp/user-trap", user_trap);
@@ -90,7 +87,6 @@ export function guest_test(
       network.close();
       for (const guest of guests) guest.machine.close();
       await Promise.all(guests.map((guest) => guest.machine.closed));
-      await Promise.all(consoles);
     }
   });
 }

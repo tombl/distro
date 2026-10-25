@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-import type { DeviceTreeNode } from "./devicetree.ts";
 import type { Machine } from "./index.ts";
-import type { VirtioDevice } from "./virtio/core.ts";
+import type { Device } from "./virtio/device.ts";
 
 /** Returns the machine plugin represented by a higher-level object. */
-export const getMachinePlugin: unique symbol = Symbol("getMachinePlugin");
+export const machinePlugin: unique symbol = Symbol("machinePlugin");
 
 /** An object that can contribute to a machine without exposing its plugin hooks directly. */
 export interface MachinePluginProvider {
-  [getMachinePlugin](): MachinePlugin;
+  [machinePlugin](): MachinePlugin;
 }
 
 /** A machine plugin or an object that provides one. */
@@ -21,23 +20,21 @@ export interface KernelArguments {
   add(...args: string[]): void;
 }
 
-/** Virtio devices accumulated while configuring a machine. */
+/** Devices accumulated while configuring a machine. */
 export interface MachineDevices {
   /** Attaches devices in device-tree order. */
-  add(...devices: VirtioDevice[]): void;
-}
-
-/** Device-tree changes accumulated while configuring a machine. */
-export interface DeviceTreeBuilder {
-  /** Recursively merges a fragment over the generated machine device tree. */
-  merge(fragment: DeviceTreeNode): void;
+  add(...devices: Device[]): void;
 }
 
 /** The configure-only surface made available to machine plugins. */
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
-  readonly deviceTree: DeviceTreeBuilder;
+  /**
+   * Early kernel output. Consume this stream during configuration, before the
+   * machine boots.
+   */
+  readonly bootConsole: ReadableStream<Uint8Array>;
 }
 
 /** A composable contribution to a machine. */
@@ -46,4 +43,13 @@ export interface MachinePlugin {
   configure(setup: MachineSetup): void | Promise<void>;
   /** Runs after boot; `bootMachine()` does not resolve until this hook does. */
   booted?(machine: Machine): void | Promise<void>;
+}
+
+/** Routes early kernel output to a writable stream before the machine boots. */
+export function bootConsole(output: WritableStream<Uint8Array>): MachinePlugin {
+  return {
+    configure(setup) {
+      void setup.bootConsole.pipeTo(output, { preventClose: true }).catch(() => {});
+    },
+  };
 }

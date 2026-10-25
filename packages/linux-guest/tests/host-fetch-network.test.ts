@@ -54,14 +54,12 @@ async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) =
     ],
   });
   const guest = Object.assign(agent, { network: attachment });
-  const console_done = machine.bootConsole.pipeTo(console_output());
   try {
     await fn(guest);
   } finally {
     network.close();
     machine.close();
     await machine.closed;
-    await console_done;
   }
 }
 
@@ -107,6 +105,28 @@ test("streams a large response through with its bytes intact", async () => {
       const [output, status] = await Promise.all([collect(wget.stdout), wget.status]);
       assert.deepEqual(output, payload);
       assert.deepEqual(status, { success: true, code: 0, signal: null });
+    });
+  } finally {
+    server.close();
+  }
+});
+
+test("streams concurrent large responses into one guest without loss", async () => {
+  const payload = pattern_bytes(1 << 20);
+  const server = createServer((_request, response) => response.end(Buffer.from(payload)));
+  const port = await listen(server);
+  try {
+    await with_guest(hostFetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
+      const downloads = await Promise.all(
+        Array.from({ length: 6 }, (_, i) =>
+          guest.exec(["wget", "-q", "-O", "-", `http://example.test/blob${i}`]),
+        ),
+      );
+      for (const wget of downloads) {
+        const [output, status] = await Promise.all([collect(wget.stdout), wget.status]);
+        assert.deepEqual(output, payload);
+        assert.deepEqual(status, { success: true, code: 0, signal: null });
+      }
     });
   } finally {
     server.close();

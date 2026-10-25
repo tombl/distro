@@ -2,11 +2,11 @@
 
 import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
-import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
+import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
-import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
+import { VirtioBus } from "./virtio/bus.ts";
 import {
   allocate_shared_memory,
   type Imports,
@@ -17,18 +17,9 @@ import {
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
-export type { DeviceTreeNode } from "./devicetree.ts";
-export {
-  VirtioController,
-  type VirtioDevice,
-  type VirtioDeviceOptions,
-  type VirtioDriver,
-  type Virtqueue,
-  type VirtqueueBuffer,
-  type VirtqueueChain,
-  type VirtqueueHandler,
-} from "./virtio/core.ts";
-export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
+export { bootConsole } from "./plugin.ts";
+export type { Device } from "./virtio/device.ts";
+export { blockDevice, type BlockStorage } from "./virtio/block.ts";
 export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
@@ -77,8 +68,6 @@ export interface BootMachineOptions {
 export interface Machine extends Disposable, AsyncDisposable {
   /** The machine's physical memory. */
   readonly memory: WebAssembly.Memory;
-  /** Kernel output from before the console device is available. */
-  readonly bootConsole: ReadableStream<Uint8Array>;
   /** Settles when closed, rejecting if the machine failed unexpectedly. */
   readonly closed: Promise<void>;
   /** Idempotently shuts down the workers and owned devices. */
@@ -171,8 +160,32 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
  * ```
  */
 export async function bootMachine(options: BootMachineOptions): Promise<Machine> {
-  const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
-  const { devices, plugins } = configured;
+  let boot_console_controller!: ReadableStreamDefaultController<Uint8Array>;
+  let boot_console_closed = false;
+  const boot_console = new ReadableStream<Uint8Array>({
+    start(controller) {
+      boot_console_controller = controller;
+    },
+    cancel() {
+      boot_console_closed = true;
+    },
+  });
+  // Closing is skipped once a reader cancelled the stream, which would throw.
+  const boot_console_close = () => {
+    if (boot_console_closed) return;
+    boot_console_closed = true;
+    boot_console_controller.close();
+  };
+  let configured;
+  try {
+    configured = await configure_machine(options.args ?? [], options.plugins ?? [], boot_console);
+  } catch (error) {
+    // Close the stream so a bootConsole() pipe ends and releases its output.
+    boot_console_close();
+    throw error;
+  }
+  const { plugins } = configured;
+  const bus = new VirtioBus(configured.devices);
   const workers = new Set<WorkerHandle>();
   let closed = false;
   let failed = false;
@@ -184,24 +197,23 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   // merely because a consumer chooses not to observe them.
   void closed_promise.promise.catch(() => {});
 
-  const boot_console = new TransformStream<Uint8Array, Uint8Array>();
-  const boot_console_writer = boot_console.writable.getWriter();
   const boot_console_write = (message: ArrayBuffer) => {
-    void boot_console_writer.write(new Uint8Array(message)).catch(() => {});
+    // Boot output is diagnostic and synchronous from the kernel's point of
+    // view. Discard it unless a plugin attached a reader before boot.
+    if (!boot_console_closed && boot_console.locked) {
+      boot_console_controller.enqueue(new Uint8Array(message));
+    }
   };
-  const boot_console_close = () => {
-    void boot_console_writer.close().catch(() => {});
-  };
-
   const finish = () => {
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
-      const device_closes = devices.map((device) => close_virtio_device(device));
-      for (const result of await Promise.allSettled(device_closes)) {
-        if (result.status === "rejected" && !failed) {
+      try {
+        await bus.close();
+      } catch (device_error) {
+        if (!failed) {
           failed = true;
-          finish_error = result.reason;
+          finish_error = device_error;
         }
       }
       try {
@@ -259,16 +271,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       },
     };
 
-    for (const [i, dev] of devices.entries()) {
-      const device = virtio_device_description(dev);
-      devicetree[`virtio${i}`] = {
-        compatible: `virtio,wasm`,
-        "host-id": i,
-        "virtio-device-id": device.device_id,
-        features: device.features,
-        config: device.config,
-      };
-    }
+    Object.assign(devicetree, bus.describe());
     const memory_reservations: { address: number; size: number }[] = [];
 
     if (initcpio) {
@@ -286,7 +289,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     }
 
     (devicetree.chosen as DeviceTreeNode).sections = sections;
-    merge_device_tree(devicetree, configured.deviceTree);
 
     const generated_devicetree = generate_devicetree(devicetree, {
       memory_reservations,
@@ -424,9 +426,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         futex_atomic_op: unavailable,
         futex_atomic_cmpxchg: unavailable,
       },
-      virtio: virtio_imports({
+      virtio: bus.attach({
         memory: wasm_memory,
-        devices,
         on_error: fail,
         trigger_irq(irq) {
           assert(instance);
@@ -440,7 +441,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
 
     const machine: Machine = {
       memory: wasm_memory,
-      bootConsole: boot_console.readable,
       closed: closed_promise.promise,
       close,
       [Symbol.dispose]: close,

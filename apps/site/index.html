@@ -92,6 +92,7 @@
       } from "@lowland/guest";
       import {
         blockDevice,
+        bootConsole,
         bootMachine,
         consoleDevice,
         entropyDevice,
@@ -319,7 +320,7 @@
       const extraArgs = cmdline.replace(/\+/g, " ");
       if (extraArgs) args.push(extraArgs);
 
-      const plugins = [guest, ttyConsole];
+      const plugins = [bootConsole(bootOut), guest, ttyConsole];
       if (installDisk) plugins.push(installDisk);
       plugins.push(entropyDevice());
       if (bootDirectory) {
@@ -328,12 +329,11 @@
       plugins.push(bootMode === "live" ? blockDevice(disk) : disk);
       plugins.push(networkAttachment);
 
-      const machine = await bootMachine({
+      await bootMachine({
         cpus: navigator.hardwareConcurrency,
         args,
         plugins,
       });
-      void machine.bootConsole.pipeTo(bootOut).catch(() => {});
       if (bootDirectory) {
         await guest.fs.mkdir("/boot", { recursive: true });
         await guest.mount("boot", "/boot", { type: "virtiofs" });

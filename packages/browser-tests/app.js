@@ -1,5 +1,6 @@
 import {
   blockDevice,
+  bootConsole,
   bootMachine,
   consoleDevice,
   fileSystemDevice,
@@ -248,10 +249,9 @@ async function runInstalledSystem(path, cpus) {
 
   const machine = await bootMachine({
     cpus,
-    plugins: [root, consoleDevice(input, outputStream())],
+    plugins: [bootConsole(outputStream()), root, consoleDevice(input, outputStream())],
     initcpio,
   });
-  void machine.bootConsole.pipeTo(outputStream()).catch(reject);
   void machine.closed.then(
     () => reject(new Error("machine closed before scheduler handoff test completed")),
     reject,
