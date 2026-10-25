@@ -180,13 +180,18 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_closed = true;
     },
   });
+  // Closing is skipped once a reader cancelled the stream, which would throw.
+  const boot_console_close = () => {
+    if (boot_console_closed) return;
+    boot_console_closed = true;
+    boot_console_controller.close();
+  };
   let configured;
   try {
     configured = await configure_machine(options.args ?? [], options.plugins ?? [], boot_console);
   } catch (error) {
     // Close the stream so a bootConsole() pipe ends and releases its output.
-    boot_console_closed = true;
-    boot_console_controller.close();
+    boot_console_close();
     throw error;
   }
   const { devices, plugins } = configured;
@@ -208,12 +213,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_controller.enqueue(new Uint8Array(message));
     }
   };
-  const boot_console_close = () => {
-    if (boot_console_closed) return;
-    boot_console_closed = true;
-    boot_console_controller.close();
-  };
-
   const finish = () => {
     if (finish_promise) return finish_promise;
     closed = true;
