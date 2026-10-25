@@ -156,6 +156,7 @@
                   fi
                   test_assets=${wasmpkgs.linux-guest.package.checks.tests.assets}
                   install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
+                  install -Dm0644 ${wasmpkgs.lowland-image.rootfs} packages/image/rootfs.erofs
                   for asset in "$test_assets"/*; do
                     install -Dm0644 "$asset" "packages/linux-guest/$(basename "$asset")"
                   done
