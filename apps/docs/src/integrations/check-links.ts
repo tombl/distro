@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import type { AstroIntegration } from "astro";
 
-// Fails the build when a generated page links to a page or anchor on this
+// Fails the build when a generated page links to a file or anchor on this
 // site that the build did not produce, such as a page that is still a draft.
 export function checkLinks(site: string): AstroIntegration {
   return {
@@ -12,22 +12,28 @@ export function checkLinks(site: string): AstroIntegration {
     hooks: {
       "astro:build:done": async ({ dir, logger }) => {
         const root = fileURLToPath(dir);
-        const pages = new Map<string, string>();
-        for (const file of await htmlFiles(root)) {
-          const path = `/${relative(root, file)}`.replace(/index\.html$/, "");
-          pages.set(path, await readFile(file, "utf8"));
+        // Every generated file, by its URL path.
+        const files = new Set(
+          (await listFiles(root)).map((file) => `/${relative(root, file).split("\\").join("/")}`),
+        );
+        const html = new Map<string, string>();
+        for (const path of files) {
+          if (path.endsWith(".html")) html.set(path, await readFile(join(root, path), "utf8"));
         }
 
         const broken: string[] = [];
-        for (const [page, html] of pages) {
-          for (const [, href] of html.matchAll(/\bhref="([^"]+)"/g)) {
+        for (const [file, source] of html) {
+          const page = file.replace(/index\.html$/, "");
+          for (const [, href] of source.matchAll(/\bhref="([^"]+)"/g)) {
             const target = internalTarget(href.replaceAll("&amp;", "&"), page, site);
             if (!target) continue;
-            const linked = pages.get(target.path);
-            if (linked === undefined) {
-              if (!target.path.endsWith("/") || target.path.includes(".")) continue;
-              broken.push(`${page}: ${href} (no such page)`);
-            } else if (target.hash && !linked.includes(`id="${target.hash}"`)) {
+            const resolved = resolveFile(target.path, files);
+            if (!resolved) {
+              broken.push(`${page}: ${href} (no such file)`);
+              continue;
+            }
+            const linked = html.get(resolved);
+            if (target.hash && linked !== undefined && !hasAnchor(linked, target.hash)) {
               broken.push(`${page}: ${href} (no such anchor)`);
             }
           }
@@ -42,6 +48,20 @@ export function checkLinks(site: string): AstroIntegration {
   };
 }
 
+// A URL path names a generated file directly, or a directory whose
+// index.html is the page.
+function resolveFile(path: string, files: Set<string>): string | undefined {
+  if (path.endsWith("/")) return files.has(`${path}index.html`) ? `${path}index.html` : undefined;
+  if (files.has(path)) return path;
+  if (files.has(`${path}/index.html`)) return `${path}/index.html`;
+  return undefined;
+}
+
+function hasAnchor(html: string, id: string): boolean {
+  const escaped = id.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+  return html.includes(`id="${id}"`) || html.includes(`id="${escaped}"`);
+}
+
 function internalTarget(href: string, page: string, site: string) {
   let url: URL;
   try {
@@ -50,15 +70,24 @@ function internalTarget(href: string, page: string, site: string) {
     return undefined;
   }
   if (url.origin !== new URL(site).origin) return undefined;
-  return { path: url.pathname, hash: decodeURIComponent(url.hash.slice(1)) };
+  return { path: decode(url.pathname), hash: decode(url.hash.slice(1)) };
 }
 
-async function htmlFiles(dir: string): Promise<string[]> {
+// Fragments and paths may contain a literal "%" that is not an escape.
+function decode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+async function listFiles(dir: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...(await htmlFiles(path)));
-    else if (entry.name.endsWith(".html")) files.push(path);
+    if (entry.isDirectory()) files.push(...(await listFiles(path)));
+    else files.push(path);
   }
   return files;
 }
