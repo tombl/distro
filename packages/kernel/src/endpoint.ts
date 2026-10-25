@@ -36,7 +36,10 @@ const as_error = (value: unknown, fallback: string) =>
 
 /** @internal */
 export function listen_endpoint(endpoint: Endpoint, handlers: EndpointHandlers) {
-  if ("addEventListener" in endpoint) {
+  // Node's MessagePort implements both interfaces. Its EventTarget side wraps
+  // every message in a MessageEvent, which loads undici on first use: ~30 ms
+  // of CPU in each worker. The emitter side delivers the data directly.
+  if (!("on" in endpoint)) {
     const on_message = (event: MessageEvent) => handlers.message(event.data);
     const on_message_error = (_event: MessageEvent) =>
       handlers.error?.(new Error("could not deserialize endpoint message"));
