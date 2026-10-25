@@ -468,7 +468,8 @@ export function serveDevice(endpoint: Endpoint, handle: Device): void {
  * @example
  * ```ts
  * try {
- *   // Throws NoModificationAllowedError while another tab holds the file.
+ *   // Throws NoModificationAllowedError (InvalidStateError in WebKit) while
+ *   // another tab holds the file.
  *   const access = await file.createSyncAccessHandle();
  *   // `storage(access)` builds the application's BlockStorage over the handle.
  *   serveDevice(self, blockDevice(storage(access)));
