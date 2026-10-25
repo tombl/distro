@@ -15,6 +15,22 @@ thread_local! {
 
 static ATOMIC: AtomicUsize = AtomicUsize::new(0);
 
+// std leaks thread-local values at thread exit on wasm unless the platform
+// runs pthread key destructors; count drops to prove it does.
+static TLS_DROPS: AtomicUsize = AtomicUsize::new(0);
+
+struct CountDrop;
+
+impl Drop for CountDrop {
+    fn drop(&mut self) {
+        TLS_DROPS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+thread_local! {
+    static TLS_DROP: CountDrop = const { CountDrop };
+}
+
 fn process_child(args: &[String]) -> bool {
     match args.get(1).map(String::as_str) {
         Some("--process-child") => {
@@ -219,6 +235,7 @@ fn main() {
                         TLS_COUNTER.with(|c| c.set(c.get() + 1));
                     }
                     let tls = TLS_COUNTER.with(|c| c.get());
+                    TLS_DROP.with(|_| {});
                     tx.send((thread::current().name().unwrap().to_owned(), tls))
                         .unwrap();
                     i as u64
@@ -244,6 +261,10 @@ fn main() {
     assert_eq!(atomic, n_threads * iters, "atomic count wrong");
     let main_tls = TLS_COUNTER.with(|c| c.get());
     assert_eq!(main_tls, 0, "main thread TLS should be untouched");
+    // pthread_join returns after the thread's key destructors have run.
+    let tls_drops = TLS_DROPS.load(Ordering::Relaxed);
+    println!("thread-local destructors run: {tls_drops}");
+    assert_eq!(tls_drops, n_threads, "thread-local destructors did not run");
 
     // timed futex waits: sleep and park_timeout must actually take ~their duration
     let t0 = Instant::now();

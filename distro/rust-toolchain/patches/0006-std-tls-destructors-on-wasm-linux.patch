@@ -1,0 +1,25 @@
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -93,9 +93,11 @@
+             pub(crate) use windows::enable;
+         }
+         any(
+-            all(target_family = "wasm", not(
+-                all(target_os = "wasi", target_env = "p1", target_feature = "atomics")
+-            )),
++            all(target_family = "wasm", not(any(
++                all(target_os = "wasi", target_env = "p1", target_feature = "atomics"),
++                // tombl/linux runs pthread key destructors at thread exit.
++                all(target_os = "linux", not(target_vendor = "wali")),
++            ))),
+             target_os = "uefi",
+             target_os = "zkvm",
+             target_os = "trusty",
+@@ -151,6 +153,7 @@
+             all(not(target_thread_local), target_vendor = "apple"),
+             target_os = "teeos",
+             all(target_os = "wasi", target_env = "p1", target_feature = "atomics"),
++            all(target_family = "wasm", target_os = "linux", not(target_vendor = "wali")),
+         ) => {
+             mod racy;
+             mod unix;
