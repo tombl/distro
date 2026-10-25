@@ -1,0 +1,275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Stokes <git@tombl.dev>
+Date: Sun, 25 Oct 2026 15:38:26 +0800
+Subject: [PATCH 2/2] Add wasm32- and wasm64-unknown-linux-musl targets
+
+Tier 3 targets for the tombl/linux NOMMU kernel port: musl libc, static
+executables linked through the clang driver for the same triple, wasm
+threads over an imported shared memory. They differ from
+wasm32-wali-linux-musl in ABI (ordinary ILP32/LP64 C ABI, syscalls
+through musl rather than host imports), which the "wali" vendor now
+distinguishes.
+---
+ compiler/rustc_target/src/spec/base/mod.rs    |  1 +
+ .../rustc_target/src/spec/base/wasm_linux.rs  | 82 +++++++++++++++++++
+ compiler/rustc_target/src/spec/mod.rs         |  2 +
+ .../spec/targets/wasm32_unknown_linux_musl.rs | 23 ++++++
+ .../spec/targets/wasm64_unknown_linux_musl.rs | 25 ++++++
+ src/doc/rustc/src/SUMMARY.md                  |  1 +
+ src/doc/rustc/src/platform-support.md         |  2 +
+ .../wasm-unknown-linux-musl.md                | 44 ++++++++++
+ 8 files changed, 180 insertions(+)
+ create mode 100644 compiler/rustc_target/src/spec/base/wasm_linux.rs
+ create mode 100644 compiler/rustc_target/src/spec/targets/wasm32_unknown_linux_musl.rs
+ create mode 100644 compiler/rustc_target/src/spec/targets/wasm64_unknown_linux_musl.rs
+ create mode 100644 src/doc/rustc/src/platform-support/wasm-unknown-linux-musl.md
+
+diff --git a/compiler/rustc_target/src/spec/base/mod.rs b/compiler/rustc_target/src/spec/base/mod.rs
+index 13f364f3..84e349b7 100644
+--- a/compiler/rustc_target/src/spec/base/mod.rs
++++ b/compiler/rustc_target/src/spec/base/mod.rs
+@@ -36,6 +36,7 @@
+ pub(crate) mod unikraft_linux_musl;
+ pub(crate) mod vxworks;
+ pub(crate) mod wasm;
++pub(crate) mod wasm_linux;
+ pub(crate) mod windows_gnu;
+ pub(crate) mod windows_gnullvm;
+ pub(crate) mod windows_msvc;
+diff --git a/compiler/rustc_target/src/spec/base/wasm_linux.rs b/compiler/rustc_target/src/spec/base/wasm_linux.rs
+new file mode 100644
+index 00000000..7b27ff33
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/base/wasm_linux.rs
+@@ -0,0 +1,82 @@
++//! wasm32 and wasm64 Linux on the tombl/linux NOMMU kernel port: musl libc,
++//! static executables linked through the clang driver for the same triple.
++//!
++//! Unlike WALI (`linux_wasm`), which imports Linux syscalls from the host and
++//! uses an LP64-style ABI on wasm32, these targets use the ordinary C ABI for
++//! their pointer width and enter the kernel through musl.
++
++use crate::spec::{
++    BinaryFormat, Cc, Env, LinkSelfContainedDefault, LinkerFlavor, Os, PanicStrategy, RelocModel,
++    TargetOptions, TlsModel, cvs,
++};
++
++pub(crate) fn opts(clang_target: &'static str, max_memory: &'static str) -> TargetOptions {
++    let pre_link_args = TargetOptions::link_args(
++        LinkerFlavor::WasmLld(Cc::Yes),
++        &[
++            clang_target,
++            // The kernel instantiates every process against one shared memory
++            // and calls through the function table for signal handlers and
++            // clone callbacks.
++            "-Wl,--import-memory",
++            "-Wl,--shared-memory",
++            max_memory,
++            "-Wl,--export-table",
++            // wasm-ld's default 64 KiB shadow stack is too small for ordinary
++            // programs; match the 8 MiB Linux convention.
++            "-Wl,-z,stack-size=8388608",
++            // LLD only implements C++-like demangling, which doesn't match
++            // Rust's mangling scheme.
++            "-Wl,--no-demangle",
++        ],
++    );
++
++    TargetOptions {
++        os: Os::Linux,
++        env: Env::Musl,
++        families: cvs!["wasm", "unix"],
++        is_like_wasm: true,
++        binary_format: BinaryFormat::Wasm,
++
++        // The clang driver for the target supplies musl's crt1, libc and the
++        // compiler runtime; nothing is self-contained in the Rust toolchain.
++        linker: Some("clang".into()),
++        linker_flavor: LinkerFlavor::WasmLld(Cc::Yes),
++        pre_link_args,
++        link_self_contained: LinkSelfContainedDefault::False,
++
++        // Executables are always static; the kernel has no dynamic loader.
++        crt_static_default: true,
++        crt_static_respected: true,
++        dynamic_linking: false,
++        relocation_model: RelocModel::Static,
++
++        // wasm cannot unwind yet.
++        panic_strategy: PanicStrategy::Abort,
++
++        // Threads are wasm threads over the shared memory; TLS is per-instance
++        // and only local-exec is implemented for wasm in LLVM.
++        has_thread_local: true,
++        tls_model: TlsModel::LocalExec,
++        singlethread: false,
++        max_atomic_width: Some(64),
++
++        // musl's crt1 `_start` fetches argv from the kernel and calls the weak
++        // `__main_void`, whose libc definition forwards the real argc/argv to
++        // `__main_argc_argv`.
++        entry_name: "__main_argc_argv".into(),
++        main_needs_argc_argv: true,
++
++        eh_frame_header: false,
++        emit_debug_gdb_scripts: false,
++        // See https://bugs.llvm.org/show_bug.cgi?id=52442.
++        generate_arange_section: false,
++        // Symbol visibility handles this for wasm.
++        limit_rdylib_exports: false,
++
++        // Matches the musl sysroot, which clang compiles with these features.
++        features: "+atomics,+bulk-memory,+mutable-globals,+sign-ext".into(),
++
++        ..Default::default()
++    }
++}
+diff --git a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
+index a747b0ae..8ef77335 100644
+--- a/compiler/rustc_target/src/spec/mod.rs
++++ b/compiler/rustc_target/src/spec/mod.rs
+@@ -1651,7 +1651,9 @@ fn $module() {
+     ("wasm32-wasip3", wasm32_wasip3),
+     ("wasm32-wasip1-threads", wasm32_wasip1_threads),
+     ("wasm32-wali-linux-musl", wasm32_wali_linux_musl),
++    ("wasm32-unknown-linux-musl", wasm32_unknown_linux_musl),
+     ("wasm64-unknown-unknown", wasm64_unknown_unknown),
++    ("wasm64-unknown-linux-musl", wasm64_unknown_linux_musl),
+ 
+     ("thumbv6m-none-eabi", thumbv6m_none_eabi),
+     ("thumbv7m-none-eabi", thumbv7m_none_eabi),
+diff --git a/compiler/rustc_target/src/spec/targets/wasm32_unknown_linux_musl.rs b/compiler/rustc_target/src/spec/targets/wasm32_unknown_linux_musl.rs
+new file mode 100644
+index 00000000..2d21ac6c
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/targets/wasm32_unknown_linux_musl.rs
+@@ -0,0 +1,23 @@
++//! wasm32 Linux on the tombl/linux kernel port with musl libc. See
++//! `base::wasm_linux`.
++
++use crate::spec::{Arch, Target, TargetMetadata, base};
++
++pub(crate) fn target() -> Target {
++    Target {
++        llvm_target: "wasm32-unknown-linux-musl".into(),
++        metadata: TargetMetadata {
++            description: Some("WebAssembly Linux (tombl/linux) with musl-libc".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(true),
++        },
++        pointer_width: 32,
++        data_layout: "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20".into(),
++        arch: Arch::Wasm32,
++        options: base::wasm_linux::opts(
++            "--target=wasm32-unknown-linux-musl",
++            "-Wl,--max-memory=4294967296",
++        ),
++    }
++}
+diff --git a/compiler/rustc_target/src/spec/targets/wasm64_unknown_linux_musl.rs b/compiler/rustc_target/src/spec/targets/wasm64_unknown_linux_musl.rs
+new file mode 100644
+index 00000000..b2a8024c
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/targets/wasm64_unknown_linux_musl.rs
+@@ -0,0 +1,25 @@
++//! wasm64 (memory64) Linux on the tombl/linux kernel port with musl libc. See
++//! `base::wasm_linux`.
++
++use crate::spec::{Arch, Target, TargetMetadata, base};
++
++pub(crate) fn target() -> Target {
++    Target {
++        llvm_target: "wasm64-unknown-linux-musl".into(),
++        metadata: TargetMetadata {
++            description: Some("WebAssembly 64-bit Linux (tombl/linux) with musl-libc".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(true),
++        },
++        pointer_width: 64,
++        data_layout: "e-m:e-p:64:64-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20".into(),
++        arch: Arch::Wasm64,
++        // FIXME: provisional 16 GiB limit; shared memories need a maximum and
++        // the wasm64 platform has not settled on one yet.
++        options: base::wasm_linux::opts(
++            "--target=wasm64-unknown-linux-musl",
++            "-Wl,--max-memory=17179869184",
++        ),
++    }
++}
+diff --git a/src/doc/rustc/src/SUMMARY.md b/src/doc/rustc/src/SUMMARY.md
+index 3abeea4e..e422fc93 100644
+--- a/src/doc/rustc/src/SUMMARY.md
++++ b/src/doc/rustc/src/SUMMARY.md
+@@ -145,6 +145,7 @@
+     - [wasm32-wasip2](platform-support/wasm32-wasip2.md)
+     - [wasm32-wasip3](platform-support/wasm32-wasip3.md)
+     - [wasm32-wali-linux-musl](platform-support/wasm32-wali-linux.md)
++    - [wasm\*-unknown-linux-musl](platform-support/wasm-unknown-linux-musl.md)
+     - [wasm32-unknown-emscripten](platform-support/wasm32-unknown-emscripten.md)
+     - [wasm32-unknown-unknown](platform-support/wasm32-unknown-unknown.md)
+     - [wasm32v1-none](platform-support/wasm32v1-none.md)
+diff --git a/src/doc/rustc/src/platform-support.md b/src/doc/rustc/src/platform-support.md
+index ce4d55c2..046f2a35 100644
+--- a/src/doc/rustc/src/platform-support.md
++++ b/src/doc/rustc/src/platform-support.md
+@@ -444,6 +444,8 @@ target | std | host | notes
+ [`thumbv8m.main-nuttx-eabihf`](platform-support/nuttx.md) | ✓ |  | ARMv8M Mainline with NuttX, hardfloat
+ [`wasm64-unknown-unknown`](platform-support/wasm64-unknown-unknown.md) | ? |  | WebAssembly
+ [`wasm32-wali-linux-musl`](platform-support/wasm32-wali-linux.md) | ? |  | WebAssembly with [WALI](https://github.com/arjunr2/WALI)
++[`wasm32-unknown-linux-musl`](platform-support/wasm-unknown-linux-musl.md) | ✓ |  | WebAssembly Linux (tombl/linux) with musl
++[`wasm64-unknown-linux-musl`](platform-support/wasm-unknown-linux-musl.md) | ✓ |  | WebAssembly 64-bit Linux (tombl/linux) with musl
+ [`wasm32-wasip3`](platform-support/wasm32-wasip3.md) | ✓ |  | WebAssembly with WASIp3
+ [`x86_64-apple-tvos`](platform-support/apple-tvos.md) | ✓ |  | x86 64-bit tvOS
+ [`x86_64-apple-watchos-sim`](platform-support/apple-watchos.md) | ✓ |  | x86 64-bit Apple WatchOS simulator
+diff --git a/src/doc/rustc/src/platform-support/wasm-unknown-linux-musl.md b/src/doc/rustc/src/platform-support/wasm-unknown-linux-musl.md
+new file mode 100644
+index 00000000..e5ad63cf
+--- /dev/null
++++ b/src/doc/rustc/src/platform-support/wasm-unknown-linux-musl.md
+@@ -0,0 +1,44 @@
++# `wasm32-unknown-linux-musl` and `wasm64-unknown-linux-musl`
++
++**Tier: 3**
++
++WebAssembly executables for [tombl/linux](https://github.com/tombl/linux), a
++NOMMU Linux kernel port that runs in a WebAssembly host (a browser or Node.js)
++and runs each process as a wasm instance over a shared memory. Userspace is
++musl libc; programs enter the kernel through musl's ordinary syscall path
++rather than importing syscalls from the host as
++[WALI](wasm32-wali-linux.md) does.
++
++`wasm32-unknown-linux-musl` is ILP32 (`c_long` is 32 bits). `wasm64` uses
++memory64 and is LP64.
++
++## Target maintainers
++
++None upstream; maintained in the [tombl/rust](https://github.com/tombl/rust)
++fork.
++
++## Requirements
++
++- Executables only, always statically linked; there is no dynamic loader.
++- `panic=abort`; wasm cannot unwind.
++- The `atomics` and `bulk-memory` features are enabled, since threads are
++  wasm threads over the shared process memory.
++- `std` is supported, apart from `fork` (the kernel is NOMMU; use
++  `posix_spawn`/`vfork`-style process creation) and `mmap` of files.
++
++## Building the target
++
++Linking goes through a clang for the same triple with a musl sysroot, from
++the tombl/llvm-project fork. The standard library is not shipped; build it
++with `-Zbuild-std` or `x.py` with a C toolchain for the target configured.
++
++## Building Rust programs
++
++```sh
++cargo +nightly build -Zbuild-std=std,panic_abort --target wasm32-unknown-linux-musl
++```
++
++## Testing
++
++There is no test runner in this repository; the
++[distro](https://github.com/tombl/distro) runs smoke tests in the kernel.
