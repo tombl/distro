@@ -23,7 +23,7 @@ if (navigator.userAgent.includes("Firefox/")) {
 
 function contentType(name: string) {
   const extension = name.split(".").at(-1)?.toLowerCase();
-  return (extension && types[extension]) ?? "application/octet-stream";
+  return types[extension ?? ""] ?? "application/octet-stream";
 }
 
 async function bootFile(pathname: string) {
