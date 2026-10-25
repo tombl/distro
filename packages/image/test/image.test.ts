@@ -5,7 +5,7 @@ import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { bootMachine } from "@lowland/kernel";
+import { bootMachine, type VirtioDevice } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "../src/index.ts";
@@ -14,11 +14,34 @@ import { canonical_image, scratch_directory, writable_ext4_copy } from "./assets
 const decoder = new TextDecoder();
 const success = { success: true, code: 0, signal: null };
 
-async function boot(image: MachinePlugin, args: string[] = []) {
+async function boot(image: MachinePlugin) {
   const guest = guestAgent();
-  const machine = await bootMachine({ cpus: 1, args, plugins: [image, guest] });
+  const machine = await bootMachine({ cpus: 1, plugins: [image, guest] });
   void machine.bootConsole.pipeTo(new WritableStream());
   return { guest, machine };
+}
+
+// blockDevice() advertises VIRTIO_BLK_F_RO when its storage has no write
+// callback. The transport that carries the feature bits is private to
+// @lowland/kernel, so find it among the device's symbol properties.
+const VIRTIO_BLK_F_RO = 1n << 5n;
+
+async function read_only(image: MachinePlugin) {
+  const devices: VirtioDevice[] = [];
+  await image.configure({
+    args: { add() {} },
+    devices: { add: (...added) => devices.push(...added) },
+    deviceTree: { merge() {} },
+  });
+  assert.equal(devices.length, 1);
+  const device = devices[0] as unknown as Record<symbol, unknown>;
+  const transport = Object.getOwnPropertySymbols(device)
+    .map((symbol) => device[symbol] as { features?: unknown; close?(): Promise<void> })
+    .find((value) => typeof value?.features === "bigint");
+  assert.ok(transport);
+  // Closing the device releases a file opened from a path.
+  await transport.close!();
+  return ((transport.features as bigint) & VIRTIO_BLK_F_RO) !== 0n;
 }
 
 test("boots the root image with the guest agent", async (t) => {
@@ -100,17 +123,14 @@ test("modifies writable bytes in place", async () => {
   assert.notDeepEqual(bytes, before);
 });
 
-test("leaves read-only images unwritten", async () => {
+test("attaches read-only images as read-only devices", async () => {
   await using directory = await scratch_directory();
   const path = await writable_ext4_copy(directory.path);
-  const before = await readFile(path);
-  {
-    // The guest agent mounts ext4 read-write unless it is given an overlay.
-    const { guest, machine } = await boot(rootImage(path), ["lowland.root.overlay=tmpfs"]);
-    await using _ = machine;
-    await guest.run(["sh", "-c", "echo x > /root/marker; sync"]);
-  }
-  assert.deepEqual(await readFile(path), before);
+  const bytes = await readFile(path);
+  assert.equal(await read_only(rootImage(path)), true);
+  assert.equal(await read_only(rootImage(bytes)), true);
+  assert.equal(await read_only(rootImage(path, { writable: true })), false);
+  assert.equal(await read_only(rootImage(bytes, { writable: true })), false);
 });
 
 test("rejects a writable URL", () => {

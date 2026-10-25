@@ -62,8 +62,11 @@ page.
 
 ## Writable images
 
-Images are read-only by default. Pass `writable: true` to let the guest write
-to an ext4 image:
+Images are read-only by default. The guest agent boots a read-only image
+beneath a temporary writable overlay, so the guest can still write to its root,
+but those changes are discarded when the machine closes and the image itself is
+never modified. Pass `writable: true` to let the guest write to an ext4 image
+and keep its changes:
 
 ```js
 const guest = guestAgent();
@@ -81,10 +84,6 @@ be writable. Attach a writable image to only one running machine at a time.
 The guest decides when its writes reach the image. Data is written once the
 guest flushes it, for example by running `sync` or unmounting the filesystem,
 so run `sync` in the guest before closing the machine to keep recent changes.
-
-The guest agent mounts an ext4 root read-write. To boot a read-only ext4 image
-as the root, pass the `lowland.root.overlay=tmpfs` kernel argument described in
-the `@lowland/guest` README.
 
 ## Installing packages
 
