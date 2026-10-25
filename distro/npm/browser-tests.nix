@@ -22,6 +22,7 @@ let
     ${playwright.linkRuntime "$out"}
     cp ${source}/app.js $out/app.js
     cp ${source}/index.html $out/index.html
+    cp ${source}/memory-probe-worker.js $out/memory-probe-worker.js
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${site.package}/static/*/opfs-disk-worker.js $out/opfs-disk-worker.js
     cp ${image.bootInitramfs} $out/boot.cpio
@@ -34,6 +35,7 @@ let
     cp ${source}/tests/boot.spec.js $out/tests/
     cp ${source}/tests/opfs-disk.spec.js $out/tests/
     cp ${source}/tests/posix-spawn-stress.spec.js $out/tests/
+    cp ${source}/tests/process-reservations.spec.js $out/tests/
     cp ${source}/tests/remote-memory.spec.js $out/tests/
     cp ${source}/tests/spawn-stress.spec.js $out/tests/
     cp ${source}/tests/virtio-fs.spec.js $out/tests/

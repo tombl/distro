@@ -8,8 +8,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "busybox";
-    rev = "4ad91c87e7efeff15628bea7240b6055b2737644";
-    hash = "sha256-IwdmKbP2LPrw011n3DmsX75siuBlzc358Zk+IulwaVw=";
+    rev = "c79a60dc5f546d7ab029b74927f5a5e60a2d1609";
+    hash = "sha256-TrRhJggGtjJtp4psXUpj6+kPiTaKpmXf+6AWgKAAhqY=";
   },
   vm-test,
 }:

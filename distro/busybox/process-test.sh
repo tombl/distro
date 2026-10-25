@@ -25,6 +25,50 @@ exec 9<&-
 [ "$inherited_fd" = inherited-fd ] ||
   fail "inherited fd returned [$inherited_fd]"
 
+# hush spawns pipe members and background jobs that only exec an external
+# program in a child sharing its memory, so their setup must stay invisible
+# to the shell: assignment prefixes, redirects and exec failures.
+export SPAWN_OUTER=outer
+SPAWN_PREFIX=prefix SPAWN_OUTER=inner SPAWN_OUTER=last env >/tmp/spawn-env &
+wait $! || fail "spawning env with assignment prefixes failed"
+grep -qx SPAWN_PREFIX=prefix /tmp/spawn-env || fail "assignment prefix missing from spawned env"
+[ "$(grep -c '^SPAWN_OUTER=' /tmp/spawn-env)" -eq 1 ] || fail "spawned env repeats an overridden variable"
+grep -qx SPAWN_OUTER=last /tmp/spawn-env || fail "spawned env did not take the last assignment"
+[ -z "${SPAWN_PREFIX+set}" ] || fail "assignment prefix leaked into the shell"
+[ "$SPAWN_OUTER" = outer ] || fail "assignment prefix overwrote [$SPAWN_OUTER]"
+# shellcheck disable=SC2034 # must not reach the child's environment
+spawn_unexported=1
+env | grep -q '^spawn_unexported=' && fail "unexported variable reached a spawned child"
+spawn_word=piped
+/bin/echo "$spawn_word" 2>/dev/null | /bin/cat | /bin/grep -qx piped ||
+  fail "external pipeline with a variable failed"
+/bin/cat >/tmp/spawn-stdin &
+wait $! || fail "background cat failed"
+[ ! -s /tmp/spawn-stdin ] || fail "background job did not read /dev/null"
+/bin/echo appended >>/tmp/spawn-redir 2>&1 &
+wait $!
+grep -qx appended /tmp/spawn-redir || fail "background redirect failed"
+/nonexistent/spawn-test 2>/tmp/spawn-missing &
+wait $!
+spawn_rc=$?
+[ "$spawn_rc" -eq 127 ] || fail "missing program exited $spawn_rc instead of 127"
+grep -q "can't execute '/nonexistent/spawn-test'" /tmp/spawn-missing ||
+  fail "missing program did not report the exec failure"
+# shellcheck disable=SC2030,SC2031 # asserting exactly that
+/bin/true $((spawn_arith = 5)) | /bin/cat
+# shellcheck disable=SC2031
+[ -z "$spawn_arith" ] || fail "arithmetic in a pipe member leaked into the shell"
+# shellcheck disable=SC2030 # asserting exactly that
+/bin/true "${spawn_default:=set}" | /bin/cat
+# shellcheck disable=SC2031
+[ -z "$spawn_default" ] || fail "default assignment in a pipe member leaked into the shell"
+spawn_i=0
+while [ "$spawn_i" -lt 40 ]; do
+  /bin/sleep 0 &
+  spawn_i=$((spawn_i + 1))
+done
+wait || fail "waiting for background sleeps failed"
+
 # The forkless timeout watcher sleeps for the requested interval, then signals
 # the target. The target is in nanosleep, so cooperative delivery reaches it on
 # a kernel entry rather than relying on a pure userspace spin.

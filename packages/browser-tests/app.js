@@ -125,6 +125,97 @@ globalThis.spawnStress = () =>
     return collectProcess(await guest.exec(["sh", "-c", script]));
   });
 
+// Probed from a throwaway worker that is terminated afterwards: memories
+// allocated on the main thread stay pinned until the page itself collects
+// garbage, which Chromium may never do.
+function memoryHeadroom() {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker("/memory-probe-worker.js");
+    worker.onmessage = ({ data }) => {
+      worker.terminate();
+      resolve(data);
+    };
+    worker.onerror = (event) => {
+      worker.terminate();
+      reject(new Error(`memory probe failed: ${event.message}`));
+    };
+    worker.postMessage({ limit: 4000 });
+  });
+}
+
+// WebKit returns a dropped reservation asynchronously, so give the probe's
+// memories (and any short-lived guest processes) time to come back before
+// the next step allocates.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 2000));
+
+globalThis.processReservations = (count) =>
+  withGuest(async (guest) => {
+    // Each background sleep is spawned by hush and execs straight away, so it
+    // should hold exactly one reservation: its own program's memory. A
+    // spawn that copies the shell first holds a second one for the copy.
+    const script = [
+      "echo idle",
+      "read _ || exit 1",
+      "i=0",
+      "pids=",
+      `while [ $i -lt ${count} ]; do`,
+      "  sleep 120 &",
+      '  pids="$pids $!"',
+      "  i=$((i+1))",
+      "done",
+      "for pid in $pids; do",
+      "  attempt=0",
+      "  until [ \"$(tr '\\000' ' ' < /proc/$pid/cmdline)\" = 'sleep 120 ' ]; do",
+      "    attempt=$((attempt+1))",
+      "    [ $attempt -lt 500 ] || exit 2",
+      "    sleep 0.01",
+      "  done",
+      "done",
+      "echo ready",
+      "read _",
+      "kill $pids",
+      "wait",
+    ].join("\n");
+    const child = await guest.exec(["sh", "-c", script]);
+    const stderr = new Response(child.stderr).text();
+    const reader = child.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    // Reads stdout until marker appears, or to EOF without one.
+    const output = async (marker) => {
+      while (marker === undefined || !stdout.includes(marker)) {
+        const { done, value } = await reader.read();
+        if (done) return false;
+        stdout += decoder.decode(value, { stream: true });
+      }
+      return true;
+    };
+    const stdin = child.stdin.getWriter();
+    const proceed = () => stdin.write(new TextEncoder().encode("\n"));
+
+    let idle;
+    let held;
+    if (await output("idle\n")) {
+      idle = await memoryHeadroom();
+      await settle();
+      await proceed().catch(() => {});
+      if (await output("ready\n")) {
+        await settle();
+        held = await memoryHeadroom();
+      }
+      await proceed().catch(() => {});
+    }
+    await stdin.close().catch(() => {});
+    await output();
+    return {
+      status: await child.status,
+      stdout,
+      stderr: await stderr,
+      idle,
+      held,
+    };
+  });
+
 globalThis.remoteMemoryMetadata = () =>
   withGuest(
     async (guest) => {
