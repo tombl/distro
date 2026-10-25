@@ -9,7 +9,7 @@ import { blockDevice } from "../src/virtio/block.ts";
 import { consoleDevice } from "../src/virtio/console.ts";
 import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
-import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
+import { serveDevice, serveDeviceError, workerDevice } from "../src/virtio/remote.ts";
 import { attach_devices, close_device, TestDevice } from "./virtio-fixture.ts";
 import {
   allocate_shared_memory,
@@ -633,6 +633,20 @@ test("a worker-device failure after ready is observed before attachment", async 
   await assert.rejects(close_device(device), /worker failed after ready/);
 
   await close_device(served);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("serveDeviceError rejects workerDevice with the error's name and message", async () => {
+  const channel = new MessageChannel();
+  serveDeviceError(
+    channel.port1,
+    new DOMException("the file is open in another tab", "NoModificationAllowedError"),
+  );
+  await assert.rejects(workerDevice(channel.port2), {
+    name: "NoModificationAllowedError",
+    message: "the file is open in another tab",
+  });
   channel.port1.close();
   channel.port2.close();
 });
