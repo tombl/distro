@@ -174,7 +174,7 @@ guest_test("guest-fetch-handler", async (t, fixture) => {
 
   await t.test("POST echo through httpd CGI", async () => {
     await guest.fs.mkdir("/tmp/www/cgi-bin", { recursive: true });
-    // A hush CGI script: the header block, then cat streams the request body
+    // A shell CGI script: the header block, then cat streams the request body
     // (httpd frames CGI stdin by CONTENT_LENGTH) straight back as the response.
     await guest.fs.writeFile(
       "/tmp/www/cgi-bin/echo",

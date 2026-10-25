@@ -8,6 +8,8 @@ fail() {
 
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
+# ash gives background jobs /dev/null as stdin when job control is off.
+mount -t devtmpfs devtmpfs /dev || fail "mounting devtmpfs failed"
 mount -t proc proc /proc || fail "mounting proc failed"
 /vm-test-setup-dev-fd || fail "creating /dev/fd links failed"
 

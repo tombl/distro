@@ -1,0 +1,64 @@
+BusyBox gates ash on !NOMMU because every subshell, pipeline member, command
+substitution and external command goes through fork(). Our port replaces
+that fork with callback clone (see wasm-ash-callback-clone.patch), so lift
+the Kconfig dependency and the compile-time #error.
+
+diff --git a/shell/Config.src b/shell/Config.src
+index 5efbf99..2bb6a60 100644
+--- a/shell/Config.src
++++ b/shell/Config.src
+@@ -15,7 +15,6 @@ choice
+ 
+ # note: cannot use "select ASH" here, it breaks "make allnoconfig"
+ config SH_IS_ASH
+-	depends on !NOMMU
+ 	bool "ash"
+ 	select SHELL_ASH
+ 	help
+@@ -57,7 +56,6 @@ choice
+ 	"bash" as a supported applet name.
+ 
+ config BASH_IS_ASH
+-	depends on !NOMMU
+ 	bool "ash"
+ 	select SHELL_ASH
+ 	help
+diff --git a/shell/ash.c b/shell/ash.c
+index 9173b86..94f59a5 100644
+--- a/shell/ash.c
++++ b/shell/ash.c
+@@ -17,12 +17,10 @@
+  */
+ //config:config SHELL_ASH
+ //config:	bool #hidden option
+-//config:	depends on !NOMMU
+ //config:
+ //config:config ASH
+ //config:	bool "ash (80 kb)"
+ //config:	default y
+-//config:	depends on !NOMMU
+ //config:	select SHELL_ASH
+ //config:	help
+ //config:	The most complete and most pedantically correct shell included with
+@@ -31,9 +29,7 @@
+ //config:	(written by Kenneth Almquist) from NetBSD.
+ //config:
+ //config:# ash options
+-//config:# note: Don't remove !NOMMU part in the next line; it would break
+-//config:# menuconfig's indenting.
+-//config:if !NOMMU && (SHELL_ASH || ASH || SH_IS_ASH || BASH_IS_ASH)
++//config:if SHELL_ASH || ASH || SH_IS_ASH || BASH_IS_ASH
+ //config:
+ //config:config ASH_OPTIMIZE_FOR_SIZE
+ //config:	bool "Optimize for size instead of speed"
+@@ -316,10 +312,6 @@ typedef long arith_t;
+ # define unlikely(cond) (cond)
+ #endif
+ 
+-#if !BB_MMU
+-# error "Do not even bother, ash will not run on NOMMU machine"
+-#endif
+-
+ /* ============ Hash table sizes. Configurable. */
+ 
+ #define VTABSIZE 39
