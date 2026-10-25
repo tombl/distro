@@ -6,7 +6,7 @@ import {
   type MacAddress,
 } from "@lowland/kernel";
 import {
-  getMachinePlugin,
+  machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
 } from "@lowland/kernel/plugin";
@@ -1528,7 +1528,7 @@ function attach_guest(network: Network, agent: GuestAgent): NetworkAttachment {
   const guest_network: NetworkAttachment = {
     address: attachment.address,
     connect,
-    [getMachinePlugin]() {
+    [machinePlugin]() {
       return plugin;
     },
   };

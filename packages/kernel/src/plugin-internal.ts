@@ -1,39 +1,23 @@
 // SPDX-License-Identifier: MIT
 
-import type { DeviceTreeNode } from "./devicetree.ts";
 import type { Machine } from "./index.ts";
 import {
-  getMachinePlugin,
+  machinePlugin,
   type MachinePlugin,
   type MachinePluginInput,
   type MachineSetup,
 } from "./plugin.ts";
-import { close_virtio_device, type VirtioDevice } from "./virtio/core.ts";
+import { VirtioBus } from "./virtio/bus.ts";
+import type { Device } from "./virtio/device.ts";
 
 export interface ConfiguredMachine {
   readonly args: readonly string[];
-  readonly devices: readonly VirtioDevice[];
-  readonly deviceTree: DeviceTreeNode;
+  readonly devices: readonly Device[];
   readonly plugins: readonly MachinePlugin[];
 }
 
-function is_device_tree_node(value: unknown): value is DeviceTreeNode {
-  return typeof value === "object" && value?.constructor === Object;
-}
-
-export function merge_device_tree(target: DeviceTreeNode, source: DeviceTreeNode) {
-  for (const [name, value] of Object.entries(source)) {
-    const current = target[name];
-    if (is_device_tree_node(current) && is_device_tree_node(value)) {
-      merge_device_tree(current, value);
-    } else {
-      target[name] = value;
-    }
-  }
-}
-
 function machine_plugin(input: MachinePluginInput): MachinePlugin {
-  return getMachinePlugin in input ? input[getMachinePlugin]() : input;
+  return machinePlugin in input ? input[machinePlugin]() : input;
 }
 
 export async function configure_machine(
@@ -42,8 +26,7 @@ export async function configure_machine(
   bootConsole: ReadableStream<Uint8Array> = new ReadableStream(),
 ): Promise<ConfiguredMachine> {
   const configured_args = [...args];
-  const devices: VirtioDevice[] = [];
-  const device_tree: DeviceTreeNode = {};
+  const devices: Device[] = [];
   const setup: MachineSetup = {
     bootConsole,
     args: {
@@ -56,11 +39,6 @@ export async function configure_machine(
         devices.push(...next);
       },
     },
-    deviceTree: {
-      merge(fragment) {
-        merge_device_tree(device_tree, fragment);
-      },
-    },
   };
 
   const plugins: MachinePlugin[] = [];
@@ -71,14 +49,13 @@ export async function configure_machine(
       await plugin.configure(setup);
     }
   } catch (error) {
-    await Promise.allSettled(devices.map((device) => close_virtio_device(device)));
+    await new VirtioBus(devices).close().catch(() => {});
     throw error;
   }
 
   return {
     args: configured_args,
     devices,
-    deviceTree: device_tree,
     plugins,
   };
 }
