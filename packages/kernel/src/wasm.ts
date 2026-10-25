@@ -215,7 +215,16 @@ export interface Imports {
      * worker without returning.
      */
     exec_handoff(): void;
-    call(): void;
+    /**
+     * For an exec in place: allocates and instantiates the compiled image in
+     * this worker, then replaces this worker's image with it.
+     */
+    exec_prepare(): number;
+    exec_instantiate(): void;
+    /** Abandons the user stack after an exec in place replaced the instance. */
+    unwind(): never;
+    /** Returns 1 when unwind() ended the call, so the kernel enters the new image. */
+    call(): number;
     switch_entry(fn: UserWord, arg: UserWord): void;
     /** Returns WASM_HANDLER_ESCAPED if the handler left through an exception. */
     call_signal_handler(fn: UserWord, sig: number): number;
