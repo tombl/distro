@@ -41,8 +41,7 @@ export function root_device() {
   });
 }
 
-export function ext4_root_device() {
-  const disk = new Uint8Array(ext4_rootfs);
+export function ext4_root_device(disk = new Uint8Array(ext4_rootfs)) {
   return blockDevice({
     capacity: disk.byteLength,
     read(offset, target) {
@@ -55,6 +54,17 @@ export function ext4_root_device() {
       return data.byteLength;
     },
     flush() {},
+  });
+}
+
+export function readonly_ext4_root_device() {
+  return blockDevice({
+    capacity: ext4_rootfs.byteLength,
+    read(offset, target) {
+      const source = ext4_rootfs.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
   });
 }
 
