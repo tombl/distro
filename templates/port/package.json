@@ -1,0 +1,12 @@
+{
+  "name": "hello",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "boot": "node boot.mjs"
+  },
+  "dependencies": {
+    "@lowland/guest": "*",
+    "@lowland/kernel": "*"
+  }
+}
