@@ -1,13 +1,223 @@
 ---
 title: Persist the filesystem
-description: Keep a guest's writable data across page loads.
-draft: true
+description: Keep a guest's writable data across page loads with a disk stored in the origin private file system.
 section: howtos
 order: 7
 ---
 
 # Persist the filesystem
 
-This page has not been written yet. It will cover storing a guest's writable data in OPFS so it survives page reloads,
-and what the packaged read-only root image does and does not let you
-persist.
+Everything a guest writes is lost when the page closes, unless it is written to storage on the
+host. In a browser, that storage can be a file in the origin private file system (OPFS). This
+page attaches such a file to the machine as a second disk, formats it on first use, and mounts
+it inside the guest. Files written to that disk survive reloads.
+
+The setup has three parts:
+
+1. A worker that opens the OPFS file and serves it as a block device.
+2. Page code that starts the worker and attaches the device when the machine boots.
+3. A filesystem on the disk, made inside the guest the first time the page runs.
+
+## Serve the disk from a worker
+
+Browsers give fast, synchronous access to an OPFS file only in a dedicated worker, through
+`createSyncAccessHandle()`. The worker opens the file, gives it a size on first use, and serves
+it with `serveDevice()`:
+
+```ts title="disk-worker.ts"
+import { blockDevice, type BlockStorage, serveDevice } from "@lowland/kernel";
+
+const capacity = 256 * 1024 * 1024;
+
+async function openStorage(): Promise<BlockStorage> {
+  const directory = await navigator.storage.getDirectory();
+  const file = await directory.getFileHandle("disk.img", { create: true });
+  const access = await file.createSyncAccessHandle();
+  if (access.getSize() === 0) access.truncate(capacity);
+
+  return {
+    capacity: access.getSize(),
+    read(offset, target) {
+      return access.read(target, { at: offset });
+    },
+    write(offset, data) {
+      return access.write(data, { at: offset });
+    },
+    flush() {
+      access.flush();
+    },
+    close() {
+      access.flush();
+      access.close();
+    },
+  };
+}
+
+openStorage().then(
+  (storage) => serveDevice(self, blockDevice(storage)),
+  (error) => postMessage({ diskError: error }),
+);
+```
+
+`read` and `write` receive views of the guest's memory and pass them to the access handle
+directly, without copying. The views are valid until the call returns.
+
+`truncate()` gives a new file its full size at once, and the browser counts that size against
+the origin's storage quota from the start. Choose the capacity before the first run. Changing
+`capacity` later has no effect on a file that already exists.
+
+If the file cannot be opened, the worker posts the error in its own message, so that the page
+can report the actual reason.
+
+## Attach the disk
+
+On the page, start the worker and pass it to `workerDevice()`. It resolves with a device once
+the worker has called `serveDevice()`. The page also listens for the worker's error message:
+
+```ts
+import { bootMachine, type Device, workerDevice } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+async function openDisk(): Promise<Device> {
+  const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), { type: "module" });
+  const failed = new Promise<never>((_, reject) => {
+    worker.addEventListener("message", (event) => {
+      if (event.data?.diskError) reject(event.data.diskError);
+    });
+  });
+  try {
+    const disk = await Promise.race([workerDevice(worker), failed]);
+    disk.closed.finally(() => worker.terminate()).catch(() => {});
+    return disk;
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
+}
+
+const disk = await openDisk();
+const guest = guestAgent();
+const machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest, disk] });
+```
+
+The worker imports `@lowland/kernel`, so it must be bundled. Vite bundles a worker that is
+started with `new Worker(new URL(..., import.meta.url), { type: "module" })`. With another
+bundler, check that the build output contains the worker. The page needs the headers described
+in [Set up a browser page](/set-up-a-browser-page/).
+
+When the machine closes, it closes the disk, and the worker releases the file.
+
+## Format and mount the disk
+
+Block devices appear in the guest in the order their plugins are attached. With the plugins
+above, the root image is `/dev/vda`, the guest agent's disk is `/dev/vdb`, and the OPFS disk is
+`/dev/vdc`.
+
+On the first run, the disk contains only zeros. `blkid` prints nothing for a device without a
+filesystem, so the page makes one with BusyBox's `mkfs.ext2` in that case:
+
+```ts
+const probe = await guest.run(["blkid", "/dev/vdc"]);
+if (probe.stdout.byteLength === 0) {
+  const result = await guest.run(["mkfs.ext2", "-L", "data", "/dev/vdc"]);
+  if (!result.status.success) throw new Error("could not format the disk");
+}
+
+await guest.fs.mkdir("/tmp/data", { recursive: true });
+await guest.mount("/dev/vdc", "/tmp/data", { type: "ext2" });
+await guest.fs.writeTextFile("/tmp/data/hello.txt", "hello\n");
+```
+
+On later runs, `blkid` finds the filesystem and the page mounts it as it is. Files under
+`/tmp/data` are the ones written in earlier runs.
+
+## Write data safely
+
+The guest kernel keeps recent writes in its memory and writes them to the disk later. If the
+page closes or reloads before then, those writes are lost, and an ext2 filesystem can be left
+inconsistent. Unmount the disk before you close the machine:
+
+```ts
+await guest.unmount("/tmp/data");
+machine.close();
+```
+
+A user can close the tab at any time, though. To write important data to the disk at once, run
+`sync` after writing it:
+
+```ts
+await guest.run(["sync"]);
+```
+
+To write everything through as it happens, mount the disk with the `sync` option instead. Use
+the guest's `mount` command for this:
+
+```ts
+await guest.run(["mount", "-t", "ext2", "-o", "sync", "/dev/vdc", "/tmp/data"]);
+```
+
+Writes are slower with this option, because each one waits for the disk.
+
+## What persists
+
+Only files on the attached disk persist. Everything else in the guest lives in memory and is
+lost when the machine closes:
+
+- The root image is read-only, and every page load starts from the same copy.
+- `/tmp`, apart from the mounted disk, is kept in memory.
+- A writable layer added with `lowland.root.overlay=tmpfs` is also kept in memory. Changes to
+  `/etc` or `/usr` are lost, even though the whole filesystem appears writable.
+
+Keep data that must persist under the disk's mount point. To keep a program's configuration,
+point the program at a path on the disk.
+
+## One tab at a time
+
+Only one access handle can be open on an OPFS file at a time. While one tab has the disk open,
+`createSyncAccessHandle()` in a second tab throws a `DOMException` named
+`NoModificationAllowedError`, and `openDisk()` rejects with it. The file becomes available again
+when the first tab closes its machine, or when that tab closes.
+
+Check for this error and tell the user that the page is already open elsewhere:
+
+```ts
+const disk = await openDisk().catch((error) => {
+  if (error?.name === "NoModificationAllowedError") {
+    throw new Error("This page is already open in another tab.");
+  }
+  throw error;
+});
+```
+
+To let several tabs run at once, give each one its own file.
+
+## Ask the browser to keep the data
+
+By default, data in the origin private file system is stored on a best-effort basis. The
+browser may delete it when the device runs low on storage, or when the user clears site data.
+`navigator.storage.persist()` asks the browser to keep it:
+
+```ts
+const persisted = await navigator.storage.persist();
+```
+
+The browser decides whether to grant the request, and resolves with `false` if it does not. The
+disk works the same either way. The request only changes whether the browser may delete it.
+
+## In Node.js
+
+In Node.js, no worker is needed. A `blockDevice()` whose `read` and `write` use a `FileHandle`
+from `node:fs/promises` stores the disk in a host file.
+[Run in Node](/run-in-node/#read-the-root-image-from-disk) shows `read`. Open the file with the
+`"r+"` flag and add `write`:
+
+```ts
+async write(offset, data) {
+  const { bytesWritten } = await file.write(data, 0, data.byteLength, offset);
+  return bytesWritten;
+},
+```
+
+Create the file at its full size before the first run, for example with `truncate()` from
+`node:fs/promises`.
