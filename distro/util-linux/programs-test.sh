@@ -58,15 +58,28 @@ for program in swapon swapoff eject ldattach ipcmk ipcrm ipcs lsipc \
     fail "$program should be disabled for the target kernel/device configuration"
 done
 
+# uuidd publishes its socket and pidfile before it blocks the signals it reads
+# from its signalfd. In that window SIGALRM reaches the startup timer's
+# handler, which stays installed after cancel_timer and discards non-timer
+# signals, and the others take their default action. The service is only
+# ready once HUP, INT, PIPE, ALRM and TERM are all blocked.
+uuidd_signals_blocked() {
+  mask=$(awk '$1 == "SigBlk:" { print substr($2, length($2) - 3) }' \
+    "/proc/$1/status" 2>/dev/null)
+  [ -n "$mask" ] && [ $((0x$mask & 0x7003)) -eq $((0x7003)) ]
+}
+
 wait_uuidd_ready() {
   socket=$1
   pidfile=$2
   i=0
-  while { [ ! -S "$socket" ] || [ ! -s "$pidfile" ]; } && [ "$i" -lt 100 ]; do
+  while { [ ! -S "$socket" ] || [ ! -s "$pidfile" ] ||
+    ! uuidd_signals_blocked "$(awk '{ print $1 }' "$pidfile")"; } &&
+    [ "$i" -lt 100 ]; do
     sleep .05
     i=$((i + 1))
   done
-  [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile"
+  [ "$i" -lt 100 ] || fail "uuidd did not create $socket and $pidfile and block its signals"
 }
 
 wait_uuidd_exit() {
