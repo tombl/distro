@@ -36,11 +36,11 @@ async function build(t: TestContext, options: Omit<BuildImageOptions, "output">)
   return output;
 }
 
-async function boot(t: TestContext, path: string) {
+async function boot(t: TestContext, path: string, writable = false) {
   const guest = guestAgent();
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [rootImage(path, { writable: true }), guest],
+    plugins: [rootImage(path, { writable }), guest],
   });
   t.after(() => machine[Symbol.asyncDispose]());
   return guest;
@@ -56,7 +56,7 @@ for (const format of ["erofs", "ext4"] as const) {
     const { size } = await stat(output);
     if (format === "ext4") assert.equal(size, 16 * 2 ** 20);
     else assert.ok(size < 16 * 2 ** 20 && size % 4096 === 0, `EROFS image is ${size} bytes`);
-    const guest = await boot(t, output);
+    const guest = await boot(t, output, format === "ext4");
 
     const result = await guest.run(["query", ".answer", "/srv/input.json"]);
     assert.deepEqual(result.status, { success: true, code: 0, signal: null });
