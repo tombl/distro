@@ -83,6 +83,27 @@ for (const format of ["erofs", "ext4"] as const) {
   });
 }
 
+// The EROFS superblock at byte 1024 records incompatible features at offset
+// 80 and, with compression configured, the algorithms in use at offset 84.
+const COMPRESSION_CONFIGS = 0x2;
+const ALGORITHMS = { deflate: 1 << 2, lzma: 1 << 1 };
+
+for (const compression of ["deflate", "lzma", "none"] as const) {
+  test(`builds an EROFS image with ${compression} compression`, async (t) => {
+    const output = await build(t, { packages: [jq_package], compression });
+    const image = await readFile(output);
+    const superblock = new DataView(image.buffer, image.byteOffset + 1024, 128);
+    const incompatible = superblock.getUint32(80, true);
+    if (compression === "none") assert.equal(incompatible & COMPRESSION_CONFIGS, 0);
+    else assert.equal(superblock.getUint16(84, true), ALGORITHMS[compression]);
+    const guest = await boot(t, output);
+
+    const result = await guest.run(["jq", ".answer", "/srv/input.json"]);
+    assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+    assert.equal(decoder.decode(result.stdout), "42\n");
+  });
+}
+
 // Mirrors mkImage's modes check: a 0700 staged directory merged onto /usr.
 for (const mode of [undefined, "0750"]) {
   test(`merges a directory into an existing one ${mode ? `with mode ${mode}` : "without a mode"}`, async (t) => {
@@ -144,6 +165,13 @@ test("keeps setuid and setgid on copied files", async (t) => {
   assert.equal(await permissions("/opt/setuid"), "4755");
   assert.equal(await permissions("/opt/plain"), "644");
   assert.equal(await permissions("/usr/bin/setgid"), "2755");
+});
+
+test("rejects unsupported compressions", async () => {
+  await assert.rejects(
+    buildImage({ packages: ["jq"], compression: "lz4" as "none", output: "unused" }),
+    /unsupported image compression "lz4", expected one of: deflate, lzma, none/,
+  );
 });
 
 test("rejects unsupported formats", async () => {

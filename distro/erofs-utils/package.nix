@@ -35,9 +35,10 @@ stdenv.mkDerivation (finalAttrs: {
     substituteInPlace Makefile.am --replace-fail 'SUBDIRS += mount contrib' ""
   '';
 
-  # Compressors come from the scope's static liblzma and zlib (zlib backs
-  # -zdeflate). lz4 is not packaged and the zstd port ships only its CLI, so
-  # those algorithms are left out; uncompressed output needs no library. The
+  # -zdeflate uses erofs-utils' built-in encoder and -zlzma the scope's static
+  # liblzma; zlib decompresses deflate images for fsck.erofs and dump.erofs.
+  # lz4 is not packaged and the zstd port ships only its CLI, so those
+  # algorithms are left out; uncompressed output needs no library. The
   # workqueue is single-threaded here, libuuid is replaced by erofs-utils'
   # built-in UUID code, and FUSE (erofsfuse) has no library in the scope.
   configureFlags = [
