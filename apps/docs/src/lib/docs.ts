@@ -30,8 +30,7 @@ export async function getDocsSections(): Promise<{ heading: string; items: DocsI
   }
 
   return [
-    { heading: "Tutorials", items: section("tutorials") },
-    { heading: "How-to guides", items: section("howtos") },
+    { heading: "Guide", items: section("chapters") },
     {
       heading: "Reference",
       items: [
@@ -45,6 +44,6 @@ export async function getDocsSections(): Promise<{ heading: string; items: DocsI
         ...section("reference"),
       ],
     },
-    { heading: "Explanation", items: section("explanation") },
+    { heading: "Questions", items: section("questions") },
   ].filter(({ items }) => items.length > 0);
 }

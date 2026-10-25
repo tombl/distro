@@ -1,8 +1,8 @@
 ---
 title: The security model
 description: What a guest can and cannot touch, and where the isolation boundary is.
-section: explanation
-order: 3
+section: chapters
+order: 9
 ---
 
 # The security model
@@ -58,8 +58,7 @@ code, or code from the packages, on the host side.
 - **Networks.** A network card connects the guest to every other guest on the same network.
   When the guest connects to an address outside the network, your `connectTcp` function
   decides what happens. Connections to the gateway address `192.0.2.1` arrive with the target
-  `127.0.0.1`. DNS queries reach your `resolveDns` function. [The network
-  model](/network-model/) describes this path in detail.
+  `127.0.0.1`. DNS queries reach your `resolveDns` function. [Networking](/networking/) describes this path in detail.
 - **The guest agent.** `guestAgent()` adds a vsock device. Your process opens connections to
   the agent, and the agent runs as root in the guest. Program output, file contents, and every
   other reply that comes back through the agent are produced inside the guest.
