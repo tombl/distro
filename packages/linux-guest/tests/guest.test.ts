@@ -149,6 +149,41 @@ test("boots a read-only ext4 system disk beneath a writable overlay", async () =
   assert.ok(ext4_rootfs.equals(original));
 });
 
+test("boots an uncleanly closed ext4 system disk read-only", async () => {
+  const disk = new Uint8Array(ext4_rootfs);
+  {
+    const { agent: guest, machine } = await boot(ext4_root_device(disk));
+    try {
+      await guest.fs.writeTextFile("/unclean-write-test", "journaled\n");
+      const probe = await guest.exec(["sync"]);
+      assert.deepEqual(await probe.status, { success: true, code: 0, signal: null });
+    } finally {
+      machine.close();
+      await machine.closed;
+    }
+  }
+  // The machine closes without unmounting, so the journal still needs
+  // recovery: EXT4_FEATURE_INCOMPAT_RECOVER in s_feature_incompat.
+  const superblock = new DataView(disk.buffer, disk.byteOffset + 1024);
+  assert.ok(superblock.getUint32(0x60, true) & 0x4);
+  const original = disk.slice();
+  const { agent: guest, machine } = await boot(readonly_ext4_root_device(disk));
+  try {
+    const probe = await guest.exec(["sh", "-c", "grep -q ' / overlay ' /proc/mounts"]);
+    assert.deepEqual(await probe.status, { success: true, code: 0, signal: null });
+    // Without journal replay the root is as of the last checkpoint, which
+    // the write may not have reached yet.
+    const exists = await guest.exec(["test", "-e", "/unclean-write-test"]);
+    const visible = (await exists.status).success;
+    if (visible) assert.equal(await guest.fs.readTextFile("/unclean-write-test"), "journaled\n");
+    console.log(`journaled write visible read-only: ${visible}`);
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+  assert.deepEqual(disk, original);
+});
+
 test("rejects a system disk with the wrong label", async () => {
   await assert.rejects(() => boot(wrong_root_device()));
 });
