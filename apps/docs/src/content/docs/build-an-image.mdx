@@ -44,7 +44,7 @@ await buildImage({
 });
 ```
 
-`buildImage()` boots a Lowland machine and builds the image inside it. It installs the named
+`buildImage()` boots a machine and builds the image inside it. It installs the named
 packages and their dependencies from the public repository, copies `./hello.sh` to
 `/usr/bin/hello`, and writes the image to `app.erofs`.
 
@@ -75,9 +75,8 @@ npx lowland-image build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o ap
 
 ## Build an image with Nix
 
-You need [Nix](https://nixos.org/download) with flakes enabled. Nix installs on any Linux
-distribution. On macOS, guest programs are built by a Linux machine, such as the
-[nixpkgs Linux builder](https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-builder).
+You need Nix with flakes enabled. [Port software](/port-software/) covers installing it on
+Linux and macOS.
 
 Start from the porting template:
 
