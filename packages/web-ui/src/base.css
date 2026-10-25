@@ -133,17 +133,15 @@
   h5,
   h6 {
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.25;
   }
 
   h1 {
-    font-size: 2rem;
-    letter-spacing: -0.02em;
+    font-size: 1.5rem;
   }
 
   h2 {
-    font-size: 1.25rem;
-    letter-spacing: -0.01em;
+    font-size: 1.125rem;
   }
 
   h3,
@@ -155,11 +153,13 @@
 
   a {
     color: inherit;
+    text-decoration-color: var(--hairline-strong);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
     text-decoration-skip-ink: auto;
-  }
 
-  a[target="_blank"]::after {
-    content: " ↗";
-    font-size: 0.6875em;
+    &:hover {
+      text-decoration-color: currentColor;
+    }
   }
 }
