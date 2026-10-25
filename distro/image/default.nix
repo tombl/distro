@@ -31,7 +31,11 @@
 # `files` and `links` are layered over the installed packages; their paths
 # must be absolute and normalized. A file mode is an octal string applied
 # exactly, setuid, setgid, and sticky bits included; without one a file keeps
-# its executable bit and gains owner write, as 0644 or 0755. The
+# its executable bit and gains owner write, as 0644 or 0755. A directory
+# source onto an existing directory, such as /etc or /usr, merges its contents
+# into it; its mode, if given, applies to the destination directory alone, and
+# a merge otherwise keeps the existing directory's mode. Entries apply in path
+# order, so a file inside a directory entry overrides what it copied. The
 # image then gains the standard FHS mount points (with a sticky,
 # world-writable /tmp) and is encoded with every file owned by root. EROFS
 # images are bit-for-bit reproducible.

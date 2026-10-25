@@ -70,6 +70,19 @@ let
       mode = "0700";
     };
     "/etc/plain" = pkgs.writeText "plain" "plain\n";
+    # Directories onto ones apk created merge into them.
+    "/etc" = pkgs.runCommand "merged-etc" { } ''
+      mkdir $out
+      echo merged > $out/merged
+    '';
+    "/usr" = {
+      source = pkgs.runCommand "merged-usr" { } ''
+        mkdir -p $out/bin
+        printf '#!/bin/sh\n' > $out/bin/tool
+        chmod +x $out/bin/tool
+      '';
+      mode = "0750";
+    };
   };
   # Modes `stat -c %a` reports for each path, /tmp from the FHS layer.
   expected = {
@@ -79,6 +92,14 @@ let
     "/private/file" = "644";
     "/etc/plain" = "644";
     "/tmp" = "1777";
+    # A merge lands beside the existing contents rather than nested under the
+    # store name, and only a requested mode changes the directory.
+    "/etc" = "755";
+    "/etc/merged" = "644";
+    "/etc/apk/world" = "644";
+    "/usr" = "750";
+    "/usr/bin" = "755";
+    "/usr/bin/tool" = "755";
   };
   paths = builtins.attrNames expected;
   image =
