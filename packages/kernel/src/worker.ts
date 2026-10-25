@@ -66,6 +66,8 @@ function user_imports({
   imports: Imports["user"];
 } {
   const HALT_USER = Symbol("halt user");
+  // Values of enum wasm_handler_result in asm/wasm_imports.h.
+  const WASM_HANDLER_ESCAPED = 1;
 
   let context: UserContext | null = parent;
   let instance: WebAssembly.Instance | null = null;
@@ -74,6 +76,26 @@ function user_imports({
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
+  // The exception a signal handler left through, such as a siglongjmp(). It
+  // waits here while the kernel returns through the frames of the syscall
+  // that delivered the signal, and user.rethrow resumes it beyond them.
+  let escape: { error: unknown } | null = null;
+
+  // Runs a handler, catching a wasm exception that would otherwise unwind the
+  // kernel frames beneath it without running their epilogues. Only a thrown
+  // WebAssembly.Exception, as siglongjmp() and C++ throw make, is an escape.
+  // Traps, which may come from a nested syscall's kernel code, and the host's
+  // own halts, which abandon those frames on purpose, pass through.
+  function run_handler(handler: () => void): boolean {
+    try {
+      handler();
+      return true;
+    } catch (error) {
+      if (!(error instanceof WebAssembly.Exception)) throw error;
+      escape = { error };
+      return false;
+    }
+  }
 
   function copy_bytes(
     destination_memory: WebAssembly.Memory,
@@ -143,6 +165,8 @@ function user_imports({
       assert(pending);
       context = pending;
       pending = null;
+      // An escape from the replaced image has nowhere to go.
+      escape = null;
     }
 
     assert(context);
@@ -283,6 +307,15 @@ function user_imports({
         throw HALT_USER;
       },
 
+      rethrow() {
+        // The kernel's syscall export calls this after the syscall that ran
+        // an escaping handler has returned through the kernel.
+        assert(escape, "no signal handler escape to rethrow");
+        const { error } = escape;
+        escape = null;
+        throw error;
+      },
+
       // signal handling:
       call_signal_handler(fn, sig) {
         assert(instance);
@@ -293,7 +326,7 @@ function user_imports({
         const f = __indirect_function_table.get(user_word_number(fn));
         assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
-        f(sig);
+        return run_handler(() => f(sig)) ? 0 : WASM_HANDLER_ESCAPED;
       },
       call_siginfo_handler(trampoline, fn, sig) {
         assert(instance);
@@ -306,7 +339,7 @@ function user_imports({
 
         siginfo_copy_results.push(null);
         try {
-          f(fn, sig);
+          if (!run_handler(() => f(fn, sig))) return WASM_HANDLER_ESCAPED;
           return siginfo_copy_results.at(-1) ?? -22;
         } finally {
           // Non-local exits can unwind the kernel callback before its C cleanup.
