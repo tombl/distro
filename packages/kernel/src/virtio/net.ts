@@ -2,17 +2,14 @@
 
 import { Bytes, FixedArray, Struct, U16BE, U16LE, U8 } from "@lowland/bytes";
 import { assert } from "../util.ts";
-import {
-  VirtioController,
-  type VirtioDevice,
-  type Virtqueue,
-  type VirtqueueChain,
-} from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue, VirtqueueChain } from "./queue.ts";
+import { RxQueue } from "./rx.ts";
+
+const MAX_PENDING_FRAMES = 256;
 
 // Modern virtio-net always uses virtio_net_hdr_mrg_rxbuf, even when the
 // mergeable-buffer feature itself is not offered.
-const MAX_PENDING_FRAMES = 256;
-
 class VirtioNetHeader extends Struct({
   flags: U8,
   gso_type: U8,
@@ -123,7 +120,7 @@ export function ethernetNetwork(): EthernetNetwork {
 }
 
 /** A virtio-net NIC attached to an Ethernet network. */
-export interface EthernetDevice extends VirtioDevice {
+export interface EthernetDevice extends Device {
   /** The NIC's MAC address. */
   readonly macAddress: MacAddress;
 }
@@ -140,67 +137,64 @@ function random_mac(): MacAddress {
   return Array.from(address) as unknown as MacAddress;
 }
 
-function copy_packet(chain: VirtqueueChain, packet: Uint8Array) {
+function write_frame(chain: VirtqueueChain, frame: Uint8Array) {
+  const packet = new Bytes(VirtioNetHeader.size + frame.byteLength);
+  packet.alloc(VirtioNetHeader).value = {
+    flags: 0,
+    gso_type: 0,
+    header_length: 0,
+    gso_size: 0,
+    checksum_start: 0,
+    checksum_offset: 0,
+    buffer_count: 1,
+  };
+  packet.append(frame);
+  const bytes = packet.array;
   let offset = 0;
   for (const descriptor of chain) {
     assert(descriptor.writable, "virtio-net receive descriptor must be writable");
-    const length = Math.min(packet.byteLength - offset, descriptor.array.byteLength);
-    if (length > 0) descriptor.array.set(packet.subarray(offset, offset + length));
+    const length = Math.min(bytes.byteLength - offset, descriptor.array.byteLength);
+    if (length > 0) descriptor.array.set(bytes.subarray(offset, offset + length));
     offset += length;
   }
-  assert(offset === packet.byteLength, "virtio-net receive buffer is too small");
-  chain.release(offset);
+  assert(offset === bytes.byteLength, "virtio-net receive buffer is too small");
+  return offset;
 }
 
-/**
- * A virtio-net NIC attached to an Ethernet network. NICs on the same
- * network exchange ordinary Ethernet frames without any host TCP/IP
- * involvement.
- */
-export function ethernetDevice(
-  network: EthernetNetwork,
-  { macAddress = random_mac() }: EthernetDeviceOptions = {},
-): EthernetDevice {
-  assert(
-    macAddress.length === 6 &&
-      macAddress.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255),
-    "invalid MAC address",
-  );
+class VirtioNic extends VirtioDevice {
+  readonly #port: EthernetPort;
+  readonly #rx = new RxQueue();
+  readonly #pending: Uint8Array[] = [];
 
-  const receive_buffers: VirtqueueChain[] = [];
-  const pending_frames: Uint8Array[] = [];
-  let controller: VirtioController;
+  constructor(network: EthernetNetwork, macAddress: MacAddress) {
+    super({ id: 1, queues: 2, features: 1n << 5n, config: Uint8Array.from(macAddress) });
+    this.#port = network.addPort((frame) => this.#receive(frame));
+  }
 
-  function flush_receive() {
-    while (receive_buffers.length > 0 && pending_frames.length > 0) {
-      const frame = pending_frames.shift()!;
-      const packet = new Bytes(VirtioNetHeader.size + frame.byteLength);
-      packet.alloc(VirtioNetHeader).value = {
-        flags: 0,
-        gso_type: 0,
-        header_length: 0,
-        gso_size: 0,
-        checksum_start: 0,
-        checksum_offset: 0,
-        buffer_count: 1,
-      };
-      packet.append(frame);
-      copy_packet(receive_buffers.shift()!, packet.array);
+  #receive(frame: Uint8Array) {
+    if (this.stopped) return;
+    if (this.#pending.length === MAX_PENDING_FRAMES) this.#pending.shift();
+    this.#pending.push(frame.slice());
+    this.#flush();
+  }
+
+  #flush() {
+    while (
+      this.#pending.length > 0 &&
+      this.#rx.deliver((chain) => write_frame(chain, this.#pending.shift()!))
+    );
+  }
+
+  protected kick(vq: number, queue: Virtqueue) {
+    if (vq === 0) {
+      this.#rx.post(queue);
+      this.#flush();
+      return;
     }
+    return this.#transmit(queue);
   }
 
-  const port = network.addPort((frame) => {
-    if (pending_frames.length === MAX_PENDING_FRAMES) pending_frames.shift();
-    pending_frames.push(frame.slice());
-    flush_receive();
-  });
-
-  function receive(queue: Virtqueue) {
-    for (const chain of queue) receive_buffers.push(chain);
-    flush_receive();
-  }
-
-  async function transmit(queue: Virtqueue, _controller: VirtioController) {
+  async #transmit(queue: Virtqueue) {
     for (const chain of queue) {
       const chunks: Uint8Array[] = [];
       let length = 0;
@@ -221,25 +215,36 @@ export function ethernetDevice(
         source_offset = 0;
       }
       assert(frame.length === frame.capacity, "short virtio-net transmit frame");
-      await port.send(frame.array);
+      await this.#port.send(frame.array);
       chain.release(0);
     }
   }
 
-  const config = Uint8Array.from(macAddress);
-  controller = new VirtioController(
-    { deviceId: 1, features: 1n << 5n, config },
-    {
-      queues: [receive, transmit],
-      reset() {
-        receive_buffers.length = 0;
-      },
-      close() {
-        port.close();
-        receive_buffers.length = 0;
-        pending_frames.length = 0;
-      },
-    },
+  protected reset() {
+    // Frames already accepted for the guest survive; its buffers do not.
+    this.#rx.reset();
+  }
+
+  protected stop() {
+    this.#port.close();
+    this.#rx.close();
+    this.#pending.length = 0;
+  }
+}
+
+/**
+ * A virtio-net NIC attached to an Ethernet network. NICs on the same
+ * network exchange ordinary Ethernet frames without any host TCP/IP
+ * involvement.
+ */
+export function ethernetDevice(
+  network: EthernetNetwork,
+  { macAddress = random_mac() }: EthernetDeviceOptions = {},
+): EthernetDevice {
+  assert(
+    macAddress.length === 6 &&
+      macAddress.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255),
+    "invalid MAC address",
   );
-  return controller.expose({ macAddress });
+  return public_handle(new VirtioNic(network, macAddress), { macAddress });
 }

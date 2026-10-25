@@ -2,7 +2,8 @@
 
 import { Struct, U32LE, U64LE } from "@lowland/bytes";
 import { assert } from "../util.ts";
-import { VirtioController, type VirtioDevice, type Virtqueue } from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue } from "./queue.ts";
 
 const BlockDeviceFeatures = {
   RO: 1n << 5n,
@@ -33,7 +34,7 @@ const BlockDeviceStatus = {
 type MaybePromise<T> = T | Promise<T>;
 
 /** The storage behind a block device. */
-export interface BlockDeviceStorage {
+export interface BlockStorage {
   /** Reads into `target` at `offset`, returning the bytes read. */
   read(offset: number, target: Uint8Array): MaybePromise<number>;
   /** Writes `data` at `offset`, returning the bytes written. Without it the device is read-only. */
@@ -46,29 +47,21 @@ export interface BlockDeviceStorage {
   capacity: number;
 }
 
-/**
- * A virtio block device backed by a storage object.
- *
- * @example Serve a read-only root filesystem image
- * ```ts
- * blockDevice({
- *   capacity: rootfs.byteLength,
- *   read(offset, target) {
- *     const source = rootfs.subarray(offset, offset + target.byteLength);
- *     target.set(source);
- *     return source.byteLength;
- *   },
- * })
- * ```
- */
-export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
-  const config = new Uint8Array(BlockDeviceConfig.size);
-  new BlockDeviceConfig(config).capacity = BigInt(storage.capacity / 512);
-  let features = 0n;
-  if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
-  if (!storage.write) features |= BlockDeviceFeatures.RO;
+class BlockDevice extends VirtioDevice {
+  readonly #storage: BlockStorage;
 
-  async function notify(queue: Virtqueue) {
+  constructor(storage: BlockStorage) {
+    const config = new Uint8Array(BlockDeviceConfig.size);
+    new BlockDeviceConfig(config).capacity = BigInt(storage.capacity / 512);
+    let features = 0n;
+    if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
+    if (!storage.write) features |= BlockDeviceFeatures.RO;
+    super({ id: 2, queues: 1, features, config });
+    this.#storage = storage;
+  }
+
+  protected async kick(_vq: number, queue: Virtqueue) {
+    const storage = this.#storage;
     for (const chain of queue) {
       const descs = [...chain];
       const header = descs[0];
@@ -150,8 +143,26 @@ export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
     }
   }
 
-  return new VirtioController(
-    { deviceId: 2, features, config },
-    { queues: [notify], close: () => storage.close?.() },
-  ).device;
+  protected close() {
+    return this.#storage.close?.();
+  }
+}
+
+/**
+ * A virtio block device backed by a storage object.
+ *
+ * @example Serve a read-only root filesystem image
+ * ```ts
+ * blockDevice({
+ *   capacity: rootfs.byteLength,
+ *   read(offset, target) {
+ *     const source = rootfs.subarray(offset, offset + target.byteLength);
+ *     target.set(source);
+ *     return source.byteLength;
+ *   },
+ * })
+ * ```
+ */
+export function blockDevice(storage: BlockStorage): Device {
+  return public_handle(new BlockDevice(storage), {});
 }

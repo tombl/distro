@@ -4,16 +4,14 @@ import { assert } from "../util.ts";
 import { listen_endpoint, post_endpoint, type Endpoint } from "../endpoint.ts";
 export type { Endpoint } from "../endpoint.ts";
 import {
-  close_virtio_device,
-  connect_virtio_device,
-  create_virtio_device,
-  publish_virtqueue_completion,
-  virtio_device_description,
+  type BusDevice,
   type ConnectedVirtioDevice,
-  type TransportDevice,
-  type VirtioDevice,
-  type VirtqueueCompletion,
-} from "./core.ts";
+  type Device,
+  device_of,
+  public_handle,
+  type VirtioConnectionContext,
+} from "./device.ts";
+import { publish_virtqueue_completion, type VirtqueueCompletion } from "./queue.ts";
 
 /*
  * The queue protocol deliberately has no request IDs or acknowledgements.
@@ -98,7 +96,7 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
  * const device = await workerDevice(new Worker("./disk-worker.js", { type: "module" }));
  * ```
  */
-export function workerDevice(endpoint: Endpoint): Promise<VirtioDevice> {
+export function workerDevice(endpoint: Endpoint): Promise<Device> {
   endpoint.start?.();
 
   return new Promise((resolve, reject) => {
@@ -126,7 +124,7 @@ export function workerDevice(endpoint: Endpoint): Promise<VirtioDevice> {
   });
 }
 
-function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDevice {
+function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): Device {
   const config = ready.config.slice();
   const close_completion = Promise.withResolvers<void>();
   void close_completion.promise.catch(() => {});
@@ -168,19 +166,19 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDe
     error: endpoint_failure,
   });
 
-  const transport: TransportDevice = {
-    device_id: ready.device_id,
+  const transport: BusDevice = {
+    id: ready.device_id,
     features: ready.features,
     config,
     queues: ready.queues,
     closed: close_completion.promise,
-    connect(context) {
+    attach(context) {
       assert(!connection, "remote virtio device is already attached");
       if (terminal_error) throw terminal_error;
       connection = connect_remote_device(endpoint, transport, context);
       return connection.device;
     },
-    close() {
+    shutdown() {
       if (close_started) return close_completion.promise;
       close_started = true;
       connection?.revoke();
@@ -188,13 +186,13 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): VirtioDe
       return close_completion.promise;
     },
   };
-  return create_virtio_device(transport);
+  return public_handle(transport, {});
 }
 
 function connect_remote_device(
   endpoint: Endpoint,
-  transport: TransportDevice,
-  context: Parameters<TransportDevice["connect"]>[0],
+  transport: BusDevice,
+  context: VirtioConnectionContext,
 ) {
   // Slot zero revokes the whole device; the remaining slots revoke individual
   // queues. Reset changes slot zero synchronously on the main thread. A worker
@@ -311,8 +309,14 @@ function connect_remote_device(
  * serveDevice(self, blockDevice(storage));
  * ```
  */
-export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
-  const description = virtio_device_description(device);
+export function serveDevice(endpoint: Endpoint, handle: Device): void {
+  const device = device_of(handle);
+  const description = {
+    device_id: device.id,
+    features: device.features,
+    config: device.config,
+    queues: device.queues,
+  };
   let connected: ConnectedVirtioDevice | undefined;
   let control: Int32Array | undefined;
   let device_epoch = 0;
@@ -334,7 +338,7 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
           assert(!connected, "virtio device is already bound");
           message.memory.grow(0);
           control = new Int32Array(message.control);
-          connected = connect_virtio_device(device, {
+          connected = device.attach({
             memory: message.memory,
             trigger_irq: () => assert(false, "remote interrupts are published with state"),
             on_error: send_error,
@@ -401,7 +405,7 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
         case "close":
           if (closing) return;
           closing = true;
-          void close_virtio_device(device).then(
+          void device.shutdown().then(
             () => {
               stop_listening();
               post_endpoint(endpoint, { type: "closed" } satisfies WorkerMessage);

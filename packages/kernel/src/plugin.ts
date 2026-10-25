@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-import type { DeviceTreeNode } from "./devicetree.ts";
 import type { Machine } from "./index.ts";
-import type { VirtioDevice } from "./virtio/core.ts";
+import type { Device } from "./virtio/device.ts";
 
 /** Returns the machine plugin represented by a higher-level object. */
 export const getMachinePlugin: unique symbol = Symbol("getMachinePlugin");
@@ -21,23 +20,16 @@ export interface KernelArguments {
   add(...args: string[]): void;
 }
 
-/** Virtio devices accumulated while configuring a machine. */
+/** Devices accumulated while configuring a machine. */
 export interface MachineDevices {
   /** Attaches devices in device-tree order. */
-  add(...devices: VirtioDevice[]): void;
-}
-
-/** Device-tree changes accumulated while configuring a machine. */
-export interface DeviceTreeBuilder {
-  /** Recursively merges a fragment over the generated machine device tree. */
-  merge(fragment: DeviceTreeNode): void;
+  add(...devices: Device[]): void;
 }
 
 /** The configure-only surface made available to machine plugins. */
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
-  readonly deviceTree: DeviceTreeBuilder;
   /**
    * Early kernel output. Consume this stream during configuration, before the
    * machine boots.
