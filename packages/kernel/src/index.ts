@@ -87,8 +87,15 @@ export interface Machine extends Disposable, AsyncDisposable {
   /** Settles when closed, rejecting if the machine failed unexpectedly. */
   readonly closed: Promise<void>;
   /**
-   * Idempotently shuts down the workers and owned devices, after giving
-   * plugins a chance to quiesce the guest.
+   * Idempotently shuts down the workers and owned devices, after running the
+   * plugins' `closing` hooks. Returns before the hooks finish, as does
+   * `Symbol.dispose`; use `await using` or await `closed` for a durable
+   * shutdown.
+   *
+   * Teardown normally waits for in-flight device requests. If a closing hook
+   * rejects, teardown is forced: workers are terminated without waiting, so a
+   * device whose storage call never settles never runs its own `close()`, and
+   * `closed` rejects with the hook's error.
    */
   close(): void;
 }
@@ -201,15 +208,23 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     void boot_console_writer.close().catch(() => {});
   };
 
-  const finish = () => {
+  // Idempotent: a device request that settles after a forced teardown can
+  // still reach fail(), which must then be a no-op.
+  const finish = (force = false) => {
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
-      const device_closes = devices.map((device) => close_virtio_device(device));
-      for (const result of await Promise.allSettled(device_closes)) {
-        if (result.status === "rejected" && !failed) {
-          failed = true;
-          finish_error = result.reason;
+      const device_closes = Promise.allSettled(
+        devices.map((device) => close_virtio_device(device)),
+      );
+      // Device close waits for in-flight requests, which may be stuck in host
+      // storage forever. A forced teardown terminates the workers regardless.
+      if (!force) {
+        for (const result of await device_closes) {
+          if (result.status === "rejected" && !failed) {
+            failed = true;
+            finish_error = result.reason;
+          }
         }
       }
       try {
@@ -226,12 +241,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     })();
     return finish_promise;
   };
-  const fail = (error: unknown) => {
+  const fail = (error: unknown, force = false) => {
     if (!failed) {
       failed = true;
       finish_error = error;
     }
-    return finish();
+    return finish(force);
   };
   let closing = false;
   const close = () => {
@@ -239,7 +254,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     closing = true;
     // A guest that powers off or fails while plugins are closing has already
     // finished the machine; only an orderly close reports a closing failure.
-    void run_machine_closing(plugins).then(finish, (error) => (closed ? finish() : fail(error)));
+    void run_machine_closing(plugins).then(
+      () => finish(),
+      (error) => (closed ? finish() : fail(error, true)),
+    );
   };
 
   try {

@@ -48,8 +48,12 @@ export interface MachinePlugin {
   booted?(machine: Machine): void | Promise<void>;
   /**
    * Runs when `machine.close()` is called, before workers and devices are torn
-   * down; a rejection makes `machine.closed` reject. It does not run when the
-   * guest powers off or the machine fails.
+   * down. Hooks run one at a time in reverse plugin order, so a plugin can
+   * still use the plugins listed before it. Every hook runs even if one
+   * rejects; the first rejection makes `machine.closed` reject and forces
+   * teardown (see {@link Machine.close}). There is no general timeout, so a
+   * hook must bound its own work. Hooks do not run when the guest powers off
+   * or the machine fails.
    */
   closing?(): void | Promise<void>;
 }
