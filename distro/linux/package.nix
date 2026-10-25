@@ -10,8 +10,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "linux";
-    rev = "e7ca66e7454e21622a497daacb0af588514afc02";
-    hash = "sha256-Qb9lq9PgDKHSaCfky4T4eDzBDCsMAe3jgahAZpuScgo=";
+    rev = "3e44d6ebfc1184bedfc3cd4a63e7d14a51e27b08";
+    hash = "sha256-eyZ8iP9aCOQxmSyKI55ojqVEf8Josol7h5FoHrNRUFQ=";
   },
 }:
 
@@ -27,7 +27,7 @@ let
 
     outputHashMode = "recursive";
     outputHashAlgo = "sha256";
-    outputHash = "sha256-pBKb2mM3XTh9QYXqZHg0bxrC4XqCRrMxWkXl9eGkbyY=";
+    outputHash = "sha256-3N4tqkvk2stD5MOAOeMCBId0MPSr0jqwbKbn8+Marh0=";
 
     dontFixup = true;
 
