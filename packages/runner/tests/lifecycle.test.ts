@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import test from "node:test";
+import { testAsset } from "../../../scripts/test-assets.ts";
+import { spawn_runner } from "./runner.ts";
 
-function required_environment(name: string): string {
-  const value = process.env[name];
-  assert(value, `${name} is required`);
-  return value;
-}
-
-const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
-const disk = required_environment("LINUX_RUNNER_TEST_LIFECYCLE_DISK");
+const disk = await testAsset("runner-lifecycle.ext4");
 
 interface RunnerResult {
   code: number | null;
@@ -19,9 +13,8 @@ interface RunnerResult {
 }
 
 async function run_runner(cmdline: string, cpus = 1): Promise<RunnerResult> {
-  const child = spawn(runner, ["--disk", disk, "--cpus", cpus.toString(), "--cmdline", cmdline], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const child = spawn_runner(["--disk", disk, "--cpus", cpus.toString(), "--cmdline", cmdline]);
+  child.stdin.end();
   let output = "";
   let triggeredAt: number | undefined;
   const consume = (chunk: Buffer) => {

@@ -2,15 +2,10 @@ import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { testAsset } from "../../../scripts/test-assets.ts";
 
-function required_environment(name: string): string {
-  const value = process.env[name];
-  assert(value, `${name} is required`);
-  return value;
-}
-
-const initramfs = required_environment("LINUX_RUNNER_TEST_BOOT_INITRAMFS");
-const disk_path = required_environment("LINUX_RUNNER_TEST_CONSOLE_DISK");
+const initramfs = await testAsset("boot.cpio");
+const disk_path = await testAsset("runner-console.erofs");
 
 function output_sink(output: { text: string }) {
   const decoder = new TextDecoder();

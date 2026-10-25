@@ -26,15 +26,15 @@
   },
   "scripts": {
     "build": "tsc",
-    "check": "tsc --noEmit && tsc -p test",
+    "check": "tsc --noEmit && tsc -p tests",
     "test": "node --test"
   },
   "dependencies": {
     "@lowland/bytes": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^26",
-    "typescript": "^7"
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
   },
   "bundledDependencies": [
     "@lowland/bytes"

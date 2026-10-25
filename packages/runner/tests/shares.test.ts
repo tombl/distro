@@ -1,17 +1,12 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { testAsset } from "../../../scripts/test-assets.ts";
+import { spawn_runner } from "./runner.ts";
 
-function required_environment(name: string): string {
-  const value = process.env[name];
-  assert(value, `${name} is required`);
-  return value;
-}
-
-const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
+const root = await testAsset("runner-rootfs.erofs");
 
 test("runner mounts writable and read-only host shares", async (t) => {
   const temporary = await mkdtemp(path.join(tmpdir(), "linux-runner-shares-"));
@@ -21,18 +16,16 @@ test("runner mounts writable and read-only host shares", async (t) => {
   await Promise.all([mkdir(writable), mkdir(readonly)]);
   await writeFile(path.join(readonly, "host.txt"), "from host\n");
 
-  const child = spawn(
-    runner,
-    [
-      "--cpus",
-      "1",
-      "--share",
-      `${writable}:/tmp/writable share`,
-      "--share-ro",
-      `${readonly}:/tmp/read only`,
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
-  );
+  const child = spawn_runner([
+    "--cpus",
+    "1",
+    "--disk",
+    root,
+    "--share",
+    `${writable}:/tmp/writable share`,
+    "--share-ro",
+    `${readonly}:/tmp/read only`,
+  ]);
   let output = "";
   let sentCommands = false;
   const commands = `

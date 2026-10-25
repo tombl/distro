@@ -36,6 +36,18 @@ function workspacePackages(root) {
   return packages;
 }
 
+// The default catalog: the indented `name: range` lines under `catalog:`.
+function workspaceCatalog(root) {
+  const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
+  const block = workspace.match(/^catalog:\n((?:[ \t]+.*\n?)*)/m)?.[1] ?? "";
+  const catalog = new Map();
+  for (const line of block.split("\n")) {
+    const entry = line.match(/^\s+("[^"]+"|'[^']+'|[^:\s]+):\s*(.+?)\s*$/);
+    if (entry) catalog.set(entry[1].replace(/^["']|["']$/g, ""), entry[2].replace(/^["']|["']$/g, ""));
+  }
+  return catalog;
+}
+
 function publishedRange(specifier, version) {
   const range = specifier.slice("workspace:".length);
   if (range === "" || range === "*") return version;
@@ -46,18 +58,23 @@ function publishedRange(specifier, version) {
   fail(`unsupported workspace range ${JSON.stringify(specifier)}`);
 }
 
-function publishManifest(manifest, packages) {
+function publishManifest(manifest, packages, catalog) {
   const published = structuredClone(manifest);
   for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "devDependencies"]) {
     for (const [name, specifier] of Object.entries(published[field] ?? {})) {
+      if (specifier === "catalog:" || specifier === "catalog:default") {
+        if (!catalog.has(name)) fail(`${manifest.name} references ${name} missing from the catalog`);
+        published[field][name] = catalog.get(name);
+        continue;
+      }
       if (typeof specifier !== "string" || !specifier.startsWith("workspace:")) continue;
       const dependency = packages.get(name);
       if (!dependency) fail(`${manifest.name} references missing workspace package ${name}`);
       published[field][name] = publishedRange(specifier, dependency.manifest.version);
     }
   }
-  if (JSON.stringify(published).includes('"workspace:')) {
-    fail(`${manifest.name} has an unsupported workspace reference outside dependency fields`);
+  if (/"(?:workspace|catalog):/.test(JSON.stringify(published))) {
+    fail(`${manifest.name} has an unsupported workspace or catalog reference`);
   }
   return published;
 }
@@ -100,6 +117,7 @@ while (!existsSync(join(root, "pnpm-workspace.yaml"))) {
 
 const packageDirectory = resolve(process.cwd(), packageArgument);
 const packages = workspacePackages(root);
+const catalog = workspaceCatalog(root);
 const manifest = readManifest(packageDirectory);
 const workspacePackage = packages.get(manifest.name);
 if (!workspacePackage || workspacePackage.directory !== packageDirectory) {
@@ -111,7 +129,7 @@ try {
   const stage = join(temporary, "package");
   mkdirSync(stage);
   copyPackageFiles(packageDirectory, stage);
-  writeFileSync(join(stage, "package.json"), `${JSON.stringify(publishManifest(manifest, packages), null, 2)}\n`);
+  writeFileSync(join(stage, "package.json"), `${JSON.stringify(publishManifest(manifest, packages, catalog), null, 2)}\n`);
 
   for (const name of manifest.bundledDependencies ?? manifest.bundleDependencies ?? []) {
     const dependency = packages.get(name);
@@ -121,7 +139,7 @@ try {
     copyPackageFiles(dependency.directory, destination);
     writeFileSync(
       join(destination, "package.json"),
-      `${JSON.stringify(publishManifest(dependency.manifest, packages), null, 2)}\n`,
+      `${JSON.stringify(publishManifest(dependency.manifest, packages, catalog), null, 2)}\n`,
     );
   }
 

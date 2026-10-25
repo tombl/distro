@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+// The deployed site, from the config's second web server.
+test.use({ baseURL: process.env.SITE_BASE_URL });
+
 // The whole terminal buffer, scrollback included, with rows that xterm wrapped
 // joined back up, so output that later boot messages scroll out of view
 // still counts.
