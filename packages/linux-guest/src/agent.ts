@@ -14,6 +14,7 @@ import {
   type Mount,
   type Unmount,
 } from "./client.ts";
+import { GuestBootError } from "./abi.ts";
 import { platform } from "./platform.ts";
 import type { ChildProcess, CommandStatus } from "./process.ts";
 
@@ -55,7 +56,7 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
       await Promise.race([client.ping(1000), ended]);
       return;
     } catch (error) {
-      if (machine_ended) throw error;
+      if (machine_ended || error instanceof GuestBootError) throw error;
       failure = error;
     }
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);

@@ -46,8 +46,8 @@ The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
 agent then requires exactly one attached EROFS or ext4 filesystem labeled
 `LOWLAND_ROOT`, pivots into it, and unmounts its private boot filesystem.
-Missing and duplicate system roots fail `bootMachine()` through the plugin
-readiness hook.
+Missing and duplicate system roots fail `bootMachine()` with a
+`GuestBootError` carrying the agent's diagnostic.
 
 Read-only roots get an overlay: an EROFS image, or an ext4 image on a block
 device without a `write` callback, is mounted read-only beneath a temporary

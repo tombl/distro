@@ -13,9 +13,16 @@ integers are little-endian; there is no alignment padding.
 ## Transport
 
 Two vsock ports, both handshaking with 8 bytes
-`{ magic u32 = 0x584e4c54, version u16 = 3, reserved u16 = 0 }` sent by the
-host and echoed verbatim by the agent (the echo doubles as the readiness
-signal).
+`{ magic u32 = 0x584e4c54, version u16 = 3, failure u16 = 0 }` sent by the
+host and echoed by the agent (the echo doubles as the readiness signal).
+
+If the agent could not enter the system root (no or several filesystems
+labeled `LOWLAND_ROOT`, a failed mount, a failed system init), it stays alive
+as PID 1 without serving requests. Its session echo then sets `failure` to
+the length of a UTF-8 diagnostic that follows the echo, and the agent closes
+the connection. The whole exchange has a 1 s deadline so a stalled client
+cannot hold the session port. The host treats this as a terminal boot error, not as an
+agent that is not ready yet.
 
 - **Session, port 1024.** One connection, opened first and pinned for the
   session's lifetime. It carries no requests: it exists because a session
