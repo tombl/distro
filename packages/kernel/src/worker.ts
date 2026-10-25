@@ -53,7 +53,7 @@ const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
 function user_imports({
   kernel_memory,
   get_kernel_instance,
-  parent_user: parent,
+  parent_user,
 }: {
   kernel_memory: WebAssembly.Memory;
   get_kernel_instance: () => Instance;
@@ -65,7 +65,11 @@ function user_imports({
 } {
   const HALT_USER = Symbol("halt user");
 
-  let context: UserContext | null = parent;
+  // Only `context` may refer to the clone-time user context, so exec makes
+  // that memory unreachable from this worker. Closures must not capture
+  // parent_user.
+  const cloned = parent_user !== null;
+  let context: UserContext | null = parent_user;
   let instance: WebAssembly.Instance | null = null;
   let pending_module_bytes: Uint8Array<ArrayBuffer> | null = null;
   let pending: UserContext | null = null;
@@ -166,7 +170,7 @@ function user_imports({
       return context;
     },
     prepare() {
-      if (parent) instantiate(false);
+      if (cloned) instantiate(false);
     },
     imports: {
       // program management:
@@ -269,7 +273,7 @@ function user_imports({
         // The worker prepares an instance sharing the parent's user context
         // before the kernel enters this callback.
 
-        assert(parent);
+        assert(cloned);
 
         call_entry = () => {
           assert(instance);
@@ -384,56 +388,66 @@ function user_imports({
   };
 }
 
-function start({
-  fn,
-  arg,
-  vmlinux,
-  memory,
-  user: initial_user_context,
-  user_copy_status,
-}: InitMessage) {
+/**
+ * Moves the clone-time user context out of the init message, copying it first
+ * for a COPY clone. Returns undefined if the copy failed.
+ */
+function take_user_context(init: InitMessage): UserContext | null | undefined {
+  // The event that delivered the message keeps it reachable for the worker's
+  // lifetime, so clear the reference there.
+  const { user, user_copy_status } = init;
+  init.user = null;
+  init.user_copy_status = null;
+  if (!user) {
+    assert(!user_copy_status, "user memory copy without a user context");
+    return null;
+  }
+  user.memory.grow(0);
+  if (!user_copy_status) return user;
+
+  // fork.c permits COPY only for a single-user mm, and the caller blocks
+  // until publication below, so the source is stable. Allocate here so the
+  // private backing store is owned by the destination isolate, not the
+  // long-lived parent.
+  let copy: UserContext | undefined;
+  try {
+    const source = memory_bytes(user.memory, 0);
+    if (!source) throw new RangeError("invalid source memory");
+    const copied = allocate_shared_memory(source.byteLength / 0x10000, user.maximum_pages);
+    const destination = memory_bytes(copied.memory, 0, source.byteLength);
+    if (!destination) throw new RangeError("invalid destination memory");
+    destination.set(source);
+    copy = { module: user.module, ...copied };
+    Atomics.store(user_copy_status, 0, 1);
+  } catch {
+    Atomics.store(user_copy_status, 0, -12);
+  }
+  Atomics.notify(user_copy_status, 0);
+  return copy;
+}
+
+// A separate frame, because start() never returns while the worker runs and
+// must not hold the clone-time context in a local.
+function start_user(init: InitMessage, get_kernel_instance: () => Instance) {
+  const parent_user = take_user_context(init);
+  if (parent_user === undefined) return null;
+  return user_imports({ kernel_memory: init.memory, get_kernel_instance, parent_user });
+}
+
+function start(init: InitMessage) {
+  const { fn, arg, vmlinux, memory } = init;
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
   // grows it; grow(0) refreshes the wrapper before constructing any views.
   memory.grow(0);
-  initial_user_context?.memory.grow(0);
 
-  let user_context = initial_user_context;
-  if (user_copy_status) {
-    assert(user_context);
-    // fork.c permits COPY only for a single-user mm, and the caller blocks
-    // until publication below, so the source is stable. Allocate here so the
-    // private backing store is owned by the destination isolate, not the
-    // long-lived parent.
-    try {
-      const source = memory_bytes(user_context.memory, 0);
-      if (!source) throw new RangeError("invalid source memory");
-      const copied = allocate_shared_memory(
-        source.byteLength / 0x10000,
-        user_context.maximum_pages,
-      );
-      const destination = memory_bytes(copied.memory, 0, source.byteLength);
-      if (!destination) throw new RangeError("invalid destination memory");
-      destination.set(source);
-      user_context = { module: user_context.module, ...copied };
-      Atomics.store(user_copy_status, 0, 1);
-    } catch {
-      Atomics.store(user_copy_status, 0, -12);
-    }
-    Atomics.notify(user_copy_status, 0);
-    if (Atomics.load(user_copy_status, 0) < 0) {
-      postMessage({ type: "worker_exit" });
-      platform.quit();
-      return;
-    }
+  const user = start_user(init, () => instance);
+  if (!user) {
+    postMessage({ type: "worker_exit" });
+    platform.quit();
+    return;
   }
-
-  const user = user_imports({
-    kernel_memory: memory,
-    get_kernel_instance: () => instance,
-    parent_user: user_context,
-  });
 
   const imports = {
     env: { memory },
