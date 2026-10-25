@@ -94,6 +94,13 @@ Patch these calls out of the program:
 The SDK shell and the template's `stdenv` answer the autoconf checks for `fork`, `vfork`, and
 `mmap` with "no", so programs that already have a fallback select it automatically.
 
+### Long computations
+
+Signals are delivered only when a program makes a system call. A loop that runs without system
+calls cannot be interrupted, even by `SIGKILL`, until it makes one. If a program computes for a
+long time and must stay responsive to signals, make it check in periodically, for example with
+`sched_yield()`. [How it works](/how-it-works/#signals) explains why.
+
 ### Static linking
 
 Programs are linked statically. Shared libraries and `dlopen()` are not available. The SDK
