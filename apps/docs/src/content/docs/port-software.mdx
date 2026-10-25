@@ -1,11 +1,127 @@
 ---
 title: Port software
-description: What to change when building a program for Lowland, including fork, mmap, threads, and signals.
-draft: true
+description: Build C and C++ programs for Lowland guests, and what to change in them.
 section: howtos
 order: 12
 ---
 
 # Port software
 
-This page has not been written yet. It will cover what has no MMU equivalent, what to use instead of fork and mmap, and other differences from a normal Linux target.
+Programs in a guest are compiled for WebAssembly Linux. Lowland's SDK is a Nix package set that
+cross-compiles C and C++ for that target. You can use it in two ways:
+
+- The porting template packages a program with Nix and builds a bootable image that contains it.
+- The SDK shell gives you a compiler and build tools for building by hand, outside Nix.
+
+Most programs build without changes. The last section of this page lists what you may need to
+change.
+
+You need [Nix](https://nixos.org/download) with flakes enabled. Nix installs on any Linux
+distribution. On macOS, guest programs are built by a Linux machine, such as the
+[nixpkgs Linux builder](https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-builder).
+
+## Start from the template
+
+```sh
+mkdir hello
+cd hello
+nix flake init -t github:tombl/distro#port
+nix build .#image
+npm install
+node boot.mjs result
+```
+
+The last command boots the image and prints `Hello from Linux on wasm!`. The template contains:
+
+- `hello.c` and a `Makefile`, the program being ported.
+- `package.nix`, which builds the program for the guest.
+- `flake.nix`, which builds an image with BusyBox and the program, using `mkImage`.
+- `boot.mjs`, which boots that image under Node.js and runs `hello`.
+
+`package.nix` is an ordinary nixpkgs `stdenv.mkDerivation`. The `stdenv` it receives
+cross-compiles for the guest. Its install prefix is `/` and `DESTDIR` is the package output, so
+`make install` puts the program in `bin/hello`, and the image installs it at `/bin/hello`.
+Projects that use autotools, CMake, or Meson follow the same convention.
+
+To port another program, replace `src` with its source, for example a `fetchurl` of a release
+tarball, and add its dependencies from the package set to `buildInputs`.
+[Build an image](/build-an-image/#build-an-image-with-nix) shows how to add more packages and
+files to the image.
+
+## Build in the SDK shell
+
+The SDK shell is for building by hand, without writing a Nix package:
+
+```sh
+nix develop github:tombl/distro#sdk
+```
+
+In the shell, `CC`, `CXX`, `AR`, and the other usual variables name the guest toolchain, such as
+`wasm32-unknown-linux-musl-cc`. Configure scripts and CMake use it without extra flags. Meson
+needs a cross file, which the shell provides by name:
+
+```sh
+$CC hello.c -o hello
+./configure && make
+cmake -S . -B build && cmake --build build
+meson setup build --cross-file wasm32-unknown-linux-musl && meson compile -C build
+```
+
+To put the result in an image, install it into a staging directory and copy it with
+`buildImage()` or the `lowland-image` command:
+
+```sh
+./configure --prefix=/usr && make && make install DESTDIR=$PWD/stage
+npx lowland-image build -p busybox -f ./stage/usr/bin/hello:/usr/bin/hello -o hello.erofs
+```
+
+[Build an image](/build-an-image/) explains `lowland-image` and how to boot the result.
+
+## What to change
+
+### fork, vfork, and mmap
+
+Guest programs cannot call `fork()`, `vfork()`, or `mmap()`. A WebAssembly program has one
+linear memory and no memory management unit, so the kernel cannot give a child process a copy
+of its parent's memory at the same addresses, or map a file into memory. This will not change.
+
+Patch these calls out of the program:
+
+- To start another program, use `posix_spawn()`.
+- To run code in a new process, use `clone()` with a function for the child to run.
+- To allocate memory, use `malloc()`. To read a file, use `read()`.
+
+The SDK shell and the template's `stdenv` answer the autoconf checks for `fork`, `vfork`, and
+`mmap` with "no", so programs that already have a fallback select it automatically.
+
+### Static linking
+
+Programs are linked statically. Shared libraries and `dlopen()` are not available. The SDK
+builds static libraries by default.
+
+### Install locations
+
+Install programs with the usual `prefix` and `DESTDIR` conventions, as shown above, rather than
+copying files by hand.
+
+Programs started with `guest.run()` and `guest.exec()` find commands on
+`PATH=/bin:/usr/bin:/sbin:/usr/sbin`. That does not include `/usr/local/bin`, which is the
+default prefix of most build systems. Configure with `--prefix=/usr`, or run programs in
+`/usr/local/bin` by their full path.
+
+### Shell scripts
+
+`/bin/sh` is BusyBox `hush`, not `ash` or Bash. Scripts that rely on these features need
+changes:
+
+- `set -u` is not supported. hush prints an error and continues.
+- Under `set -e`, a script exits when a `while` loop ends because its condition is false. For
+  example, `set -e; while false; do :; done; echo end` exits with status 1 and prints nothing.
+
+Bash is available as the `bash` package. Add it to the image and start scripts with
+`#!/bin/bash`.
+
+### C++
+
+C++ programs build and run, but exceptions do not work. A program that throws an exception
+crashes, even when the exception would be caught. Port C++ code that does not use exceptions.
