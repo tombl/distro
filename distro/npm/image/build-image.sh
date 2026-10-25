@@ -3,8 +3,8 @@
 # @lowland/image/build boots the builder image and runs this with arguments it
 # has already validated. Host inputs are mounted at the --input directory.
 #
-#   lowland-build-image --format F --label L --input DIR [--repository URL]
-#     OPERATION...
+#   lowland-build-image --format F --label L --input DIR [--compression C]
+#     [--repository URL] OPERATION...
 #
 # Named packages are installed first from the repository, which must sign
 # them. Local packages are installed next without signature checks and with
@@ -23,12 +23,14 @@ fail() {
 }
 
 format=
+compression=deflate
 label=
 input=
 repository=
 while [ $# -gt 0 ]; do
   case "$1" in
   --format) format=$2 && shift 2 ;;
+  --compression) compression=$2 && shift 2 ;;
   --label) label=$2 && shift 2 ;;
   --input) input=$2 && shift 2 ;;
   --repository) repository=$2 && shift 2 ;;
@@ -36,6 +38,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$format" ] && [ -n "$label" ] && [ -n "$input" ] || fail "missing build options"
+# The mkfs.erofs flags mkImage uses for each compression.
+case "$compression" in
+deflate) compression_flags="-zdeflate,level=9 -C65536 -Eztailpacking" ;;
+lzma) compression_flags="-zlzma -C65536 -Eztailpacking" ;;
+none) compression_flags= ;;
+*) fail "unsupported compression: $compression" ;;
+esac
 
 device=
 for disk in /sys/block/vd*; do
@@ -181,11 +190,12 @@ chmod 01777 "$root/tmp"
 
 case "$format" in
 erofs)
-  # Like mkImage, but uncompressed because the kernel lacks
-  # EROFS compression. Writing to a block device prints a harmless warning
-  # that it cannot be erased.
+  # Like mkImage. Writing to a block device prints a harmless
+  # warning that it cannot be erased.
+  # shellcheck disable=SC2086
   mkfs.erofs --quiet --all-root --all-time -T 0 \
-    -U 00000000-0000-0000-0000-000000000000 -L "$label" -x-1 "$device" "$root"
+    -U 00000000-0000-0000-0000-000000000000 -L "$label" -x-1 $compression_flags \
+    "$device" "$root"
   ;;
 ext4) umount "$root" ;;
 esac

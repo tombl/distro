@@ -13,6 +13,7 @@
 mkImage {
   name = "lowland-image-rootfs";
   inherit format size;
+  compression = "deflate";
   packages = [
     busybox
     apk-tools

@@ -28,6 +28,12 @@ const FORMATS = ["erofs", "ext4"] as const;
 /** A filesystem format that `buildImage()` can produce. */
 export type ImageFormat = (typeof FORMATS)[number];
 
+/** The EROFS compressions the builder image can apply, default first. */
+const COMPRESSIONS = ["deflate", "lzma", "none"] as const;
+
+/** An EROFS compression that `buildImage()` can apply. */
+export type ImageCompression = (typeof COMPRESSIONS)[number];
+
 /** A host file or directory to copy into the image, with an optional octal mode such as `"0755"`. */
 export type ImageFile = string | { source: string; mode?: string };
 
@@ -59,6 +65,14 @@ export interface BuildImageOptions {
    * guest agent mounts read-only. Use `"ext4"` for a writable image.
    */
   format?: ImageFormat;
+  /**
+   * How EROFS file data is compressed. Defaults to `"deflate"`, which
+   * typically shrinks an image 2 to 3 times for a modest cost on reads.
+   * `"lzma"` is about 14% smaller again but reads about half as fast, and
+   * `"none"` stores data as is. ext4 images are never compressed and ignore
+   * this option.
+   */
+  compression?: ImageCompression;
   /** The filesystem label. Defaults to `"LOWLAND_ROOT"`, the label the guest agent boots. */
   label?: string;
   /**
@@ -231,6 +245,12 @@ export async function build_image(
       `unsupported image format ${JSON.stringify(format)}, expected one of: ${FORMATS.join(", ")}`,
     );
   }
+  const compression = options.compression ?? COMPRESSIONS[0];
+  if (!COMPRESSIONS.includes(compression)) {
+    throw new TypeError(
+      `unsupported image compression ${JSON.stringify(compression)}, expected one of: ${COMPRESSIONS.join(", ")}`,
+    );
+  }
   const label = options.label ?? "LOWLAND_ROOT";
   if (!/^[A-Za-z0-9._-]{1,15}$/.test(label)) {
     throw new TypeError(
@@ -276,6 +296,8 @@ export async function build_image(
       "lowland-build-image",
       "--format",
       format,
+      "--compression",
+      compression,
       "--label",
       label,
       "--input",

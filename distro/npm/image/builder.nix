@@ -15,6 +15,7 @@
 
 mkImage {
   name = "lowland-image-builder";
+  compression = "deflate";
   packages = [
     busybox
     apk-tools
