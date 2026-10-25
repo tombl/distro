@@ -458,3 +458,25 @@ export function serveDevice(endpoint: Endpoint, handle: Device): void {
     [ready_config.buffer],
   );
 }
+
+/**
+ * Reports over `endpoint` that the device could not be set up, instead of
+ * serving it: `workerDevice` rejects with an error carrying the same `name`
+ * and `message`. An error left uncaught in a worker reaches the page without
+ * either.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   // Throws NoModificationAllowedError while another tab holds the file.
+ *   const access = await file.createSyncAccessHandle();
+ *   // `storage(access)` builds the application's BlockStorage over the handle.
+ *   serveDevice(self, blockDevice(storage(access)));
+ * } catch (error) {
+ *   serveDeviceError(self, error);
+ * }
+ * ```
+ */
+export function serveDeviceError(endpoint: Endpoint, error: unknown): void {
+  post_endpoint(endpoint, { type: "error", error: serialize_error(error) } satisfies WorkerMessage);
+}

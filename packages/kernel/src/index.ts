@@ -20,7 +20,7 @@ import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.
 export { bootConsole } from "./plugin.ts";
 export type { Device } from "./virtio/device.ts";
 export { blockDevice, type BlockStorage } from "./virtio/block.ts";
-export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
+export { type Endpoint, serveDevice, serveDeviceError, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
 export {
