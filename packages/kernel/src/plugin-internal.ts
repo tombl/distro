@@ -2,7 +2,7 @@
 
 import type { Machine } from "./index.ts";
 import {
-  getMachinePlugin,
+  machinePlugin,
   type MachinePlugin,
   type MachinePluginInput,
   type MachineSetup,
@@ -17,7 +17,7 @@ export interface ConfiguredMachine {
 }
 
 function machine_plugin(input: MachinePluginInput): MachinePlugin {
-  return getMachinePlugin in input ? input[getMachinePlugin]() : input;
+  return machinePlugin in input ? input[machinePlugin]() : input;
 }
 
 export async function configure_machine(

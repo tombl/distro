@@ -6,7 +6,7 @@ import { bootMachine, type Machine } from "../src/index.ts";
 import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts";
 import {
   bootConsole,
-  getMachinePlugin,
+  machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
 } from "../src/plugin.ts";
@@ -36,7 +36,7 @@ test("plugins configure a machine in array order", async () => {
     },
   };
   const provider: MachinePluginProvider = {
-    [getMachinePlugin]() {
+    [machinePlugin]() {
       calls.push("provider");
       return {
         configure(setup) {

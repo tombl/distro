@@ -1,6 +1,6 @@
 import { blockDevice, vsockDevice, type Machine } from "@lowland/kernel";
 import {
-  getMachinePlugin,
+  machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
   type MachineSetup,
@@ -163,7 +163,7 @@ export function guestAgent(): GuestAgent {
       ]);
       return { status, stdout, stderr };
     },
-    [getMachinePlugin]() {
+    [machinePlugin]() {
       return plugin;
     },
   };
