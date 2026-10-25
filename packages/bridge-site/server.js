@@ -134,6 +134,11 @@ const main = createServer(async (request, response) => {
       console.error("failed to build rootfs.erofs:", error.stderr ?? error);
       return void response.writeHead(500).end();
     }
+    try {
+      if (!statSync(path).isFile()) throw new Error("not a file");
+    } catch {
+      return void response.writeHead(404).end();
+    }
     response.writeHead(200, { ...headers, "Content-Type": "application/octet-stream" });
     createReadStream(path).pipe(response);
     return;
