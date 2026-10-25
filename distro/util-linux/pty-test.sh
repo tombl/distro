@@ -14,6 +14,24 @@ contains() {
   esac
 }
 
+# BusyBox hush keeps only the exit status of $!, so a background job reaped
+# while another one is being started is forgotten, and waiting for it fails
+# with 127. Start each job's watchdog before the job, so that $! is still the
+# job when it is waited for, and hand the job's pid to the watchdog through a
+# file.
+watch_job() {
+  rm -f /tmp/watchdog.pid
+  (
+    sleep 60
+    [ -s /tmp/watchdog.pid ] && kill -KILL "$(cat /tmp/watchdog.pid)" 2>/dev/null
+  ) &
+  watchdog=$!
+}
+
+watch_pid() {
+  echo "$1" >/tmp/watchdog.pid
+}
+
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 
 mount -t devtmpfs devtmpfs /dev || fail "mount devtmpfs"
@@ -130,10 +148,12 @@ find_more_pid() {
 
 rm -f /tmp/more-shell.marker /tmp/more-editor.marker /tmp/more-command.in
 mkfifo /tmp/more-command.in || fail "create more command fifo"
+watch_job
 SHELL=/bin/sh script -q -c \
   'TERM=xterm SHELL=/tmp/more-fake-shell VISUAL=/tmp/more-fake-editor /tmp/more-wrapper' \
   /tmp/more-command.typescript </tmp/more-command.in >/tmp/more-command.out 2>&1 &
 more_session=$!
+watch_pid "$more_session"
 exec 3>/tmp/more-command.in
 i=0
 while ! contains "$(cat /tmp/more-command.out 2>/dev/null)" "--More--" &&
@@ -195,11 +215,6 @@ done
 [ "$i" -lt 100 ] || fail "more did not reap editor callback"
 printf 'q' >&3
 exec 3>&-
-(
-  sleep 10
-  kill -KILL "$more_session" 2>/dev/null
-) &
-watchdog=$!
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -211,9 +226,11 @@ contains "$(cat /tmp/more-command.typescript)" MORE_TTY_RESTORED ||
 # mirrored as a real stopped process and CONT resumes paging.
 rm -f /tmp/more-signal.in
 mkfifo /tmp/more-signal.in || fail "create more signal fifo"
+watch_job
 SHELL=/bin/sh script -q -c 'TERM=xterm /tmp/more-wrapper' \
   /tmp/more-signal.typescript </tmp/more-signal.in >/tmp/more-signal.out 2>&1 &
 more_session=$!
+watch_pid "$more_session"
 exec 3>/tmp/more-signal.in
 i=0
 while ! contains "$(cat /tmp/more-signal.out 2>/dev/null)" "--More--" &&
@@ -261,11 +278,6 @@ done
 [ "$i" -lt 100 ] || fail "more did not resume on CONT"
 printf 'q' >&3
 exec 3>&-
-(
-  sleep 10
-  kill -KILL "$more_session" 2>/dev/null
-) &
-watchdog=$!
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -276,9 +288,11 @@ contains "$(cat /tmp/more-signal.typescript)" MORE_TTY_RESTORED ||
 # INT follows the pager's normal clean-exit path and also restores the tty.
 rm -f /tmp/more-int.in
 mkfifo /tmp/more-int.in || fail "create more INT fifo"
+watch_job
 SHELL=/bin/sh script -q -c 'TERM=xterm /tmp/more-wrapper' \
   /tmp/more-int.typescript </tmp/more-int.in >/tmp/more-int.out 2>&1 &
 more_session=$!
+watch_pid "$more_session"
 exec 3>/tmp/more-int.in
 i=0
 while ! contains "$(cat /tmp/more-int.out 2>/dev/null)" "--More--" &&
@@ -290,11 +304,6 @@ done
 more_pid=$(find_more_pid) || fail "locate more INT process"
 kill -INT "$more_pid" || fail "signal more INT"
 exec 3>&-
-(
-  sleep 10
-  kill -KILL "$more_session" 2>/dev/null
-) &
-watchdog=$!
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -305,10 +314,12 @@ contains "$(cat /tmp/more-int.typescript)" MORE_TTY_RESTORED ||
 # While the proxy is active it must retain upstream's all-signals-blocked
 # model, unblocking only the signals serviced by the self-pipe bridge.
 rm -f /tmp/pty-mask.pid /tmp/pty-mask.release
+watch_job
 script -q -c \
   'echo "$PPID" >/tmp/pty-mask.pid; i=0; while [ ! -e /tmp/pty-mask.release ] && [ "$i" -lt 200 ]; do sleep .05; i=$((i + 1)); done; test -e /tmp/pty-mask.release && echo PTY_MASK_RELEASED' \
   /tmp/mask.typescript </dev/null >/tmp/mask.out 2>&1 &
 mask_script=$!
+watch_pid "$mask_script"
 i=0
 while [ ! -s /tmp/pty-mask.pid ] && [ "$i" -lt 100 ]; do
   sleep .05
@@ -323,11 +334,6 @@ usr2_bit=$((1 << (usr2 - 1)))
 [ $(((0x$blocked) & usr2_bit)) -ne 0 ] ||
   fail "PTY proxy unexpectedly unblocked SIGUSR2 (SigBlk=$blocked)"
 touch /tmp/pty-mask.release
-(
-  sleep 10
-  kill -KILL "$mask_script" 2>/dev/null
-) &
-watchdog=$!
 wait "$mask_script"
 mask_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -350,10 +356,12 @@ contains "$(cat /tmp/signal-restore.typescript)" PTY_SIGNAL_RESTORE ||
 # A stopped child remains owned and is resumed rather than being mistaken for
 # an exited child by coalesced SIGCHLD processing.
 rm -f /tmp/pty-stop.pid
+watch_job
 script -q -c \
   'echo $$ >/tmp/pty-stop.pid; kill -STOP $$; echo PTY_STOP_CONT' \
   /tmp/stop-cont.typescript </dev/null >/tmp/stop-cont.out 2>&1 &
 script_parent=$!
+watch_pid "$script_parent"
 i=0
 while [ ! -s /tmp/pty-stop.pid ] && [ "$i" -lt 100 ]; do
   sleep .05
@@ -371,11 +379,6 @@ done
 awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
   "/proc/$script_parent/status" 2>/dev/null || fail "PTY parent did not mirror SIGSTOP"
 kill -CONT "$script_parent" || fail "resume PTY proxy parent"
-(
-  sleep 10
-  kill -KILL "$script_parent" 2>/dev/null
-) &
-watchdog=$!
 wait "$script_parent"
 stop_rc=$?
 kill "$watchdog" 2>/dev/null || true
