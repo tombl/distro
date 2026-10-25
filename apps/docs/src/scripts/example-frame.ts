@@ -18,11 +18,7 @@ function format(value: unknown): string {
   }
   if (typeof value === "object" && value !== null) {
     try {
-      return JSON.stringify(
-        value,
-        (_, item) => (typeof item === "bigint" ? `${item}n` : item),
-        2,
-      );
+      return JSON.stringify(value, (_, item) => (typeof item === "bigint" ? `${item}n` : item), 2);
     } catch {
       return String(value);
     }

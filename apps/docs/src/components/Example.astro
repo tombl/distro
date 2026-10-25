@@ -16,7 +16,7 @@ const { code, lang = "ts" } = Astro.props;
   <div class="example-code" data-example-code>
     <CodeBlock code={code} language={lang} />
   </div>
-  <button type="button" class="example-run" data-example-run>Run</button>
+  <button type="button" class="example-run" data-example-run hidden>Run</button>
   <pre class="example-output" data-example-output aria-live="polite" hidden></pre>
 </div>
 
@@ -30,6 +30,20 @@ const { code, lang = "ts" } = Astro.props;
     :global(pre.astro-code) {
       margin-block-end: 0;
     }
+
+    :global(.example-editor) {
+      margin-inline: -1rem;
+    }
+
+    :global(.example-editor.rendering) {
+      position: absolute;
+      inset: 0;
+      visibility: hidden;
+    }
+  }
+
+  .example-code {
+    position: relative;
   }
 
   .example-run {
@@ -46,9 +60,76 @@ const { code, lang = "ts" } = Astro.props;
     cursor: pointer;
     transition: color 120ms, border-color 120ms;
 
+    &[hidden] {
+      display: none;
+    }
+
     &:hover {
       color: var(--code-foreground);
       border-color: var(--hairline-strong);
+    }
+  }
+
+  .example :global(.example-completions),
+  .example :global(.example-hover) {
+    position: absolute;
+    z-index: 10;
+    border: 1px solid var(--hairline);
+    border-radius: 0.25rem;
+    background-color: var(--code-background);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.8125rem;
+  }
+
+  .example :global(.example-completions) {
+    min-width: 16rem;
+    max-width: min(32rem, 100%);
+    max-height: 13.5rem;
+    overflow-y: auto;
+    padding-block: 0.25rem;
+
+    :global(.example-completion) {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0 0.5rem;
+      line-height: 1.5rem;
+      cursor: pointer;
+
+      &[aria-selected="true"] {
+        background-color: var(--code-selection);
+      }
+    }
+
+    :global(.example-completion-kind) {
+      color: var(--muted);
+    }
+
+    :global(.example-completion-detail) {
+      position: sticky;
+      inset-block-end: -0.25rem;
+      padding: 0.25rem 0.5rem;
+      border-block-start: 1px solid var(--hairline);
+      background-color: var(--code-background);
+      color: var(--prose);
+      white-space: pre-wrap;
+    }
+  }
+
+  .example :global(.example-hover) {
+    max-width: min(40rem, 100%);
+    padding: 0.375rem 0.625rem;
+    pointer-events: none;
+
+    :global(code) {
+      white-space: pre-wrap;
+    }
+
+    :global(p) {
+      margin: 0.25rem 0 0;
+      color: var(--prose);
+      font-family: var(--font-sans, system-ui, sans-serif);
     }
   }
 

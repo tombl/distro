@@ -4,8 +4,9 @@ import { copyFile, mkdir, readdir, readFile, realpath, stat } from "node:fs/prom
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AstroIntegration } from "astro";
-import type { Plugin } from "vite";
+import type { AstroIntegration, ViteUserConfig } from "astro";
+
+type Plugin = Extract<NonNullable<ViteUserConfig["plugins"]>[number], { name: string }>;
 
 // Runnable examples load the published packages the way a page without a
 // bundler does: from files on the docs origin, through an import map. This
@@ -56,10 +57,14 @@ async function loadPackage(root: string, name: string): Promise<RuntimePackage> 
       throw new Error(`${name} is missing ${entry}. Build the package and its artifacts first.`);
     }
     const found = info.isDirectory() ? await listFiles(path) : [path];
-    files.push(...found.filter((file) => !file.endsWith(".map")).map((file) => relative(dir, file)));
+    files.push(
+      ...found.filter((file) => !file.endsWith(".map")).map((file) => relative(dir, file)),
+    );
   }
   const exports: Record<string, string> = {};
-  for (const [key, target] of Object.entries(manifest.exports as Record<string, { default: string }>)) {
+  for (const [key, target] of Object.entries(
+    manifest.exports as Record<string, { default: string }>,
+  )) {
     exports[join(name, key).split(sep).join("/")] = target.default.replace(/^\.\//, "");
   }
   return { name, dir, files: files.map((file) => file.split(sep).join("/")).sort(), exports };
