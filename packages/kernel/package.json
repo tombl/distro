@@ -2,7 +2,7 @@
   "name": "@lowland/kernel",
   "version": "0.0.0",
   "description": "Low-level Linux virtual machine and virtio device primitives for JavaScript.",
-  "homepage": "https://linux.tombl.dev/reference/kernel/",
+  "homepage": "https://docs.low.land/reference/kernel/",
   "license": "MIT AND (GPL-2.0-only WITH Linux-syscall-note)",
   "repository": {
     "type": "git",
