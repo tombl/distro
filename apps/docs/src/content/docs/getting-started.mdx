@@ -124,7 +124,7 @@ console.log(await new Response(cat.stdout).text());
 ```
 
 Files written from JavaScript are immediately visible to guest programs, and
-the inverse is also true. The [`FileSystem` reference](/reference/linux-guest/#FileSystem)
+the inverse is also true. The [`FileSystem` reference](/reference/guest/#FileSystem)
 lists the complete API.
 
 ## Shut down
@@ -145,6 +145,6 @@ still need the two cross-origin-isolation headers.
 
 ## Add more guest controls
 
-Use the [`@lowland/guest` reference](/reference/linux-guest/) to add process and
+Use the [`@lowland/guest` reference](/reference/guest/) to add process and
 filesystem operations, or [attach an interactive terminal](/attach-a-terminal/)
 to this machine.

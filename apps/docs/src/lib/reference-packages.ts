@@ -1,7 +1,9 @@
 export const referencePackages = [
   {
     slug: "kernel",
+    directory: "kernel",
     name: "@lowland/kernel",
+    entrypoints: ["@lowland/kernel", "@lowland/kernel/plugin"],
     description: "APIs for Linux virtual machines and virtio devices.",
     npm: "https://www.npmjs.com/package/@lowland/kernel",
     groups: [
@@ -63,8 +65,10 @@ export const referencePackages = [
     ],
   },
   {
-    slug: "linux-guest",
+    slug: "guest",
+    directory: "linux-guest",
     name: "@lowland/guest",
+    entrypoints: ["@lowland/guest", "@lowland/guest/node", "@lowland/guest/browser"],
     description: "A bootable Linux guest with processes, files, and networking.",
     npm: "https://www.npmjs.com/package/@lowland/guest",
     groups: [
@@ -115,6 +119,12 @@ export const referencePackages = [
           "hostFetchNetwork",
           "guestFetchHandler",
         ],
+      },
+      {
+        title: "Share host directories",
+        description:
+          "Expose a host directory to the guest. Import NodeFS from @lowland/guest/node and BrowserFS from @lowland/guest/browser.",
+        symbols: ["NodeFS", "NodeFSOptions", "BrowserFS"],
       },
       {
         title: "Handle errors",
