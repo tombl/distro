@@ -15,17 +15,46 @@
   },
 }:
 
+let
+  # The UAPI headers are fixed-output so that kernel bumps which leave them
+  # untouched do not change the store path of, and so rebuild, the whole
+  # userland. When a bump does change them, the build fails with a hash
+  # mismatch that names the new value to paste here.
+  headers = pkgs.stdenvNoCC.mkDerivation {
+    pname = "linux-headers";
+    version = "0.0.0";
+    inherit src;
+
+    outputHashMode = "recursive";
+    outputHashAlgo = "sha256";
+    outputHash = "sha256-pBKb2mM3XTh9QYXqZHg0bxrC4XqCRrMxWkXl9eGkbyY=";
+
+    dontFixup = true;
+
+    nativeBuildInputs = [
+      pkgs.gnumake
+      pkgs.perl
+      pkgs.rsync
+    ];
+
+    buildPhase = ''
+      runHook preBuild
+      make -j$NIX_BUILD_CORES HOSTCC=${pkgs.llvmPackages_22.clang}/bin/clang \
+        headers_install INSTALL_HDR_PATH=$out
+      runHook postBuild
+    '';
+
+    installPhase = "runHook preInstall; runHook postInstall";
+  };
+in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "linux";
   version = "0.0.0";
   inherit src;
 
-  outputs = [
-    "out"
-    "headers"
-  ];
+  passthru = { inherit headers; };
 
-  # The outputs are wasm and headers: nixpkgs' fixup would strip nothing.
+  # The output is wasm: nixpkgs' fixup would strip nothing.
   dontFixup = true;
 
   nativeBuildInputs = [
@@ -36,7 +65,6 @@ pkgs.stdenvNoCC.mkDerivation {
     pkgs.flex
     pkgs.gnumake
     pkgs.perl
-    pkgs.rsync
     pkgs.wabt
   ];
 
@@ -55,8 +83,6 @@ pkgs.stdenvNoCC.mkDerivation {
     make vmlinux.wasm
 
     cp vmlinux.wasm $out/
-
-    make headers_install INSTALL_HDR_PATH=$headers
 
     runHook postBuild
   '';
