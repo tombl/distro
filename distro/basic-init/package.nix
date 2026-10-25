@@ -199,6 +199,12 @@ in
       syscall-latency = installedCheck { name = "syscall-latency"; };
       timer = installedCheck { name = "timer"; };
       tls = installedCheck { name = "tls"; };
+      user-copy-partial = installedCheck {
+        name = "user-copy-partial";
+        # The writer may spin in the kernel; the parent needs its own CPU to
+        # time it out.
+        cpus = 2;
+      };
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
       wallclock = installedCheck { name = "wallclock"; };

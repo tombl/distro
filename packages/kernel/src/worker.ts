@@ -94,6 +94,16 @@ function user_imports({
     }
   }
 
+  // How many of the `length` bytes at `address` lie inside user memory. Like
+  // a range that runs into an unmapped page, a range that runs off the end
+  // of linear memory transfers up to the end: callers such as
+  // generic_perform_write() rely on a short copy to make progress.
+  function user_extent(address: number, length: number): number {
+    assert(context);
+    const size = context.memory.buffer.byteLength;
+    return address < size ? Math.min(length, size - address) : 0;
+  }
+
   function user_atomic_word(uaddr: number): Int32Array | null {
     const address = uaddr >>> 0;
     if (!context || (address & 3) !== 0) return null;
@@ -322,22 +332,34 @@ function user_imports({
       read(to, from, n) {
         const length = n >>> 0;
         if (!context) return length;
-        return copy_bytes(kernel_memory, to >>> 0, context.memory, from >>> 0, length);
+        const source = from >>> 0;
+        const copied = user_extent(source, length);
+        return (
+          length - copied + copy_bytes(kernel_memory, to >>> 0, context.memory, source, copied)
+        );
       },
       write(to, from, n) {
         const length = n >>> 0;
         if (!context) return length;
-        return copy_bytes(context.memory, to >>> 0, kernel_memory, from >>> 0, length);
+        const destination = to >>> 0;
+        const copied = user_extent(destination, length);
+        return (
+          length -
+          copied +
+          copy_bytes(context.memory, destination, kernel_memory, from >>> 0, copied)
+        );
       },
       write_zeroes(to, n) {
         const length = n >>> 0;
         if (!context) return length;
-        const destination = memory_bytes(context.memory, to >>> 0, length);
+        const address = to >>> 0;
+        const cleared = user_extent(address, length);
+        const destination = memory_bytes(context.memory, address, cleared);
         if (!destination) return length;
 
         try {
           destination.fill(0);
-          return 0;
+          return length - cleared;
         } catch {
           return length;
         }
