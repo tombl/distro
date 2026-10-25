@@ -185,9 +185,11 @@
 
       // The virtio console claims stdout; the kernel's pre-console output must
       // go somewhere that isn't already locked, so it gets its own stream.
+      // The kernel never waits on this stream, so waiting for xterm here only
+      // delays the boot log behind console output that arrived after it.
       const bootOut = new WritableStream({
         write(chunk) {
-          return toTerminal(chunk);
+          term.write(chunk);
         },
       });
 
