@@ -1,12 +1,68 @@
 ---
 title: The security model
 description: What a guest can and cannot touch, and where the isolation boundary is.
-draft: true
 section: explanation
 order: 3
 ---
 
 # The security model
 
-This page has not been written yet. It will cover where the isolation boundary sits, what a guest can reach on the host,
-and what you are trusting when you run one.
+This page explains where the isolation boundary of a machine sits, and what a guest can reach
+on the host. It does not describe your JavaScript engine's own security features.
+
+## The starting assumption
+
+Assume that code running in a guest can do anything that the worker thread it runs in can do.
+
+A program in the guest is WebAssembly, and your JavaScript engine compiles it to machine code.
+Engines have bugs, and a bug in the compiler or the runtime can let WebAssembly code act outside
+the limits that WebAssembly is meant to enforce. This is the reasoning behind V8's sandbox,
+which assumes that JIT-compiled code can be made to misbehave. Lowland applies the same
+assumption to guests: a program that can run arbitrary WebAssembly in a thread should be
+treated as able to run arbitrary machine code in that thread.
+
+## Why this matters here
+
+The kernel's memory is one shared `WebAssembly.Memory`. It holds all of the kernel's data,
+including the page cache, pipe and socket buffers, and the queues of every device. The main
+thread and every worker of the machine have access to it. A worker that serves a device
+through `workerDevice()` has access to it too.
+
+Each user program runs in a worker that also runs the kernel, so the thread that runs a
+program has this memory. While WebAssembly works as designed, a program can only address its
+own process's memory. If it escapes WebAssembly's limits, everything in that thread is in
+reach, including all of the kernel's memory.
+
+## One machine per tenant
+
+Linux offers several ways to separate workloads inside one system, such as users, processes,
+cgroups, and namespaces. Under the assumption above, none of them is a security boundary
+inside a machine. The kernel enforces all of them, and its memory is in reach of the thread
+that runs each program.
+
+Do not rely on them to separate tenants that do not trust each other. Give each tenant its own
+machine, with its own call to `bootMachine()`. Each machine has its own memory and its own
+workers.
+
+## What a machine can reach on the host
+
+A guest reaches the host only through what you attach to its machine. Each of these runs your
+code, or code from the packages, on the host side.
+
+- **Devices.** A guest sends requests to every device it has. A block device calls your `read`
+  function, and your `write` function if it has one. A console device passes the guest's output
+  to your streams and your input to the guest.
+- **Shared directories.** A filesystem device gives the guest the directory behind its `NodeFS`
+  or `BrowserFS` backend, with the access that the backend allows. `NodeFS` refuses writes when
+  you pass `readOnly`.
+- **Networks.** A network card connects the guest to every other guest on the same network.
+  When the guest connects to an address outside the network, your `connectTcp` function
+  decides what happens. Connections to the gateway address `192.0.2.1` arrive with the target
+  `127.0.0.1`. DNS queries reach your `resolveDns` function. [The network
+  model](/network-model/) describes this path in detail.
+- **The guest agent.** `guestAgent()` adds a vsock device. Your process opens connections to
+  the agent, and the agent runs as root in the guest. Program output, file contents, and every
+  other reply that comes back through the agent are produced inside the guest.
+
+A machine without a network card has no network connection outside itself. A machine without
+a filesystem device has no access to host directories.
