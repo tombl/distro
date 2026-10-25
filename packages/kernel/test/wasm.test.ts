@@ -785,6 +785,133 @@ const settled_soon = (promise: Promise<unknown>) =>
     new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20)),
   ]);
 
+test("virtio-net holds unicast senders until the guest takes their frames", async () => {
+  const network = ethernetNetwork();
+  const device = ethernetDevice(network, { macAddress: [0x02, 0, 0, 0, 0, 1] });
+  const sender = network.addPort(() => {});
+  const net_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const imports = attach_devices({
+    memory: net_memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const frame = (n: number) => Uint8Array.from([2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 2, 0x08, 0, n]);
+
+  // The guest transmits once, so the switch learns its MAC and frames to it
+  // are unicast rather than flooded.
+  const tx_ring = 0x800;
+  const announcement = new Uint8Array(net_memory.buffer, 0x900, 12 + 14);
+  announcement.set([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0, 0, 1, 8, 0], 12);
+  const tx = new DataView(net_memory.buffer, tx_ring, 16);
+  tx.setBigUint64(0, 0x900n, true);
+  tx.setUint32(8, announcement.byteLength, true);
+  tx.setUint16(14, 1 << 7, true);
+  imports.enable_vring(0, 1, 1, tx_ring, 2);
+  imports.notify(0, 1);
+  await new Promise((resolve) => setTimeout(resolve, 1));
+
+  const ring = 0;
+  post_receive_buffers(net_memory, ring, 32);
+  imports.enable_vring(0, 0, 32, ring, 1);
+
+  const sends: Promise<void>[] = [];
+  let index = 0;
+  for (; index < 64; index++) {
+    const send = sender.send(frame(index));
+    sends.push(send);
+    if (!(await settled_soon(send))) break;
+  }
+  // Without posted buffers, a bounded backlog is accepted and then the
+  // sender is held instead of frames being dropped.
+  assert.ok(index > 0 && index < 64, `sender was held after ${index} frames`);
+
+  imports.notify(0, 0);
+  assert.equal(await settled_soon(sends[index]!), true);
+  for (let i = 0; i <= index; i++) {
+    const payload = new Uint8Array(net_memory.buffer, 0x1000 + i * 128 + 12 + 14, 1)[0];
+    assert.equal(payload, i, `frame ${i} delivered in order`);
+  }
+
+  sender.close();
+  await close_device(device);
+  network.close();
+});
+
+test("a stalled recipient does not hold a NIC through reset or close", async () => {
+  const network = ethernetNetwork();
+  const device = ethernetDevice(network, { macAddress: [2, 0, 0, 0, 0, 1] });
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const imports = attach_devices({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const broadcast_from = (last: number) =>
+    Uint8Array.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0, 0, last, 8, 0]);
+  // Each port transmits once, so the switch learns it and unicasts to it.
+  const stalled = network.addPort(() => new Promise<void>(() => {}));
+  await stalled.send(broadcast_from(0x0a));
+  const delivered: number[] = [];
+  const recorder = network.addPort((frame) => {
+    delivered.push(frame[14]!);
+  });
+  await recorder.send(broadcast_from(0x0b));
+
+  const transmit = (ring: number, buffer: number, to: number, payload: number) => {
+    const packet = new Uint8Array(memory.buffer, buffer, 12 + 15);
+    packet.set([2, 0, 0, 0, 0, to, 2, 0, 0, 0, 0, 1, 8, 0, payload], 12);
+    const descriptor = new DataView(memory.buffer, ring, 16);
+    descriptor.setBigUint64(0, BigInt(buffer), true);
+    descriptor.setUint32(8, packet.byteLength, true);
+    descriptor.setUint16(14, 1 << 7, true);
+    imports.enable_vring(0, 1, 1, ring, 2);
+    imports.notify(0, 1);
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 1));
+  transmit(0x800, 0x900, 0x0a, 1);
+  await tick();
+
+  // The old transmit waits on the stalled port; the replacement queue must
+  // not wait behind it.
+  imports.reset(0);
+  transmit(0xa00, 0xb00, 0x0b, 2);
+  for (let i = 0; i < 100 && delivered.length === 0; i++) await tick();
+  assert.deepEqual(delivered, [2]);
+
+  transmit(0xc00, 0xd00, 0x0a, 3);
+  await tick();
+  assert.equal(await settled_soon(close_device(device)), true);
+  stalled.close();
+  recorder.close();
+  network.close();
+});
+
+test("virtio-net floods without waiting for a stalled guest", async () => {
+  const network = ethernetNetwork();
+  const device = ethernetDevice(network);
+  const sender = network.addPort(() => {});
+  let received = 0;
+  network.addPort(() => {
+    received += 1;
+  });
+  const broadcast = Uint8Array.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0, 0, 0, 0, 2, 8, 0]);
+
+  for (let i = 0; i < 300; i++) {
+    assert.equal(await settled_soon(sender.send(broadcast)), true);
+  }
+  assert.equal(received, 300);
+
+  sender.close();
+  await close_device(device);
+  network.close();
+});
+
 test("console input is read only as the guest consumes it", async () => {
   const console_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   let pulls = 0;

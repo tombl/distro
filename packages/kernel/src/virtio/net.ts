@@ -6,6 +6,10 @@ import { type Device, public_handle, VirtioDevice } from "./device.ts";
 import type { Virtqueue, VirtqueueChain } from "./queue.ts";
 import { RxQueue } from "./rx.ts";
 
+// Frames for the guest beyond this backlog make `receive` wait until they are
+// delivered, which throttles a sender that awaits it.
+const RECEIVE_BACKLOG = 16;
+// Senders that do not wait, such as broadcast floods, are cut off here.
 const MAX_PENDING_FRAMES = 256;
 
 // Modern virtio-net always uses virtio_net_hdr_mrg_rxbuf, even when the
@@ -36,7 +40,11 @@ export type MacAddress = readonly [number, number, number, number, number, numbe
  * the handler given to `addPort`.
  */
 export interface EthernetPort {
-  /** Injects a frame into the switch. */
+  /**
+   * Injects a frame into the switch. A frame for one known recipient settles
+   * once that recipient's handler accepts it, so awaiting `send` applies the
+   * recipient's backpressure. Flooded frames do not wait.
+   */
   send(frame: Uint8Array): Promise<void>;
   /** Removes the port from the switch. */
   close(): void;
@@ -44,7 +52,10 @@ export interface EthernetPort {
 
 /** A learning Ethernet switch, created by `ethernetNetwork`. */
 export interface EthernetNetwork {
-  /** Adds a port. Frames addressed to it arrive at `receive`. */
+  /**
+   * Adds a port. Frames addressed to it arrive at `receive`, which may return
+   * a promise to hold back unicast senders until it can take more.
+   */
   addPort(receive: (frame: Uint8Array) => void | PromiseLike<void>): EthernetPort;
   /** Closes every port. */
   close(): void;
@@ -94,7 +105,14 @@ export function ethernetNetwork(): EthernetNetwork {
             : Array.from(ports, (candidate) =>
                 candidate !== port && !candidate.closed ? candidate : undefined,
               ).filter((candidate): candidate is SwitchPort => !!candidate);
-        await Promise.all(recipients.map((recipient) => recipient.receive(frame.slice())));
+        if (destination && recipients.length === 1) {
+          await recipients[0]!.receive(frame.slice());
+          return;
+        }
+        // One stalled port must not hold up a flood to the others.
+        for (const recipient of recipients) {
+          void Promise.resolve(recipient.receive(frame.slice())).catch(() => {});
+        }
       },
       close() {
         if (port.closed) return;
@@ -161,28 +179,43 @@ function write_frame(chain: VirtqueueChain, frame: Uint8Array) {
   return offset;
 }
 
+interface PendingFrame {
+  frame: Uint8Array;
+  delivered?: PromiseWithResolvers<void>;
+}
+
 class VirtioNic extends VirtioDevice {
   readonly #port: EthernetPort;
   readonly #rx = new RxQueue();
-  readonly #pending: Uint8Array[] = [];
+  readonly #pending: PendingFrame[] = [];
+  /**
+   * Settles when the guest's transmit queue goes away, releasing a transmit
+   * that is waiting on a stalled recipient. The recipient keeps the frame.
+   */
+  #abandon = Promise.withResolvers<void>();
 
   constructor(network: EthernetNetwork, macAddress: MacAddress) {
     super({ id: 1, queues: 2, features: 1n << 5n, config: Uint8Array.from(macAddress) });
     this.#port = network.addPort((frame) => this.#receive(frame));
   }
 
-  #receive(frame: Uint8Array) {
-    if (this.stopped) return;
-    if (this.#pending.length === MAX_PENDING_FRAMES) this.#pending.shift();
-    this.#pending.push(frame.slice());
+  #receive(frame: Uint8Array): void | Promise<void> {
+    if (this.stopped || this.#pending.length >= MAX_PENDING_FRAMES) return;
+    const pending: PendingFrame = { frame: frame.slice() };
+    this.#pending.push(pending);
     this.#flush();
+    if (this.#pending.length <= RECEIVE_BACKLOG) return;
+    pending.delivered = Promise.withResolvers();
+    return pending.delivered.promise;
   }
 
   #flush() {
     while (
       this.#pending.length > 0 &&
-      this.#rx.deliver((chain) => write_frame(chain, this.#pending.shift()!))
-    );
+      this.#rx.deliver((chain) => write_frame(chain, this.#pending[0]!.frame))
+    ) {
+      this.#pending.shift()!.delivered?.resolve();
+    }
   }
 
   protected kick(vq: number, queue: Virtqueue) {
@@ -215,7 +248,9 @@ class VirtioNic extends VirtioDevice {
         source_offset = 0;
       }
       assert(frame.length === frame.capacity, "short virtio-net transmit frame");
-      await this.#port.send(frame.array);
+      // Holding the chain until the network accepts the frame throttles the guest.
+      const abandoned = this.#abandon.promise.then(() => true);
+      if (await Promise.race([this.#port.send(frame.array).then(() => false), abandoned])) return;
       chain.release(0);
     }
   }
@@ -223,19 +258,24 @@ class VirtioNic extends VirtioDevice {
   protected reset() {
     // Frames already accepted for the guest survive; its buffers do not.
     this.#rx.reset();
+    this.#abandon.resolve();
+    this.#abandon = Promise.withResolvers();
   }
 
   protected stop() {
+    this.#abandon.resolve();
     this.#port.close();
     this.#rx.close();
-    this.#pending.length = 0;
+    for (const { delivered } of this.#pending.splice(0)) delivered?.resolve();
   }
 }
 
 /**
  * A virtio-net NIC attached to an Ethernet network. NICs on the same
  * network exchange ordinary Ethernet frames without any host TCP/IP
- * involvement.
+ * involvement. Frames for the guest are held until it posts receive buffers;
+ * past a small backlog, the NIC's port handler returns a promise, so unicast
+ * senders that await `EthernetPort.send` are throttled to the guest's pace.
  */
 export function ethernetDevice(
   network: EthernetNetwork,
