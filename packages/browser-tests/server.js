@@ -1,11 +1,11 @@
-import { execFile } from "node:child_process";
 import { createReadStream, statSync } from "node:fs";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { testAsset, testAssets } from "../../scripts/test-assets.ts";
 
-const root = process.cwd();
+const here = fileURLToPath(new URL(".", import.meta.url));
 const types = {
   ".cpio": "application/octet-stream",
   ".html": "text/html; charset=utf-8",
@@ -14,77 +14,108 @@ const types = {
   ".wasm": "application/wasm",
 };
 
-// The guest root disk and the scheduler-handoff initramfs are nix build
-// products: present in the packed suite the checks run against, absent in a
-// dev checkout, where we build them ourselves. Same contract as
-// packages/linux-guest/tests/assets.ts, including $LINUX_GUEST_TEST_ASSETS.
-const built = new Map();
-function build(attribute) {
-  if (!built.has(attribute)) {
-    const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-    built.set(
-      attribute,
-      promisify(execFile)("nix", [
-        "build",
-        `${repository}#${attribute}`,
-        "--no-link",
-        "--print-out-paths",
-      ]).then(({ stdout }) => stdout.trim()),
+// `node server.js` serves this package: the scenario page, the workspace
+// packages it imports, and the Nix-built images it boots. `node server.js
+// --site` serves the deployed site from the test assets instead.
+const site = process.argv.includes("--site");
+
+const assets = new Set([
+  "boot.cpio",
+  "opfs-disk-worker.js",
+  "posix-spawn-stress.erofs",
+  "remote-vm.erofs",
+  "rootfs.erofs",
+  "scheduler-handoff.erofs",
+]);
+
+// Production and previews fetch the independently published repository. The
+// site test serves the exact candidate repository so it can validate an
+// install before those packages have reached production. After installation
+// the service worker controls the page, so Playwright's page-level route
+// cannot intercept guest fetches: the served worker routes only package
+// requests to the candidate repository, and still fetches other assets
+// from assets.low.land directly.
+async function siteServiceWorker() {
+  const source = await readFile(await testAsset("site/service-worker.js"), "utf8");
+  const patched = source
+    .replace("  const { request } = event;", "  let { request } = event;")
+    .replace(
+      "  const url = new URL(request.url);",
+      `  let url = new URL(request.url);
+  if (url.hostname === "assets.low.land" && url.pathname.startsWith("/apk/")) {
+    request = new Request(new URL(url.pathname + url.search, location.origin), request);
+    url = new URL(request.url);
+  }`,
     );
+  if (
+    !patched.includes('url.hostname === "assets.low.land"') ||
+    !patched.includes("let { request }")
+  ) {
+    throw new Error("the site's service worker no longer matches the test's routing patch");
   }
-  return built.get(attribute);
+  return patched;
 }
+
+// Resolves a request path to a file, or to generated contents.
+async function resolve(relative) {
+  if (site) {
+    if (relative === "service-worker.js") return { contents: await siteServiceWorker() };
+    const directory = await testAssets();
+    return relative.startsWith("apk/")
+      ? join(directory, relative)
+      : join(directory, "site", relative);
+  }
+  if (assets.has(relative)) return testAsset(relative);
+  if (relative === "service-worker.js") return join(here, "../../apps/site/service-worker.js");
+  return join(here, relative);
+}
+
+function isFile(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+const isolation = {
+  "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cross-Origin-Opener-Policy": "same-origin",
+};
 
 const server = createServer(async (request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
   const relative = normalize(pathname === "/" ? "index.html" : pathname.slice(1));
-  let path = join(root, relative);
-  if (!path.startsWith(`${root}/`)) {
+  if (relative.startsWith("..") || relative.startsWith("/")) {
     response.writeHead(403).end();
     return;
   }
-  const exists = (p) => {
-    try {
-      return statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  };
-  if (!exists(path)) {
-    try {
-      if (relative === "rootfs.erofs") {
-        const directory =
-          process.env.LINUX_GUEST_TEST_ASSETS ?? (await build("linux-guest.checks.tests.assets"));
-        path = join(directory, relative);
-      } else if (relative === "boot.cpio") {
-        path = await build("vm-test.bootInitramfs");
-      } else if (relative === "scheduler-handoff.erofs") {
-        path = await build("basic-init.schedulerHandoffDisk");
-      } else if (relative === "remote-vm.erofs") {
-        path = await build("basic-init.remoteMemoryDisk");
-      } else if (relative === "posix-spawn-stress.erofs") {
-        path = await build("basic-init.posixSpawnStressDisk");
-      }
-    } catch (error) {
-      console.error(`failed to build ${relative}:`, error.stderr ?? error);
-      built.clear();
-      response.writeHead(500).end();
-      return;
-    }
+  let path;
+  try {
+    path = await resolve(relative);
+  } catch (error) {
+    console.error(`failed to resolve ${relative}:`, error.stderr ?? error);
+    response.writeHead(500).end();
+    return;
   }
-  if (!exists(path)) {
+  if (typeof path === "object") {
+    response.writeHead(200, { "Content-Type": types[extname(relative)], ...isolation });
+    response.end(path.contents);
+    return;
+  }
+  if (!isFile(path)) {
     response.writeHead(404).end();
     return;
   }
   const { size } = statSync(path);
+  const type = types[extname(path)] ?? "application/octet-stream";
   const range = request.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
   if (!range && size === 0) {
     response.writeHead(200, {
-      "Content-Type": types[extname(path)] ?? "application/octet-stream",
+      "Content-Type": type,
       "Accept-Ranges": "bytes",
       "Content-Length": 0,
-      "Cross-Origin-Embedder-Policy": "require-corp",
-      "Cross-Origin-Opener-Policy": "same-origin",
+      ...isolation,
     });
     response.end();
     return;
@@ -96,12 +127,11 @@ const server = createServer(async (request, response) => {
     return;
   }
   response.writeHead(range ? 206 : 200, {
-    "Content-Type": types[extname(path)] ?? "application/octet-stream",
+    "Content-Type": type,
     "Accept-Ranges": "bytes",
     "Content-Length": end - start + 1,
     ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
-    "Cross-Origin-Embedder-Policy": "require-corp",
-    "Cross-Origin-Opener-Policy": "same-origin",
+    ...isolation,
   });
   if (request.method === "HEAD") response.end();
   else createReadStream(path, { start, end }).pipe(response);

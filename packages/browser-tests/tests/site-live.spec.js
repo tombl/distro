@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 
+// The deployed site, from the config's second web server.
+test.use({ baseURL: process.env.SITE_BASE_URL });
+
 async function waitForGuest(page) {
   const terminal = page.locator(".xterm-rows");
   await expect(terminal).toContainText("root@lowland", { timeout: 30_000 });

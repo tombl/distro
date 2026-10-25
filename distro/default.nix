@@ -150,5 +150,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     linux-guest = callPackage ./npm/linux-guest { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
+    test-assets = callPackage ./npm/test-assets.nix { };
   }
 )
