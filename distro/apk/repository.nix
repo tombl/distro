@@ -65,7 +65,7 @@ let
         '') sortedPackages}
         # A package's file name carries its v3 identity, the digest of its
         # metadata block (which holds every payload file's digest), so changed
-        # bytes always get a new URL. The first index exists only to compute
+        # contents always get a new URL. The first index exists only to compute
         # those identities.
         apk --allow-untrusted mkndx --output identities.adb staging/*.apk
         apk adbdump --format json identities.adb \

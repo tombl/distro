@@ -5,7 +5,7 @@
 # only ever touches a temporary file in the runner, never the nix store.
 #
 # Package files are content-addressed (see distro/apk/repository.nix): a file
-# name changes whenever its bytes do, so APKs are uploaded once, never
+# name changes whenever its contents do, so APKs are uploaded once, never
 # overwritten, and served as immutable. Packages.adb is the only mutable object
 # and is served with no-cache. Each replaced index is kept under retired/ for
 # a grace period, and APKs stay published while any retained index names them,

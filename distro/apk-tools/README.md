@@ -50,14 +50,17 @@ Package files in every repository are content-addressed:
 `<name>-<version>.<identity>.apk`, where the identity is the first 16 hex
 digits of the package's v3 identity hash. The index records this as its
 `pkgname-spec`, and apk builds each download URL from it, so the repository URL
-stays `.../wasm32/Packages.adb`. A rebuild that changes a package's bytes
-without bumping its version still gets a new file name. The publish script
-therefore uploads APKs once and serves them as immutable. `Packages.adb` is the
+stays `.../wasm32/Packages.adb`. A rebuild that changes a package's metadata or
+any payload file without bumping its version still gets a new file name. The
+publish script therefore uploads APKs once and serves them as immutable. A
+rebuild that differs only in its archive representation, such as compression,
+keeps its identity; the publish then fails rather than replace the file. `Packages.adb` is the
 only object it replaces.
 
 A replaced index stays under `retired/` for 7 days, and its APKs stay published
-until then. A guest whose cached index is older than that, or whose refresh
-failed, gets 404s until it runs `apk update`. apk only refreshes an index older
+until then. After that, a guest still holding the old index
+can get 404s for APKs that have since been pruned, until a successful
+`apk update`. apk only refreshes an index older
 than 4 hours during writable operations such as `apk add`, so `apk fetch` keeps
 using a cached index however old it is.
 
