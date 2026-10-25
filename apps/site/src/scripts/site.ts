@@ -4,11 +4,11 @@ import { Terminal } from "@xterm/xterm";
 import {
   blockDevice,
   bootMachine,
-  type BlockDeviceStorage,
+  type BlockStorage,
   consoleDevice,
   entropyDevice,
   fileSystemDevice,
-  type VirtioDevice,
+  type Device,
   workerDevice,
 } from "@lowland/kernel";
 import type { MachinePluginInput } from "@lowland/kernel/plugin";
@@ -162,7 +162,7 @@ const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
 term.onResize(resizeConsole);
 resizeConsole();
 
-async function openLiveDisk(): Promise<BlockDeviceStorage> {
+async function openLiveDisk(): Promise<BlockStorage> {
   const manifestResponse = await fetch("/rootfs.erofs.json");
   if (!manifestResponse.ok) {
     throw new Error(`failed to fetch rootfs manifest: ${manifestResponse.status}`);
@@ -236,7 +236,7 @@ async function openInstallDisk({
   directory,
   requireFilesystem,
   timeout,
-}: InstallDiskOptions): Promise<VirtioDevice | undefined> {
+}: InstallDiskOptions): Promise<Device | undefined> {
   const handle = await directory.getFileHandle("root.ext4", { create: true });
   const file = await handle.getFile();
   const magicOffset = 1024 + 56;
@@ -286,7 +286,7 @@ const disk: MachinePluginInput =
         }),
         "persistent disk already contains a filesystem",
       );
-let installDisk: VirtioDevice | undefined;
+let installDisk: Device | undefined;
 if (bootMode === "live" && persistentInstallSupported && opfs) {
   try {
     installDisk = await openInstallDisk({

@@ -6,7 +6,11 @@
 pkgs.stdenvNoCC.mkDerivation {
   pname = "lowland-bytes";
   inherit ((builtins.fromJSON (builtins.readFile ../../packages/bytes/package.json))) version;
-  src = ../..;
+  src = node-workspace.source [
+    "tsconfig.base.json"
+    "packages/bytes"
+    "scripts/pack-package.mjs"
+  ];
   env.CI = "true";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [

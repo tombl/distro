@@ -27,7 +27,14 @@ let
   app = pkgs.stdenvNoCC.mkDerivation {
     pname = "runner-app";
     version = "0.0.0";
-    src = ../../..;
+    src = node-workspace.source [
+      "packages/bytes"
+      "packages/kernel"
+      "packages/linux-guest"
+      "packages/runner"
+      "scripts/pack-package.mjs"
+      "tsconfig.base.json"
+    ];
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
@@ -88,7 +95,14 @@ let
     pname = "linux-runner-integration-test";
     version = "0.0.0";
     passthru.ci.heavy = true;
-    src = ../../..;
+    src = node-workspace.source [
+      "packages/bytes"
+      "packages/kernel"
+      "packages/linux-guest"
+      "packages/runner"
+      "scripts/pack-package.mjs"
+      "tsconfig.base.json"
+    ];
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [

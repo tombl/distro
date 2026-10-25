@@ -3,7 +3,7 @@ import {
   consoleDevice,
   entropyDevice,
   type Machine,
-  type VirtioDevice,
+  type Device,
 } from "@lowland/kernel";
 import {
   createNetwork,
@@ -22,7 +22,7 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(devices?: readonly VirtioDevice[]): Promise<TestGuest>;
+  spawn(devices?: readonly Device[]): Promise<TestGuest>;
 }
 
 export interface TestGuest extends GuestAgent {
@@ -52,7 +52,7 @@ export function guest_test(
       resolveDns: resolve4,
     });
     const guests: TestGuest[] = [];
-    async function spawn(extra_devices: readonly VirtioDevice[] = []) {
+    async function spawn(extra_devices: readonly Device[] = []) {
       const agent = guestAgent();
       const attachment = network.attach(agent);
       const machine = await bootMachine({

@@ -219,7 +219,8 @@ export interface Imports {
     set_features(dev: number, features: bigint): void;
 
     setup(dev: number, config_irq: number, config_addr: number, config_len: number): void;
-    reset(dev: number): void;
+    /** `done` is a guest word set to 1 once the device has finished with guest memory. */
+    reset(dev: number, done: number): void;
 
     enable_vring(dev: number, vq: number, size: number, desc_addr: number, irq: number): void;
     disable_vring(dev: number, vq: number): void;

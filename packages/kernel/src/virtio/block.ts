@@ -2,14 +2,20 @@
 
 import { Struct, U32LE, U64LE } from "@lowland/bytes";
 import { assert } from "../util.ts";
-import { VirtioController, type VirtioDevice, type Virtqueue } from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue, VirtqueueChain } from "./queue.ts";
 
 const BlockDeviceFeatures = {
+  SEG_MAX: 1n << 2n,
   RO: 1n << 5n,
   FLUSH: 1n << 9n,
 } as const;
 
-class BlockDeviceConfig extends Struct({ capacity: U64LE }) {}
+// The most data segments the guest may put in one request. Indirect
+// descriptors let a request carry more than the ring holds.
+const SEG_MAX = 128;
+
+class BlockDeviceConfig extends Struct({ capacity: U64LE, size_max: U32LE, seg_max: U32LE }) {}
 
 class BlockDeviceRequest extends Struct({
   type: U32LE,
@@ -32,18 +38,213 @@ const BlockDeviceStatus = {
 
 type MaybePromise<T> = T | Promise<T>;
 
-/** The storage behind a block device. */
-export interface BlockDeviceStorage {
+/**
+ * The storage behind a block device.
+ *
+ * The arrays passed to storage are the guest's own memory. Use them only
+ * until the returned promise settles: a guest reset waits for that, then
+ * reuses the memory.
+ */
+export interface BlockStorage {
   /** Reads into `target` at `offset`, returning the bytes read. */
   read(offset: number, target: Uint8Array): MaybePromise<number>;
   /** Writes `data` at `offset`, returning the bytes written. Without it the device is read-only. */
   write?(offset: number, data: Uint8Array): MaybePromise<number>;
-  /** Flushes completed writes. Its presence advertises the flush feature. */
+  /**
+   * Reads consecutive bytes at `offset` into each of `targets` in turn,
+   * returning the bytes read. Optional: without it, a request split across
+   * guest memory takes one `read()` per contiguous piece.
+   */
+  readv?(offset: number, targets: readonly Uint8Array[]): MaybePromise<number>;
+  /** Writes each of `sources` in turn at `offset`, returning the bytes written. Optional, like `readv`. */
+  writev?(offset: number, sources: readonly Uint8Array[]): MaybePromise<number>;
+  /**
+   * Flushes completed writes. Its presence advertises the flush feature.
+   * Requests may be in flight concurrently, but a flush is only issued once
+   * every write requested before it has completed.
+   */
   flush?(): MaybePromise<void>;
   /** Releases storage resources when the device closes. */
   close?(): MaybePromise<void>;
   /** Total size in bytes. */
   capacity: number;
+}
+
+/** Merges segments that are adjacent in memory into single views. */
+function runs(segments: readonly Uint8Array[]) {
+  const merged: Uint8Array[] = [];
+  for (const segment of segments) {
+    if (segment.byteLength === 0) continue;
+    const last = merged.at(-1);
+    if (
+      last &&
+      last.buffer === segment.buffer &&
+      last.byteOffset + last.byteLength === segment.byteOffset
+    ) {
+      merged[merged.length - 1] = new Uint8Array(
+        last.buffer,
+        last.byteOffset,
+        last.byteLength + segment.byteLength,
+      );
+    } else {
+      merged.push(segment);
+    }
+  }
+  return merged;
+}
+
+/**
+ * Moves a request's segments with as few storage calls as possible: one call
+ * for one contiguous run or a vectored call, otherwise one call per run.
+ * Returns the bytes moved, stopping at the first short call.
+ */
+async function transfer(
+  offset: number,
+  segments: readonly Uint8Array[],
+  single: (offset: number, array: Uint8Array) => MaybePromise<number>,
+  vectored: ((offset: number, arrays: readonly Uint8Array[]) => MaybePromise<number>) | undefined,
+) {
+  const pieces = runs(segments);
+  if (pieces.length === 1) return single(offset, pieces[0]!);
+  if (vectored) return vectored(offset, pieces);
+  let moved = 0;
+  for (const piece of pieces) {
+    const n = await single(offset + moved, piece);
+    moved += n;
+    if (n !== piece.byteLength) break;
+  }
+  return moved;
+}
+
+class BlockDevice extends VirtioDevice {
+  readonly #storage: BlockStorage;
+  /** Writes in flight, which a flush must wait for. */
+  readonly #writes = new Set<Promise<number>>();
+  /** The advertised capacity in bytes: whole sectors only. */
+  readonly #capacity: bigint;
+
+  constructor(storage: BlockStorage) {
+    const config = new Uint8Array(BlockDeviceConfig.size);
+    const fields = new BlockDeviceConfig(config);
+    const sectors = BigInt(Math.floor(storage.capacity / 512));
+    fields.capacity = sectors;
+    fields.seg_max = SEG_MAX;
+    let features = BlockDeviceFeatures.SEG_MAX;
+    if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
+    if (!storage.write) features |= BlockDeviceFeatures.RO;
+    // Storage works on guest memory directly; a guest reset waits for it.
+    super({ id: 2, queues: 1, features, config, views: true });
+    this.#storage = storage;
+    this.#capacity = sectors * 512n;
+  }
+
+  protected kick(_vq: number, queue: Virtqueue) {
+    // Requests are independent: start each one now and let them complete in
+    // any order, rather than holding later chains behind slow storage.
+    for (const chain of queue) this.spawn(this.#request(chain));
+  }
+
+  async #request(chain: VirtqueueChain) {
+    const storage = this.#storage;
+    const descs = [...chain];
+    const header = descs[0];
+    const status = descs[descs.length - 1];
+    const data = descs.slice(1, -1);
+    const segments = data.map((desc) => desc.array);
+
+    assert(header && !header.writable, "header must be readonly");
+    assert(
+      header.array.byteLength === BlockDeviceRequest.size,
+      `header size is ${header.array.byteLength}`,
+    );
+    assert(status && status.writable, "status must be writable");
+    assert(status.array.byteLength === 1, `status size is ${status.array.byteLength}`);
+
+    // The header is guest memory: read it before anything can await.
+    const request = new BlockDeviceRequest(header.array.slice());
+    const length = segments.reduce((total, array) => total + array.byteLength, 0);
+    // Storage sees only the advertised sectors, in at most SEG_MAX segments.
+    // Checked in bigint, so the offset below is exact.
+    const start = request.sector * 512n;
+    const valid = data.length <= SEG_MAX && start + BigInt(length) <= this.#capacity;
+    const offset = Number(start);
+    let result: number = BlockDeviceStatus.OK;
+    let n = 0;
+    switch (request.type) {
+      case BlockDeviceRequestType.IN: {
+        assert(
+          data.every((desc) => desc.writable),
+          "data must be writable when IN",
+        );
+        if (!valid) {
+          result = BlockDeviceStatus.IOERR;
+          break;
+        }
+        if (length === 0) break;
+        const read = await transfer(
+          offset,
+          segments,
+          (at, target) => storage.read(at, target),
+          storage.readv && ((at, targets) => storage.readv!(at, targets)),
+        );
+        if (read !== length) result = BlockDeviceStatus.IOERR;
+        else n = length;
+        break;
+      }
+      case BlockDeviceRequestType.OUT: {
+        assert(
+          data.every((desc) => !desc.writable),
+          "data must be readonly when OUT",
+        );
+        const write = storage.write;
+        if (!write) {
+          result = BlockDeviceStatus.UNSUPP;
+          break;
+        }
+        if (!valid) {
+          result = BlockDeviceStatus.IOERR;
+          break;
+        }
+        if (length === 0) break;
+        // Registered before awaiting, so a flush queued after this request
+        // waits for it.
+        const written = transfer(
+          offset,
+          segments,
+          (at, source) => write.call(storage, at, source),
+          storage.writev && ((at, sources) => storage.writev!(at, sources)),
+        );
+        this.#writes.add(written);
+        try {
+          if ((await written) !== length) result = BlockDeviceStatus.IOERR;
+        } finally {
+          this.#writes.delete(written);
+        }
+        break;
+      }
+      case BlockDeviceRequestType.FLUSH: {
+        if (!storage.flush) {
+          result = BlockDeviceStatus.UNSUPP;
+          break;
+        }
+        await Promise.allSettled(this.#writes);
+        await storage.flush();
+        break;
+      }
+      case BlockDeviceRequestType.GET_ID:
+        break;
+      default:
+        console.error("unknown request type", request.type);
+        result = BlockDeviceStatus.UNSUPP;
+    }
+
+    status.array[0] = result;
+    chain.release(n);
+  }
+
+  protected close() {
+    return this.#storage.close?.();
+  }
 }
 
 /**
@@ -61,97 +262,11 @@ export interface BlockDeviceStorage {
  * })
  * ```
  */
-export function blockDevice(storage: BlockDeviceStorage): VirtioDevice {
-  const config = new Uint8Array(BlockDeviceConfig.size);
-  new BlockDeviceConfig(config).capacity = BigInt(storage.capacity / 512);
-  let features = 0n;
-  if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
-  if (!storage.write) features |= BlockDeviceFeatures.RO;
-
-  async function notify(queue: Virtqueue) {
-    for (const chain of queue) {
-      const descs = [...chain];
-      const header = descs[0];
-      const status = descs[descs.length - 1];
-      const data = descs.slice(1, -1);
-
-      assert(header && !header.writable, "header must be readonly");
-      assert(
-        header.array.byteLength === BlockDeviceRequest.size,
-        `header size is ${header.array.byteLength}`,
-      );
-      assert(status && status.writable, "status must be writable");
-      assert(status.array.byteLength === 1, `status size is ${status.array.byteLength}`);
-      const status_desc = status;
-
-      const request = new BlockDeviceRequest(header.array);
-
-      function set_status(value: number) {
-        status_desc.array[0] = value;
-      }
-
-      let n = 0;
-      let offset = Number(request.sector) * 512;
-      switch (request.type) {
-        case BlockDeviceRequestType.IN: {
-          let ok = true;
-          for (const desc of data) {
-            assert(desc.writable, "data must be writable when IN");
-            const read = await storage.read(offset, desc.array);
-            if (read !== desc.array.byteLength) {
-              ok = false;
-              break;
-            }
-            n += read;
-            offset += read;
-          }
-          set_status(ok ? BlockDeviceStatus.OK : BlockDeviceStatus.IOERR);
-          break;
-        }
-        case BlockDeviceRequestType.OUT: {
-          if (!storage.write) {
-            set_status(BlockDeviceStatus.UNSUPP);
-            break;
-          }
-          let ok = true;
-          for (const desc of data) {
-            assert(!desc.writable, "data must be readonly when OUT");
-            const written = await storage.write(offset, desc.array);
-            if (written !== desc.array.byteLength) {
-              ok = false;
-              break;
-            }
-            n += written;
-            offset += written;
-          }
-          set_status(ok ? BlockDeviceStatus.OK : BlockDeviceStatus.IOERR);
-          break;
-        }
-        case BlockDeviceRequestType.FLUSH: {
-          if (!storage.flush) {
-            set_status(BlockDeviceStatus.UNSUPP);
-            break;
-          }
-          await storage.flush();
-          set_status(BlockDeviceStatus.OK);
-          break;
-        }
-        case BlockDeviceRequestType.GET_ID: {
-          console.log("GET_ID");
-          set_status(BlockDeviceStatus.OK);
-          break;
-        }
-        default:
-          console.error("unknown request type", request.type);
-          set_status(BlockDeviceStatus.UNSUPP);
-      }
-
-      chain.release(n);
-    }
-  }
-
-  return new VirtioController(
-    { deviceId: 2, features, config },
-    { queues: [notify], close: () => storage.close?.() },
-  ).device;
+export function blockDevice(storage: BlockStorage): Device {
+  // Byte offsets up to the capacity must be exact JavaScript numbers.
+  assert(
+    storage.capacity >= 0 && storage.capacity <= Number.MAX_SAFE_INTEGER,
+    "block storage capacity must be a safe integer number of bytes",
+  );
+  return public_handle(new BlockDevice(storage), {});
 }

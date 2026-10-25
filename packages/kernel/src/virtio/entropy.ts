@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 
 import { assert } from "../util.ts";
-import { VirtioController, type VirtioDevice, type Virtqueue } from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue } from "./queue.ts";
 
-/** A virtio entropy source, feeding the guest's randomness pool from `crypto.getRandomValues`. */
-export function entropyDevice(): VirtioDevice {
-  function notify(queue: Virtqueue) {
+class EntropyDevice extends VirtioDevice {
+  constructor() {
+    super({ id: 4, queues: 1 });
+  }
+
+  protected kick(_vq: number, queue: Virtqueue) {
     for (const chain of queue) {
       let n = 0;
       for (const { array, writable } of chain) {
@@ -21,6 +25,9 @@ export function entropyDevice(): VirtioDevice {
       chain.release(n);
     }
   }
+}
 
-  return new VirtioController({ deviceId: 4 }, { queues: [notify] }).device;
+/** A virtio entropy source, feeding the guest's randomness pool from `crypto.getRandomValues`. */
+export function entropyDevice(): Device {
+  return public_handle(new EntropyDevice(), {});
 }
