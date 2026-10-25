@@ -15,9 +15,10 @@ The examples on this page assume a booted machine and its `guest`, set up as in 
 
 ## Where you can write
 
-Programs and `guest.fs` can write anywhere. With an EROFS root image, the changes are kept in a
-layer in memory on top of the image and are lost when the machine closes. With an ext4 root
-image, they are written to the image. `/tmp` is always kept in memory.
+The whole root filesystem is writable. With an EROFS image, such as the one from `rootImage()`,
+changes are kept in memory and lost when the machine closes. With an ext4 image, changes are
+written to the image. `/tmp` is always kept in memory. [Images](/images/#erofs-and-ext4)
+describes both formats.
 
 ## Write and read files
 

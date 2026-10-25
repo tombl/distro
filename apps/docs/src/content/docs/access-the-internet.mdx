@@ -19,13 +19,12 @@ const network = createNetwork({ connectTcp, resolveDns });
 const guest = guestAgent();
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [root, guest, network.attach(guest)],
+  plugins: [rootImage(), guest, network.attach(guest)],
 });
 ```
 
-`root` is the root filesystem device from the
-[`@lowland/guest` usage example](/reference/guest/#usage). The rest of this page shows what to
-pass as `connectTcp` and `resolveDns`.
+The machine is set up as in the [`@lowland/guest` usage example](/reference/guest/#usage). The
+rest of this page shows what to pass as `connectTcp` and `resolveDns`.
 
 ## In Node.js
 
