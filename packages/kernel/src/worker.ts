@@ -13,7 +13,9 @@ import {
   type MachineTerminationReason,
   memory_bytes,
   user_module_imports_supported,
+  reserve_worker,
   type UserContext,
+  type WorkerBudget,
 } from "./wasm.ts";
 
 export interface InitMessage {
@@ -22,6 +24,7 @@ export interface InitMessage {
   arg: number;
   vmlinux: WebAssembly.Module;
   memory: WebAssembly.Memory;
+  worker_budget: WorkerBudget;
   user: UserContext | null;
   /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
   user_copy_status: Int32Array<SharedArrayBuffer> | null;
@@ -435,7 +438,7 @@ function start_user(init: InitMessage, get_kernel_instance: () => Instance) {
 }
 
 function start(init: InitMessage) {
-  const { fn, arg, vmlinux, memory } = init;
+  const { fn, arg, vmlinux, memory, worker_budget } = init;
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
@@ -460,6 +463,9 @@ function start(init: InitMessage) {
       is_worker: true,
       memory,
       spawn_worker(fn, arg, name, user, copy_user_memory) {
+        // The page releases the reservation when the new worker exits.
+        const reserved = reserve_worker(worker_budget, user !== null);
+        if (reserved) return reserved;
         const direct = new MessageChannel();
         postMessage(
           {
@@ -476,6 +482,7 @@ function start(init: InitMessage) {
           arg,
           vmlinux,
           memory,
+          worker_budget,
           user,
           user_copy_status,
         } satisfies InitMessage);

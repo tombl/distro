@@ -37,6 +37,7 @@ let
     cp ${source}/tests/remote-memory.spec.js $out/tests/
     cp ${source}/tests/spawn-stress.spec.js $out/tests/
     cp ${source}/tests/virtio-fs.spec.js $out/tests/
+    cp ${source}/tests/worker-budget.spec.js $out/tests/
     cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
     cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
     tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest

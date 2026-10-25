@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import { platform } from "./platform.ts";
+import { assert } from "./util.ts";
 
 export interface Instance extends WebAssembly.Instance {
   exports: {
@@ -191,6 +192,43 @@ export interface Imports {
 }
 
 export const HALT_KERNEL = Symbol("halt kernel");
+
+/**
+ * Machine-wide count of live workers, shared by every worker so a clone can
+ * be refused before the browser silently queues the worker instead.
+ */
+export interface WorkerBudget {
+  /** [0]: live workers, [1]: maximum. */
+  counts: Int32Array<SharedArrayBuffer>;
+}
+
+export function create_worker_budget(maximum: number): WorkerBudget {
+  assert(
+    Number.isInteger(maximum) && maximum >= 1 && maximum <= 0x7fffffff,
+    "maxWorkers must be a positive 32-bit integer",
+  );
+  const counts = new Int32Array(new SharedArrayBuffer(8));
+  counts[1] = maximum;
+  return { counts };
+}
+
+/**
+ * Reserves a worker. Userspace clones fail with EAGAIN once the budget is
+ * exhausted. Kernel threads and CPUs are always admitted: the kernel does not
+ * expect their creation to fail, and there are few of them.
+ */
+export function reserve_worker({ counts }: WorkerBudget, refusable: boolean): number {
+  const live = Atomics.add(counts, 0, 1);
+  if (refusable && live >= Atomics.load(counts, 1)) {
+    Atomics.sub(counts, 0, 1);
+    return -11; // try again
+  }
+  return 0;
+}
+
+export function release_worker({ counts }: WorkerBudget): void {
+  Atomics.sub(counts, 0, 1);
+}
 
 export function kernel_imports({
   is_worker,

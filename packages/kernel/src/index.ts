@@ -9,10 +9,13 @@ import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
 import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
 import {
   allocate_shared_memory,
+  create_worker_budget,
   type Imports,
   type Instance,
   kernel_imports,
   MachineTerminationReason,
+  release_worker,
+  reserve_worker,
   type UserContext,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
@@ -68,7 +71,18 @@ export interface BootMachineOptions {
   plugins?: readonly MachinePluginInput[];
   /** Initial ramdisk loaded into memory and passed to the kernel. */
   initcpio?: MaybePromise<ArrayBufferView>;
+  /**
+   * Most Web Workers the machine runs at once, one per guest task. Past this,
+   * fork and clone fail with EAGAIN. Kernel threads are always admitted but
+   * count toward it. Defaults to 448, below Firefox's limit of 512 live
+   * workers per site, beyond which it queues new workers without starting
+   * them. Leave headroom for the page's other workers, including worker
+   * devices and other tabs on the same site.
+   */
+  maxWorkers?: number;
 }
+
+const DEFAULT_MAX_WORKERS = 448;
 
 /**
  * A booted Linux machine: one shared WebAssembly memory, one Web Worker per
@@ -174,6 +188,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   const configured = await configure_machine(options.args ?? [], options.plugins ?? []);
   const { devices, plugins } = configured;
   const workers = new Set<WorkerHandle>();
+  const worker_budget = create_worker_budget(options.maxWorkers ?? DEFAULT_MAX_WORKERS);
   let closed = false;
   let failed = false;
   let finish_error: unknown;
@@ -296,8 +311,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     // call back into, but they only run once exports.boot() starts the kernel.
     let instance: Instance | undefined;
 
+    // The caller has reserved the worker in worker_budget.
     const start_worker = (name: string, init: InitMessage | ForwardedInitMessage) => {
-      if (closed) return;
+      if (closed) {
+        release_worker(worker_budget);
+        return;
+      }
       const worker = platform.spawn_worker(name, {
         on_message(raw) {
           const message = raw as WorkerMessage;
@@ -337,8 +356,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
             case "worker_exit": {
               // The worker closes itself after posting this message. Calling
               // terminate() here races that orderly shutdown and leaks the
-              // worker's address-space reservations in WebKit.
-              workers.delete(worker);
+              // worker's address-space reservations in WebKit. The worker may
+              // still count toward the browser's limit briefly; the default
+              // budget leaves headroom for that.
+              if (workers.delete(worker)) release_worker(worker_budget);
               break;
             }
             default:
@@ -361,12 +382,15 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       // COPY originates only from userspace clone in a worker; never block the
       // browser's main agent waiting for a memory snapshot.
       assert(!copy_user_memory);
+      const reserved = reserve_worker(worker_budget, user !== null);
+      if (reserved) return reserved;
       start_worker(name, {
         type: "init",
         fn,
         arg,
         vmlinux,
         memory: wasm_memory,
+        worker_budget,
         user,
         user_copy_status: null,
       });

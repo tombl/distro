@@ -12,7 +12,10 @@ import { VirtioController, close_virtio_device, virtio_imports } from "../src/vi
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
 import {
   allocate_shared_memory,
+  create_worker_budget,
   memory_bytes,
+  release_worker,
+  reserve_worker,
   user_module_imports_supported,
 } from "../src/wasm.ts";
 
@@ -784,4 +787,23 @@ test("virtio stop can unblock a handler before final cleanup", async () => {
 
   await close_virtio_device(controller.device);
   assert.deepEqual(events, ["notify", "stop", "close"]);
+});
+
+test("the worker budget refuses user clones with EAGAIN when full", () => {
+  const budget = create_worker_budget(2);
+
+  assert.equal(reserve_worker(budget, true), 0);
+  assert.equal(reserve_worker(budget, true), 0);
+  assert.equal(reserve_worker(budget, true), -11);
+  // Kernel threads are admitted over budget and still counted.
+  assert.equal(reserve_worker(budget, false), 0);
+  release_worker(budget);
+  assert.equal(reserve_worker(budget, true), -11);
+  release_worker(budget);
+  assert.equal(reserve_worker(budget, true), 0);
+});
+
+test("the worker budget rejects a maximum that does not fit in an i32", () => {
+  assert.throws(() => create_worker_budget(Infinity));
+  assert.throws(() => create_worker_budget(0));
 });

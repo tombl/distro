@@ -57,6 +57,7 @@ async function withGuest(scenario, options) {
   const agent = guestAgent();
   const machine = await bootMachine({
     cpus: options?.cpus ?? 1,
+    maxWorkers: options?.maxWorkers,
     plugins: [agent, ...(options?.devices ?? []), await rootDevice()],
   });
   try {
@@ -124,6 +125,29 @@ globalThis.spawnStress = () =>
     const script = "i=0; while [ $i -lt 100 ]; do ls / >/dev/null || exit 1; i=$((i+1)); done";
     return collectProcess(await guest.exec(["sh", "-c", script]));
   });
+
+globalThis.workerBudget = () =>
+  withGuest(
+    async (guest) => {
+      // Booting and the guest agent use about 32 workers, so a few background
+      // jobs succeed before the budget refuses the rest. Keeping the budget
+      // tight runs out of workers before WebKit runs out of memories.
+      const script = [
+        "i=0",
+        "while [ $i -lt 10 ]; do sleep 1 & i=$((i+1)); done",
+        "wait",
+        // Reaping a child can beat the page releasing its worker.
+        "n=0",
+        "until /bin/echo recovered; do",
+        "  n=$((n+1))",
+        "  [ $n -lt 50 ] || exit 1",
+        "  sleep 0.1 2>/dev/null || :",
+        "done",
+      ].join("\n");
+      return collectProcess(await guest.exec(["sh", "-c", script]));
+    },
+    { maxWorkers: 36 },
+  );
 
 globalThis.remoteMemoryMetadata = () =>
   withGuest(
