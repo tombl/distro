@@ -121,6 +121,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     bridge-site = callPackage ../packages/bridge-site { };
 
     apk-checks = callPackage ./apk/checks.nix { inherit apk; };
+    image-checks = callPackage ./image/checks.nix { };
     repository =
       (callPackage ./repository.nix {
         inherit apk;
@@ -129,6 +130,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       // {
         checks = {
           inherit (self.apk-checks) install store-references userland;
+          image-resolver = self.image-checks.resolver;
         };
       };
 

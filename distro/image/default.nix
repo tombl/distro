@@ -18,10 +18,12 @@
 # installed by apk, so the image carries a real package database and a booted
 # guest can upgrade or remove what the build installed. A package's
 # passthru.apk.depends names other packages; mkImage resolves them
-# transitively, first against `packages` and then against the package scope by
-# attribute name, so an image lists only what it wants and builds only that
-# closure. Only `packages` are recorded in /etc/apk/world: dependencies stay
-# removable once nothing needs them. A downstream package can depend on
+# transitively, first against `packages` (their names and `provides`) and then
+# against the package scope by attribute name, so an image lists only what it
+# wants and builds only that closure. Version constraints and `!name`
+# conflicts are left to apk. Only `packages` are recorded in /etc/apk/world:
+# dependencies stay removable once nothing needs them. Two different packages
+# in `packages` cannot share a name. A downstream package can depend on
 # another downstream package either by listing both in `packages` or by adding
 # it to the scope with overrideScope.
 #
@@ -60,7 +62,23 @@ in
 
 let
   requested = map apk.packageFrom packages;
-  requestedByName = lib.listToAttrs (map (package: lib.nameValuePair package.name package) requested);
+  requestedByName = lib.groupBy (package: package.name) requested;
+
+  # Two different payloads under one name would install whichever came first.
+  # The same package listed twice is harmless.
+  conflicts = lib.filterAttrs (
+    _name: candidates: lib.length (lib.unique (map (package: package.drvPath) candidates)) > 1
+  ) requestedByName;
+
+  # Names the requested packages satisfy without the scope: their own names
+  # and the virtual names they provide. apk checks provided versions.
+  satisfied =
+    lib.genAttrs (builtins.attrNames requestedByName) (_: true)
+    // lib.listToAttrs (
+      map (atom: lib.nameValuePair (dependencyName atom) true) (
+        lib.concatMap (package: package.provides) requested
+      )
+    );
 
   fromScope =
     dependent: dependency:
@@ -74,8 +92,10 @@ let
     else
       package;
 
-  lookup = dependent: dependency: requestedByName.${dependency} or (fromScope dependent dependency);
-
+  # The closure is keyed by package name, so a package reached twice is
+  # visited once and cycles terminate. Requested packages are all in the start
+  # set, so a dependency they satisfy adds nothing. `!name` atoms forbid a
+  # package rather than install one; they stay in the metadata for apk.
   closure = map (item: item.package) (
     builtins.genericClosure {
       startSet = map (package: {
@@ -84,16 +104,16 @@ let
       }) requested;
       operator =
         item:
-        map (
-          dependency:
-          let
-            dependencyKey = dependencyName dependency;
-          in
-          {
-            key = dependencyKey;
-            package = lookup item.package.name dependencyKey;
-          }
-        ) item.package.depends;
+        map
+          (dependency: {
+            key = dependency;
+            package = fromScope item.package.name dependency;
+          })
+          (
+            builtins.filter (dependency: !(satisfied ? ${dependency})) (
+              map dependencyName (builtins.filter (atom: !lib.hasPrefix "!" atom) item.package.depends)
+            )
+          );
     }
   );
 
@@ -111,6 +131,8 @@ let
   };
 in
 assert lib.assertMsg (packages != [ ]) "mkImage ${name} requires at least one package";
+assert lib.assertMsg (conflicts == { })
+  "mkImage ${name}: packages contains different packages with the same name: ${lib.concatStringsSep ", " (builtins.attrNames conflicts)}";
 mkFilesystem {
   inherit
     name
