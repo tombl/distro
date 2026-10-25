@@ -6,6 +6,13 @@ on:
       - 'v*'
   pull_request:
 
+# A newer push to a pull request supersedes its older runs. Pushes to main
+# are not cancelled, so each one is still checked, but deploy jobs skip
+# publishing when their commit is no longer the newest.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   plan:
     name: Plan checks
@@ -159,6 +166,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      pull-requests: read
     concurrency:
       group: deploy-site-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
@@ -169,8 +177,16 @@ jobs:
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Check the commit is still current
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/is-current.sh \
+            "${{ github.event.pull_request.head.sha || github.sha }}" \
+            "${{ github.event.pull_request.number }}"
       - name: Publish apk repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           APK_SIGNING_KEY: ${{secrets.APK_SIGNING_KEY}}
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
@@ -183,15 +199,15 @@ jobs:
         run: |
           distro/site/scripts/publish-apk-repo.sh
       - name: Deploy production
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
           GH_TOKEN: ${{ github.token }}
         run: |
           nix run .#wrangler-deploy
-          .github/scripts/record-deployment.sh site "https://low.land" "Site"
+          .github/scripts/record-deployment.sh site "https://low.land" "Site" production
       - name: Deploy preview
-        if: github.event_name == 'pull_request'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'pull_request'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
           GH_TOKEN: ${{ github.token }}
@@ -210,7 +226,8 @@ jobs:
             printf '[Open the site preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/record-deployment.sh \
-            "preview-site" "$preview_url" "Site preview" \
+            "preview-site-pr-${{ github.event.pull_request.number }}" "$preview_url" \
+            "Site preview" preview \
             "${{ github.event.pull_request.head.sha }}"
 
   deploy-docs:
@@ -223,6 +240,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      pull-requests: read
     concurrency:
       group: deploy-docs-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
@@ -233,17 +251,25 @@ jobs:
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Check the commit is still current
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/is-current.sh \
+            "${{ github.event.pull_request.head.sha || github.sha }}" \
+            "${{ github.event.pull_request.number }}"
       - name: Deploy production
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
           GH_TOKEN: ${{ github.token }}
         run: |
           nix run .#docs-wrangler-deploy
           .github/scripts/record-deployment.sh \
-            docs "https://docs.low.land" "Docs"
+            docs "https://docs.low.land" "Docs" production
       - name: Deploy preview
-        if: github.event_name == 'pull_request'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'pull_request'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
           GH_TOKEN: ${{ github.token }}
@@ -262,7 +288,8 @@ jobs:
             printf '[Open the docs preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
           .github/scripts/record-deployment.sh \
-            "preview-docs" "$preview_url" "Docs preview" \
+            "preview-docs-pr-${{ github.event.pull_request.number }}" "$preview_url" \
+            "Docs preview" preview \
             "${{ github.event.pull_request.head.sha }}"
 
   publish-release:
