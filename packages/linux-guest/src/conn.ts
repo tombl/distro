@@ -14,7 +14,7 @@
 // session down (agent side: kill and reap every child).
 
 import type { VsockConnection, VsockDevice } from "@lowland/kernel";
-import { ProtocolError } from "./abi.ts";
+import { GuestBootError, ProtocolError } from "./abi.ts";
 import { Bytes, Struct, U16LE, U32LE } from "@lowland/bytes";
 
 const SESSION_PORT = 1024;
@@ -30,7 +30,7 @@ const MAX_LANES = 64;
 class Handshake extends Struct({
   magic: U32LE,
   version: U16LE,
-  reserved: U16LE,
+  failure: U16LE,
 }) {}
 
 /** One strictly serial request/reply channel. Only ever held by one
@@ -65,7 +65,7 @@ class VsockLane implements Lane {
 async function handshake(conn: VsockConnection): Promise<void> {
   const bytes = new Bytes(Handshake.size);
   const hello = bytes.alloc(Handshake);
-  hello.value = { magic: HANDSHAKE_MAGIC, version: PROTOCOL_VERSION, reserved: 0 };
+  hello.value = { magic: HANDSHAKE_MAGIC, version: PROTOCOL_VERSION, failure: 0 };
   await conn.write(bytes.array);
   const echo = await conn.readExactly(Handshake.size);
   if (echo.byteLength !== Handshake.size) {
@@ -74,6 +74,13 @@ async function handshake(conn: VsockConnection): Promise<void> {
   const reply = new Handshake(echo);
   if (reply.magic !== HANDSHAKE_MAGIC || reply.version !== PROTOCOL_VERSION) {
     throw new ProtocolError("guest handshake echo mismatch");
+  }
+  if (reply.failure !== 0) {
+    const message = await conn.readExactly(reply.failure);
+    if (message.byteLength !== reply.failure) {
+      throw new ProtocolError("guest connection closed during handshake");
+    }
+    throw new GuestBootError(new TextDecoder().decode(message));
   }
 }
 

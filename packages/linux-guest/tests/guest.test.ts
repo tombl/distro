@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { blockDevice, bootMachine } from "@lowland/kernel";
-import { guestAgent, SystemError } from "../src/index.ts";
+import { GuestBootError, guestAgent, SystemError } from "../src/index.ts";
 import { ext4_root_device, root_device, wrong_root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
@@ -90,8 +90,21 @@ guest_test("root discovery", async (_t, fixture) => {
   assert.deepEqual(status, { success: true, code: 0, signal: null });
 });
 
+function boot_failure(message: string) {
+  return (error: unknown) => error instanceof GuestBootError && error.message === message;
+}
+
+const no_root = boot_failure("no supported filesystem is labeled LOWLAND_ROOT");
+
+test("rejects a machine without a system disk", async () => {
+  await assert.rejects(bootMachine({ cpus: 1, plugins: [guestAgent()] }), no_root);
+});
+
 test("rejects more than one system disk", async () => {
-  await assert.rejects(() => boot(root_device(), [root_device()]));
+  await assert.rejects(
+    () => boot(root_device(), [root_device()]),
+    boot_failure("multiple filesystems are labeled LOWLAND_ROOT"),
+  );
 });
 
 test("rejects more than one guest agent", async () => {
@@ -119,21 +132,23 @@ test("boots a writable ext4 system disk", async () => {
 });
 
 test("rejects a system disk with the wrong label", async () => {
-  await assert.rejects(() => boot(wrong_root_device()));
+  await assert.rejects(() => boot(wrong_root_device()), no_root);
 });
 
 test("rejects a system disk without a label", async () => {
   const empty = new Uint8Array(4096);
-  await assert.rejects(() =>
-    boot(
-      blockDevice({
-        capacity: empty.byteLength,
-        read(offset, target) {
-          const source = empty.subarray(offset, offset + target.byteLength);
-          target.set(source);
-          return source.byteLength;
-        },
-      }),
-    ),
+  await assert.rejects(
+    () =>
+      boot(
+        blockDevice({
+          capacity: empty.byteLength,
+          read(offset, target) {
+            const source = empty.subarray(offset, offset + target.byteLength);
+            target.set(source);
+            return source.byteLength;
+          },
+        }),
+      ),
+    no_root,
   );
 });

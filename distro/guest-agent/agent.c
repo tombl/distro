@@ -26,6 +26,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <spawn.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +51,7 @@ enum {
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
+	max_boot_failure = 256,
 	max_string = 4096,
 	max_arguments = 256,
 	max_environment = 256,
@@ -87,6 +89,10 @@ static struct {
 	.changed = PTHREAD_COND_INITIALIZER,
 };
 
+/* Why the system root could not be entered, reported in place of a ready
+ * handshake. Empty while booting normally. */
+static char boot_failure[max_boot_failure];
+
 static uint16_t load_u16(const uint8_t *p)
 {
 	return (uint16_t)p[0] | (uint16_t)p[1] << 8;
@@ -101,6 +107,12 @@ static uint32_t load_u32(const uint8_t *p)
 static uint64_t load_u64(const uint8_t *p)
 {
 	return (uint64_t)load_u32(p) | (uint64_t)load_u32(p + 4) << 32;
+}
+
+static void store_u16(uint8_t *p, uint16_t value)
+{
+	p[0] = value;
+	p[1] = value >> 8;
 }
 
 static void store_u32(uint8_t *p, uint32_t value)
@@ -577,15 +589,20 @@ static int serve_reap(int fd)
 	return write_all(fd, body, sizeof(body));
 }
 
-/* Handshake: 8 bytes { magic u32, version u16, reserved u16 }, echoed. */
+/* Handshake: 8 bytes { magic u32, version u16, failure u16 }, echoed with
+ * failure set to the length of the boot failure message that follows it. */
 static int handshake(int fd)
 {
+	size_t length = strlen(boot_failure);
 	uint8_t hs[8];
 
 	if (read_all(fd, hs, sizeof(hs)) || load_u32(hs) != protocol_magic ||
 	    load_u16(hs + 4) != protocol_version)
 		return -1;
-	return write_all(fd, hs, sizeof(hs));
+	store_u16(hs + 6, length);
+	if (write_all(fd, hs, sizeof(hs)))
+		return -1;
+	return write_all(fd, boot_failure, length);
 }
 
 static void serve_lane(int fd)
@@ -870,6 +887,16 @@ static int mount_system_root(const struct system_root *root)
 	return 0;
 }
 
+static void fail_boot(const char *format, ...)
+{
+	va_list args;
+
+	va_start(args, format);
+	vsnprintf(boot_failure, sizeof(boot_failure), format, args);
+	va_end(args);
+	fprintf(stderr, "linux-guest-agent: %s\n", boot_failure);
+}
+
 static int prepare_system_root(void)
 {
 	struct system_root root;
@@ -881,21 +908,29 @@ static int prepare_system_root(void)
 	    make_directory("/proc", 0555) ||
 	    mount_if_needed("proc", "/proc", "proc") ||
 	    make_directory("/sys", 0555) ||
-	    mount_if_needed("sysfs", "/sys", "sysfs"))
+	    mount_if_needed("sysfs", "/sys", "sysfs")) {
+		fail_boot("mounting kernel filesystems: %s", strerror(errno));
 		return -1;
+	}
 
 	if (find_system_root(&root)) {
 		if (errno == EEXIST)
-			fprintf(stderr, "linux-guest-agent: multiple filesystems are labeled LOWLAND_ROOT\n");
+			fail_boot("multiple filesystems are labeled LOWLAND_ROOT");
 		else
-			fprintf(stderr, "linux-guest-agent: no supported filesystem is labeled LOWLAND_ROOT\n");
+			fail_boot("no supported filesystem is labeled LOWLAND_ROOT");
 		return -1;
 	}
-	if (mount_system_root(&root) ||
-	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
-	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
-	    chmod("/mnt/tmp", 01777) == -1)
+	if (mount_system_root(&root)) {
+		fail_boot("mounting system root %s: %s", root.device,
+			  strerror(errno));
 		return -1;
+	}
+	if (mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
+	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
+	    chmod("/mnt/tmp", 01777) == -1) {
+		fail_boot("mounting system root tmpfs: %s", strerror(errno));
+		return -1;
+	}
 
 	if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1 ||
 	    mount("/dev", "/mnt/dev", NULL, MS_MOVE, NULL) == -1 ||
@@ -903,8 +938,10 @@ static int prepare_system_root(void)
 	    mount("/sys", "/mnt/sys", NULL, MS_MOVE, NULL) == -1 ||
 	    chdir("/mnt") == -1 ||
 	    syscall(SYS_pivot_root, ".", "mnt") == -1 ||
-	    chdir("/") == -1 || umount2("/mnt", MNT_DETACH) == -1)
+	    chdir("/") == -1 || umount2("/mnt", MNT_DETACH) == -1) {
+		fail_boot("entering system root: %s", strerror(errno));
 		return -1;
+	}
 	return 0;
 }
 
@@ -960,7 +997,7 @@ static int start_system_init(pid_t *pid)
 int main(void)
 {
 	struct sigaction child_action = { .sa_handler = child_exited };
-	pid_t system_init;
+	pid_t system_init = 0;
 	int session_listener;
 
 	signal(SIGPIPE, SIG_IGN);
@@ -970,26 +1007,28 @@ int main(void)
 		return 1;
 	}
 	/* /proc remains load-bearing after the root transition: the host's
-	 * realPath and FsFile.stat go through /proc/self/fd/N. */
-	if (prepare_system_root()) {
-		perror("linux-guest-agent: preparing system root");
-		return 1;
-	}
-	/* A supervisor pthread would share PID 1's address space. The wasm kernel
-	 * refuses to snapshot an address space with another user, so that would
-	 * make every later clone of a session worker fail with EOPNOTSUPP. Keep PID
-	 * 1 single-threaded and let SIGCHLD interrupt its blocking operations so it
-	 * can check the system init here instead. */
-	if (start_system_init(&system_init)) {
-		perror("linux-guest-agent: starting system init");
-		return 1;
+	 * realPath and FsFile.stat go through /proc/self/fd/N.
+	 *
+	 * A failure before the system is running leaves PID 1 alive in whatever
+	 * root it reached: exiting would panic the kernel and lose the reason,
+	 * while every session handshake can carry it to the host instead. */
+	if (!prepare_system_root()) {
+		/* A supervisor pthread would share PID 1's address space. The wasm
+		 * kernel refuses to snapshot an address space with another user, so
+		 * that would make every later clone of a session worker fail with
+		 * EOPNOTSUPP. Keep PID 1 single-threaded and let SIGCHLD interrupt its
+		 * blocking operations so it can check the system init here instead. */
+		if (start_system_init(&system_init))
+			fail_boot("starting system init: %s", strerror(errno));
 	}
 	session_listener = listener(session_port, 1);
 	if (session_listener == -1) {
 		perror("vsock listener");
 		return 1;
 	}
-	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
+	if (!*boot_failure)
+		printf("linux-guest-agent: ready on vsock port %d\n",
+		       session_port);
 	for (;;) {
 		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
 		pid_t worker, waited;
@@ -1001,6 +1040,11 @@ int main(void)
 				check_system_init(system_init);
 			else
 				perror("accept session");
+			continue;
+		}
+		if (*boot_failure) {
+			handshake(fd);
+			close(fd);
 			continue;
 		}
 		args = (struct session_worker_args) {
