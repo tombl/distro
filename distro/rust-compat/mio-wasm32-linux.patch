@@ -1,0 +1,16 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 4563271..674ae95 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -40,7 +40,10 @@
+ //!
+ //! The available features are described in the [`features`] module.
+
+-#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
++#[cfg(all(
++    target_family = "wasm",
++    not(any(target_os = "wasi", target_os = "linux"))
++))]
+ compile_error!("This wasm target is unsupported by mio. If using Tokio, disable the net feature.");
+
+ // macros used internally
