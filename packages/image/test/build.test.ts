@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { lookup } from "node:dns/promises";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -86,6 +86,25 @@ for (const format of ["erofs", "ext4"] as const) {
     );
   });
 }
+
+test("merges a directory into an existing one", async (t) => {
+  const stage = await mkdtemp(join(tmpdir(), "lowland-image-stage-"));
+  t.after(() => rm(stage, { recursive: true, force: true }));
+  await mkdir(join(stage, "bin"));
+  await writeFile(join(stage, "bin", "hello"), "#!/bin/sh\necho hello\n");
+  const kept = join(stage, "kept");
+  await writeFile(kept, "kept\n");
+  // The first entry creates /opt/app, so the directory lands on an existing one.
+  const output = await build(t, {
+    packages: [jq_package],
+    files: { "/opt/app/kept": kept, "/opt/app": join(stage, "bin") },
+  });
+  const guest = await boot(t, output);
+
+  assert.equal(await guest.fs.readTextFile("/opt/app/kept"), "kept\n");
+  assert.equal(await guest.fs.readTextFile("/opt/app/hello"), "#!/bin/sh\necho hello\n");
+  await assert.rejects(guest.fs.stat("/opt/app/2"));
+});
 
 test("builds an image from the public repository", { skip: !online && "offline" }, async (t) => {
   const output = await build(t, {
