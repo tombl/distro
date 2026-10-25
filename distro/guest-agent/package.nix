@@ -34,7 +34,7 @@ let
     pname = "linux-guest-agent-abi-check";
     version = "0.0.0";
     src = ./.;
-    nativeBuildInputs = [ pkgs.nodejs ];
+    nativeBuildInputs = [ pkgs.nodejs_26 ];
 
     buildPhase = ''
       runHook preBuild
