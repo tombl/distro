@@ -23,6 +23,9 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
+    # A general-purpose interpreter: the interpreter check alone peaks at
+    # about 120 MiB, half the platform default maximum.
+    maxMemory = 1024 * 1024 * 1024;
     passthru.apk.depends = [
       "ncurses"
       "openssl"

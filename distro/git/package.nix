@@ -17,6 +17,10 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "git";
   version = "2.55.0";
   inherit src;
+  # Without mmap (see NO_MMAP below) pack windows are read into the heap, so
+  # pack access alone can use core.packedGitLimit (256 MiB) on top of the
+  # delta caches, which exceeds the platform default maximum.
+  maxMemory = 1024 * 1024 * 1024;
 
   # git creates every child through run-command.c:start_command(): a fork()
   # with the fd plumbing (dup2/close of the pipe ends, chdir for cmd->dir) done
