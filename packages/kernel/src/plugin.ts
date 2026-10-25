@@ -43,6 +43,12 @@ export interface MachinePlugin {
   configure(setup: MachineSetup): void | Promise<void>;
   /** Runs after boot; `bootMachine()` does not resolve until this hook does. */
   booted?(machine: Machine): void | Promise<void>;
+  /**
+   * Runs when `machine.close()` is called, before workers and devices are torn
+   * down; a rejection makes `machine.closed` reject. It does not run when the
+   * guest powers off or the machine fails.
+   */
+  closing?(): void | Promise<void>;
 }
 
 /** Routes early kernel output to a writable stream before the machine boots. */
