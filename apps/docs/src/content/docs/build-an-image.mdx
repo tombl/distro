@@ -9,7 +9,7 @@ order: 11
 
 A guest runs the programs in its root filesystem image. The image from `rootImage()` contains
 only BusyBox and apk. To boot with your own programs already installed, build an image of your
-own and attach it in place of `rootImage()`.
+own and pass it to `rootImage()`.
 
 There are two ways to build one:
 
@@ -131,39 +131,39 @@ image = wasmpkgs.mkImage {
 
 ## Boot the image
 
-Attach the image file as a block device in place of `rootImage()`:
+Pass the path of the image file to `rootImage()`:
 
 ```js title="boot.mjs"
-import { readFile } from "node:fs/promises";
-import { blockDevice, bootMachine } from "@lowland/kernel";
+import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
-
-const image = await readFile("app.erofs");
-const root = blockDevice({
-  capacity: image.byteLength,
-  read(offset, target) {
-    const source = image.subarray(offset, offset + target.byteLength);
-    target.set(source);
-    return source.byteLength;
-  },
-});
+import { rootImage } from "@lowland/image";
 
 const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("app.erofs"), guest],
+});
 
 const result = await guest.run(["hello"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-For an image built with Nix, read `result` instead of `app.erofs`. The template's own
+For an image built with Nix, pass `"result"` instead of `"app.erofs"`. The template's own
 `boot.mjs` does the same.
 
-A machine boots from exactly one image. Do not attach `rootImage()` as well.
+In Node.js, a string is a file path, and the image is read from disk as the guest needs it.
+In a browser, a string is a URL relative to the page. [Images](/images/#rootimage) lists the
+other kinds of source.
+
+The image is read-only. The guest can still change any file in its root filesystem, but those
+changes are kept in memory and discarded when the machine closes. The image file never
+changes.
+
+A machine boots from exactly one image. Do not attach `rootImage()` twice.
 
 ## Keep changes between boots
 
-An EROFS image never changes. Changes that programs make to the root filesystem are lost when
-the machine closes. To keep them, build an ext4 image instead:
+To keep the changes that programs make to the root filesystem, build an ext4 image instead:
 
 ```sh
 npx lowland build -p busybox --format ext4 --size 64M -o data.ext4
@@ -176,36 +176,24 @@ read-only, so copy the result to a file you can change:
 install -m 644 result data.ext4
 ```
 
-Then attach the image file with a `write` function, so that the guest can change it. Without
-one, the guest cannot mount an ext4 image and `bootMachine()` rejects.
+Then attach it with `writable: true`. The file is opened for reading and writing, and the
+guest writes its changes back to it:
 
 ```js
-import { open } from "node:fs/promises";
-import { blockDevice, bootMachine } from "@lowland/kernel";
+import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
-
-const file = await open("data.ext4", "r+");
-const { size } = await file.stat();
-const root = blockDevice({
-  capacity: size,
-  async read(offset, target) {
-    const { bytesRead } = await file.read(target, 0, target.byteLength, offset);
-    return bytesRead;
-  },
-  async write(offset, data) {
-    const { bytesWritten } = await file.write(data, 0, data.byteLength, offset);
-    return bytesWritten;
-  },
-  flush: () => file.datasync(),
-  close: () => file.close(),
-});
+import { rootImage } from "@lowland/image";
 
 const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("data.ext4", { writable: true }), guest],
+});
 
 await guest.fs.writeTextFile("/root/note.txt", "kept\n");
 await guest.run(["sync"]);
 ```
 
 Run `sync` before the machine closes. Linux keeps recent writes in memory, and closing the
-machine does not write them to the image.
+machine does not write them to the image. Attach a writable image to only one running machine
+at a time.

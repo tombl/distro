@@ -10,8 +10,8 @@ order: 1
 A guest's root filesystem comes from an image attached to the machine as a block device. This
 page describes what an image must contain, and the three ways to get one:
 
-- `rootImage()` from `@lowland/image` attaches a ready-made image. It is a JavaScript plugin
-  for `bootMachine()`.
+- `rootImage()` from `@lowland/image` attaches the ready-made image that ships with the package.
+  It is a JavaScript plugin for `bootMachine()`, and it also attaches images you build.
 - `buildImage()` from `@lowland/image/build` builds an image file in Node.js. It is also
   available as the `lowland build` command.
 - `mkImage` is a Nix function that builds an image file from Nix packages.
@@ -29,8 +29,8 @@ Use `mkImage` when you build programs from source with Nix, as described in
 [Port software](/port-software/). It installs Nix packages, not packages from the public
 repository.
 
-`buildImage()` and `mkImage` both write an image file. Attach it with `blockDevice()`, as shown
-in [Build an image](/build-an-image/#boot-the-image).
+`buildImage()` and `mkImage` both write an image file. Attach it with `rootImage("app.erofs")`,
+as shown in [Build an image](/build-an-image/#boot-the-image).
 
 ## The image contract
 
@@ -49,15 +49,15 @@ a `GuestBootError` from `@lowland/guest`. Its message says what is wrong, for ex
 
 ### EROFS and ext4
 
-An EROFS image is read-only. The guest puts a writable layer in memory on top of it, so programs
-can change any file, but the changes are lost when the machine closes. The image file itself
-never changes, and one image can be attached to any number of machines.
+An image attached read-only, which is the default, never changes. The guest puts a writable
+layer in memory on top of it, so programs can change any file, but the changes are discarded
+when the machine closes. One read-only image can be attached to any number of machines.
 
-An ext4 image is mounted read-write, and changes are written back to it. Attach it with a
-`write` function, as shown in
+An ext4 image attached with `rootImage(source, { writable: true })` is mounted read-write, and
+changes are written back to it, as shown in
 [Build an image](/build-an-image/#keep-changes-between-boots). Run `sync` in the guest before
-closing the machine, or recent changes may be lost. Attach an ext4 image to only one machine at
-a time.
+closing the machine, or recent changes may be lost. Attach a writable image to only one machine
+at a time.
 
 ### `/init`
 
@@ -76,8 +76,13 @@ const guest = guestAgent();
 await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
 ```
 
-`rootImage()` returns a plugin that attaches the image shipped inside `@lowland/image`. The
-image is EROFS and contains:
+`rootImage(source, options)` returns a plugin that attaches an image as a block device. One
+plugin can be passed to any number of machines.
+
+### The bundled image
+
+Without a source, `rootImage()` attaches the image shipped inside `@lowland/image`. The image is
+EROFS and contains:
 
 - BusyBox, which provides `/bin/sh` and the standard commands.
 - apk-tools, configured to install signed packages from the public repository,
@@ -93,7 +98,44 @@ await guest.run(["apk", "add", "jq"]);
 ```
 
 In Node.js, the image is read from disk as the guest needs it. In a browser, it is fetched once
-and shared by every machine on the page. One plugin can be passed to any number of machines.
+and shared by every machine on the page.
+
+### Sources
+
+Pass a source to attach an image of your own:
+
+```js
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage("app.erofs"), guest] });
+```
+
+| Source                                | Behavior                                                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| A string                              | In Node.js, a file path. In a browser, a URL relative to the page.                                                               |
+| A `URL`                               | A `file:` URL is a file path. Any other URL is fetched.                                                                          |
+| A `FileHandle` from `node:fs/promises` | Read in place. It stays open after the machine closes.                                                                           |
+| A `Uint8Array` or `ArrayBuffer`       | The whole image, in memory.                                                                                                      |
+| A `Blob` or `Response`                | The whole image. It is read into memory once.                                                                                    |
+
+Files are read from disk as the guest needs them. A URL is fetched once and shared by every
+machine that the plugin is passed to.
+
+Every source must contain an EROFS or ext4 filesystem. Otherwise `bootMachine()` rejects with an
+error that names the source. A common cause is a development server that answers a mistyped
+image URL with its HTML page:
+
+```text
+http://localhost:5173/app.erofs did not return a filesystem image: got text/html, 116 bytes
+```
+
+### Options
+
+| Option     | Default | Description                                                                                                                                                                                           |
+| ---------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `writable` | `false` | Lets the guest write its changes back to an ext4 image. A path is opened for reading and writing, a `FileHandle` must already be open for writing, and a `Uint8Array` or `ArrayBuffer` is changed in place. |
+
+Without `writable`, the guest boots the image beneath a writable layer in memory, and its
+changes are discarded when the machine closes. `rootImage()` throws if `writable` is set for
+the bundled image, a URL other than a `file:` URL, a `Blob`, or a `Response`.
 
 ## `buildImage()`
 
@@ -116,6 +158,7 @@ the image in it, and writes it to `output`. It runs only in Node.js. Its options
 | `files`    | `{}`             | Host files to copy, keyed by absolute guest path. A value is a host path, or `{ source, mode }` with an octal mode string such as `"0755"`. Without a mode, a file keeps its host mode. A directory is copied whole, and its guest path must not already exist in the image. |
 | `links`    | `{}`             | Symbolic links to create, keyed by absolute guest path, with the link target as the value.                                                                                                    |
 | `format`   | `"erofs"`        | `"erofs"` or `"ext4"`.                                                                                                                                                                         |
+| `compression` | `"deflate"`   | How an EROFS image is compressed: `"deflate"`, `"lzma"`, or `"none"`. `"deflate"` typically makes an image 2 to 3 times smaller at a small cost on reads. `"lzma"` is about 14% smaller again but reads about half as fast. An ext4 image is never compressed. |
 | `label`    | `"LOWLAND_ROOT"` | The filesystem label, 1 to 15 letters, digits, dots, underscores, or hyphens. The guest boots only from `LOWLAND_ROOT`.                                                                         |
 | `size`     | `"256M"`         | The image size, in bytes or with a `K`, `M`, or `G` suffix. An EROFS image is only as large as its contents, so for EROFS this is the largest size allowed.                                    |
 | `output`   | required         | The path to write the image to.                                                                                                                                                                |
@@ -130,7 +173,8 @@ creates the directories that the image contract requires.
 npx lowland build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
 ```
 
-The command takes the same options as `buildImage()`:
+The `lowland build` command comes from the `lowland` package. It takes the same options as
+`buildImage()`:
 
 | Flag                           | Option                                                           |
 | ------------------------------ | ---------------------------------------------------------------- |
@@ -138,6 +182,7 @@ The command takes the same options as `buildImage()`:
 | `-f`, `--file <host:guest[:mode]>` | Adds an entry to `files`. Repeat it for each file.           |
 | `-l`, `--link <guest=target>`  | Adds an entry to `links`. Repeat it for each link.               |
 | `--format <format>`            | Sets `format`.                                                   |
+| `--compression <compression>`  | Sets `compression`.                                              |
 | `--label <label>`              | Sets `label`.                                                    |
 | `--size <size>`                | Sets `size`.                                                     |
 | `-o`, `--output <file>`        | Sets `output`.                                                   |

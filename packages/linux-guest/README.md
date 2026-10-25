@@ -25,8 +25,9 @@ console.log(new TextDecoder().decode(result.stdout));
 
 The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
 `rootImage()` from `@lowland/image` attaches a small one with BusyBox and apk.
-[Build an image](https://docs.low.land/build-an-image/) explains how to make your own, and a
-missing or duplicate root makes `bootMachine()` reject with a `GuestBootError`.
+[Build an image](https://docs.low.land/build-an-image/) explains how to make your own, which
+`rootImage("app.erofs")` attaches in the same way. A missing or duplicate root makes
+`bootMachine()` reject with a `GuestBootError`.
 
 The same code runs in a browser. The page must be served with the cross-origin isolation
 headers described in [Set up a browser page](https://docs.low.land/set-up-a-browser-page/).
@@ -42,9 +43,9 @@ and do not go through a shell.
 `guest.fs` reads and writes files inside the machine. Files written from JavaScript are
 immediately visible to programs in the guest, and the reverse is also true.
 
-The root filesystem is writable. Changes to an EROFS image, such as the one from `rootImage()`,
-are kept in memory and lost when the machine closes. Changes to an ext4 image are written back
-to it.
+The root filesystem is writable. Changes to a read-only image, such as the one from
+`rootImage()`, are kept in memory and lost when the machine closes. Changes to an ext4 image
+attached with `rootImage("app.ext4", { writable: true })` are written back to it.
 
 ## Networking
 
