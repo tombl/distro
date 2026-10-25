@@ -1,0 +1,75 @@
+// The VM page: boots a real guest serving busybox httpd on 8080, then serves
+// its ports through the bridge.
+import { createNetwork, guestAgent, guestFetchHandler } from "@lowland/guest";
+import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
+import { serveGuest } from "@lowland/bridge-site/client";
+import { hubOrigin } from "./hub.js";
+
+Object.assign(globalThis, { bridgeOrigin: hubOrigin });
+
+const status = document.querySelector("#status")!;
+const log = document.querySelector("#log")!;
+const decoder = new TextDecoder();
+const boot_console = consoleDevice(
+  new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+  new WritableStream<Uint8Array>({
+    write(chunk) {
+      log.textContent += decoder.decode(Uint8Array.from(chunk), { stream: true });
+    },
+  }),
+);
+
+async function bytes(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`failed to fetch ${path}: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+// Boot eagerly, then serve: navigating a port origin never starts anything —
+// like localhost, it shows what is listening or a connection-refused page.
+// Cold tabs opened during boot wait at "Waiting for a VM…" and complete once
+// serveGuest comes up. busybox httpd serves on 8080; wait for it to bind so
+// the demo's first request doesn't race the server's startup.
+(async () => {
+  const network = createNetwork({
+    connectTcp() {
+      throw new Error("outbound TCP is unavailable in this test");
+    },
+    resolveDns: async () => [],
+  });
+  const rootfs = await bytes("/rootfs.erofs");
+  const root = blockDevice({
+    capacity: rootfs.byteLength,
+    read(offset, target) {
+      target.set(rootfs.subarray(offset, offset + target.byteLength));
+      return target.byteLength;
+    },
+  });
+  const guest = guestAgent();
+  const attachment = network.attach(guest);
+  await bootMachine({
+    cpus: 1,
+    plugins: [root, guest, boot_console, attachment],
+  });
+  await guest.fs.mkdir("/tmp/www");
+  await guest.fs.writeTextFile("/tmp/www/index.html", "<h1>hello from the guest</h1>\n");
+  await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+  const httpd = guestFetchHandler(attachment, { port: 8080 });
+  for (;;) {
+    try {
+      await (await httpd(new Request("http://localhost/"))).arrayBuffer();
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  serveGuest({
+    hub: hubOrigin,
+    fetch: (port) => guestFetchHandler(attachment, { port }),
+  });
+  status.textContent = `serving — open any <port>.bridge.localhost:${new URL(hubOrigin).port} (httpd is on 8080)`;
+})().catch((error) => {
+  status.textContent = String(error);
+  throw error;
+});

@@ -1,0 +1,543 @@
+import {
+  blockDevice,
+  bootConsole,
+  bootMachine,
+  consoleDevice,
+  fileSystemDevice,
+  workerDevice,
+  type Device,
+  type Machine,
+} from "@lowland/kernel";
+import { guestAgent, type ChildProcess, type GuestAgent } from "@lowland/guest";
+import { BrowserFS } from "@lowland/guest/browser";
+
+async function collectProcess(child: ChildProcess) {
+  const [status, stdout, stderr] = await Promise.all([
+    child.status,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { status, stdout, stderr };
+}
+
+const rootfs = fetch("/rootfs.erofs").then(async (response) => {
+  if (!response.ok) throw new Error(`failed to load rootfs: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+});
+
+async function rootDevice() {
+  const bytes = await rootfs;
+  return blockDevice({
+    capacity: bytes.byteLength,
+    read(offset, target) {
+      const source = bytes.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+  });
+}
+
+async function opfsDiskDevice(handle: FileSystemFileHandle, capacity?: number) {
+  const worker = new Worker("/opfs-disk-worker.js", { type: "module" });
+  const devicePromise = workerDevice(worker);
+  worker.postMessage({
+    handle,
+    capacity,
+  });
+  try {
+    const device = await devicePromise;
+    void device.closed.finally(() => worker.terminate()).catch(() => {});
+    return device;
+  } catch (error) {
+    worker.terminate();
+    throw error;
+  }
+}
+
+// Boots a guest, runs the scenario, and always shuts the machine down.
+// Scenarios return plain JSON so specs assert on the result directly.
+async function withGuest<T>(
+  scenario: (guest: GuestAgent) => Promise<T>,
+  options?: { cpus?: number; devices?: Device[] },
+) {
+  const agent = guestAgent();
+  const machine = await bootMachine({
+    cpus: options?.cpus ?? 1,
+    plugins: [agent, ...(options?.devices ?? []), await rootDevice()],
+  });
+  try {
+    return await scenario(agent);
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+}
+
+const bootSmoke = () =>
+  withGuest(async (guest) => {
+    const result = await collectProcess(await guest.exec(["uname", "-a"]));
+    return { ...result, machineClosed: true };
+  });
+
+const opfsWorkerDiskRoundTrip = async () => {
+  const directory = await navigator.storage.getDirectory();
+  const name = "virtio-worker-round-trip.img";
+  await directory.removeEntry(name).catch((error: Error) => {
+    if (error.name !== "NotFoundError") throw error;
+  });
+  const handle = await directory.getFileHandle(name, { create: true });
+  const marker = "opfs-worker-virtio-round-trip";
+
+  try {
+    const first = await opfsDiskDevice(handle, 1024 * 1024);
+    const write = await withGuest(
+      async (guest) =>
+        collectProcess(
+          await guest.exec([
+            "sh",
+            "-c",
+            `until [ -b /dev/vdb ]; do sleep 0.1; done; printf '%s\\n' '${marker}' | dd of=/dev/vdb bs=512 conv=fsync 2>/dev/null`,
+          ]),
+        ),
+      { devices: [first] },
+    );
+
+    const second = await opfsDiskDevice(handle);
+    const read = await withGuest(
+      async (guest) =>
+        collectProcess(
+          await guest.exec([
+            "sh",
+            "-c",
+            "until [ -b /dev/vdb ]; do sleep 0.1; done; dd if=/dev/vdb bs=512 count=1 2>/dev/null | head -n 1",
+          ]),
+        ),
+      { devices: [second] },
+    );
+    return { marker, write, read };
+  } finally {
+    await directory.removeEntry(name);
+  }
+};
+
+// A second worker opening a disk that is already open, as a second tab would,
+// must surface the browser's own error rather than a generic worker failure.
+const opfsWorkerDiskLocked = async () => {
+  const directory = await navigator.storage.getDirectory();
+  const name = "virtio-worker-locked.img";
+  await directory.removeEntry(name).catch((error: Error) => {
+    if (error.name !== "NotFoundError") throw error;
+  });
+  const handle = await directory.getFileHandle(name, { create: true });
+  const holder = new Worker("/opfs-disk-worker.js", { type: "module" });
+  const challenger = new Worker("/opfs-disk-worker.js", { type: "module" });
+  try {
+    const held = workerDevice(holder);
+    holder.postMessage({ handle, capacity: 1024 * 1024 });
+    await held;
+    const challenged = workerDevice(challenger);
+    challenger.postMessage({ handle });
+    try {
+      await challenged;
+      return { rejected: false } as const;
+    } catch (error) {
+      const { name, message } = error as Error;
+      return { rejected: true, name, message } as const;
+    }
+  } finally {
+    holder.terminate();
+    challenger.terminate();
+    // Termination releases the access handle asynchronously.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await directory.removeEntry(name);
+        break;
+      } catch (error) {
+        if (attempt === 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+};
+
+const spawnStress = () =>
+  withGuest(async (guest) => {
+    // One in-guest shell spawning a vfork+exec pair per iteration at full
+    // burst rate, with no host round-trip pacing between iterations. This is
+    // the workload that exhausts WebKit's shared-memory address-space budget
+    // when spawns outpace its asynchronous reservation reclaim: paced
+    // spawning passes everywhere, bursts are what break.
+    const script = "i=0; while [ $i -lt 100 ]; do ls / >/dev/null || exit 1; i=$((i+1)); done";
+    return collectProcess(await guest.exec(["sh", "-c", script]));
+  });
+
+const remoteMemoryMetadata = () =>
+  withGuest(
+    async (guest) => {
+      const script = [
+        "MARKER=remote-vm-environ sleep 30 &",
+        "pid=$!",
+        "attempt=0",
+        "while [ $attempt -lt 500 ]; do",
+        "  cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
+        '  [ "$cmdline" = "sleep 30 " ] && break',
+        "  attempt=$((attempt+1))",
+        // Reading /proc does not block. Yield the single guest CPU so the
+        // background child can reach execve instead of exhausting a retry
+        // count while it still has the parent shell's command line.
+        "  sleep 0.01",
+        "done",
+        "environ=$(tr '\\000' '\\n' < /proc/$pid/environ)",
+        "auxv_size=$(wc -c < /proc/$pid/auxv)",
+        "kill $pid",
+        "wait $pid 2>/dev/null || true",
+        'printf \'cmdline=%s\\nenviron=%s\\nauxv=%s\\n\' "$cmdline" "$(printf \'%s\\n\' "$environ" | grep \'^MARKER=\')" "$auxv_size"',
+      ].join("\n");
+      return collectProcess(await guest.exec(["sh", "-c", script]));
+    },
+    { cpus: 1 },
+  );
+
+let lifecycleGuest: { agent: GuestAgent; machine: Machine } | undefined;
+
+const startRemoteMemoryLifecycle = async () => {
+  if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
+  const agent = guestAgent();
+  const machine = await bootMachine({ cpus: 1, plugins: [agent, await rootDevice()] });
+  lifecycleGuest = { agent, machine };
+};
+
+const runRemoteMemoryLifecycleBatch = async (batch: string | number, iterations: number) => {
+  if (!lifecycleGuest) throw new Error("remote-memory lifecycle guest is not running");
+  const script = [
+    "i=0",
+    `while [ $i -lt ${iterations} ]; do`,
+    `  MARKER=remote-vm-lifecycle-${batch}-$i sleep 30 &`,
+    "  pid=$!",
+    "  attempt=0",
+    "  while [ $attempt -lt 500 ]; do",
+    "    cmdline=$(tr '\\000' ' ' < /proc/$pid/cmdline)",
+    '    [ "$cmdline" = "sleep 30 " ] && break',
+    "    attempt=$((attempt+1))",
+    // This is a readiness wait, not a throughput assertion. Without a
+    // blocking operation the observer can win every timeslice and consume
+    // all retries before the child changes its /proc identity at execve.
+    "    sleep 0.01",
+    "  done",
+    "  environ=$(tr '\\000' '\\n' < /proc/$pid/environ | grep '^MARKER=')",
+    "  auxv_size=$(wc -c < /proc/$pid/auxv)",
+    "  kill $pid",
+    "  wait $pid 2>/dev/null || true",
+    '  [ "$cmdline" = "sleep 30 " ] || exit 10',
+    `  [ "$environ" = "MARKER=remote-vm-lifecycle-${batch}-$i" ] || exit 11`,
+    '  [ "$auxv_size" -gt 0 ] || exit 12',
+    "  i=$((i+1))",
+    "done",
+    "printf 'batch=%s processes=%s\\n' \"" + batch + '" "$i"',
+  ].join("\n");
+  return collectProcess(await lifecycleGuest.agent.exec(["sh", "-c", script]));
+};
+
+const closeRemoteMemoryLifecycle = async () => {
+  if (!lifecycleGuest) return;
+  const { machine } = lifecycleGuest;
+  lifecycleGuest = undefined;
+  machine.close();
+  await machine.closed;
+};
+
+function required<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("expected a value");
+  return value;
+}
+
+async function fetchBytes(path: string) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(`failed to load ${path}: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+const bootInitramfs = fetchBytes("/boot.cpio");
+
+async function runInstalledSystem(path: string, cpus: number) {
+  const [initcpio, disk] = await Promise.all([bootInitramfs, fetchBytes(path)]);
+  const root = blockDevice({
+    capacity: disk.byteLength,
+    read(offset, target) {
+      const source = disk.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+  });
+
+  const { promise: completed, resolve, reject } = Promise.withResolvers<void>();
+  let output = "";
+  const decoder = new TextDecoder();
+  const consume = (chunk: Uint8Array) => {
+    // Virtio console output may be a view into shared WebAssembly memory,
+    // which TextDecoder deliberately rejects in Chromium and Firefox.
+    output += decoder.decode(Uint8Array.from(chunk), { stream: true });
+    if (output.includes("::vm-test::pass")) resolve();
+    if (output.includes("::vm-test::fail") || output.includes("Kernel panic - not syncing")) {
+      reject(new Error(output));
+    }
+  };
+  const outputStream = () =>
+    new WritableStream<Uint8Array>({
+      write: consume,
+    });
+  const input = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+
+  const machine = await bootMachine({
+    cpus,
+    plugins: [bootConsole(outputStream()), root, consoleDevice(input, outputStream())],
+    initcpio,
+  });
+  void machine.closed.then(
+    () => reject(new Error("machine closed before scheduler handoff test completed")),
+    reject,
+  );
+
+  try {
+    await completed;
+  } finally {
+    machine.close();
+    await machine.closed.catch(() => {});
+  }
+}
+
+const schedulerHandoffStress = () => runInstalledSystem("/scheduler-handoff.erofs", 2);
+
+const remoteMemoryProtocol = () => runInstalledSystem("/remote-vm.erofs", 2);
+
+const posixSpawnHandoffStress = () => runInstalledSystem("/posix-spawn-stress.erofs", 1);
+
+const opfsVirtioFileSystem = async () => {
+  const storage = await navigator.storage.getDirectory();
+  await storage.removeEntry("virtio-fs-test", { recursive: true }).catch(() => {});
+  const directory = await storage.getDirectoryHandle("virtio-fs-test", { create: true });
+  const filesystem = new BrowserFS(directory);
+  const created = await filesystem.create(filesystem.root, "hello", 0x40 | 0x80 | 0x2, {
+    mode: 0o100640,
+    uid: 1000,
+    gid: 1000,
+  });
+  const input = new TextEncoder().encode("persistent");
+  await filesystem.write(created.node, created.handle, 0n, input);
+  const output = await filesystem.read(created.node, created.handle, 0n, input.length);
+  const directoryNode = await filesystem.mkdir(filesystem.root, "directory", {
+    mode: 0o040750,
+    uid: 1000,
+    gid: 1000,
+  });
+  const nested = await filesystem.create(directoryNode, "nested", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(nested.node, nested.handle, 0n, new TextEncoder().encode("before"));
+  await filesystem.rename(filesystem.root, "directory", filesystem.root, "moved-directory");
+  await filesystem.write(nested.node, nested.handle, 0n, new TextEncoder().encode("after"));
+  await filesystem.rename(filesystem.root, "hello", filesystem.root, "renamed");
+  const entries = (
+    await filesystem.readdir(filesystem.root, await filesystem.opendir(filesystem.root))
+  )
+    .map((entry) => entry.name)
+    .sort();
+
+  const reopened = new BrowserFS(directory);
+  const node = required(await reopened.lookup(reopened.root, "renamed"));
+  const handle = await reopened.open(node, 0);
+  const persisted = await reopened.read(node, handle, 0n, input.length);
+  const movedDirectory = required(await reopened.lookup(reopened.root, "moved-directory"));
+  const nestedNode = required(await reopened.lookup(movedDirectory, "nested"));
+  const nestedHandle = await reopened.open(nestedNode, 0);
+  const nestedPersisted = await reopened.read(nestedNode, nestedHandle, 0n, 5);
+  await filesystem.setattr(created.node, {
+    mtime: { seconds: 123n, nanoseconds: 456_000_000 },
+  });
+  const stat = await filesystem.getattr(created.node);
+
+  const concurrent = await filesystem.create(filesystem.root, "concurrent", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(
+    concurrent.node,
+    concurrent.handle,
+    0n,
+    new TextEncoder().encode("000000"),
+  );
+  await Promise.all([
+    filesystem.write(concurrent.node, concurrent.handle, 0n, new TextEncoder().encode("abc")),
+    filesystem.write(concurrent.node, concurrent.handle, 3n, new TextEncoder().encode("def")),
+  ]);
+  const concurrentData = await filesystem.read(concurrent.node, concurrent.handle, 0n, 6);
+  await filesystem.unlink(filesystem.root, "concurrent");
+
+  const old = await filesystem.create(filesystem.root, "identity", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(old.node, old.handle, 0n, new TextEncoder().encode("old"));
+  await filesystem.unlink(filesystem.root, "identity");
+  const replacement = await filesystem.create(filesystem.root, "identity", 0x40 | 0x80 | 0x2, {
+    mode: 0o100600,
+    uid: 1000,
+    gid: 1000,
+  });
+  await filesystem.write(replacement.node, replacement.handle, 0n, new TextEncoder().encode("new"));
+  await filesystem.write(old.node, old.handle, 0n, new TextEncoder().encode("OLD")).catch(() => {});
+  const replacementData = await filesystem.read(replacement.node, replacement.handle, 0n, 3);
+  await filesystem.unlink(filesystem.root, "identity");
+
+  const externalOld = await filesystem.create(
+    filesystem.root,
+    "external-identity",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await directory.removeEntry("external-identity");
+  const missing = await filesystem.lookup(filesystem.root, "external-identity");
+  const externalFile = await directory.getFileHandle("external-identity", { create: true });
+  const externalWritable = await externalFile.createWritable();
+  await externalWritable.write("new");
+  await externalWritable.close();
+  await filesystem
+    .write(externalOld.node, externalOld.handle, 0n, new TextEncoder().encode("OLD"))
+    .catch(() => {});
+  const externalReplacement = required(
+    await filesystem.lookup(filesystem.root, "external-identity"),
+  );
+  const externalReplacementHandle = await filesystem.open(externalReplacement, 0);
+  const externalReplacementData = await filesystem.read(
+    externalReplacement,
+    externalReplacementHandle,
+    0n,
+    3,
+  );
+  await filesystem.unlink(filesystem.root, "external-identity");
+
+  const renameSource = await filesystem.create(
+    filesystem.root,
+    "rename-source",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await filesystem.write(
+    renameSource.node,
+    renameSource.handle,
+    0n,
+    new TextEncoder().encode("source"),
+  );
+  const renameDestination = await filesystem.create(
+    filesystem.root,
+    "rename-destination",
+    0x40 | 0x80 | 0x2,
+    { mode: 0o100600, uid: 1000, gid: 1000 },
+  );
+  await filesystem.write(
+    renameDestination.node,
+    renameDestination.handle,
+    0n,
+    new TextEncoder().encode("destination"),
+  );
+  await filesystem.rename(filesystem.root, "rename-source", filesystem.root, "rename-destination");
+  const renamed = required(await filesystem.lookup(filesystem.root, "rename-destination"));
+  const renamedHandle = await filesystem.open(renamed, 0);
+  const renameDestinationData = await filesystem.read(renamed, renamedHandle, 0n, 6);
+  const renameSourceMissing =
+    (await filesystem.lookup(filesystem.root, "rename-source")) === undefined;
+  const replacedHandleStale = await filesystem.getattr(renameDestination.node).then(
+    () => false,
+    () => true,
+  );
+  await filesystem.unlink(filesystem.root, "rename-destination");
+  return {
+    concurrent: new TextDecoder().decode(concurrentData),
+    entries,
+    externalMissing: missing === undefined,
+    externalReplacement: new TextDecoder().decode(externalReplacementData),
+    mode: stat.mode & 0o777,
+    mtime: `${required(stat.mtime).seconds}.${String(required(stat.mtime).nanoseconds).padStart(9, "0")}`,
+    nestedPersisted: new TextDecoder().decode(nestedPersisted),
+    output: new TextDecoder().decode(output),
+    persisted: new TextDecoder().decode(persisted),
+    renameDestination: new TextDecoder().decode(renameDestinationData),
+    renameSourceMissing,
+    replacedHandleStale,
+    replacement: new TextDecoder().decode(replacementData),
+  };
+};
+
+const opfsVirtioFileSystemGuest = async () => {
+  const storage = await navigator.storage.getDirectory();
+  await storage.removeEntry("virtio-fs-guest-test", { recursive: true }).catch(() => {});
+  const directory = await storage.getDirectoryHandle("virtio-fs-guest-test", { create: true });
+  const filesystem = new BrowserFS(directory);
+  const input = new Uint8Array(256 * 1024);
+  for (let index = 0; index < input.length; index += 1) input[index] = index % 251;
+
+  const mounted = await withGuest(
+    async (guest) => {
+      const mount = await collectProcess(
+        await guest.exec([
+          "sh",
+          "-c",
+          "mkdir -p /tmp/shared && mount -t virtiofs browser-test /tmp/shared",
+        ]),
+      );
+      if (!mount.status.success) throw new Error(`mount failed: ${mount.stderr}`);
+      await guest.fs.writeFile("/tmp/shared/persistent", input);
+      const output = await guest.fs.readFile("/tmp/shared/persistent");
+      return {
+        size: output.byteLength,
+        first: output[0],
+        last: output.at(-1),
+      };
+    },
+    {
+      devices: [
+        fileSystemDevice(filesystem, {
+          tag: "browser-test",
+          cache: false,
+        }),
+      ],
+    },
+  );
+
+  const reopened = new BrowserFS(directory);
+  const node = required(await reopened.lookup(reopened.root, "persistent"));
+  const handle = await reopened.open(node, 0);
+  const persisted = await reopened.read(node, handle, 0n, input.byteLength);
+  return {
+    ...mounted,
+    persistedSize: persisted.byteLength,
+    persistedFirst: persisted[0],
+    persistedLast: persisted.at(-1),
+  };
+};
+
+// The scenarios specs drive through page.evaluate(); hooks.d.ts types them.
+export const hooks = {
+  bootSmoke,
+  closeRemoteMemoryLifecycle,
+  opfsVirtioFileSystem,
+  opfsVirtioFileSystemGuest,
+  opfsWorkerDiskLocked,
+  opfsWorkerDiskRoundTrip,
+  posixSpawnHandoffStress,
+  remoteMemoryMetadata,
+  remoteMemoryProtocol,
+  runRemoteMemoryLifecycleBatch,
+  schedulerHandoffStress,
+  spawnStress,
+  startRemoteMemoryLifecycle,
+};
+Object.assign(globalThis, hooks);

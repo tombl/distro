@@ -42,7 +42,7 @@ Chrome and Firefox (not Safari).
 
 ```
 pnpm artifacts && pnpm -r build   # once, from the repository root
-node server.js
+node server.ts
 ```
 
 The server prints its dynamically allocated main and bridge ports. Open the

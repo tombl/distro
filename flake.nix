@@ -63,6 +63,7 @@
         }:
         import ./checks.nix { inherit lib; } wasmpkgs
         // {
+          inherit (wasmpkgs) typecheck;
           formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
             cp -r ${self} tree
             chmod -R u+w tree

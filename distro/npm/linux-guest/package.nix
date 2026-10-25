@@ -20,7 +20,7 @@ let
       "packages/linux-guest/tsconfig.json"
       "packages/linux-guest/README.md"
       "packages/linux-guest/LICENSE"
-      "scripts/pack-package.mjs"
+      "scripts/pack-package.ts"
       "tsconfig.base.json"
     ];
     env.CI = "true";
@@ -45,7 +45,7 @@ let
       runHook preInstall
 
       mkdir -p $out
-      node scripts/pack-package.mjs packages/linux-guest --out $out/package.tgz
+      node scripts/pack-package.ts packages/linux-guest --out $out/package.tgz
       tar -xzf $out/package.tgz --strip-components=1 -C $out
 
       runHook postInstall

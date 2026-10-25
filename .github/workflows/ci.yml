@@ -332,7 +332,7 @@ jobs:
           test "$(jq --raw-output .version packages/kernel/package.json)" = "$version"
           test "$(jq --raw-output .version packages/linux-guest/package.json)" = "$version"
           test "$(jq --raw-output .version packages/runner/package.json)" = "$version"
-          node scripts/release-notes.mjs "$version" > release-notes.md
+          node scripts/release-notes.ts "$version" > release-notes.md
       - name: Publish packages
         env:
           NPM_CONFIG_PROVENANCE: true

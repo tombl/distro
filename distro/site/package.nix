@@ -22,7 +22,9 @@ pkgs.stdenvNoCC.mkDerivation {
     size=$(wc -c < ${rootfs})
     printf '{"sha":"%s","size":%s}' "$sha" "$size" > $out/rootfs.erofs.json
 
-    cp ${../../apps/site/service-worker.js} $out/service-worker.js
+    # A classic script: strip the types without bundling.
+    ${pkgs.esbuild}/bin/esbuild ${../../apps/site/service-worker.ts} \
+      --target=es2024 --outfile=$out/service-worker.js
     cp ${../../apps/site/_headers} $out/_headers
     # The hosting provider rejects individual assets larger than 25 MB.
     rootfs_bytes=$(wc -c < $out/rootfs-''${sha}.erofs)

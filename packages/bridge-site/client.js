@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Serve a family of guest origins from one VM page, binding each origin lazily
  * the first time a cold navigation demands it. This is the only public entry
@@ -77,7 +78,7 @@ export function serveGuest({ hub, fetch }) {
     if (closed) return;
     // Hold the lock (and stay the provider) until close() resolves this promise.
     return new Promise((resolve) => {
-      release = resolve;
+      release = () => resolve(undefined);
       provider = document.createElement("iframe");
       provider.hidden = true;
       provider.src = `${hubUrl.origin}/_bridge/provider.html`;
@@ -144,7 +145,8 @@ function connectBridge({ origin, fetch }) {
           response.body ? [response.body] : [],
         );
       } catch (error) {
-        reply.postMessage({ type: "error", message: String(error?.message ?? error) });
+        const { message } = /** @type {{ message?: unknown } | undefined} */ (error) ?? {};
+        reply.postMessage({ type: "error", message: String(message ?? error) });
       }
     };
   }
@@ -156,7 +158,7 @@ function connectBridge({ origin, fetch }) {
     // A fresh channel per ready covers both startup and service-worker restarts.
     const channel = new MessageChannel();
     serve(channel.port1);
-    iframe.contentWindow.postMessage({ type: "bridge:port" }, origin, [channel.port2]);
+    iframe.contentWindow?.postMessage({ type: "bridge:port" }, origin, [channel.port2]);
   }
 
   window.addEventListener("message", onMessage);

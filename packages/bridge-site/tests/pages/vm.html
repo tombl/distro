@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>guest bridge test</title>
+<meta name="hub" content="__HUB_ORIGIN__" />
+<script type="importmap">
+  {
+    "imports": {
+      "@lowland/bridge-site/client": "/client.js",
+      "@lowland/bytes": "/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js",
+      "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js"
+    }
+  }
+</script>
+<p id="status">booting…</p>
+<pre id="log"></pre>
+<script type="module" src="/pages/vm.js"></script>

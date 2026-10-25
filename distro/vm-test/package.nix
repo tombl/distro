@@ -16,8 +16,8 @@ let
 
   runnerBase = pkgs.runCommand "vm-test-runner" { } ''
     mkdir $out
-    cp ${./protocol.js} $out/protocol.js
-    cp ${./run-test.js} $out/run-test.js
+    cp ${./protocol.ts} $out/protocol.ts
+    cp ${./run-test.ts} $out/run-test.ts
   '';
 
   runner = runnerBase // {
@@ -27,10 +27,10 @@ let
           nativeBuildInputs = [ pkgs.nodejs_26 ];
         }
         ''
-          cp ${./protocol.js} protocol.js
-          cp ${./protocol-test.js} protocol-test.js
+          cp ${./protocol.ts} protocol.ts
+          cp ${./protocol-test.ts} protocol-test.ts
 
-          node --test protocol-test.js
+          node --test protocol-test.ts
           mkdir $out
         '';
   };
@@ -65,7 +65,7 @@ let
           chmod u+w ${diskCopy.name}
         '') diskCopies}
         set +e
-        timeout --kill-after=5 300 node ${runner}/run-test.js \
+        timeout --kill-after=5 300 node ${runner}/run-test.ts \
           --cpus ${toString cpus} \
           ${kernel}/dist/index.js \
           ${initramfs} \

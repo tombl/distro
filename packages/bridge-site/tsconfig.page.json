@@ -1,0 +1,10 @@
+// The browser pages: the bridge client and its iframe script stay source-form
+// JavaScript checked through JSDoc, and the test pages are TypeScript.
+{
+  "extends": "../../tsconfig.page.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["client.js", "public/_bridge/*.js", "tests/pages/*.ts"]
+}

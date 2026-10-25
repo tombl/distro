@@ -13,7 +13,7 @@ pkgs.stdenvNoCC.mkDerivation {
   installPhase = ''
     mkdir -p node_modules/@lowland $out
     ln -s ${bytes} node_modules/@lowland/bytes
-    esbuild ${../../apps/site/opfs-disk-worker.js} \
+    esbuild ${../../apps/site/opfs-disk-worker.ts} \
       --bundle \
       --format=esm \
       --minify \

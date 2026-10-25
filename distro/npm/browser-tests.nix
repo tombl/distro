@@ -20,7 +20,7 @@ let
       name = "browser-tests-${project}";
       package = "@lowland/browser-tests";
       directory = "packages/browser-tests";
-      paths = [ "apps/site/service-worker.js" ];
+      paths = [ "apps/site/service-worker.ts" ];
       assets = test-assets.select assets;
       inherit project browser built;
     };
@@ -44,7 +44,7 @@ let
     };
 in
 # The suite runs from the source tree, so the package itself is only the
-# owner of its checks, one per project in playwright.config.js.
+# owner of its checks, one per project in playwright.config.ts.
 pkgs.runCommand "browser-tests" { } "mkdir $out"
 // {
   checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (

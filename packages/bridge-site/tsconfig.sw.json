@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.worker.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["public/_bridge_sw.js"]
+}
