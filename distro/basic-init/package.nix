@@ -206,6 +206,7 @@ in
       syscall-latency = installedCheck { name = "syscall-latency"; };
       timer = installedCheck { name = "timer"; };
       tls = installedCheck { name = "tls"; };
+      uapi-ptrace = installedCheck { name = "uapi-ptrace"; };
       user-copy-partial = installedCheck {
         name = "user-copy-partial";
         # The writer may spin in the kernel; the parent needs its own CPU to
