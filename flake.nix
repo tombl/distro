@@ -105,7 +105,7 @@
               wasmpkgs.llvm-toolchain
               pkgs.cmake
               pkgs.ninja
-              pkgs.nodejs
+              pkgs.nodejs_26
               pkgs.pnpm_11
               pkgs.wasm-tools
             ];
