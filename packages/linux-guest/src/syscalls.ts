@@ -210,15 +210,15 @@ export async function ftruncate64(fd: GuestFd, length: bigint): Promise<void> {
   await syscall(fd.session, NR.ftruncate64, fd, len & 0xffffffffn, len >> 32n);
 }
 
+export async function sync(session: GuestSession): Promise<void> {
+  await syscall(session, NR.sync);
+}
+
 export async function fsync(fd: GuestFd): Promise<void> {
   await syscall(fd.session, NR.fsync, fd);
 }
 
 /** Read one buffer of dirent64 records; an empty result is the end. */
-export async function sync(session: GuestSession): Promise<void> {
-  await syscall(session, NR.sync);
-}
-
 export async function getdents64(fd: GuestFd, capacity: number): Promise<Uint8Array> {
   const { out } = await syscall(
     fd.session,
