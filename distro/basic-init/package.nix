@@ -206,6 +206,7 @@ in
       signal-syscall-return = signalSyscallReturnCheck "plain" "";
       signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ";
       signal-correctness = installedCheck { name = "signal-correctness"; };
+      signal-exec = installedCheck { name = "signal-exec"; };
       signal-handler-escape = installedCheck { name = "signal-handler-escape"; };
       signal-temporary-mask = installedCheck { name = "signal-temporary-mask"; };
       sigsetjmp = sigsetjmpCheck;
