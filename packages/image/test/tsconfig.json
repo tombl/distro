@@ -6,5 +6,5 @@
     "rootDir": "..",
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "online/*.ts"]
 }
