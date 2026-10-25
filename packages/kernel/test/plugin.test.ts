@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DeviceTreeNode } from "../src/devicetree.ts";
-import type { Machine } from "../src/index.ts";
+import { bootMachine, type Machine } from "../src/index.ts";
 import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts";
 import {
   bootConsole,
@@ -82,6 +82,30 @@ test("boot console output attaches during configuration", async () => {
 
   assert.deepEqual(await received.promise, new Uint8Array([1, 2, 3]));
   controller.close();
+});
+
+test("a failed configuration releases the boot console output", async () => {
+  const output = new WritableStream<Uint8Array>();
+  const failure = new Error("configuration failed");
+
+  await assert.rejects(
+    bootMachine({
+      cpus: 1,
+      plugins: [
+        bootConsole(output),
+        {
+          configure() {
+            throw failure;
+          },
+        },
+      ],
+    }),
+    (error) => error === failure,
+  );
+  await new Promise((resolve) => setTimeout(resolve));
+
+  const writer = output.getWriter();
+  writer.releaseLock();
 });
 
 test("virtio devices provide plugins without changing their device API", async () => {
