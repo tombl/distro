@@ -21,15 +21,16 @@ stdenv.mkDerivation {
 }
 ```
 
-The single published `repository` contains all runtime packages and the site
-boot payload; a booted guest installs from it. Images are built with `mkImage`
-(documented in `distro/image/default.nix`), which installs a package selection
-the same way at build time: it resolves `depends` by name against the package
-scope, indexes exactly that closure, runs the host apk implementation under
-fakeroot into a root tree (including the native installed database), layers
-product `files` and `links` on top, and encodes the tree as EROFS or ext4. The
-package, repository, and system-install helpers in `distro/apk` are private to
-the scope.
+The single published `repository` contains every user-installable package and
+the site boot payload; a booted guest installs from it. Internal guest programs
+(the guest agent, test suites, smoke tests) are not published: images receive
+them as derivations. Images are built with `mkImage` (documented in
+`distro/image/default.nix`), which installs a package selection the same way at
+build time: it resolves `depends` by name against the package scope, indexes
+exactly that closure, runs the host apk implementation under fakeroot into a
+root tree (including the native installed database), layers product `files` and
+`links` on top, and encodes the tree as EROFS or ext4. The package, repository,
+and system-install helpers in `distro/apk` are private to the scope.
 
 All guest checks use `vm-test.installedTest` or `vm-test.installedDisk`, thin
 wrappers over `mkImage`. They boot APK-installed systems through one generic
