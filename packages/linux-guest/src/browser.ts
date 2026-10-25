@@ -94,6 +94,8 @@ class Node {
   // resolve a same-path recreation. Once removal is observed, permanently
   // detach this generation so old guest handles fail instead of retargeting it.
   attached = true;
+  /** Known nodes directly below this one, so removal and rename visit only them. */
+  readonly children = new Map<string, Node>();
 
   constructor(parts: string[], handle: FileSystemHandle, metadata: Metadata) {
     this.parts = parts;
@@ -176,6 +178,9 @@ export class BrowserFS implements FS<Node, Handle> {
     if (!node) {
       node = new Node(parts, handle, default_metadata(handle.kind));
       this.#nodes.set(key, node);
+      // Register with the parent so #forget and rename can walk the subtree
+      // instead of scanning every node.
+      this.#nodes.get(parts.slice(0, -1).join("/"))?.children.set(parts[parts.length - 1]!, node);
     } else {
       node.handle = handle;
     }
@@ -183,13 +188,16 @@ export class BrowserFS implements FS<Node, Handle> {
   }
 
   #forget(parts: readonly string[]) {
-    const key = parts.join("/");
-    for (const [candidate, node] of this.#nodes) {
-      if (candidate === key || candidate.startsWith(`${key}/`)) {
-        node.attached = false;
-        this.#nodes.delete(candidate);
-      }
-    }
+    const node = this.#nodes.get(parts.join("/"));
+    if (!node || node === this.root) return;
+    this.#nodes.get(parts.slice(0, -1).join("/"))?.children.delete(parts[parts.length - 1]!);
+    const detach = (n: Node) => {
+      this.#nodes.delete(n.parts.join("/"));
+      n.attached = false;
+      for (const child of n.children.values()) detach(child);
+      n.children.clear();
+    };
+    detach(node);
   }
 
   #open_handle(node: Node, handle: Handle) {
@@ -539,25 +547,24 @@ export class BrowserFS implements FS<Node, Handle> {
       throw error;
     }
 
-    const moved = [...this.#nodes].filter(
-      ([key]) => key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`),
-    );
-    moved.sort(([, left], [, right]) => left.parts.length - right.parts.length);
-    for (const [key, node] of moved) {
-      const relative = node.parts.slice(old_parts.length);
-      let handle: FileSystemHandle = copied;
-      for (const component of relative) {
-        if (handle.kind !== "directory") throw new FSError("EIO");
-        const child = await this.#child(handle as FileSystemDirectoryHandle, component);
-        if (!child) throw new FSError("EIO");
-        handle = child;
-      }
+    // Move the known subtree to its new names, pointing each node at its
+    // copy. Children are resolved from their parent's new handle.
+    const moved = this.#nodes.get(old_parts.join("/"));
+    if (!moved) return;
+    this.#nodes.get(old_parts.slice(0, -1).join("/"))?.children.delete(oldName);
+    const move = async (node: Node, parts: string[], handle: FileSystemHandle) => {
       node.handle = handle;
-      if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
-        this.#nodes.delete(key);
-        node.parts = [...new_parts, ...node.parts.slice(old_parts.length)];
-        this.#nodes.set(node.parts.join("/"), node);
+      this.#nodes.delete(node.parts.join("/"));
+      node.parts = parts;
+      this.#nodes.set(parts.join("/"), node);
+      for (const [name, child] of node.children) {
+        if (handle.kind !== "directory") throw new FSError("EIO");
+        const child_handle = await this.#child(handle as FileSystemDirectoryHandle, name);
+        if (!child_handle) throw new FSError("EIO");
+        await move(child, [...parts, name], child_handle);
       }
-    }
+    };
+    this.#nodes.get(new_parts.slice(0, -1).join("/"))?.children.set(newName, moved);
+    await move(moved, new_parts, copied);
   }
 }
