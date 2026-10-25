@@ -38,9 +38,6 @@ await guest.mount("host", "/tmp/host", { type: "virtiofs" });
 [`@lowland/guest` usage example](/reference/guest/#usage). Files under `./shared` are now
 visible at `/tmp/host`, and files the guest writes there appear in `./shared`.
 
-The mount point must be in a writable location such as `/tmp`, unless the machine boots with
-a writable root.
-
 ## In a browser
 
 `BrowserFS` serves a `FileSystemDirectoryHandle`. That can be a folder the user picks, or the

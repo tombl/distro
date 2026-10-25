@@ -62,7 +62,7 @@ const server = createServer(async (request, response) => {
           process.env.LINUX_GUEST_TEST_ASSETS ?? (await build("linux-guest.checks.tests.assets"));
         path = join(directory, relative);
       } else if (relative === "boot.cpio") {
-        path = await build("image.bootInitramfs");
+        path = await build("vm-test.bootInitramfs");
       } else if (relative === "scheduler-handoff.erofs") {
         path = await build("basic-init.schedulerHandoffDisk");
       } else if (relative === "remote-vm.erofs") {

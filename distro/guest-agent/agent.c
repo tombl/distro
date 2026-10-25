@@ -851,42 +851,16 @@ static int make_directory(const char *path, mode_t mode)
 	return 0;
 }
 
-static bool command_line_option(const char *option)
+/* An ext4 root is persistent and mounts read-write directly. An EROFS root is
+ * immutable, so it always sits beneath a temporary OverlayFS upper layer: the
+ * system then behaves like a normal writable root for the lifetime of a boot. */
+static int mount_system_root(const struct system_root *root)
 {
-	char command_line[4096];
-	char *token, *save;
-	ssize_t length;
-	int fd;
-
-	fd = open("/proc/cmdline", O_RDONLY | O_CLOEXEC);
-	if (fd == -1)
-		return false;
-	do
-		length = read(fd, command_line, sizeof(command_line) - 1);
-	while (length == -1 && errno == EINTR);
-	close(fd);
-	if (length < 0)
-		return false;
-	command_line[length] = 0;
-	for (token = strtok_r(command_line, " \t\r\n", &save); token;
-	     token = strtok_r(NULL, " \t\r\n", &save))
-		if (!strcmp(token, option))
-			return true;
-	return false;
-}
-
-static int mount_system_root(const struct system_root *root, bool overlay)
-{
-	const char *type = root->filesystem == root_filesystem_erofs ? "erofs" :
-								     "ext4";
-	unsigned long flags = root->filesystem == root_filesystem_erofs ?
-								 MS_RDONLY : 0;
-
-	if (!overlay)
-		return mount(root->device, "/mnt", type, flags, NULL);
+	if (root->filesystem == root_filesystem_ext4)
+		return mount(root->device, "/mnt", "ext4", 0, NULL);
 	if (make_directory("/lower", 0755) ||
 	    make_directory("/overlay", 0755) ||
-	    mount(root->device, "/lower", type, MS_RDONLY, NULL) == -1 ||
+	    mount(root->device, "/lower", "erofs", MS_RDONLY, NULL) == -1 ||
 	    mount("tmpfs", "/overlay", "tmpfs", 0, NULL) == -1 ||
 	    make_directory("/overlay/upper", 0755) ||
 	    make_directory("/overlay/work", 0755) ||
@@ -899,7 +873,6 @@ static int mount_system_root(const struct system_root *root, bool overlay)
 static int prepare_system_root(void)
 {
 	struct system_root root;
-	bool overlay;
 
 	if (make_directory("/dev", 0755) ||
 	    mount_if_needed("devtmpfs", "/dev", "devtmpfs") ||
@@ -918,8 +891,7 @@ static int prepare_system_root(void)
 			fprintf(stderr, "linux-guest-agent: no supported filesystem is labeled LOWLAND_ROOT\n");
 		return -1;
 	}
-	overlay = command_line_option("lowland.root.overlay=tmpfs");
-	if (mount_system_root(&root, overlay) ||
+	if (mount_system_root(&root) ||
 	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
 	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
 	    chmod("/mnt/tmp", 01777) == -1)

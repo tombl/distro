@@ -23,6 +23,9 @@ let
     pname = "python";
     version = "3.13.14";
     inherit src;
+    # A general-purpose interpreter: the interpreter check alone peaks at
+    # about 120 MiB, half the platform default maximum.
+    maxMemory = 1024 * 1024 * 1024;
     passthru.apk.depends = [
       "ncurses"
       "openssl"
@@ -151,6 +154,10 @@ let
         --replace-fail ${pkgs.coreutils}/bin/ /bin/ \
         --replace-fail ${llvm-toolchain}/bin/ "" \
         --replace-fail ${openssl} /usr
+      # The in-tree build directory (abs_srcdir, coverage paths) depends on
+      # the builder's sandbox layout; pin it as nixpkgs' CPython does so the
+      # output is reproducible.
+      substituteInPlace "$config" "$sysconfig" --replace-fail "$PWD" /no-such-path
       rm -f $out/usr/lib/python3.13/__pycache__/_sysconfigdata__linux_.*.pyc
 
       # _curses is statically linked. Its compiled terminal descriptions are

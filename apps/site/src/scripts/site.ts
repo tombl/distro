@@ -303,7 +303,6 @@ const guest = guestAgent();
 const networkAttachment = network.attach(guest);
 
 const args: string[] = [];
-if (bootMode === "live") args.push("lowland.root.overlay=tmpfs");
 if (installDisk) args.push("lowland.install=1");
 if (cmdline) args.push(cmdline);
 

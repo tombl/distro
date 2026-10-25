@@ -46,11 +46,13 @@ guest_test("guest", async (t, fixture) => {
     assert.equal(result.stderr.byteLength, 0);
   });
 
-  await t.test("mounts the root filesystem read-only", async () => {
-    await assert.rejects(
-      guest.fs.writeTextFile("/immutable.txt", "nope"),
-      (error) => error instanceof SystemError && error.code === "EROFS",
-    );
+  await t.test("mounts an EROFS root beneath a writable overlay", async () => {
+    await guest.fs.writeTextFile("/etc/overlay-write-test", "writable\n");
+    assert.equal(await guest.fs.readTextFile("/etc/overlay-write-test"), "writable\n");
+    const probe = await guest.exec(["sh", "-c", "grep -q ' / overlay ' /proc/mounts"]);
+    const [error, status] = await Promise.all([collect(probe.stderr), probe.status]);
+    assert.deepEqual(status, { success: true, code: 0, signal: null });
+    assert.equal(error.byteLength, 0);
   });
 
   await t.test("hides the agent filesystem after pivot_root", async () => {
@@ -86,21 +88,6 @@ guest_test("root discovery", async (_t, fixture) => {
   const [output, status] = await Promise.all([collect(command.stdout), command.status]);
   assert.equal(new TextDecoder().decode(output).trim(), "Linux");
   assert.deepEqual(status, { success: true, code: 0, signal: null });
-});
-
-guest_test("temporary root overlay", async (_t, fixture) => {
-  const guest = await fixture.spawn([], { cmdline: "lowland.root.overlay=tmpfs" });
-  await guest.fs.writeTextFile("/overlay-write-test", "writable\n");
-  assert.equal(await guest.fs.readTextFile("/overlay-write-test"), "writable\n");
-
-  const probe = await guest.exec([
-    "sh",
-    "-c",
-    "grep -q ' / overlay ' /proc/mounts && ! test -e /bin/linux-guest-agent && ! grep -q ' /mnt ' /proc/mounts",
-  ]);
-  const [error, status] = await Promise.all([collect(probe.stderr), probe.status]);
-  assert.deepEqual(status, { success: true, code: 0, signal: null });
-  assert.equal(error.byteLength, 0);
 });
 
 test("rejects more than one system disk", async () => {

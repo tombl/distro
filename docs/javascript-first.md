@@ -40,7 +40,7 @@ apps/
 distro/                    Nix package scope
   linux/                   kernel source pin and build
   guest-agent/             guest executable
-  images/                  filesystem construction and canonical image
+  image/                   mkImage, the one image constructor
   site/                    site image, repository, and deployment
   toolchains/              LLVM, musl, Rust, and the wasm stdenv
   packages/                BusyBox and other wasm userspace packages
@@ -107,14 +107,14 @@ It contains a small JavaScript module, declarations, and package-relative image
 assets. It is a machine plugin provider. It attaches the image but does not
 choose whether the machine is temporary or persistent.
 
-The site derives its own image from the same package graph but is not required
-to ship the exact canonical image. It adds site content such as its message of
-the day. The site or the `lowland` facade, not the image package, selects the
-storage implementation.
+The site derives its own image from the same package graph and the same
+`mkImage` constructor, but is not required to ship the exact canonical image.
+It adds site content such as its message of the day. The site or the `lowland`
+facade, not the image package, selects the storage implementation.
 
 Nix should expose a helper for producing another npm package with the same
-shape from any root filesystem derivation. An image is not intrinsically the
-kernel root device: the same abstraction can be attached as any block device.
+shape from any `mkImage` result. An image is not intrinsically the kernel root
+device: the same abstraction can be attached as any block device.
 
 ### `lowland`
 
@@ -237,16 +237,16 @@ virtio device order, a kernel argument, or information returned by
 `devices.add()` to choose a disk. `LOWLAND_AGENT` identifies the private boot
 disk and cannot be mistaken for the system image.
 
-The default behavior mounts the selected filesystem directly: EROFS is
-read-only and ext4 is read-write. The exact kernel argument
-`lowland.root.overlay=tmpfs` instead mounts the selected filesystem read-only
-and places a temporary OverlayFS upper layer over it. This option is a general
-embedding contract, not site-specific logic. It makes an immutable image feel
-writable for one boot without claiming persistence.
+An ext4 filesystem is persistent and mounts read-write directly. An EROFS
+filesystem is immutable, so the agent always mounts it read-only beneath a
+temporary OverlayFS upper layer. The system then behaves like a normal
+writable root for one boot without claiming persistence. There is no option
+to disable the overlay.
 
-The canonical live site attaches one `LOWLAND_ROOT` EROFS image and enables the
-temporary overlay. It also attaches an unformatted persistent block device;
-the installer creates and labels its ext4 filesystem inside the guest. Once
+The canonical live site attaches one `LOWLAND_ROOT` EROFS image, which the
+agent mounts beneath the temporary overlay. It also attaches an unformatted
+persistent block device; the installer creates and labels its ext4 filesystem
+inside the guest. Once
 installed, the site does not attach the live EROFS image and mounts only that
 `LOWLAND_ROOT` ext4 disk directly. A `?live=1` recovery boot does not attach an
 existing installed disk, because exposing it alongside the live image would
