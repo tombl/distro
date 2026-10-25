@@ -200,10 +200,17 @@ export interface Imports {
     instantiate(fresh_memory: number): void;
     call(): void;
     switch_entry(fn: UserWord, arg: UserWord): void;
-    call_signal_handler(fn: UserWord, sig: number): void;
+    /** Returns WASM_HANDLER_ESCAPED if the handler left through an exception. */
+    call_signal_handler(fn: UserWord, sig: number): number;
     /** Abandons the user stack after an execve replaced the instance. */
     unwind(): never;
+    /**
+     * Returns WASM_HANDLER_ESCAPED if the handler left through an exception,
+     * and otherwise the result of its siginfo copy.
+     */
     call_siginfo_handler(trampoline: UserWord, fn: UserWord, sig: number): number;
+    /** Throws the exception a signal handler escaped with. */
+    rethrow(): never;
     read(to: number, from: number, n: number): number;
     write(to: number, from: number, n: number): number;
     write_zeroes(to: number, n: number): number;
