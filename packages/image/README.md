@@ -153,14 +153,8 @@ label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
 it with `rootImage("app.erofs")`, or with
 `rootImage("app.ext4", { writable: true })` for an ext4 image.
 
-The same build is available from the command line:
-
-```sh
-npx @lowland/image build --package busybox --package curl \
-  --file ./build/app:/usr/local/bin/app:0755 \
-  --link /usr/bin/app=/usr/local/bin/app \
-  --output app.erofs
-```
+The command-line equivalent is `npx lowland build`, provided by the `lowland`
+package.
 
 ## License
 
