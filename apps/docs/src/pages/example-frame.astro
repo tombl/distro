@@ -1,0 +1,20 @@
+---
+// The document a runnable example executes in. It resolves the package names
+// with an import map, then runs the module its parent page posts to it and
+// reports the module's console output back. Each run gets a fresh frame, so
+// removing the frame stops the machine and frees its memory.
+import { importMap } from "virtual:example-runtime";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <script type="importmap" is:inline set:html={JSON.stringify(importMap)} />
+    <meta charset="UTF-8" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light dark" />
+    <title>lowland example</title>
+    <script src="../scripts/example-frame.ts"></script>
+  </head>
+  <body></body>
+</html>

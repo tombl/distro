@@ -3,6 +3,8 @@ import mdx from "@astrojs/mdx";
 import { defineConfig } from "astro/config";
 
 import { checkLinks } from "./src/integrations/check-links";
+import { exampleRuntime } from "./src/integrations/example-runtime";
+import { runnableExamples } from "./src/integrations/runnable-examples";
 
 // External links in rendered markdown open in a new tab.
 function externalLinkTargets() {
@@ -28,10 +30,15 @@ export default defineConfig({
         dark: "github-dark-default",
       },
     },
-    processor: unified({ smartypants: false, rehypePlugins: [externalLinkTargets] }),
+    processor: unified({
+      smartypants: false,
+      remarkPlugins: [runnableExamples],
+      rehypePlugins: [externalLinkTargets],
+    }),
   },
   integrations: [
     checkLinks(site),
+    exampleRuntime(),
     mdx({
       optimize: {
         ignoreElementNames: ["pre"],
@@ -41,6 +48,14 @@ export default defineConfig({
   vite: {
     server: {
       allowedHosts: ["lowland-docs.via.tombl.net"],
+    },
+  },
+  // Runnable examples boot machines, which need shared memory, so every page
+  // is cross-origin isolated. public/_headers sends the same in production.
+  server: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
     },
   },
 });
