@@ -1,14 +1,19 @@
 # Build-platform test harness: boots the kernel under Node and asserts on a
 # pass marker. See docs/architecture.md, "Testing".
 {
-  apk,
+  busybox,
   pkgs,
   lib,
-  image,
   kernel,
+  mkImage,
 }:
 
 let
+  # Installed tests boot through a tiny BusyBox initramfs that mounts the
+  # first disk as the root. The cpio constructor exists only for it.
+  mkInitramfs = import ./initramfs.nix { inherit lib pkgs; };
+  bootInitramfs = import ./boot-initramfs.nix { inherit busybox mkInitramfs; };
+
   runnerBase = pkgs.runCommand "vm-test-runner" { } ''
     mkdir $out
     cp ${./protocol.js} $out/protocol.js
@@ -75,6 +80,8 @@ let
         mkdir $out
       '';
 
+  # An mkImage root whose /init is the test program. The setup helper lets
+  # init scripts recreate /dev/fd, which devtmpfs does not provide.
   installedDisk =
     {
       name,
@@ -85,41 +92,26 @@ let
     }:
     let
       fixtureName = lib.replaceStrings [ "_" ] [ "-" ] name;
-      packages = map apk.packageFrom contents;
-      repository = apk.mkRepository {
-        name = "${fixtureName}-system";
-        packages = lib.listToAttrs (
-          map (p: {
-            inherit (p) name;
-            value = p;
-          }) packages
-        );
-      };
-      system = apk.mkSystem {
-        name = "${fixtureName}-system";
-        repositories = [ repository ];
-        inherit packages;
-        files = files // {
-          "/init" = {
-            source = init;
-            mode = "0755";
-          };
-          "/vm-test-setup-dev-fd" = {
-            source = ./setup-dev-fd.sh;
-            mode = "0755";
-          };
-        };
-      };
     in
-    assert lib.assertMsg (contents != [ ]) "installedDisk requires at least one APK package";
+    assert lib.assertMsg (contents != [ ]) "installedDisk requires at least one package";
     assert lib.assertMsg (!(files ? "/init")) "installedDisk files cannot define /init; use init";
     assert lib.assertMsg (
       !(files ? "/vm-test-setup-dev-fd")
     ) "installedDisk files cannot override /vm-test-setup-dev-fd";
-    image.mkFilesystem {
+    mkImage {
       name = "${fixtureName}-system";
-      root = system;
+      packages = contents;
       inherit format;
+      files = files // {
+        "/init" = {
+          source = init;
+          mode = "0755";
+        };
+        "/vm-test-setup-dev-fd" = {
+          source = ./setup-dev-fd.sh;
+          mode = "0755";
+        };
+      };
     };
 
   installedTest =
@@ -149,11 +141,12 @@ let
     bootInstalledSystem {
       inherit cpus heavy name;
       disks = [ rootDisk ] ++ disks;
-      initramfs = image.bootInitramfs;
+      initramfs = bootInitramfs;
     };
 in
 {
   inherit
+    bootInitramfs
     installedDisk
     installedTest
     runner

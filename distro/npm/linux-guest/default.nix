@@ -1,18 +1,15 @@
 {
   callPackage,
-  repository,
 }:
 
 let
-  agentDisk = callPackage ./agent-disk.nix { inherit repository; };
-  rootfs = callPackage ./rootfs.nix { inherit repository; };
+  agentDisk = callPackage ./agent-disk.nix { };
+  rootfs = callPackage ./rootfs.nix { };
   ext4Root = callPackage ./rootfs.nix {
-    inherit repository;
     format = "ext4";
     size = "64M";
   };
   wrongRoot = callPackage ./rootfs.nix {
-    inherit repository;
     label = "WRONG_ROOT";
   };
 in

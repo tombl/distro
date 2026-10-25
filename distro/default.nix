@@ -1,7 +1,8 @@
 # The wasm32 package scope. This attrset is the product: consumers import it,
 # build their own packages with `callPackage`, and replace or extend members
 # with `overrideScope`. Product-owned artifacts are nested under their owner;
-# shared construction machinery lives under `image` and `vm-test`.
+# `mkImage` is the one shared image constructor and `vm-test` the shared guest
+# test harness.
 #
 # Dependency provenance is explicit: build-platform packages come from `pkgs.*`,
 # wasm packages come from the scope by bare name. Inside the scope, `stdenv`
@@ -21,10 +22,12 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
   self:
   let
     inherit (self) callPackage;
-    # Images embedded by lowland-boot cannot install from the final repository:
-    # that repository contains lowland-boot itself. This private index is the
-    # acyclic package-only input used to construct those images.
-    bootstrapRepository = callPackage ./repository.nix { };
+    # The APK package, repository, and system-install machinery. It is private:
+    # images go through mkImage, and only the published repository and its
+    # checks index packages directly.
+    apk = callPackage ./apk {
+      tools = self.apk-tools-host;
+    };
   in
   {
     inherit debug sourceVersion;
@@ -34,9 +37,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       version = "3.0.5";
       src = self.apk-tools-src;
     });
-    apk = callPackage ./apk {
-      tools = self.apk-tools-host;
-    };
 
     # The toolchain bootstrap. These build with the build platform's stdenv and
     # explicit flags because they exist to produce the wasm stdenv below; they
@@ -110,19 +110,27 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     # hide whether the kernel and libc reached userspace correctly.
     vm-test = callPackage ./vm-test/package.nix { };
 
-    # Shared immutable filesystem construction. Product-specific images remain
-    # owned by their consumer packages.
-    image = callPackage ./image { };
+    # The image constructor; see image/default.nix for its arguments. It
+    # resolves package dependencies by name against this (final) scope.
+    mkImage = callPackage ./image {
+      inherit apk;
+      scope = self;
+    };
 
-    site = callPackage ./site { repository = bootstrapRepository; };
+    site = callPackage ./site { };
     bridge-site = callPackage ../packages/bridge-site { };
 
-    apk-checks = callPackage ./apk/checks.nix { };
-    repository = (callPackage ./repository.nix { bootFiles = self.site.bootFiles; }) // {
-      checks = {
-        inherit (self.apk-checks) install store-references userland;
+    apk-checks = callPackage ./apk/checks.nix { inherit apk; };
+    repository =
+      (callPackage ./repository.nix {
+        inherit apk;
+        bootFiles = self.site.bootFiles;
+      })
+      // {
+        checks = {
+          inherit (self.apk-checks) install store-references userland;
+        };
       };
-    };
 
     # The private guest protocol and its JavaScript SDK ship together.
     guest-agent = callPackage ./guest-agent/package.nix { };
@@ -130,7 +138,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     kselftests = callPackage ./kselftests/package.nix { };
     node-workspace = callPackage ./npm/node-workspace.nix { };
     playwright = callPackage ./npm/playwright.nix { };
-    linux-guest = callPackage ./npm/linux-guest { repository = bootstrapRepository; };
+    linux-guest = callPackage ./npm/linux-guest { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
   }

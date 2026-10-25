@@ -3,7 +3,6 @@
   bytes,
   busybox,
   ext4Root,
-  image,
   pkgs,
   rootfs,
   wrongRoot,
@@ -44,7 +43,7 @@ let
   test-assets = pkgs.linkFarm "linux-guest-test-assets" {
     "agent.img" = agentDisk;
     "rootfs.ext4" = ext4Root;
-    "boot-initramfs.cpio" = image.bootInitramfs;
+    "boot-initramfs.cpio" = vm-test.bootInitramfs;
     "lifecycle-rootfs.erofs" = lifecycle-rootfs;
     "rootfs.erofs" = rootfs;
     "wrong-root.erofs" = wrongRoot;

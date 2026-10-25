@@ -43,7 +43,6 @@ let
       name,
       repositories,
       packages,
-      allowUntrusted ? true,
       files ? { },
       links ? { },
     }:
@@ -95,10 +94,12 @@ let
       }
       ''
         mkdir -p $out
+        # Build-time repositories are unsigned: signing happens only at
+        # publication, outside Nix, so the key never enters the store.
         fakeroot apk \
           --root $out \
           --arch ${platform.apkArch} \
-          ${lib.optionalString allowUntrusted "--allow-untrusted"} \
+          --allow-untrusted \
           ${repositoryArgs} \
           add --initdb ${packageArgs}
 

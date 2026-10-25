@@ -4,11 +4,11 @@ apk is the guest package and root-filesystem installation model. Nix remains
 the source build language: guest derivations are ordinary root-shaped outputs,
 and packaging happens at the repository boundary rather than inside the stdenv.
 
-`apk.mkPackage` turns a derivation into a native v3 APK. Name, version,
-description, and Nix license metadata are used by default; overrides and
-runtime metadata live on the derivation's `passthru.apk`. Guest software is
-statically linked, so dependencies are only the declared runtime packages and
-shared data:
+Every guest derivation becomes a native v3 APK at the repository or image
+boundary. Name, version, description, and Nix license metadata are used by
+default; overrides and runtime metadata live on the derivation's
+`passthru.apk`. Guest software is statically linked, so dependencies are only
+the declared runtime packages and shared data:
 
 ```nix
 stdenv.mkDerivation {
@@ -21,19 +21,20 @@ stdenv.mkDerivation {
 }
 ```
 
-`apk.mkRepository` accepts an attribute set of derivations or APKs and indexes
-them. The single published `repository` contains all runtime packages and the
-site boot payload. It is the runtime contract: a booted guest installs from the
-same index, and `apk.mkSystem`
-installs the same way at build time, so build-time and runtime installs cannot
-diverge. `apk.mkSystem` takes repositories and a package selection, runs the
-host apk implementation under fakeroot into a root tree (including the native
-installed database), and layers product `files` and `links` on top.
-`image.mkFilesystem` then encodes that tree as EROFS or ext4.
+The single published `repository` contains all runtime packages and the site
+boot payload; a booted guest installs from it. Images are built with `mkImage`
+(documented in `distro/image/default.nix`), which installs a package selection
+the same way at build time: it resolves `depends` by name against the package
+scope, indexes exactly that closure, runs the host apk implementation under
+fakeroot into a root tree (including the native installed database), layers
+product `files` and `links` on top, and encodes the tree as EROFS or ext4. The
+package, repository, and system-install helpers in `distro/apk` are private to
+the scope.
 
-All guest checks use `vm-test.installedTest` or its installed-disk constructor.
-They boot APK-installed systems through one generic boot initramfs; there is no
-test-specific raw-initramfs path.
+All guest checks use `vm-test.installedTest` or `vm-test.installedDisk`, thin
+wrappers over `mkImage`. They boot APK-installed systems through one generic
+boot initramfs (`vm-test.bootInitramfs`); there is no test-specific
+raw-initramfs path.
 
 Host and guest apk-tools are both version 3.0.5. The target executable is
 static and includes the CA bundle needed by bundled libfetch. Its wasm changes
