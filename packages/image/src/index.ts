@@ -27,6 +27,10 @@ export interface RootImageOptions {
   /**
    * Lets the guest write to the image, which defaults to read-only.
    *
+   * The guest agent boots a read-only image beneath a temporary writable
+   * overlay, so the guest can still write to its root, but those changes are
+   * discarded when the machine closes. A writable ext4 image keeps them.
+   *
    * A path is opened for reading and writing, a file handle must already be
    * open for writing, and byte arrays are modified in place. Fetched images,
    * blobs, and responses cannot be writable. Writes reach the source when the
