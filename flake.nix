@@ -62,6 +62,14 @@
           formatter,
         }:
         import ./checks.nix { inherit lib; } wasmpkgs
+        // import ./templates/checks.nix {
+          inherit
+            self
+            lib
+            pkgs
+            wasmpkgs
+            ;
+        }
         // {
           formatting = pkgs.runCommand "treefmt-check" { nativeBuildInputs = [ formatter ]; } ''
             cp -r ${self} tree
@@ -91,6 +99,14 @@
       );
 
       formatter = eachSystem ({ pkgs, ... }: import ./formatter.nix { inherit pkgs; });
+
+      templates = {
+        port = {
+          path = ./templates/port;
+          description = "A program ported to Linux on WebAssembly, with an image and a Node boot script";
+        };
+        default = self.templates.port;
+      };
 
       devShells = eachSystem (
         {
