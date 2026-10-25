@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -162,4 +162,49 @@ test("rejects a file that is not a filesystem image", async () => {
     () => boot(rootImage(path)),
     new Error(`${path} is not a filesystem image: got ${page.length} bytes`),
   );
+});
+
+// Linux lists a process's open files in /proc/self/fd.
+const open_files = async () => (await readdir("/proc/self/fd")).length;
+
+function ext4_bytes(size: number) {
+  const bytes = new Uint8Array(size);
+  new DataView(bytes.buffer).setUint16(1024 + 56, 0xef53, true);
+  return bytes;
+}
+
+test("rejects a file that is not whole sectors without leaking it", async () => {
+  await using directory = await scratch_directory();
+  const path = join(directory.path, "partial.ext4");
+  await writeFile(path, ext4_bytes(4097));
+  const before = await open_files();
+  for (let i = 0; i < 10; i++) {
+    await assert.rejects(
+      () => boot(rootImage(path)),
+      new Error(
+        `${path} is not a filesystem image: got 4097 bytes, which is not a multiple of 512`,
+      ),
+    );
+  }
+  assert.equal(await open_files(), before);
+});
+
+test("closes a file whose device the machine refuses", async () => {
+  const before = await open_files();
+  for (let i = 0; i < 10; i++) {
+    await assert.rejects(
+      async () =>
+        await rootImage(canonical_image).configure({
+          args: { add() {} },
+          devices: {
+            add() {
+              throw new Error("refused");
+            },
+          },
+          deviceTree: { merge() {} },
+        }),
+      new Error("refused"),
+    );
+  }
+  assert.equal(await open_files(), before);
 });

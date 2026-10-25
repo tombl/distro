@@ -146,3 +146,16 @@ test("accepts writable ext4 bytes and file handles", async () => {
   const handle = file_handle(ext4_image());
   assert.equal((await configure(rootImage(handle, { writable: true }))).length, 1);
 });
+
+test("rejects images that are not whole sectors", async () => {
+  await assert.rejects(
+    () => configure(rootImage(ext4_image(4097))),
+    new Error(
+      "the image bytes are not a filesystem image: got 4097 bytes, which is not a multiple of 512",
+    ),
+  );
+  await assert.rejects(
+    () => configure(rootImage(file_handle(ext4_image(4097)))),
+    /^Error: the file handle is not a filesystem image: got 4097 bytes, which is not a multiple of 512$/,
+  );
+});
