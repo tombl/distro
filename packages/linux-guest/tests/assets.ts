@@ -22,6 +22,7 @@ export function root_device() {
   });
 }
 
+/** A writable ext4 system disk; pass the same `disk` to reattach its storage. */
 export function ext4_root_device(disk = new Uint8Array(ext4_rootfs)) {
   return blockDevice({
     capacity: disk.byteLength,
