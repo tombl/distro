@@ -1,7 +1,6 @@
 {
   apk,
-  lib,
-  bootFiles ? null,
+  bootFiles,
   apk-tools,
   basic-init,
   bash,
@@ -18,12 +17,9 @@
   findutils,
   gawk,
   git,
-  guest-agent,
   grep,
   jq,
-  kselftests,
   less,
-  ltp,
   lua,
   make,
   ncurses,
@@ -32,7 +28,6 @@
   python,
   quickjs,
   readline,
-  rust-smoke,
   sed,
   sqlite3,
   tar,
@@ -45,7 +40,11 @@
 
 # The published repository: the set of derivations the runtime package manager
 # serves. Membership is the aports equivalent of a repository directory; each
-# derivation carries its optional APK metadata as passthru.apk.
+# derivation carries its optional APK metadata as passthru.apk. Only packages a
+# user may install belong here. Internal guest programs (the guest agent, test
+# suites, smoke tests) reach their images as derivations through mkImage.
+# bootFiles is the site's lowland-boot payload, published so installed
+# machines upgrade it with `apk upgrade`.
 apk.mkRepository {
   name = "repository";
   packages = {
@@ -53,6 +52,7 @@ apk.mkRepository {
       apk-tools
       basic-init
       bash
+      bootFiles
       busybox
       bzip2
       ca-certificates
@@ -66,12 +66,9 @@ apk.mkRepository {
       findutils
       gawk
       git
-      guest-agent
       grep
       jq
-      kselftests
       less
-      ltp
       lua
       make
       ncurses
@@ -80,7 +77,6 @@ apk.mkRepository {
       python
       quickjs
       readline
-      rust-smoke
       sed
       sqlite3
       tar
@@ -90,6 +86,5 @@ apk.mkRepository {
       zlib
       zstd
       ;
-  }
-  // lib.optionalAttrs (bootFiles != null) { inherit bootFiles; };
+  };
 }

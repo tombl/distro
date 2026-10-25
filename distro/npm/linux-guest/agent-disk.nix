@@ -1,37 +1,33 @@
 {
-  apk,
   busybox,
   guest-agent,
-  image,
+  mkImage,
   pkgs,
-  repository,
 }:
 
 let
-  filesystem = image.mkFilesystem {
+  filesystem = mkImage {
     name = "linux-guest-agent-filesystem";
     label = "LOWLAND_AGENT";
-    root = apk.mkSystem {
-      name = "linux-guest-agent";
-      repositories = [ repository ];
-      packages = [
-        busybox
-        guest-agent
-      ];
-      files = {
-        "/init" = {
-          source = ./init.sh;
-          mode = "0755";
-        };
-        "/bin/linux-guest-agent" = "${guest-agent}/bin/linux-guest-agent";
-        # The agent image is EROFS, so mount points needed before pivot_root
-        # must exist in the built image rather than being created during boot.
-        "/lower/.mountpoint" = pkgs.emptyFile;
-        "/overlay/.mountpoint" = pkgs.emptyFile;
+    packages = [
+      busybox
+      guest-agent
+    ];
+    files = {
+      "/init" = {
+        source = ./init.sh;
+        mode = "0755";
       };
+      "/bin/linux-guest-agent" = "${guest-agent}/bin/linux-guest-agent";
+      # The agent image is EROFS, so mount points needed before pivot_root
+      # must exist in the built image rather than being created during boot.
+      "/lower/.mountpoint" = pkgs.emptyFile;
+      "/overlay/.mountpoint" = pkgs.emptyFile;
     };
   };
 in
+# The agent filesystem is found by partition label, so it is wrapped in a GPT
+# whose single partition carries it.
 pkgs.runCommand "linux-guest-agent.img"
   {
     nativeBuildInputs = [ pkgs.gptfdisk ];

@@ -6,7 +6,6 @@
   kernel,
   linux-guest,
   node-workspace,
-  image,
   rootfs,
   vm-test,
 }:
@@ -108,7 +107,7 @@ let
       ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
       pnpm --filter=@lowland/linux-runner check
       LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
-        LINUX_RUNNER_TEST_BOOT_INITRAMFS=${image.bootInitramfs} \
+        LINUX_RUNNER_TEST_BOOT_INITRAMFS=${vm-test.bootInitramfs} \
         LINUX_RUNNER_TEST_CONSOLE_DISK=${console-rootfs} \
         LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
         LINUX_RUNNER_TEST_ROOT_DISK=${rootfs} \

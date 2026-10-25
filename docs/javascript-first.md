@@ -40,7 +40,7 @@ apps/
 distro/                    Nix package scope
   linux/                   kernel source pin and build
   guest-agent/             guest executable
-  images/                  filesystem construction and canonical image
+  image/                   mkImage, the one image constructor
   site/                    site image, repository, and deployment
   toolchains/              LLVM, musl, Rust, and the wasm stdenv
   packages/                BusyBox and other wasm userspace packages
@@ -107,14 +107,14 @@ It contains a small JavaScript module, declarations, and package-relative image
 assets. It is a machine plugin provider. It attaches the image but does not
 choose whether the machine is temporary or persistent.
 
-The site derives its own image from the same package graph but is not required
-to ship the exact canonical image. It adds site content such as its message of
-the day. The site or the `lowland` facade, not the image package, selects the
-storage implementation.
+The site derives its own image from the same package graph and the same
+`mkImage` constructor, but is not required to ship the exact canonical image.
+It adds site content such as its message of the day. The site or the `lowland`
+facade, not the image package, selects the storage implementation.
 
 Nix should expose a helper for producing another npm package with the same
-shape from any root filesystem derivation. An image is not intrinsically the
-kernel root device: the same abstraction can be attached as any block device.
+shape from any `mkImage` result. An image is not intrinsically the kernel root
+device: the same abstraction can be attached as any block device.
 
 ### `lowland`
 

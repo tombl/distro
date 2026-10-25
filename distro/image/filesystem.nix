@@ -1,3 +1,5 @@
+# mkImage's encoder: turns an installed apk.mkSystem tree into the image file.
+# Private to mkImage; arguments are validated and documented there.
 {
   pkgs,
   lib,
@@ -6,23 +8,24 @@
 {
   name,
   root,
-  format ? "erofs",
-  label ? "LOWLAND_ROOT",
-  size ? "256M",
+  format,
+  label,
+  size,
+  passthru ? { },
 }:
 
 assert lib.assertMsg (
   builtins.isAttrs root && (root.isApkSystem or false)
-) "mkFilesystem root must be an apk.mkSystem result";
+) "image root must be an apk.mkSystem result";
 assert lib.assertMsg (builtins.elem format [
   "erofs"
   "ext4"
-]) "mkFilesystem format must be erofs or ext4, got ${format}";
+]) "mkImage format must be erofs or ext4, got ${format}";
 assert lib.assertMsg (
   builtins.isString label
   && builtins.stringLength label <= 15
   && builtins.match "[A-Za-z0-9._-]+" label != null
-) "mkFilesystem label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens";
+) "mkImage label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens";
 pkgs.runCommand "${name}.${format}"
   {
     nativeBuildInputs = [
@@ -30,8 +33,8 @@ pkgs.runCommand "${name}.${format}"
     ]
     ++ lib.optionals (format == "ext4") [ pkgs.e2fsprogs ]
     ++ lib.optionals (format == "erofs") [ pkgs.erofs-utils ];
-    passthru = {
-      inherit format label root;
+    passthru = passthru // {
+      inherit format label;
     };
   }
   ''

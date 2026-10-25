@@ -1,7 +1,6 @@
 {
   basic-init,
   bytes,
-  image,
   lib,
   kernel,
   linux-guest,
@@ -9,6 +8,7 @@
   playwright,
   repository,
   site,
+  vm-test,
 }:
 
 let
@@ -24,7 +24,7 @@ let
     cp ${source}/index.html $out/index.html
     cp ${source}/playwright.config.js $out/playwright.config.js
     cp ${site.package}/static/*/opfs-disk-worker.js $out/opfs-disk-worker.js
-    cp ${image.bootInitramfs} $out/boot.cpio
+    cp ${vm-test.bootInitramfs} $out/boot.cpio
     cp ${basic-init.schedulerHandoffDisk} $out/scheduler-handoff.erofs
     cp ${basic-init.remoteMemoryDisk} $out/remote-vm.erofs
     cp ${basic-init.posixSpawnStressDisk} $out/posix-spawn-stress.erofs

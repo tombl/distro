@@ -1,6 +1,5 @@
 {
   callPackage,
-  repository,
 }:
 
 rec {
@@ -14,7 +13,7 @@ rec {
     inherit assets;
     bootMode = "installed";
   };
-  rootfs = callPackage ./rootfs.nix { inherit repository; };
+  rootfs = callPackage ./rootfs.nix { };
   bootFiles = callPackage ./boot-files.nix { inherit installedFiles; };
   package = callPackage ./package.nix { inherit liveFiles rootfs; };
   recurseForDerivations = true;
