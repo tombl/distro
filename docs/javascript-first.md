@@ -124,9 +124,9 @@ owns ergonomic defaults and coordination, but it does not fork the underlying
 guest API or introduce another machine implementation.
 
 The JavaScript facade is stateful because a `Linux` value represents one live
-Linux environment. The CLI is intentionally one-shot and stateless; persistence
-exists only where the caller explicitly supplies a persistent disk or mounted
-host filesystem.
+Linux environment. The CLI is stateless: each `lowland run` is one-shot, and persistence exists
+only where the caller explicitly supplies a persistent disk or mounted host
+filesystem.
 
 ## Kernel API
 
@@ -297,29 +297,55 @@ a special image option.
 
 ## CLI shape
 
+The `lowland` command has subcommands, so it can grow without overloading one
+set of flags. There are two:
+
 ```text
-Usage: lowland [options] [--] [command...]
+Usage: lowland <command> [options]
 
-Run a command in a fresh Linux machine. With no command, start a shell.
-
-Options:
-  --mount <host:guest>  Mount a host directory into the machine (repeatable)
-  --disk <path>         Attach a persistent block device (repeatable)
-  --cwd <path>          Set the command working directory
-  --env <name=value>    Set an environment variable (repeatable)
-  -h, --help            Show help
-  -v, --version         Show the version
+Commands:
+  run    Run a command in a fresh Linux machine
+  build  Build a system image from apk packages and host files
 ```
 
-The command's stdin, stdout, stderr, and exit status are proxied directly. Each
-invocation creates and closes one machine. There is no daemon, instance name,
-implicit state, or low-level emulator switch in the product CLI. Kernel tests
-use the lower-level JavaScript API rather than turning product flags into a
-second testing API.
+`run` executes one command, or a shell when no command is given, in a fresh
+machine:
 
+```text
+Usage: lowland run [options] [--] [command...]
+
+Options:
+  --image <path>             Boot this root image instead of the canonical one
+  --disk <path:guest[:ro]>   Attach a block device and mount it (repeatable)
+  --mount <host:guest[:ro]>  Share a host directory into the machine (repeatable)
+  --cwd <path>               Set the command working directory
+  --env <name=value>         Set an environment variable (repeatable)
+```
+
+`build` produces an image file that `run --image`, `rootImage(source)`, or any
+block device can use. Its flags mirror `buildImage()` from `@lowland/image/build`
+one-to-one: `--package`, `--file host:guest[:mode]`, `--link guest=target`,
+`--format`, `--label`, `--size`, `--compression`, and `--output`. The JavaScript
+options object and these flags are the only build inputs. There is no build
+file, no imperative build step, and no layer model: an image is declared as a
+set of packages, files, and links, like `mkImage`.
+
+Images are ordinary files named by path. There is no daemon, image store,
+registry, tag, container name, or implicit state, so the CLI has no commands to
+list, pull, push, or remove them. Each `run` creates and closes one machine.
+The root image is always read-only beneath a tmpfs overlay, whether it is EROFS
+or ext4, so running an image never changes it. Persistence exists only where
+the caller asks for it, through `--disk` or `--mount`. There is no low-level
+emulator switch in the product CLI. Kernel tests use the lower-level JavaScript
+API rather than turning product flags into a second testing API.
+
+`run` proxies the command's stdin, stdout, stderr, and exit status directly.
 Command mode uses ordinary pipes and preserves separate stdout and stderr.
 No-command interactive shell mode uses a guest PTY so terminal signals, job
 control, and resize events have real terminal semantics.
+
+`@lowland/image` remains a library without a command of its own. `lowland`
+depends on it and owns every command-line entry point.
 
 ## Artifacts and development
 
@@ -393,7 +419,7 @@ CI application.
    the agent object.
 5. Define the image-to-`/root` association, publish the minimal image package
    shape, and add the Nix image-to-npm helper.
-6. Build the `Linux` facade and one-shot `lowland` CLI.
+6. Build the `Linux` facade and the `lowland` CLI.
 7. Make pnpm authoritative for JavaScript builds and Node tests; add the single
    artifact materialization command.
 8. Move native packages and tooling under `distro/`, move the browser app under
