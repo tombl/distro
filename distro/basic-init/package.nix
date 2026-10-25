@@ -179,6 +179,7 @@ in
       named-semaphore = namedSemaphoreCheck;
       proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;
+      ptrace = installedCheck { name = "ptrace"; };
       pty = installedCheck { name = "pty"; };
       remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
