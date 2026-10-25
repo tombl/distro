@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
@@ -18,8 +19,16 @@ import {
 } from "../src/wasm.ts";
 import { read_wasm_function_imports } from "../src/wasm_binary.ts";
 
-function wasm_bytes(hex: string) {
-  return Uint8Array.from(hex.match(/../g)!, (byte) => Number.parseInt(byte, 16));
+// Assembles WebAssembly text with wasm-tools, which the Nix devshell provides.
+function wat(source: string) {
+  try {
+    return new Uint8Array(execFileSync("wasm-tools", ["parse"], { input: source }));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("wasm-tools is not on PATH; run the tests inside `nix develop`");
+    }
+    throw error;
+  }
 }
 
 const memory = new WebAssembly.Memory({
@@ -112,17 +121,20 @@ test("memory views include growth performed by another worker", async () => {
 
 // Imports linux.syscall, linux.get_thread_area and linux.copy_siginfo with
 // slots, pointers and longs of the given width.
+function user_abi_module(width: UserWidth) {
+  return wat(`
+    (module
+      (import "env" "memory" (memory 1 1 shared))
+      (import "linux" "syscall"
+        (func (param ${width} ${width} ${width} ${width} ${width} ${width} ${width}) (result ${width})))
+      (import "linux" "get_thread_area" (func (result ${width})))
+      (import "linux" "copy_siginfo" (func (param ${width}) (result i32))))
+  `);
+}
+
 const user_abi_modules = {
-  i32: wasm_bytes(
-    "0061736d0100000001150360077f7f7f7f7f7f7f017f6000017f60017f017f024d0403656e76066d656d" +
-      "6f727902030101056c696e75780773797363616c6c0000056c696e75780f6765745f7468726561645f" +
-      "617265610001056c696e75780c636f70795f736967696e666f0002",
-  ),
-  i64: wasm_bytes(
-    "0061736d0100000001150360077e7e7e7e7e7e7e017e6000017e60017e017f024d0403656e76066d656d" +
-      "6f727902030101056c696e75780773797363616c6c0000056c696e75780f6765745f7468726561645f" +
-      "617265610001056c696e75780c636f70795f736967696e666f0002",
-  ),
+  i32: user_abi_module("i32"),
+  i64: user_abi_module("i64"),
 };
 
 function supported(bytes: Uint8Array<ArrayBuffer>, width: UserWidth) {
@@ -130,10 +142,11 @@ function supported(bytes: Uint8Array<ArrayBuffer>, width: UserWidth) {
 }
 
 test("userspace modules may only import the supported host ABI", () => {
-  const unsupported = wasm_bytes(
-    "0061736d01000000010c0160077f7f7f7f7f7f7f017f02190203656e76066d656d6f727902030101046576" +
-      "696c01660000",
-  );
+  const unsupported = wat(`
+    (module
+      (import "env" "memory" (memory 1 1 shared))
+      (import "evil" "f" (func (param i32 i32 i32 i32 i32 i32 i32) (result i32))))
+  `);
 
   assert.equal(supported(user_abi_modules.i32, "i32"), true);
   assert.equal(supported(unsupported, "i32"), false);
@@ -147,10 +160,14 @@ test("userspace imports must match the width of the user memory", () => {
 
 test("function import signatures are read through GC type groups", () => {
   // A recursive group holding a struct type, then the syscall function type.
-  const module = wasm_bytes(
-    "0061736d010000000114014e025f017801500060077e7e7e7e7e7e7e017e02200203656e76066d656d6f72" +
-      "7902030101056c696e75780773797363616c6c0001",
-  );
+  const module = wat(`
+    (module
+      (rec
+        (type (struct (field (mut i8))))
+        (type (sub (func (param i64 i64 i64 i64 i64 i64 i64) (result i64)))))
+      (import "env" "memory" (memory 1 1 shared))
+      (import "linux" "syscall" (func (type 1))))
+  `);
 
   assert.deepEqual(read_wasm_function_imports(module), [
     { module: "linux", name: "syscall", type: "i64,i64,i64,i64,i64,i64,i64->i64" },
