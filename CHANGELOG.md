@@ -35,6 +35,10 @@
   `DeviceTreeNode` and `MachineSetup.deviceTree` are removed. Devices are typed
   as the opaque `Device`, and `VsockDevice.close()` is removed because the
   machine owns device lifetime. `BlockDeviceStorage` is renamed `BlockStorage`.
+- Virtio-net no longer drops frames for a guest that has fallen behind. Past a
+  small backlog, a unicast `EthernetPort.send()` waits until the guest accepts
+  the frame, so awaiting senders are throttled to the guest's pace. Floods
+  never wait for a stalled port.
 - Console input is read from its stream only as the guest consumes it.
 
 ### Fixed
