@@ -14,6 +14,9 @@ stdenv.mkDerivation (finalAttrs: {
   version = "5.6.4";
   inherit src;
   passthru.apk.replaces = [ "busybox" ];
+  # Compressing at -8 needs about 370 MiB and at -9 about 680 MiB, beyond the
+  # platform default maximum.
+  wasmMaxMemory = 1024 * 1024 * 1024;
 
   # Static-only target; NLS pulls in gettext, the sandbox methods (Capsicum,
   # Landlock, pledge) need syscalls the wasm kernel lacks, and the POSIX

@@ -32,12 +32,21 @@ rec {
     "-wasm-enable-sjlj"
   ];
 
+  # Default declared maximum of a process's shared memory, in bytes. WebKit
+  # reserves a shared memory's full maximum up front from a fixed per-tab
+  # budget (64 GiB, 16 GiB on iOS), so this bounds how many processes can be
+  # live at once. The maximum cannot be raised after creation: growth past it
+  # fails as ENOMEM. Packages whose programs need more set `wasmMaxMemory`
+  # (a multiple of 64 KiB) on the derivation. RLIMIT_AS still lowers it at
+  # exec.
+  defaultMaxMemory = 256 * 1024 * 1024;
+
   # Flags for linking wasm executables the kernel can load. No --fatal-warnings
   # here: wasm-ld warns on the wrong-prototype probes autoconf-style configure
   # scripts link, and promoting that to an error breaks every such probe.
   linkerFlags = [
     "--import-memory"
-    "--max-memory=4294967296"
+    "--max-memory=${toString defaultMaxMemory}"
     "--shared-memory"
     "--export-table"
     # clang's wasm-linux toolchain defaults the table base to 3, reserving

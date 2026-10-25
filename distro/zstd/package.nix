@@ -13,6 +13,9 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "zstd";
   version = "1.5.6";
   inherit src;
+  # High levels outgrow the platform default maximum when compressing large
+  # inputs: -19 needs about 280 MiB, --ultra -20 550 MiB, -22 1.1 GiB.
+  wasmMaxMemory = 2 * 1024 * 1024 * 1024;
 
   # Only the CLI is wanted, and building just `programs/zstd` links the library
   # sources straight into a static binary, sidestepping the shared-library
