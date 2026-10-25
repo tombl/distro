@@ -20,3 +20,23 @@ test("persists a virtio block device through an OPFS worker", async ({ page }) =
   expect(result.read.stderr).toBe("");
   expect(result.read.stdout).toContain(result.marker);
 });
+
+test("reports an OPFS disk that is already open with the browser's error", async ({ page }) => {
+  page.on("console", (message) => console.log(`[browser] ${message.text()}`));
+  page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
+
+  await page.goto("/");
+  test.skip(
+    !(await page.evaluate(() => "storage" in navigator && "getDirectory" in navigator.storage)),
+    "browser does not expose OPFS",
+  );
+  await expect
+    .poll(() => page.evaluate(() => typeof globalThis.opfsWorkerDiskLocked))
+    .toBe("function");
+  const result = await page.evaluate(() => globalThis.opfsWorkerDiskLocked());
+
+  expect(result.rejected).toBe(true);
+  expect(result.name).toBe("NoModificationAllowedError");
+  expect(result.message).not.toBe("");
+  expect(result.message).not.toMatch(/^Uncaught/);
+});
