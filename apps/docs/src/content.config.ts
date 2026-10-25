@@ -8,7 +8,7 @@ const docs = defineCollection({
     title: z.string(),
     description: z.string(),
     draft: z.boolean().default(false),
-    section: z.enum(["tutorials", "howtos", "reference", "explanation"]),
+    section: z.enum(["chapters", "reference", "questions"]),
     order: z.number(),
   }),
 });

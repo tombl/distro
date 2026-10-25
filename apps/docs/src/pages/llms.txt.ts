@@ -5,7 +5,7 @@ import { referencePackages } from "../lib/reference-packages";
 
 export const GET: APIRoute = async ({ site }) => {
   const docs = await getPublishedDocs();
-  const sectionOrder = ["tutorials", "howtos", "reference", "explanation"];
+  const sectionOrder = ["chapters", "reference", "questions"];
   const links = docs
     .toSorted(
       (a, b) =>

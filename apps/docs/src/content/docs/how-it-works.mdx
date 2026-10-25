@@ -1,15 +1,15 @@
 ---
 title: How it works
 description: How a Linux kernel ends up running inside a JavaScript process.
-section: explanation
-order: 1
+section: chapters
+order: 8
 ---
 
 # How it works
 
 A machine is an ordinary Linux kernel, compiled to WebAssembly and run by your JavaScript
-engine. This page describes how its parts fit together, and then what this design means for
-programs that run inside it.
+engine. None of this is needed to use Lowland, but it explains why the rest of the guide's
+caveats exist.
 
 ## The kernel
 
@@ -86,37 +86,6 @@ statically linked `wasm32` module. Programs are built against musl for the
 
 ## What this means for programs
 
-The design above changes some of what programs can assume about Linux. This section describes
-the differences. [Port software](/port-software/) explains how to adapt a program.
-
-### Creating processes
-
-`fork()` and `vfork()` are not available. The C library does not declare them. New processes
-are created with `clone()`, which starts the child in a function that the caller passes. The C
-library's `posix_spawn()` and `system()` work this way, and are the usual way to run another
-program.
-
-Without `CLONE_VM`, `clone()` gives the child a private copy of the caller's memory. This only
-works while the calling process has a single thread. In a process with more than one thread it
-fails with `EOPNOTSUPP`.
-
-### Memory mapping
-
-There is no `mmap()`, `munmap()`, or `mprotect()`, and this includes anonymous mappings. The C
-library does not declare them. `malloc()` grows the process's memory instead. To read a file,
-use `read()`.
-
-### Threads
-
-POSIX threads work. Each thread runs in its own worker and shares its process's memory.
-
-### Signals
-
-Signal handlers installed with `sigaction()` run, but a thread receives signals only when it
-enters the kernel, during a system call or as one returns. A thread that runs without making
-system calls receives no signals, not even `SIGKILL`, and it keeps its CPU until it makes one.
-
-### Size and startup
-
-Every time a program starts, the kernel reads and compiles the whole binary. A large binary
-therefore takes longer to start than a small one.
+No MMU means no `fork()` and no `mmap()`. Uninterruptible WebAssembly means signals arrive only
+at system calls. Compiling on exec means large programs start slowly.
+[What runs, and what doesn't](/what-runs/) turns each of these into what to change in a program.

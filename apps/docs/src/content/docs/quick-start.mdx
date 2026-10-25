@@ -1,0 +1,75 @@
+---
+title: Quick start
+description: Boot Linux from a Node.js script or a web page and run a program in it.
+section: chapters
+order: 1
+---
+
+# Quick start
+
+You need Node.js 24 or later. Install three packages:
+
+```sh
+npm install @lowland/kernel @lowland/guest @lowland/image
+```
+
+`@lowland/kernel` is the kernel and its virtual devices. `@lowland/guest` runs programs and
+moves files inside a booted machine. `@lowland/image` provides a small root filesystem with
+BusyBox and the apk package manager.
+
+## In Node.js
+
+Save this as `hello.mjs`. On this site, Run boots it in your browser instead.
+
+```js run
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+const guest = guestAgent();
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+
+const result = await guest.run(["uname", "-a"]);
+console.log(new TextDecoder().decode(result.stdout));
+```
+
+```sh
+node hello.mjs
+```
+
+It prints a line that starts with `Linux` and ends with `wasm GNU/Linux`. `uname` ran inside
+the machine, and the machine closed when `await using` went out of scope. Without that, an open
+machine keeps Node.js running.
+
+## In a web page
+
+The same code runs in a browser. The page must be
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
+because the machine's workers share memory, and browsers only allow that on isolated pages.
+With Vite, add the headers to the dev server:
+
+```js title="vite.config.js"
+import { defineConfig } from "vite";
+
+const headers = {
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+};
+
+export default defineConfig({ server: { headers }, preview: { headers } });
+```
+
+Then import the packages from a module script as usual. In a browser, `rootImage()` downloads
+the image, about 6.5 MB, before the machine boots. [Hosting](/hosting/) covers production
+headers, other bundlers, and pages without a bundler.
+
+## What happened
+
+`bootMachine()` started a Linux kernel with one virtual CPU and two plugins. `rootImage()`
+attached a read-only root filesystem. `guestAgent()` attached a small init program that runs as
+PID 1 and accepts requests from your process: start this program, read this file, mount that
+device. Everything else in this guide goes through those two objects, the machine and the
+guest.
+
+The next chapter starts building the example that runs through this guide: a service that runs
+a code snippet from a user and returns what it printed.

@@ -1,0 +1,106 @@
+---
+title: Troubleshooting
+description: Known failures, by the error or symptom you see, with the cause and the fix.
+section: questions
+order: 2
+---
+
+# Troubleshooting
+
+## `bootMachine()` fails in the browser with an error about `SharedArrayBuffer` or shared memory
+
+The page is not cross-origin isolated. Evaluate `crossOriginIsolated` in its console. If it is
+`false`, the document was served without the headers in
+[Hosting](/hosting/#the-headers). Check them in the network panel, on the document itself, not
+on its scripts.
+
+## `SecurityError` when the machine boots
+
+The kernel tried to start a worker from another origin. This happens when an import map points
+the packages at a CDN. Serve them from the page's origin.
+
+## `... did not return a filesystem image: got text/html`
+
+The image URL served a web page instead of an image, usually a dev server's fallback for a path
+that does not exist. Check the path relative to the page, and that the image is in the build
+output.
+
+## `no supported filesystem is labeled LOWLAND_ROOT`
+
+`bootMachine()` rejected with a `GuestBootError`. The machine needs exactly one EROFS or ext4
+filesystem labelled `LOWLAND_ROOT`. Either no attached image has that label, or two do. Images
+from `buildImage()` and `mkImage` have it unless you passed another `label`.
+
+## The machine fails during boot and nothing explains why
+
+Add `bootConsole(output)` from `@lowland/kernel` to the plugins to see the kernel's boot
+messages. A kernel panic rejects `machine.closed` with a `MachinePanicError`.
+
+## The Node.js script never exits
+
+An open machine keeps the event loop alive. Call `machine.close()`, or declare it with
+`await using`.
+
+## A timeout fired, but the program is still running
+
+The program is in a loop that makes no system calls, so it cannot receive signals, `SIGKILL`
+included. Close the machine. See
+[What runs, and what doesn't](/what-runs/#busy-loops-and-spinners).
+
+## Everything in the machine stopped
+
+Usually the same cause: with one virtual CPU, a task in a loop without system calls keeps the
+CPU, and nothing else in the machine runs. A spin-wait in a program waiting for another thread
+does the same. Give the machine more CPUs, or fix the loop to yield.
+
+## A program crashes when it throws a C++ exception
+
+C++ exceptions are not supported yet, even when the exception would be caught. See
+[What runs, and what doesn't](/what-runs/#c-exceptions).
+
+## `fork` or `mmap` is undeclared when compiling
+
+They do not exist in the guest. See [What runs, and what doesn't](/what-runs/).
+
+## A program installed to `/usr/local/bin` is "not found"
+
+The guest agent's `PATH` is `/bin:/usr/bin:/sbin:/usr/sbin`. Configure with `--prefix=/usr`, or
+run it by full path.
+
+## `wget https://...` fails in the browser
+
+`hostFetchNetwork()` reads plain HTTP requests to find their destination, and TLS from the guest
+hides them. Use `http://` URLs in the guest. The browser's `fetch()` adds TLS on the way out.
+
+## Requests from the guest fail in the browser, but work in Node.js
+
+The browser's cross-origin rules apply to the `fetch()` each request turns into. The site does
+not send CORS headers. Route the request through a proxy you run, in the `fetch` function you
+pass to `hostFetchNetwork()`.
+
+## Connecting to a guest server is refused right after starting it
+
+`exec()` resolves once the program has started, not once it is listening. Retry the connection
+briefly.
+
+## Spawning many programs fails with `ENOMEM` in Safari
+
+Safari frees the memory of a finished process about a second after it exits. A guest that starts
+many short-lived programs in quick succession can run out of address space before then. Start
+fewer processes, or slow the rate.
+
+## Files written to a disk are missing after reload
+
+The guest kernel had not written them yet when the machine or tab closed. Run `sync` or unmount
+the disk before closing, and mount with `-o sync` if the tab may close at any time. See
+[Files and storage](/files-and-storage/#dont-lose-writes).
+
+## `NoModificationAllowedError` when attaching an OPFS disk
+
+Another tab has the same file open. Only one sync access handle can be open at a time. See
+[Files and storage](/files-and-storage/#one-tab-at-a-time).
+
+## The Vite dev server fails to boot the machine, but the build works
+
+Vite 7 pre-bundles dependencies and breaks their asset URLs. Exclude the packages in
+`optimizeDeps.exclude`, as in [Hosting](/hosting/#bundlers), or use Vite 8.

@@ -12,9 +12,16 @@ const sections = await getDocsSections();
 >
   <h1>Lowland documentation</h1>
   <p>
-    Lowland runs Linux, compiled to WebAssembly, inside a browser tab or a Node.js process. These
-    pages cover the JavaScript packages that boot and control it. If you are new, start with the
-    tutorial.
+    Lowland is the Linux kernel ported to WebAssembly. A machine boots inside a browser tab or a
+    Node.js process, runs Linux programs compiled for WebAssembly, and gives your JavaScript a
+    handle to start those programs, move files in and out, and decide what the network can reach.
+  </p>
+  <p>
+    These pages assume you are comfortable with a Linux shell and with modern JavaScript. They
+    spend their words on what is different here, not on how Linux or streams work. The guide
+    reads in order, and over its chapters it builds a small service that runs code snippets
+    sent by users. Each chapter also makes sense on its own. If you want to know how Lowland
+    compares to v86 or WebContainers first, read the <a href="/faq/">questions</a>.
   </p>
 
   {sections.map(({ heading, items }) => (

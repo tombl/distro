@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, serveDevice } from "@lowland/kernel";
+import { blockDevice, serveDevice, serveDeviceError } from "@lowland/kernel";
 
 type Configuration = {
   handle: FileSystemFileHandle;
@@ -30,6 +30,8 @@ async function openAccessHandle(handle: FileSystemFileHandle): Promise<FileSyste
   }
 }
 
+// A setup failure, such as the disk being open in another tab, must reach
+// workerDevice() on the page with its name and message.
 try {
   const access = await openAccessHandle(configuration.handle);
   if (configuration.capacity !== undefined) access.truncate(configuration.capacity);
@@ -70,9 +72,5 @@ try {
     }),
   );
 } catch (error) {
-  const value = error instanceof Error ? error : new Error(String(error));
-  postMessage({
-    type: "error",
-    error: { name: value.name, message: value.message, stack: value.stack },
-  });
+  serveDeviceError(self, error);
 }

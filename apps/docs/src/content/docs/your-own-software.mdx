@@ -1,0 +1,140 @@
+---
+title: Your own software
+description: Install packages, build root images, and compile your own programs for the guest.
+section: chapters
+order: 5
+---
+
+# Your own software
+
+Guest programs are WebAssembly binaries for 32-bit Linux, linked statically against musl. Your
+existing x86 or Arm binaries do not run, and neither do container images. Software has to be
+compiled for the guest, and either installed at runtime or built into the root image.
+
+The default image has BusyBox and apk, and the public repository has a few dozen ported
+packages, Python, Lua, QuickJS, Git, curl, SQLite and Vim among them. If what you need is
+there, you need no compiler.
+
+## Installing at runtime
+
+With a network attached, apk installs from the public repository:
+
+```js
+await guest.run(["apk", "add", "python"]);
+```
+
+The package lands in the memory layer, so it costs a download on every boot and is gone when the
+machine closes. That is fine for trying things. For anything you boot repeatedly, build an
+image.
+
+## Building an image
+
+`buildImage()` runs in Node.js and needs nothing else. It boots a machine, installs packages
+into a fresh filesystem there, copies in host files, and writes the image:
+
+```js title="build.mjs"
+import { buildImage } from "@lowland/image/build";
+
+await buildImage({
+  packages: ["busybox", "python"],
+  files: { "/usr/bin/run-tests": { source: "./run-tests.sh", mode: "0755" } },
+  output: "runner.erofs",
+});
+```
+
+The same build from a shell:
+
+```sh
+npx lowland build -p busybox -p python -f ./run-tests.sh:/usr/bin/run-tests:0755 -o runner.erofs
+```
+
+The image contains only what you list, so include `busybox` if anything needs a shell. Packages
+named like `jq` come from the public repository, with dependencies and signature checks. Paths
+to local `.apk` files are installed without a signature check, and a build that uses only local
+files needs no network. The [Images reference](/images/) lists every option.
+
+Boot it by passing the file to `rootImage()`. In Node.js a string is a path, read from disk as
+the guest needs blocks. In a browser it is a URL relative to the page, fetched once:
+
+```js
+const image = rootImage("runner.erofs");
+```
+
+The example service can now run Python snippets. Swap `rootImage()` for this image, and run
+`["python3", "-c", code]` instead of `["sh", "-c", code]`.
+
+### EROFS or ext4
+
+EROFS, the default, is read-only and compressed, and one file can back many machines at once.
+The guest puts a memory layer above it.
+
+Build ext4 with `--format ext4 --size 64M` when the guest should write back to the image, and
+attach it with `rootImage("data.ext4", { writable: true })`. Run `sync` before the machine
+closes, because closing does not flush the guest's page cache. Attach a writable image to one
+machine at a time.
+
+### `/init`
+
+If an image has an executable `/init`, the guest agent starts it once the root filesystem is
+mounted, with the console as its standard streams. The machine powers off when `/init` exits.
+Use it for services that live as long as the machine.
+
+## Compiling your own
+
+The SDK cross-compiles C and C++ for the guest. It is a Nix package set, so you need
+[Nix](https://nixos.org/download) with flakes. On macOS, guest programs build on a Linux
+builder such as the
+[nixpkgs Linux builder](https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-builder).
+
+### With the porting template
+
+```sh
+mkdir hello && cd hello
+nix flake init -t github:tombl/distro#port
+nix build .#image
+npm install
+node boot.mjs result
+```
+
+That prints `Hello from Linux on wasm!`. The template has a C program, a `package.nix` that
+builds it, a `flake.nix` that builds an image with `mkImage`, and `boot.mjs`, which boots it.
+
+`package.nix` is an ordinary `stdenv.mkDerivation` whose `stdenv` cross-compiles for the guest.
+The prefix is `/` and `DESTDIR` is the output, so `make install` puts the program at
+`bin/hello` and the image at `/bin/hello`. Autotools, CMake and Meson projects follow the same
+convention. To port something else, point `src` at its source and add dependencies from the
+package set to `buildInputs`.
+
+`mkImage` takes the same `files`, `links` and `format` as `buildImage()`, but installs Nix
+packages, not packages from the public repository:
+
+```nix
+image = wasmpkgs.mkImage {
+  name = "hello";
+  packages = [ wasmpkgs.busybox wasmpkgs.jq hello ];
+  files."/etc/motd" = ./motd;
+};
+```
+
+### With the SDK shell
+
+To build by hand:
+
+```sh
+nix develop github:tombl/distro#sdk
+```
+
+`CC`, `CXX`, `AR` and the rest name the guest toolchain, so `./configure` and CMake work without
+flags. Meson takes `--cross-file wasm32-unknown-linux-musl`. Install into a staging directory
+and put the result in an image with `lowland build`:
+
+```sh
+./configure --prefix=/usr && make && make install DESTDIR=$PWD/stage
+npx lowland build -p busybox -f ./stage/usr/bin/hello:/usr/bin/hello -o hello.erofs
+```
+
+Use `--prefix=/usr`. Programs started by the guest agent search
+`PATH=/bin:/usr/bin:/sbin:/usr/sbin`, which leaves out `/usr/local/bin`.
+
+Most programs build unchanged. The ones that don't usually fork, map memory, or spin.
+[What runs, and what doesn't](/what-runs/) covers each case and what to change.

@@ -32,7 +32,7 @@ await using machine = await bootMachine({
 
 Devices cover block storage, consoles, shared filesystems, networking, and entropy. Each virtual
 CPU runs in its own worker. In a browser, the page must be served with the cross-origin isolation
-headers described in [Set up a browser page](https://docs.low.land/set-up-a-browser-page/).
+headers described in [Hosting](https://docs.low.land/hosting/).
 
 ## Documentation
 
