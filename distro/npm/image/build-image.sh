@@ -111,6 +111,19 @@ install() {
 # would nest it under its staged name, and the existing directory keeps its
 # mode. Only the copied entries are touched. A requested mode applies to the
 # destination itself, never to the entries copied beneath it.
+#
+# chown clears setuid and setgid from regular files, so those modes are copied
+# back from the source afterwards.
+restore_special() {
+  if [ -d "$1" ]; then
+    # shellcheck disable=SC2016 # $0 and $f are the inner shell's
+    (cd "$1" && find . -type f -perm /6000 -print0) |
+      (cd "$2" && xargs -0 -r sh -c 'for f; do chmod "$(stat -c %a "$0/$f")" "$f"; done' "$1")
+  elif [ -f "$1" ]; then
+    chmod "$(stat -c %a "$1")" "$2"
+  fi
+}
+
 place() {
   mkdir -p "$(dirname "$2")"
   if [ -d "$1" ] && [ -d "$2" ]; then
@@ -118,10 +131,12 @@ place() {
     cp -a "$1/." "$2"
     chmod "$existing" "$2"
     (cd "$1" && find . -mindepth 1 -print0) | (cd "$2" && xargs -0 -r chown -h 0:0)
+    restore_special "$1" "$2"
     (cd "$1" && find . -mindepth 1 ! -type l -print0) | (cd "$2" && xargs -0 -r chmod u+w)
   else
     cp -a "$1" "$2"
     chown -R -h 0:0 "$2"
+    restore_special "$1" "$2"
     find "$2" ! -type l -exec chmod u+w {} +
   fi
 }
