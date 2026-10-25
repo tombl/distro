@@ -63,6 +63,25 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
   throw new Error("guest agent did not become ready", { cause: failure });
 }
 
+// Bounds how long close() waits for the guest to write back its page cache,
+// so a wedged guest cannot hang teardown.
+const CLOSE_SYNC_TIMEOUT_MS = 30_000;
+
+async function sync_before_close(client: GuestClientCapabilities) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("guest did not sync its filesystems before close")),
+      CLOSE_SYNC_TIMEOUT_MS,
+    );
+  });
+  try {
+    await Promise.race([client.sync(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function collect(stream: ReadableStream<Uint8Array>) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
@@ -104,6 +123,8 @@ export function wait_for_agent(agent: GuestAgent, machine: Machine): Promise<voi
  * GPT-wrapped agent EROFS, its vsock transport, and its boot arguments. The
  * partition label makes discovery independent of virtio device ordering. The
  * plugin does not finish booting until the agent is ready to accept requests.
+ * `machine.close()` first syncs the guest's filesystems through the agent,
+ * waiting at most 30 seconds; if that fails, `machine.closed` rejects.
  */
 export function guestAgent(): GuestAgent {
   const vsock = vsockDevice();
@@ -145,6 +166,18 @@ export function guestAgent(): GuestAgent {
     },
     async booted(machine) {
       await wait(machine);
+    },
+    async closing() {
+      // Without a ready agent there is no session to sync through.
+      if (
+        !ready ||
+        !(await ready.then(
+          () => true,
+          () => false,
+        ))
+      )
+        return;
+      await sync_before_close(client);
     },
   };
 
