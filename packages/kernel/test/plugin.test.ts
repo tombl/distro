@@ -108,6 +108,29 @@ test("a failed configuration releases the boot console output", async () => {
   writer.releaseLock();
 });
 
+test("a failed configuration keeps its error when the boot console was cancelled", async () => {
+  const failure = new Error("configuration failed");
+
+  await assert.rejects(
+    bootMachine({
+      cpus: 1,
+      plugins: [
+        {
+          async configure(setup) {
+            await setup.bootConsole.cancel();
+          },
+        },
+        {
+          configure() {
+            throw failure;
+          },
+        },
+      ],
+    }),
+    (error) => error === failure,
+  );
+});
+
 test("virtio devices provide plugins without changing their device API", async () => {
   const controller = new VirtioController({ deviceId: 1 }, { queues: [] });
   const device = controller.expose({ capability: "available" as const });
