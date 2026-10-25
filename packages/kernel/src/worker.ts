@@ -32,10 +32,8 @@ interface ExecImage {
  * one user memory for its whole life and ending the worker releases it. The
  * two halves synchronize through the successor's control array:
  */
-/** The successor's start result: 0 pending, 1 ready, or a negative errno. */
-const EXEC_READY = 0;
 /** Whether the successor may enter the kernel: one of the HANDOFF_ values. */
-const EXEC_HANDOFF = 1;
+const EXEC_HANDOFF = 0;
 const HANDOFF_WAIT = 0;
 const HANDOFF_RUN = 1;
 const HANDOFF_ABORT = 2;
@@ -51,8 +49,13 @@ export interface InitMessage {
   vmlinux: WebAssembly.Module;
   memory: WebAssembly.Memory;
   user: UserContext | null;
-  /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
-  user_copy_status: Int32Array<SharedArrayBuffer> | null;
+  /** Set for a COPY clone. */
+  copy: boolean;
+  /**
+   * The kernel's struct wasm_spawn_wait for a COPY clone or an exec
+   * successor: this worker stores the result in it and raises its irq.
+   */
+  spawn_wait: number | null;
   /** Set when this worker succeeds an execing worker. */
   exec: ExecSuccessor | null;
 }
@@ -70,6 +73,7 @@ export type WorkerMessage =
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }
   | { type: "run_on_main"; fn: number; arg: number }
+  | { type: "trigger_irq"; irq: number }
   | { type: "worker_exit" };
 
 const unavailable = () => {
@@ -477,11 +481,10 @@ function user_imports({
 function take_user_context(init: InitMessage): UserContext | null | undefined {
   // The event that delivered the message keeps it reachable for the worker's
   // lifetime, so clear the references there.
-  const { user, user_copy_status, exec } = init;
+  const { user, copy, exec } = init;
   init.user = null;
-  init.user_copy_status = null;
   if (exec) {
-    assert(!user && !user_copy_status, "exec successor with a user context");
+    assert(!user && !copy, "exec successor with a user context");
     try {
       return {
         module: exec.module,
@@ -492,17 +495,16 @@ function take_user_context(init: InitMessage): UserContext | null | undefined {
     }
   }
   if (!user) {
-    assert(!user_copy_status, "user memory copy without a user context");
+    assert(!copy, "user memory copy without a user context");
     return null;
   }
   user.memory.grow(0);
-  if (!user_copy_status) return user;
+  if (!copy) return user;
 
-  // fork.c permits COPY only for a single-user mm, and the caller blocks
-  // until publication below, so the source is stable. Allocate here so the
-  // private backing store is owned by the destination isolate, not the
-  // long-lived parent.
-  let copy: UserContext | undefined;
+  // fork.c permits COPY only for a single-user mm, and the parent sleeps in
+  // the kernel until this worker reports, so the source is stable. Allocate
+  // here so the private backing store is owned by the destination isolate,
+  // not the long-lived parent.
   try {
     const source = memory_bytes(user.memory, 0);
     if (!source) throw new RangeError("invalid source memory");
@@ -510,56 +512,67 @@ function take_user_context(init: InitMessage): UserContext | null | undefined {
     const destination = memory_bytes(copied.memory, 0, source.byteLength);
     if (!destination) throw new RangeError("invalid destination memory");
     destination.set(source);
-    copy = { module: user.module, ...copied };
-    Atomics.store(user_copy_status, 0, 1);
+    return { module: user.module, ...copied };
   } catch {
-    Atomics.store(user_copy_status, 0, -12);
+    return undefined;
   }
-  Atomics.notify(user_copy_status, 0);
-  return copy;
+}
+
+/**
+ * Reports a COPY clone's or exec successor's result to the kernel, which is
+ * sleeping on the spawn wait: store it, then raise the wait's irq.
+ */
+function report_spawn(
+  memory: WebAssembly.Memory,
+  wait: number,
+  status: number,
+  instance?: Instance,
+) {
+  const words = new Int32Array(memory.buffer, wait >>> 0, 2);
+  const irq = words[1]!;
+  Atomics.store(words, 0, status);
+  if (instance) instance.exports.trigger_irq(irq);
+  // Without a kernel instance, the page raises it.
+  else postMessage({ type: "trigger_irq", irq });
 }
 
 function start(init: InitMessage) {
-  const { fn, arg, vmlinux, memory, exec } = init;
+  const { fn, arg, vmlinux, memory, exec, spawn_wait } = init;
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
   // grows it; grow(0) refreshes the wrapper before constructing any views.
   memory.grow(0);
 
-  const fail_exec = () => {
-    // execve fails with ENOMEM before its point of no return.
-    if (!exec) return;
-    Atomics.store(exec.control, EXEC_READY, -12);
-    Atomics.notify(exec.control, EXEC_READY);
-  };
-
+  // A failed copy or allocation fails the clone or execve with ENOMEM, before
+  // execve's point of no return.
   const context = take_user_context(init);
-  if (context === undefined) {
-    fail_exec();
-    quit();
-    return;
-  }
-
   const user = user_imports({
     kernel_memory: memory,
     get_kernel_instance: () => instance,
-    context,
+    context: context ?? null,
   });
   let instance: Instance;
   try {
     instance = new WebAssembly.Instance(vmlinux, worker_imports(init, user)) as Instance;
-    user.prepare();
   } catch (error) {
-    if (!exec) throw error;
-    fail_exec();
+    if (spawn_wait === null) throw error;
+    report_spawn(memory, spawn_wait, -12);
     quit();
     return;
   }
+  try {
+    if (context === undefined) throw new RangeError("user memory allocation failed");
+    user.prepare();
+  } catch (error) {
+    if (spawn_wait === null) throw error;
+    report_spawn(memory, spawn_wait, -12, instance);
+    quit();
+    return;
+  }
+  if (spawn_wait !== null) report_spawn(memory, spawn_wait, 1, instance);
 
   if (exec) {
-    Atomics.store(exec.control, EXEC_READY, 1);
-    Atomics.notify(exec.control, EXEC_READY);
     // The execing worker still runs on the task's kernel stack. Wait in JS,
     // so this worker runs no kernel code until that worker has left.
     let handoff: number;
@@ -591,15 +604,13 @@ function worker_imports({ vmlinux, memory }: InitMessage, user: ReturnType<typeo
     kernel: kernel_imports({
       is_worker: true,
       memory,
-      spawn_worker(fn, arg, name, user_memory, context) {
+      spawn_worker(fn, arg, name, user_memory, context, spawn_wait) {
         let exec: ExecSuccessor | null = null;
         if (user_memory === UserMemory.Exec) {
           const image = user.take_exec_image();
           if (!image) return -22; // invalid argument
-          exec = { ...image, control: new Int32Array(new SharedArrayBuffer(8)) };
+          exec = { ...image, control: new Int32Array(new SharedArrayBuffer(4)) };
         }
-        const status =
-          user_memory === UserMemory.Copy ? new Int32Array(new SharedArrayBuffer(4)) : null;
 
         const direct = new MessageChannel();
         postMessage(
@@ -617,26 +628,16 @@ function worker_imports({ vmlinux, memory }: InitMessage, user: ReturnType<typeo
           vmlinux,
           memory,
           user: context,
-          user_copy_status: status,
+          copy: user_memory === UserMemory.Copy,
+          spawn_wait,
           exec,
         } satisfies InitMessage);
 
-        // COPY and EXEC are synchronous: their result is the destination
-        // worker's allocation. If publication wins the race, wait returns
-        // "not-equal"; no wakeup is lost.
-        if (exec) {
-          Atomics.wait(exec.control, EXEC_READY, 0);
-          const result = Atomics.load(exec.control, EXEC_READY);
-          assert(result === 1 || result < 0, "exec wait completed without a result");
-          if (result < 0) return result;
-          user.set_successor(exec.control);
-          return 0;
-        }
-        if (!status) return 0;
-        Atomics.wait(status, 0, 0);
-        const result = Atomics.load(status, 0);
-        assert(result === 1 || result < 0, "copy wait completed without a result");
-        return result === 1 ? 0 : result;
+        // Never wait here: the new worker may not start until another worker
+        // exits. For COPY and EXEC the kernel sleeps on spawn_wait, which the
+        // new worker completes; an exec that fails later aborts the successor.
+        if (exec) user.set_successor(exec.control);
+        return 0;
       },
       boot_console_write(message) {
         postMessage({ type: "boot_console_write", message });

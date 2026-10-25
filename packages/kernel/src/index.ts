@@ -333,6 +333,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
                   void fail(new Error(`unknown machine termination reason: ${message.reason}`));
               }
               break;
+            case "trigger_irq":
+              // A COPY clone or exec successor that has no kernel instance
+              // still has to wake the kernel sleeping on its spawn wait.
+              assert(instance);
+              instance.exports.trigger_irq(message.irq);
+              break;
             case "run_on_main":
               assert(instance);
               instance.exports.__indirect_function_table.get(message.fn >>> 0)!(message.arg);
@@ -371,7 +377,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         vmlinux,
         memory: wasm_memory,
         user,
-        user_copy_status: null,
+        copy: false,
+        spawn_wait: null,
         exec: null,
       });
       return 0;

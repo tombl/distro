@@ -200,6 +200,8 @@ export interface Imports {
       comm: number,
       comm_len: number,
       user_memory: number,
+      /** A struct wasm_spawn_wait for COPY and EXEC, else 0. */
+      wait: number,
     ): number;
     run_on_main(fn: number, arg: number): void;
   };
@@ -303,6 +305,8 @@ export function kernel_imports({
     name: string,
     user_memory: UserMemory,
     user: UserContext | null,
+    /** Where a COPY clone or exec successor reports its result. */
+    spawn_wait: number | null,
   ) => number;
   boot_console_write: (message: ArrayBuffer) => void;
   boot_console_close: () => void;
@@ -369,7 +373,7 @@ export function kernel_imports({
       new Uint8Array(memory.buffer).set(trace.subarray(0, capacity), address);
     },
 
-    spawn_worker: (fn, arg, comm, comm_len, user_memory) => {
+    spawn_worker: (fn, arg, comm, comm_len, user_memory, wait) => {
       const comm_address = comm >>> 0;
       const comm_length = comm_len >>> 0;
       const name = new TextDecoder().decode(
@@ -377,13 +381,19 @@ export function kernel_imports({
       );
       switch (user_memory) {
         case UserMemory.None:
+          return spawn_worker(fn, arg, name, user_memory, null, null);
         case UserMemory.Exec:
-          return spawn_worker(fn, arg, name, user_memory, null);
+          if (!wait) return -22; // invalid argument
+          return spawn_worker(fn, arg, name, user_memory, null, wait >>> 0);
         case UserMemory.Share:
         case UserMemory.Copy: {
           const context = get_user_context();
           if (!context) return -22; // invalid argument
-          return spawn_worker(fn, arg, name, user_memory, context);
+          if (user_memory === UserMemory.Share) {
+            return spawn_worker(fn, arg, name, user_memory, context, null);
+          }
+          if (!wait) return -22; // invalid argument
+          return spawn_worker(fn, arg, name, user_memory, context, wait >>> 0);
         }
         default:
           return -22; // invalid argument
