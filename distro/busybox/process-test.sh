@@ -62,6 +62,16 @@ grep -q "can't execute '/nonexistent/spawn-test'" /tmp/spawn-missing ||
 /bin/true "${spawn_default:=set}" | /bin/cat
 # shellcheck disable=SC2031
 [ -z "$spawn_default" ] || fail "default assignment in a pipe member leaked into the shell"
+# Opening a FIFO blocks until the other end opens. A background reader whose
+# writer is this shell must not suspend the shell until it execs.
+mkfifo /tmp/spawn-fifo || fail "creating spawn fifo failed"
+/bin/cat </tmp/spawn-fifo >/tmp/spawn-fifo-out &
+spawn_reader=$!
+exec 8>/tmp/spawn-fifo || fail "opening spawn fifo for writing failed"
+echo through-fifo >&8
+exec 8>&-
+wait "$spawn_reader" || fail "background fifo reader failed"
+grep -qx through-fifo /tmp/spawn-fifo-out || fail "background fifo reader lost data"
 spawn_i=0
 while [ "$spawn_i" -lt 40 ]; do
   /bin/sleep 0 &
