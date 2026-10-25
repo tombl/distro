@@ -267,6 +267,11 @@ jobs:
       !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
       github.event.pull_request.head.repo.full_name == 'tombl/distro')
+    # Production publishes prune the apk repository against its live index, so
+    # they must not interleave. Previews stay independent.
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.run_id) }}
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6

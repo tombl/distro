@@ -46,6 +46,15 @@ Repositories built by Nix are unsigned and local system construction uses
 `--allow-untrusted`. Release signing remains outside Nix so a private key never
 becomes a derivation input or enters the store.
 
+Package files in every repository are content-addressed:
+`<name>-<version>.<identity>.apk`, where the identity is the first 16 hex
+digits of the package's v3 identity hash. The index records this as its
+`pkgname-spec`, and apk builds each download URL from it, so the repository URL
+stays `.../wasm32/Packages.adb`. A rebuild that changes a package's bytes
+without bumping its version still gets a new file name. The publish script
+therefore uploads APKs once and serves them as immutable. `Packages.adb` is the
+only object it replaces.
+
 Build the complete repository with:
 
 ```console
