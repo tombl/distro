@@ -87,6 +87,30 @@ guest_test("outbound TCP", async (t, fixture) => {
     });
   });
 
+  await t.test("delivers a response delimited by the server's FIN", async () => {
+    // No Content-Length: wget reads until EOF and only then closes its side,
+    // so the host must pass on the server's FIN while staying half-open.
+    const body = pattern_bytes(4096);
+    const server = createServer((socket) => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write("HTTP/1.0 200 OK\r\n\r\n");
+        socket.end(body);
+      });
+    });
+    const port = await listen(server);
+    try {
+      const result = await run(
+        `wget -O /tmp/out http://${fixture.network.gateway}:${port}/ && wc -c < /tmp/out`,
+      );
+      assert.deepEqual(result.status, { success: true, code: 0, signal: null }, result.stderr);
+      assert.equal(result.stdout.trim(), String(body.byteLength));
+      await assert_graceful(session_for(fixture, port));
+    } finally {
+      server.close();
+    }
+  });
+
   await t.test("ends the session's readable when the guest closes first", async () => {
     // The host echoes but keeps its side open until it sees the guest's FIN.
     const received = Promise.withResolvers<{ data: string; error?: Error }>();
@@ -150,9 +174,27 @@ guest_test("outbound TCP", async (t, fixture) => {
       const pipes = await session.pipes;
       assert.equal(session.signal.aborted, true);
       assert.match(String(session.signal.reason), /guest reset TCP connection/);
-      assert.ok(pipes.some((pipe) => pipe.status === "rejected"));
+      assert.deepEqual(
+        pipes.map((pipe) => pipe.status),
+        ["rejected", "rejected"],
+      );
     } finally {
       server.close();
     }
+  });
+
+  // Last: it closes the network.
+  await t.test("aborts a gracefully closed session when the network closes", async () => {
+    const body = pattern_bytes(1256);
+    await serve(body, async (url, port) => {
+      fixture.lingering.add(port);
+      const result = await run(`wget -qO- ${url} | wc -c`);
+      assert.equal(result.stdout.trim(), String(body.byteLength), result.stderr);
+      const session = session_for(fixture, port);
+      await assert_graceful(session);
+      fixture.network.close();
+      assert.equal(session.signal.aborted, true);
+      assert.match(String(session.signal.reason), /network closed/);
+    });
   });
 });

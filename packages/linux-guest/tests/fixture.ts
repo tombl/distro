@@ -32,6 +32,11 @@ export interface TestFixture {
   network: Network;
   /** Every outbound TCP session the guests have opened, in order. */
   outbound: OutboundSession[];
+  /**
+   * Target ports whose `connectTcp` keeps running after both pipes settle,
+   * until the session's signal aborts, like a host socket still flushing.
+   */
+  lingering: Set<number>;
   spawn(devices?: readonly Device[]): Promise<TestGuest>;
 }
 
@@ -46,6 +51,7 @@ export function guest_test(
 ) {
   test(name, async (t) => {
     const outbound: OutboundSession[] = [];
+    const lingering = new Set<number>();
     const network = createNetwork({
       async connectTcp(session) {
         const pipes = Promise.withResolvers<PromiseSettledResult<void>[]>();
@@ -70,6 +76,8 @@ export function guest_test(
         ];
         pipes.resolve(Promise.allSettled(piped));
         await Promise.all(piped);
+        if (lingering.has(session.target.port) && !session.signal.aborted)
+          await once(session.signal, "abort");
       },
       resolveDns: resolve4,
     });
@@ -104,6 +112,7 @@ export function guest_test(
       await fn(t, {
         network,
         outbound,
+        lingering,
         spawn,
       });
     } finally {

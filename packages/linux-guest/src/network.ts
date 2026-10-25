@@ -184,18 +184,22 @@ export interface TcpSession {
   readonly target: { readonly hostname: string; readonly port: number };
   /**
    * Bytes received from the guest. The first read starts the TCP handshake.
-   * Ends when the guest half-closes its side (FIN).
+   * Ends when the guest half-closes its side (FIN), and errors when the flow
+   * is reset.
    */
   readonly readable: ReadableStream<Uint8Array>;
   /**
    * Bytes sent to the guest. The first write or close starts the TCP
    * handshake. Closing it sends FIN once all written data is acknowledged.
+   * Errors when the flow is reset.
    */
   readonly writable: WritableStream<Uint8Array>;
   /**
    * Aborted when the flow is reset: by a guest RST, by aborting or cancelling
-   * the session's streams, or by the network closing. A connection that ends
-   * with a FIN in each direction does not abort it.
+   * the session's streams, or by `connectTcp` throwing. A connection that ends
+   * with a FIN in each direction does not abort it. Closing the network or
+   * detaching the guest aborts it while `connectTcp` is still running, even
+   * after a graceful close, so host resources still flushing are released.
    */
   readonly signal: AbortSignal;
 }
@@ -450,6 +454,7 @@ interface TcpFlow {
   handshake?: PromiseWithResolvers<TcpConnection>;
   handshake_timeout?: ReturnType<typeof setTimeout>;
   readable?: ReadableStreamDefaultController<Uint8Array>;
+  writable?: WritableStreamDefaultController;
   activation?: Promise<void>;
   activation_waiter?: PromiseWithResolvers<void>;
   abort?: AbortController;
@@ -604,7 +609,9 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  * const network = createNetwork({
  *   async connectTcp(session) {
  *     // Each direction closes independently, so keep the socket half-open
- *     // after the remote's FIN until the guest finishes sending too.
+ *     // after the remote's FIN until the guest finishes sending too. Needs
+ *     // Node 24.20 or 26.7: before them, a half-open Duplex.toWeb readable
+ *     // never ends at the remote's FIN.
  *     const socket = createConnection({ host: session.target.hostname,
  *       port: session.target.port, signal: session.signal, allowHalfOpen: true });
  *     await once(socket, "connect");
@@ -631,6 +638,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   const ethernet = ethernetNetwork();
   const attachments = new Map<number, Attachment>();
   const tcp_flows = new Map<string, TcpFlow>();
+  // Outbound flows whose `connectTcp` callback is still running. A graceful
+  // close removes the flow from `tcp_flows` while the callback may still be
+  // flushing host resources, which detaching or closing must still reach.
+  const tcp_sessions = new Set<TcpFlow>();
   const udp_flows = new Map<string, UdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
   let next_address = 2;
@@ -900,6 +911,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       } catch {
         // The stream may already have been closed by the peer.
       }
+      flow.writable?.error(error);
       flow.handshake?.reject(error);
     } else {
       try {
@@ -910,11 +922,22 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     }
   }
 
+  // A reset always reaches close_tcp_flow with an error: closing without one
+  // is the graceful path, which leaves the session's signal alone.
   function abort_tcp_flow(flow: TcpFlow, error?: unknown) {
     if (flow.closed) return;
     void send_tcp(flow, TcpFlag.RST | TcpFlag.ACK).catch(() => {});
-    flow.abort?.abort(error ?? new Error("TCP connection reset"));
-    close_tcp_flow(flow, error);
+    close_tcp_flow(flow, error ?? new Error("TCP connection reset"));
+  }
+
+  // Resets the flows of `guest`, or of every guest, including sessions whose
+  // flow closed gracefully but whose callback is still flushing.
+  function abort_tcp_flows(error: Error, guest?: Attachment) {
+    for (const flow of new Set([...tcp_flows.values(), ...tcp_sessions])) {
+      if (guest && flow.guest !== guest) continue;
+      abort_tcp_flow(flow, error);
+      flow.abort?.abort(error);
+    }
   }
 
   function expire_tcp_handshake(flow: TcpFlow, message: string) {
@@ -956,6 +979,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       },
     );
     const writable = new WritableStream<Uint8Array>({
+      start(controller) {
+        flow.writable = controller;
+      },
       async write(chunk) {
         await activate?.();
         return send_tcp_data(flow, chunk);
@@ -990,7 +1016,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       TcpFlag.RST | TcpFlag.ACK,
     );
     void send_ip(flow.guest.macAddress, flow.peer_ip, flow.guest.ip, IpProtocol.TCP, rst);
-    close_tcp_flow(flow, error);
+    close_tcp_flow(flow, error ?? new Error("TCP connection rejected"));
   }
 
   function start_outbound_tcp(guest: Attachment, ip: ParsedIpPacket, segment: ParsedTcpSegment) {
@@ -1016,6 +1042,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       peer_window: segment.window,
     };
     tcp_flows.set(key, flow);
+    tcp_sessions.add(flow);
     const abort = new AbortController();
     flow.abort = abort;
     expire_tcp_handshake(
@@ -1049,6 +1076,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     };
     Promise.resolve()
       .then(() => connectTcp(session))
+      .finally(() => tcp_sessions.delete(flow))
       .then(
         () => {
           if (flow.closed) return;
@@ -1475,10 +1503,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
           if (!attached) return;
           attached = false;
           attachments.delete(ip);
-          for (const flow of tcp_flows.values()) {
-            if (flow.guest === attachment)
-              abort_tcp_flow(flow, new Error("guest detached from network"));
-          }
+          abort_tcp_flows(new Error("guest detached from network"), attachment);
           for (const flow of udp_flows.values()) {
             if (flow.guest === attachment) {
               flow.closed = true;
@@ -1497,7 +1522,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     close() {
       if (closed) return;
       closed = true;
-      for (const flow of tcp_flows.values()) abort_tcp_flow(flow, new Error("network closed"));
+      abort_tcp_flows(new Error("network closed"));
       for (const flow of udp_flows.values()) {
         flow.closed = true;
         flow.controller.close();
