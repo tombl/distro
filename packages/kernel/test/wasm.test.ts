@@ -6,6 +6,7 @@ import test from "node:test";
 import { Worker } from "node:worker_threads";
 import { blockDevice } from "../src/virtio/block.ts";
 import { consoleDevice } from "../src/virtio/console.ts";
+import { fileSystemDevice } from "../src/virtio/fs.ts";
 import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
 import { VirtioController, close_virtio_device, virtio_imports } from "../src/virtio/core.ts";
@@ -546,6 +547,102 @@ test("a remote virtio worker owns chains but the main thread publishes completio
 
   await close_virtio_device(device);
   assert.equal(closes, 1);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("a remote virtio-fs read split across descriptors reaches guest memory", async () => {
+  const remote_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const contents = Uint8Array.from({ length: 100 }, (_, index) => index);
+  // The read returns views of the filesystem's own storage, which the remote
+  // transport must neither detach nor list twice in a transfer.
+  const served = fileSystemDevice(
+    {
+      root: {},
+      lookup: () => undefined,
+      getattr: () => ({ mode: 0o100644, size: BigInt(contents.byteLength) }),
+      open: () => "handle",
+      read: (_node, _handle, offset, length) =>
+        contents.subarray(Number(offset), Number(offset) + length),
+    },
+    { tag: "remote", cache: false },
+  );
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, served);
+  const device = await workerDevice(channel.port2);
+  const interrupts: number[] = [];
+  const errors: unknown[] = [];
+  const imports = virtio_imports({
+    memory: remote_memory,
+    devices: [device],
+    trigger_irq: (irq) => interrupts.push(irq),
+    on_error: (error) => errors.push(error),
+  });
+  const view = new DataView(remote_memory.buffer);
+  const AVAIL = 1 << 7;
+  const USED = 1 << 15;
+  const NEXT = 1 << 0;
+  const WRITE = 1 << 1;
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    view.setBigUint64(index * 16, BigInt(address), true);
+    view.setUint32(index * 16 + 8, length, true);
+    view.setUint16(index * 16 + 12, index, true);
+    view.setUint16(index * 16 + 14, flags | AVAIL, true);
+  };
+  const request_header = (address: number, length: number, opcode: number, unique: number) => {
+    view.setUint32(address, length, true);
+    view.setUint32(address + 4, opcode, true);
+    view.setBigUint64(address + 8, BigInt(unique), true);
+    view.setBigUint64(address + 16, 1n, true);
+  };
+  const completed = async (index: number) => {
+    for (let i = 0; i < 1000 && !(view.getUint16(index * 16 + 14, true) & USED); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.notEqual(view.getUint16(index * 16 + 14, true) & USED, 0);
+  };
+
+  imports.enable_vring(0, 1, 8, 0, 4);
+
+  // OPEN the root: a 40-byte header and 8-byte fuse_open_in, answered with a
+  // 16-byte header and 16-byte fuse_open_out.
+  request_header(1024, 48, 14, 1);
+  descriptor(0, 1024, 48, NEXT);
+  descriptor(1, 2048, 32, WRITE);
+  imports.notify(0, 1);
+  await completed(0);
+  assert.equal(view.getInt32(2048 + 4, true), 0);
+  const fh = view.getBigUint64(2048 + 16, true);
+
+  // READ 40 bytes into two writable descriptors. The first holds the 16-byte
+  // reply header and 8 bytes of data, the second the remaining 32, so the
+  // reply's data spans two outputs that share one buffer.
+  request_header(1100, 80, 15, 2);
+  view.setBigUint64(1140, fh, true);
+  view.setBigUint64(1148, 0n, true);
+  view.setUint32(1156, 40, true);
+  descriptor(2, 1100, 80, NEXT);
+  descriptor(3, 3072, 24, NEXT | WRITE);
+  descriptor(4, 3200, 64, WRITE);
+  imports.notify(0, 1);
+  await completed(2);
+
+  assert.equal(view.getUint32(3072, true), 56);
+  assert.equal(view.getInt32(3072 + 4, true), 0);
+  assert.equal(view.getBigUint64(3072 + 8, true), 2n);
+  assert.equal(view.getUint32(2 * 16 + 8, true), 56);
+  assert.deepEqual(
+    [
+      ...new Uint8Array(remote_memory.buffer, 3088, 8),
+      ...new Uint8Array(remote_memory.buffer, 3200, 32),
+    ],
+    [...contents.subarray(0, 40)],
+  );
+  assert.equal(contents.byteLength, 100, "the filesystem's storage was not detached");
+  assert.deepEqual(interrupts, [4, 4]);
+  assert.deepEqual(errors, []);
+
+  await close_virtio_device(device);
   channel.port1.close();
   channel.port2.close();
 });
