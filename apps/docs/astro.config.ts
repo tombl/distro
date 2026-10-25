@@ -49,6 +49,10 @@ export default defineConfig({
     server: {
       allowedHosts: ["lowland-docs.via.tombl.net"],
     },
+    // The examples' type checker loads its standard library in chunks.
+    worker: {
+      format: "es",
+    },
   },
   // Runnable examples boot machines, which need shared memory, so every page
   // is cross-origin isolated. public/_headers sends the same in production.

@@ -24,6 +24,6 @@ in
     };
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-roifLz3wkOgtSFCOuGX5zIvYNP69/9wXXUdxM5FRNkw=";
+    hash = "sha256-ZTBTZg2PycKS8UBC/x6SIr1fgKUZtdArvTLqYuqLCO8=";
   };
 }

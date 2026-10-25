@@ -77,9 +77,9 @@ async function run(example: HTMLElement) {
   frame.title = "Example runner";
   frame.hidden = true;
   frame.allow = "cross-origin-isolated";
-  runs.set(example, { frame, code, quiet: false });
+  // The placeholder stays until the example prints something.
   status(example, "Running...");
-  runs.get(example)!.quiet = true;
+  runs.set(example, { frame, code, quiet: true });
   example.append(frame);
 }
 
@@ -103,7 +103,32 @@ addEventListener("message", (event: MessageEvent<FrameMessage>) => {
   }
 });
 
+// The editor loads once an example comes into view, so the code is editable by
+// the time a reader reaches it.
+const visible = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const example = entry.target as HTMLElement;
+      visible.unobserve(example);
+      void import("./example-editor").then(({ mountEditor }) => {
+        const code = example.querySelector<HTMLElement>("[data-example-code]")!;
+        const editor = mountEditor(
+          example,
+          code,
+          example.dataset.source ?? "",
+          example.dataset.lang ?? "ts",
+        );
+        sources.set(example, editor.getText);
+      });
+    }
+  },
+  { rootMargin: "50% 0px" },
+);
+
 for (const example of document.querySelectorAll<HTMLElement>("[data-example]")) {
+  visible.observe(example);
+  parts(example).button.hidden = false;
   parts(example).button.addEventListener("click", () => {
     if (runs.has(example)) {
       finish(example);
