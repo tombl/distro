@@ -65,17 +65,19 @@ web streams:
 ```js
 const process = await guest.exec(["tr", "a-z", "A-Z"]);
 
+const output = new Response(process.stdout).text();
+
 const writer = process.stdin.getWriter();
 await writer.write(new TextEncoder().encode("shout\n"));
 await writer.close();
 
-console.log(await new Response(process.stdout).text()); // "SHOUT\n"
+console.log(await output); // "SHOUT\n"
 console.log(await process.status);
 ```
 
-Standard input is buffered on the host, so writing all of the input before reading any output
-cannot deadlock. Close the writer to send end of file. A program that reads its standard input
-waits until you do.
+`write()` resolves once the bytes are queued on the host, but `close()` waits until the guest
+has read all of them. Start reading the output before you close standard input. Otherwise a
+program that fills its output pipe stops reading its input, and `close()` never resolves.
 
 Up to eight programs started by `run()` and `exec()` can be running at a time. Further calls
 wait for a slot instead of failing.
@@ -95,8 +97,8 @@ await guest.run(["sleep", "30"], { signal: AbortSignal.timeout(1000) });
 Here Lowland differs from Linux on real hardware. The kernel cannot interrupt WebAssembly while
 it runs, so a program receives signals only when it makes a system call. A program stuck in a
 loop that makes no system calls ignores every signal, `SIGKILL` included, and keeps its CPU.
-With `cpus: 1`, nothing else in the machine runs until it makes one. The abort still rejects
-your call, but the program keeps running.
+With `cpus: 1`, nothing else in the machine runs until it makes one. The pending call does
+not reject either, because it waits for the program to be reaped first.
 
 If you run code you do not control, enforce the deadline by closing the machine. That always
 works.
@@ -193,8 +195,7 @@ for (;;) {
 }
 ```
 
-`setsid cttyhack` makes `/dev/hvc0` the shell's controlling terminal. Without one, Ctrl+C
-reaches nothing.
+`setsid cttyhack` makes `/dev/hvc0` the shell's controlling terminal, so Ctrl+C works.
 
 Kernel messages from early boot go nowhere unless you add `bootConsole(output)`. Add it when a
 machine fails before the guest agent is ready, which usually means the image is wrong.

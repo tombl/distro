@@ -98,13 +98,15 @@ Some behavior to know before you rely on it:
   fail with `EROFS`.
 - **Devices are fixed at boot.** Attach every directory you might share when the machine boots.
   You can mount and unmount it later, but you cannot add a device.
-- **The guest caches metadata.** File attributes and directory listings are cached for one
-  second. If other host programs change the directory while the guest runs, pass
-  `cache: false` to `fileSystemDevice()`. File contents the guest has read can still be cached.
+- **The guest caches metadata.** File attributes and name lookups are cached for one second.
+  Directory listings are always read fresh. If other host programs change files while the guest
+  runs, pass `cache: false` to `fileSystemDevice()`. File contents the guest has read can still
+  be cached.
 - **`BrowserFS` emulates POSIX.** The browser file system API has no permissions, ownership or
-  atomic rename, so `BrowserFS` stores what it needs alongside the files. An operation that
-  fails partway can leave that state behind. The [reference](/reference/guest/#BrowserFS) has
-  the details.
+  atomic rename. `BrowserFS` keeps modes, owners and timestamps in memory, so they reset when
+  you create a new `BrowserFS`. Rename copies and then deletes, so one that fails partway can
+  lose the old destination, leave a partial new one, or leave both names.
+  The [reference](/reference/guest/#BrowserFS) has the details.
 - **`NodeFS` confines paths, within limits.** It keeps the guest inside the shared directory,
   but cannot guarantee that while another host process moves things around in it. Share a
   directory that your application owns.
