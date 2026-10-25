@@ -9,6 +9,7 @@
   name,
   root,
   format,
+  compression,
   label,
   size,
   passthru ? { },
@@ -21,11 +22,27 @@ assert lib.assertMsg (builtins.elem format [
   "erofs"
   "ext4"
 ]) "mkImage format must be erofs or ext4, got ${format}";
+assert lib.assertMsg (builtins.elem compression [
+  "deflate"
+  "lzma"
+  "none"
+]) "mkImage compression must be deflate, lzma, or none, got ${compression}";
 assert lib.assertMsg (
   builtins.isString label
   && builtins.stringLength label <= 15
   && builtins.match "[A-Za-z0-9._-]+" label != null
 ) "mkImage label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens";
+let
+  # 64 KiB physical clusters with tail packing; mkfs.erofs's own defaults
+  # compress far worse. No lz4: the NOMMU kernel BUG()s mapping its buffers.
+  compressionFlags =
+    {
+      deflate = "-zdeflate,level=9 -C65536 -Eztailpacking";
+      lzma = "-zlzma -C65536 -Eztailpacking";
+      none = "";
+    }
+    .${compression};
+in
 pkgs.runCommand "${name}.${format}"
   {
     nativeBuildInputs = [
@@ -59,7 +76,7 @@ pkgs.runCommand "${name}.${format}"
       else
         ''
           fakeroot sh -c 'chown -R 0:0 root && exec mkfs.erofs --all-root --all-time \
-            -T 0 -U 00000000-0000-0000-0000-000000000000 -L "$1" -x-1 "$0" root' \
+            -T 0 -U 00000000-0000-0000-0000-000000000000 -L "$1" -x-1 ${compressionFlags} "$0" root' \
             "$out" ${lib.escapeShellArg label}
         ''
     }
