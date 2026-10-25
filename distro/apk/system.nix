@@ -106,14 +106,27 @@ let
 
         # Product configuration is layered on the installed packages after the
         # install; image encoding applies root ownership to the whole tree.
-        # Sources come from the store without write permission, so a copy
-        # without a requested mode gains owner write: 0644, or 0755 when
-        # executable.
+        # Sources come from the store without write permission, so copied
+        # entries gain owner write: 0644, or 0755 when executable. A directory
+        # onto an existing directory merges into it, where cp -a would nest it
+        # under its store name, and the existing directory keeps its mode.
+        # A requested mode applies to the destination itself, never to the
+        # entries copied beneath it.
+        place() {
+          mkdir -p "$(dirname "$2")"
+          if [ -d "$1" ] && [ -d "$2" ]; then
+            existing=$(stat -c %a "$2")
+            cp -a "$1/." "$2"
+            chmod "$existing" "$2"
+            (cd "$1" && find . -mindepth 1 ! -type l -print0) | (cd "$2" && xargs -0 -r chmod u+w)
+          else
+            cp -a "$1" "$2"
+            chmod -R u+w "$2"
+          fi
+        }
         ${lib.concatMapStringsSep "\n" (path: ''
           destination="$root"/${lib.escapeShellArg (lib.removePrefix "/" path)}
-          mkdir -p "$(dirname "$destination")"
-          cp -a ${lib.escapeShellArg (toString normalizedFiles.${path}.source)} "$destination"
-          chmod -R u+w "$destination"
+          place ${lib.escapeShellArg (toString normalizedFiles.${path}.source)} "$destination"
           ${lib.optionalString (normalizedFiles.${path}.mode != null) ''
             chmod ${lib.escapeShellArg normalizedFiles.${path}.mode} "$destination"
           ''}
