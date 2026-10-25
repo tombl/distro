@@ -37,6 +37,6 @@ in
     };
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-SjFFqzSHucHf/rXr1v7/rTH2hlNghBFcU4KZOFuXEnc=";
+    hash = "sha256-2xRK+UqVT9ZkR4ackl29TljlMDUCD/CM1OJ0wcebwAk=";
   };
 }
