@@ -157,6 +157,11 @@ export interface FSSetAttributes {
 export interface FSDirectoryEntry<TNode> {
   name: string;
   node: TNode;
+  /**
+   * The entry's mode, if the backend already knows it. Only the file type
+   * bits are used. Without it, READDIR calls getattr for the entry's type.
+   */
+  mode?: number;
 }
 
 export interface FSStat {
@@ -489,7 +494,7 @@ interface HandleRecord<TNode, THandle> {
   handle: THandle;
   directory: boolean;
   /** A directory's entries, read by its first READDIR and resumed by `off`. */
-  entries?: { name: string; node: TNode }[];
+  entries?: { name: string; node: TNode; mode?: number }[];
 }
 
 function mode_type(mode: number): keyof typeof DirentType {
@@ -1114,7 +1119,11 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           handle.entries = [];
           const directory_entries = await filesystem.readdir(handle.node.node, handle.handle);
           for (const entry of await async_iterable(directory_entries)) {
-            handle.entries.push({ name: validate_name(entry.name), node: entry.node });
+            handle.entries.push({
+              name: validate_name(entry.name),
+              node: entry.node,
+              mode: entry.mode,
+            });
           }
         }
         const listed = handle.entries;
@@ -1125,11 +1134,11 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const transient: NodeRecord<TNode>[] = [];
         const limit = Math.min(request.size, capacity - FuseOutHeader.size);
         const entry_at = (index: number) => {
-          if (index < 2) return entries[index]!;
-          const { name, node } = listed[index - 2]!;
+          if (index < 2) return { ...entries[index]!, mode: undefined };
+          const { name, node, mode } = listed[index - 2]!;
           const record = record_for_node(node, handle.node);
           transient.push(record);
-          return { name, record };
+          return { name, record, mode };
         };
         try {
           for (let index = offset; index < listed.length + 2; index++) {
@@ -1138,12 +1147,12 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
             // FUSE dirents are padded to 8 bytes: 24-byte header + name.
             const record_length = (24 + name.byteLength + 7) & ~7;
             if (payload.length + record_length > limit) break;
-            const attributes = await filesystem.getattr(entry.record.node);
+            const mode = entry.mode ?? (await filesystem.getattr(entry.record.node)).mode;
             payload.alloc(FuseDirent).value = {
               ino: entry.record.id,
               off: BigInt(index + 1),
               namelen: name.byteLength,
-              type: DirentType[mode_type(attributes.mode)],
+              type: DirentType[mode_type(mode)],
             };
             payload.append(name);
             payload.bump(-payload.length & 7);
