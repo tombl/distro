@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { blockDevice, bootMachine, type VsockDevice, vsockDevice } from "@lowland/kernel";
+import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { GuestSession } from "../src/conn.ts";
 import { GuestBootError, guestAgent, ProtocolError, SystemError } from "../src/index.ts";
 import {
@@ -238,6 +239,108 @@ test("boots an uncleanly closed ext4 system disk read-only", async () => {
     await machine.closed;
   }
   assert.deepEqual(disk, original);
+});
+
+async function read_back(disk: Uint8Array<ArrayBuffer>) {
+  const { agent: guest, machine } = await boot(ext4_root_device(disk));
+  try {
+    return await guest.fs.readTextFile("/close-sync-test");
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+}
+
+test("closing the machine keeps writes to an ext4 system disk", async (t) => {
+  await t.test("with close()", async () => {
+    const disk = new Uint8Array(ext4_rootfs);
+    const { agent: guest, machine } = await boot(ext4_root_device(disk));
+    await guest.fs.writeTextFile("/close-sync-test", "closed\n");
+    machine.close();
+    await machine.closed;
+    assert.equal(await read_back(disk), "closed\n");
+  });
+
+  await t.test("with await using", async () => {
+    const disk = new Uint8Array(ext4_rootfs);
+    {
+      const guest = guestAgent();
+      await using _machine = await bootMachine({
+        cpus: 1,
+        plugins: [ext4_root_device(disk), guest],
+      });
+      await guest.fs.writeTextFile("/close-sync-test", "disposed\n");
+    }
+    assert.equal(await read_back(disk), "disposed\n");
+  });
+
+  await t.test("from a closing hook listed after the agent", async () => {
+    const disk = new Uint8Array(ext4_rootfs);
+    const guest = guestAgent();
+    const late_writer: MachinePlugin = {
+      configure() {},
+      async closing() {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await guest.fs.writeTextFile("/close-sync-test", "late\n");
+      },
+    };
+    const machine = await bootMachine({
+      cpus: 1,
+      plugins: [ext4_root_device(disk), guest, late_writer],
+    });
+    machine.close();
+    await machine.closed;
+    assert.equal(await read_back(disk), "late\n");
+  });
+});
+
+test("closing before the agent is ready does not wait for it", async () => {
+  let machine_closed: Promise<void> | undefined;
+  const closer: MachinePlugin = {
+    configure() {},
+    booted(machine) {
+      machine_closed = machine.closed;
+      setTimeout(() => machine.close(), 0);
+    },
+  };
+  await assert.rejects(
+    bootMachine({ cpus: 1, plugins: [ext4_root_device(), closer, guestAgent()] }),
+    /machine closed before guest agent became ready/,
+  );
+  assert(machine_closed);
+  await machine_closed;
+});
+
+test("a sync stuck in host storage forces teardown", async () => {
+  const disk = new Uint8Array(ext4_rootfs);
+  const stuck = Promise.withResolvers<void>();
+  let hang = false;
+  const root = blockDevice({
+    capacity: disk.byteLength,
+    read(offset, target) {
+      const source = disk.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+    write(offset, data) {
+      disk.set(data, offset);
+      return data.byteLength;
+    },
+    flush() {
+      if (hang) return stuck.promise;
+    },
+  });
+  const guest = guestAgent({ syncTimeoutMs: 1000 });
+  const machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
+  await guest.fs.writeTextFile("/close-sync-test", "stuck\n");
+  hang = true;
+  machine.close();
+  await assert.rejects(machine.closed, /did not sync its filesystems/);
+
+  // The abandoned flush failing later reaches the finished machine as a no-op.
+  stuck.reject(new Error("late flush failure"));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await assert.rejects(machine.closed, /did not sync its filesystems/);
 });
 
 test("rejects a system disk with the wrong label", async () => {

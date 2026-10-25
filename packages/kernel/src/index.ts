@@ -2,7 +2,7 @@
 
 import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
-import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
+import { configure_machine, run_machine_booted, run_machine_closing } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
@@ -70,7 +70,17 @@ export interface Machine extends Disposable, AsyncDisposable {
   readonly memory: WebAssembly.Memory;
   /** Settles when closed, rejecting if the machine failed unexpectedly. */
   readonly closed: Promise<void>;
-  /** Idempotently shuts down the workers and owned devices. */
+  /**
+   * Idempotently shuts down the workers and owned devices, after running the
+   * plugins' `closing` hooks. Returns before the hooks finish, as does
+   * `Symbol.dispose`; use `await using` or await `closed` for a durable
+   * shutdown.
+   *
+   * Teardown normally waits for in-flight device requests. If a closing hook
+   * rejects, teardown is forced: workers are terminated without waiting, so a
+   * device whose storage call never settles never runs its own `close()`, and
+   * `closed` rejects with the hook's error.
+   */
   close(): void;
 }
 
@@ -204,18 +214,28 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_controller.enqueue(new Uint8Array(message));
     }
   };
-  const finish = () => {
+  // A forced teardown stops waiting for device close, which waits for
+  // in-flight requests that may be stuck in host storage forever. It can be
+  // requested after an ordinary teardown has already started.
+  const force_requested = Promise.withResolvers<void>();
+  let forced = false;
+  // Idempotent: a device request that settles after a forced teardown can
+  // still reach fail(), which must then be a no-op.
+  const finish = (force = false) => {
+    if (force && !forced) {
+      forced = true;
+      force_requested.resolve();
+    }
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
-      try {
-        await bus.close();
-      } catch (device_error) {
-        if (!failed) {
+      const device_close = bus.close().catch((device_error) => {
+        if (!failed && !forced) {
           failed = true;
           finish_error = device_error;
         }
-      }
+      });
+      await Promise.race([device_close, force_requested.promise]);
       try {
         await Promise.all(Array.from(workers, (worker) => worker.terminate()));
       } catch (termination_error) {
@@ -230,14 +250,25 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     })();
     return finish_promise;
   };
-  const fail = (error: unknown) => {
+  const fail = (error: unknown, force = false) => {
     if (!failed) {
       failed = true;
       finish_error = error;
     }
-    return finish();
+    return finish(force);
   };
-  const close = () => void finish();
+  let closing = false;
+  const close = () => {
+    if (closing || closed) return;
+    closing = true;
+    // A guest that powers off or fails while plugins are closing has already
+    // finished the machine; only an orderly close reports a closing failure.
+    void run_machine_closing(plugins).then(
+      () => finish(),
+      // Either way, a failed hook forces a teardown that may be stuck.
+      (error) => (closed ? finish(true) : fail(error, true)),
+    );
+  };
 
   try {
     const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
