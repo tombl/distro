@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      statuses: write
     outputs:
       heavy-checks: ${{ steps.plan.outputs.heavy-checks }}
     steps:
@@ -26,10 +27,44 @@ jobs:
       - uses: nixbuild/nix-quick-install-action@v35
       - id: plan
         name: Discover heavy checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Fork pull requests get a read-only token.
+          POST_STATUSES: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          checks=$(nix eval --json '.#ciJobs.x86_64-linux.heavyChecks' \
-            --apply 'checks: builtins.attrNames checks')
-          echo "heavy-checks=$(jq --compact-output '{check: .}' <<< "$checks")" \
+          status() {
+            [ "$POST_STATUSES" = true ] || return 0
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/statuses/$STATUS_SHA" \
+              --field state="$2" \
+              --field context="checks/$1" \
+              --field description="$3" \
+              --field target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              >/dev/null
+          }
+
+          # A check whose outputs are already in the binary cache passed on an
+          # identical derivation, so it gets a status instead of a runner.
+          outputs=$(nix eval --json '.#ciJobs.x86_64-linux.heavyChecks' --apply '
+            builtins.mapAttrs (
+              _: derivation: map (output: (builtins.getAttr output derivation).outPath) derivation.outputs
+            )
+          ')
+
+          pending=()
+          while read -r check; do
+            mapfile -t paths < <(jq --raw-output --arg check "$check" '.[$check][]' <<< "$outputs")
+            if .github/ci/cached.sh "${paths[@]}"; then
+              status "$check" success "Cached result"
+            else
+              pending+=("$check")
+            fi
+          done < <(jq --raw-output 'keys[]' <<< "$outputs")
+
+          echo "${#pending[@]} of $(jq length <<< "$outputs") heavy checks need a runner"
+          echo "heavy-checks=$(jq --compact-output --null-input '$ARGS.positional' --args -- "${pending[@]}")" \
             >> "$GITHUB_OUTPUT"
 
   build:
@@ -49,30 +84,38 @@ jobs:
       - name: Build checks
         env:
           GH_TOKEN: ${{ github.token }}
+          # On pull requests GITHUB_SHA is the synthetic merge commit, whose
+          # statuses never appear on the pull request.
+          STATUS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Fork pull requests get a read-only token.
+          POST_STATUSES: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           checks_file="$RUNNER_TEMP/checks.json"
           nix eval --json '.#ciJobs.x86_64-linux' --apply '
             jobs:
             let
-              describeBuilds = builtins.mapAttrs (_: derivation: { drv = derivation.drvPath; });
-              describeChecks = builtins.mapAttrs (
+              describe = builtins.mapAttrs (
                 _: derivation:
                 {
                   drv = derivation.drvPath;
-                  outputs = map (output: (builtins.getAttr output derivation).outPath) derivation.outputs;
+                  # The stdenv packages have no outputs attribute.
+                  outputs = map (output: (builtins.getAttr output derivation).outPath) (
+                    derivation.outputs or [ "out" ]
+                  );
                 }
               );
             in
             {
-              builds = describeBuilds jobs.builds;
-              checks = describeChecks jobs.checks;
+              builds = describe jobs.builds;
+              checks = describe jobs.checks;
             }
           ' > "$checks_file"
 
           status() {
+            [ "$POST_STATUSES" = true ] || return 0
             gh api \
               --method POST \
-              "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              "repos/$GITHUB_REPOSITORY/statuses/$STATUS_SHA" \
               --field state="$2" \
               --field context="checks/$1" \
               --field description="$3" \
@@ -82,34 +125,52 @@ jobs:
 
           mapfile -t builds < <(jq --raw-output '.builds | keys[]' "$checks_file")
           mapfile -t checks < <(jq --raw-output '.checks | keys[]' "$checks_file")
+          outputs() {
+            jq --raw-output --arg kind "$1" --arg name "$2" '.[$kind][$name].outputs[]' "$checks_file"
+          }
+
+          # Cached outputs need neither a rebuild nor a download.
           installables=()
           for build in "${builds[@]}"; do
-            drv=$(jq --raw-output --arg build "$build" '.builds[$build].drv' "$checks_file")
-            installables+=("$drv^*")
+            mapfile -t paths < <(outputs builds "$build")
+            if ! .github/ci/cached.sh "${paths[@]}"; then
+              drv=$(jq --raw-output --arg build "$build" '.builds[$build].drv' "$checks_file")
+              installables+=("$drv^*")
+            fi
           done
+          declare -A cached_checks=()
           for check in "${checks[@]}"; do
-            status "$check" pending "Build in progress"
-            drv=$(jq --raw-output --arg check "$check" '.checks[$check].drv' "$checks_file")
-            installables+=("$drv^*")
+            mapfile -t paths < <(outputs checks "$check")
+            if .github/ci/cached.sh "${paths[@]}"; then
+              cached_checks[$check]=1
+              status "$check" success "Cached result"
+            else
+              status "$check" pending "Build in progress"
+              drv=$(jq --raw-output --arg check "$check" '.checks[$check].drv' "$checks_file")
+              installables+=("$drv^*")
+            fi
           done
+          echo "${#installables[@]} of $((${#builds[@]} + ${#checks[@]})) builds and checks are not cached"
 
-          set +e
-          nix build \
-            --max-jobs auto \
-            --keep-going \
-            --no-link \
-            --print-build-logs \
-            "${installables[@]}"
-          build_status=$?
-          set -e
+          build_status=0
+          if [ "${#installables[@]}" -gt 0 ]; then
+            set +e
+            nix build \
+              --max-jobs auto \
+              --keep-going \
+              --no-link \
+              --print-build-logs \
+              "${installables[@]}"
+            build_status=$?
+            set -e
+          fi
 
           for check in "${checks[@]}"; do
-            mapfile -t outputs < <(
-              jq --raw-output --arg check "$check" '.checks[$check].outputs[]' "$checks_file"
-            )
+            [ -z "${cached_checks[$check]:-}" ] || continue
+            mapfile -t paths < <(outputs checks "$check")
             state=success
             description="Build passed"
-            for output in "${outputs[@]}"; do
+            for output in "${paths[@]}"; do
               if ! nix path-info "$output" >/dev/null 2>&1; then
                 state=failure
                 description="Build failed"
@@ -138,9 +199,11 @@ jobs:
     needs:
       - plan
       - build
+    if: needs.plan.outputs.heavy-checks != '[]'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.heavy-checks) }}
+      matrix:
+        check: ${{ fromJSON(needs.plan.outputs.heavy-checks) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -161,7 +224,11 @@ jobs:
     needs:
       - build
       - heavy-check
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    # heavy-check is skipped when every heavy check is cached.
+    if: >-
+      !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
+      github.event.pull_request.head.repo.full_name == 'tombl/distro')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -207,7 +274,9 @@ jobs:
     needs:
       - build
       - heavy-check
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'tombl/distro'
+    if: >-
+      !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'tombl/distro'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
