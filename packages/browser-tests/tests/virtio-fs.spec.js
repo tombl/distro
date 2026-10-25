@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./opfs.js";
 
 test("adapts OPFS to the virtio filesystem contract", async ({ page }) => {
   page.on("pageerror", (error) => console.error(`[browser] ${error.stack ?? error}`));
