@@ -8,7 +8,12 @@
 pkgs.stdenvNoCC.mkDerivation {
   pname = "lowland-kernel";
   inherit ((builtins.fromJSON (builtins.readFile ../../packages/kernel/package.json))) version;
-  src = ../..;
+  src = node-workspace.source [
+    "tsconfig.base.json"
+    "packages/bytes"
+    "packages/kernel"
+    "scripts/pack-package.mjs"
+  ];
   env.CI = "true";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [
