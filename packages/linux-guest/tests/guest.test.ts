@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { blockDevice, bootMachine } from "@lowland/kernel";
 import { guestAgent, SystemError } from "../src/index.ts";
-import { ext4_root_device, root_device, wrong_root_device } from "./assets.ts";
+import {
+  ext4_root_device,
+  ext4_rootfs,
+  readonly_ext4_root_device,
+  root_device,
+  wrong_root_device,
+} from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
 
@@ -106,16 +112,41 @@ test("rejects more than one guest agent", async () => {
 });
 
 test("boots a writable ext4 system disk", async () => {
-  const { agent: guest, machine } = await boot(ext4_root_device());
+  const disk = new Uint8Array(ext4_rootfs);
+  {
+    const { agent: guest, machine } = await boot(ext4_root_device(disk));
+    try {
+      await guest.fs.writeTextFile("/persistent-write-test", "writable\n");
+      assert.equal(await guest.fs.readTextFile("/persistent-write-test"), "writable\n");
+      const probe = await guest.exec(["sh", "-c", "grep -q ' / ext4 rw' /proc/mounts && sync"]);
+      assert.deepEqual(await probe.status, { success: true, code: 0, signal: null });
+    } finally {
+      machine.close();
+      await machine.closed;
+    }
+  }
+  const { agent: guest, machine } = await boot(ext4_root_device(disk));
   try {
-    await guest.fs.writeTextFile("/persistent-write-test", "writable\n");
     assert.equal(await guest.fs.readTextFile("/persistent-write-test"), "writable\n");
-    const probe = await guest.exec(["sh", "-c", "grep -q ' / ext4 rw' /proc/mounts"]);
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+});
+
+test("boots a read-only ext4 system disk beneath a writable overlay", async () => {
+  const original = new Uint8Array(ext4_rootfs);
+  const { agent: guest, machine } = await boot(readonly_ext4_root_device());
+  try {
+    await guest.fs.writeTextFile("/etc/overlay-write-test", "writable\n");
+    assert.equal(await guest.fs.readTextFile("/etc/overlay-write-test"), "writable\n");
+    const probe = await guest.exec(["sh", "-c", "grep -q ' / overlay ' /proc/mounts && sync"]);
     assert.deepEqual(await probe.status, { success: true, code: 0, signal: null });
   } finally {
     machine.close();
     await machine.closed;
   }
+  assert.ok(ext4_rootfs.equals(original));
 });
 
 test("rejects a system disk with the wrong label", async () => {
