@@ -115,8 +115,46 @@ with apk:
 await guest.run(["apk", "add", "curl"]);
 ```
 
+## Building images
+
+`@lowland/image/build` builds a custom system image in Node. It boots a builder
+machine from an image shipped in this package, so it needs no other tools:
+
+```js
+import { buildImage } from "@lowland/image/build";
+
+await buildImage({
+  packages: ["busybox", "curl"],
+  files: {
+    "/usr/local/bin/app": { source: "./build/app", mode: "0755" },
+  },
+  links: { "/usr/bin/app": "/usr/local/bin/app" },
+  output: "app.erofs",
+});
+```
+
+Package names resolve from the public repository with signature checks, and
+the builder downloads them through the host network. Paths to local `.apk`
+files are installed without signature checks. A build whose packages are all
+local files uses no network.
+
+The default format is EROFS, which the guest agent mounts read-only. Pass
+`format: "ext4"` for a writable image, with `size` setting its capacity. The
+label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
+it with `blockDevice()` from `@lowland/kernel`.
+
+The same build is available from the command line:
+
+```sh
+npx @lowland/image build --package busybox --package curl \
+  --file ./build/app:/usr/local/bin/app:0755 \
+  --link /usr/bin/app=/usr/local/bin/app \
+  --output app.erofs
+```
+
 ## License
 
 The TypeScript and JavaScript sources are available under the MIT license. The
-published image also contains GPL-2.0-only BusyBox and apk-tools, MIT-licensed
-musl, and the MPL-2.0 Mozilla CA certificate bundle.
+published images also contain GPL-2.0-only BusyBox and apk-tools, MIT-licensed
+musl, and the MPL-2.0 Mozilla CA certificate bundle. The builder image also
+contains GPL-2.0-only e2fsprogs and GPL-2.0-or-later erofs-utils.
