@@ -38,11 +38,11 @@ export function ext4_root_device(disk = new Uint8Array(ext4_rootfs)) {
   });
 }
 
-export function readonly_ext4_root_device() {
+export function readonly_ext4_root_device(disk: Uint8Array = ext4_rootfs) {
   return blockDevice({
-    capacity: ext4_rootfs.byteLength,
+    capacity: disk.byteLength,
     read(offset, target) {
-      const source = ext4_rootfs.subarray(offset, offset + target.byteLength);
+      const source = disk.subarray(offset, offset + target.byteLength);
       target.set(source);
       return source.byteLength;
     },
