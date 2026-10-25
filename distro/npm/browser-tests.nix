@@ -13,26 +13,28 @@ let
     {
       project,
       browser ? project,
-      built ? { },
       assets ? [ ],
     }:
     playwright.mkCheck {
       name = "browser-tests-${project}";
       package = "@lowland/browser-tests";
       directory = "packages/browser-tests";
-      paths = [ "apps/site/service-worker.js" ];
+      paths = [ "apps/site/service-worker.ts" ];
       assets = test-assets.select assets;
       inherit project browser built;
     };
+
+  # `pnpm check` typechecks src/app.ts against the workspace packages, so
+  # every project needs them built.
+  built = {
+    inherit bytes kernel;
+    linux-guest = linux-guest.package;
+  };
 
   engine =
     project:
     check {
       inherit project;
-      built = {
-        inherit bytes kernel;
-        linux-guest = linux-guest.package;
-      };
       assets = [
         "boot.cpio"
         "opfs-disk-worker.js"
@@ -44,7 +46,7 @@ let
     };
 in
 # The suite runs from the source tree, so the package itself is only the
-# owner of its checks, one per project in playwright.config.js.
+# owner of its checks, one per project in playwright.config.ts.
 pkgs.runCommand "browser-tests" { } "mkdir $out"
 // {
   checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (

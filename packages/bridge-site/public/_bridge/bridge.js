@@ -1,3 +1,4 @@
+// @ts-check
 // The worker script sits at the root (not under /_bridge/) because a worker
 // can only claim its script's directory as scope without extra headers.
 await navigator.serviceWorker.register("/_bridge_sw.js", { scope: "/" });
@@ -21,7 +22,7 @@ window.addEventListener("message", ({ data, source, origin, ports }) => {
   if (embedder === null) embedder = origin;
   else if (origin !== embedder) return;
   if (data?.type !== "bridge:port") return;
-  registration.active.postMessage({ type: "bridge:port" }, ports);
+  registration.active?.postMessage({ type: "bridge:port" }, [...ports]);
 });
 
 announce();

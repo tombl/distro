@@ -12,7 +12,7 @@ pkgs.stdenvNoCC.mkDerivation {
     "tsconfig.base.json"
     "packages/bytes"
     "packages/kernel"
-    "scripts/pack-package.mjs"
+    "scripts/pack-package.ts"
   ];
   env.CI = "true";
   pnpmDeps = node-workspace.deps;
@@ -39,7 +39,7 @@ pkgs.stdenvNoCC.mkDerivation {
     runHook preInstall
 
     mkdir -p $out
-    node scripts/pack-package.mjs packages/kernel --out $out/package.tgz
+    node scripts/pack-package.ts packages/kernel --out $out/package.tgz
     tar -xzf $out/package.tgz --strip-components=1 -C $out
 
     runHook postInstall

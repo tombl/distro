@@ -1,0 +1,6 @@
+{
+  "extends": "../../../tsconfig.spec.json",
+  // hooks.d.ts reaches client.js, which tsconfig.page.json checks.
+  "compilerOptions": { "allowJs": true },
+  "include": ["*.ts", "pages/hooks.d.ts"]
+}

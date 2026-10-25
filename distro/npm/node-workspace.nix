@@ -69,6 +69,10 @@ rec {
         [
           "scripts/test-assets.ts"
           "tsconfig.base.json"
+          "tsconfig.node.json"
+          "tsconfig.page.json"
+          "tsconfig.spec.json"
+          "tsconfig.worker.json"
         ]
         ++ paths
       );
@@ -108,6 +112,6 @@ rec {
     };
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-yDm7snJvKecVPvhvOrU3plUZsEdrXUwGLhEzyubAN88=";
+    hash = "sha256-meOBgM0vTcCxEvENHe6LSzYM4XSUQttsw8X9/DvshI8=";
   };
 }

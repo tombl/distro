@@ -1,0 +1,12 @@
+// The site's workers. index.html's inline script and vendor/ are not checked.
+{
+  "extends": "../../tsconfig.worker.json",
+  "compilerOptions": {
+    // The OPFS worker imports the kernel's private virtio modules so its
+    // bundle carries only the block device.
+    "paths": {
+      "@lowland/kernel/virtio/*": ["./node_modules/@lowland/kernel/dist/virtio/*"]
+    }
+  },
+  "include": ["*.ts"]
+}

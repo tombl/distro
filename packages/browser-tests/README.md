@@ -16,14 +16,17 @@ pnpm --filter=@lowland/browser-tests test --project=chromium
 ```
 
 The server reads images from `$LOWLAND_TEST_ASSETS`, or builds
-`.#test-assets` on first use when it is unset.
+`.#test-assets` on first use when it is unset. The page's own code is
+TypeScript (`src/app.ts`, typed hooks in `src/hooks.d.ts`), which the server
+serves through esbuild's type stripping as `/app.js`; the import map in
+`index.html` still points at the packages' `dist/` builds.
 
-`playwright.config.js` has one project per engine, plus two Chromium-only
+`playwright.config.ts` has one project per engine, plus two Chromium-only
 projects with their own served roots:
 
 - `service-worker` exercises the site's service worker, served from
-  `apps/site/service-worker.js`.
-- `site-live` runs against the built site (`node server.js --site`), installing
+  `apps/site/service-worker.ts`.
+- `site-live` runs against the built site (`node server.ts --site`), installing
   from the candidate apk repository rather than production.
 
 Each project is an ordinary flake check that runs the same `pnpm test` in the

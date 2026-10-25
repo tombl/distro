@@ -151,5 +151,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
     test-assets = callPackage ./npm/test-assets.nix { };
+    typecheck = callPackage ./npm/typecheck.nix { };
   }
 )

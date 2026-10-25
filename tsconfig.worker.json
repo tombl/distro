@@ -1,0 +1,16 @@
+// Dedicated and service workers. A service worker declares its own `self`:
+// `declare const self: ServiceWorkerGlobalScope;`.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "es2024",
+      "esnext.disposable",
+      "webworker",
+      "webworker.iterable",
+      "webworker.asynciterable"
+    ],
+    "types": [],
+    "noEmit": true
+  }
+}

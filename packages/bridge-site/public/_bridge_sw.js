@@ -1,3 +1,8 @@
+// @ts-check
+
+// `self`, typed as the service worker global it is at runtime.
+const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
 /** @type {MessagePort | null} */
 let bridgePort = null;
 /** @type {Promise<MessagePort | null> | null} shared in-flight port acquisition */
@@ -5,16 +10,16 @@ let acquiring = null;
 /** @type {(() => void) | null} wakes the current acquisition when a port lands */
 let onPort = null;
 
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+sw.addEventListener("install", () => sw.skipWaiting());
+sw.addEventListener("activate", (event) => event.waitUntil(sw.clients.claim()));
 
-self.addEventListener("message", ({ data, ports }) => {
+sw.addEventListener("message", ({ data, ports }) => {
   if (data?.type !== "bridge:port") return;
-  bridgePort = ports[0];
+  bridgePort = ports[0] ?? null;
   onPort?.();
 });
 
-self.addEventListener("fetch", (event) => {
+sw.addEventListener("fetch", (event) => {
   const { pathname } = new URL(event.request.url);
   // The connecting page only needs to know when it can reload into guest content.
   if (pathname === "/_bridge/status") {
@@ -45,10 +50,10 @@ function acquirePort() {
   if (bridgePort) return Promise.resolve(bridgePort);
   if (!acquiring) {
     acquiring = (async () => {
-      const clients = await self.clients.matchAll({ includeUncontrolled: true });
+      const clients = await sw.clients.matchAll({ includeUncontrolled: true });
       for (const client of clients) client.postMessage({ type: "bridge:need-port" });
       await new Promise((resolve) => {
-        onPort = resolve;
+        onPort = () => resolve(undefined);
         setTimeout(resolve, 1000);
       });
       onPort = null;
@@ -59,6 +64,7 @@ function acquirePort() {
   return acquiring;
 }
 
+/** @param {Request} request */
 async function proxy(request) {
   const port = await acquirePort();
   if (!port) return unavailable();

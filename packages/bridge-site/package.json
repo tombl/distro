@@ -6,7 +6,7 @@
     "./client": "./client.js"
   },
   "scripts": {
-    "check": "playwright test --list",
+    "check": "tsc -p . && tsc -p tsconfig.page.json && tsc -p tsconfig.sw.json && tsc -p tests",
     "test": "playwright test"
   },
   "dependencies": {
@@ -15,6 +15,9 @@
     "@lowland/kernel": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "catalog:"
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:"
   }
 }

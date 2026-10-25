@@ -1,0 +1,13 @@
+{
+  "name": "@lowland/site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc"
+  },
+  "devDependencies": {
+    "@lowland/bytes": "workspace:*",
+    "@lowland/kernel": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

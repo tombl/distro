@@ -1,0 +1,14 @@
+{
+  "name": "@lowland/vm-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc",
+    "test": "node --test protocol-test.ts"
+  },
+  "devDependencies": {
+    "@lowland/kernel": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,11 @@
+// Node code: scripts, test servers, Playwright configs, the runner and every
+// node:test suite. Node strips the types itself, so only erasable syntax.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "esnext.disposable"],
+    "types": ["node"],
+    "noEmit": true,
+    "erasableSyntaxOnly": true
+  }
+}

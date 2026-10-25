@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "playwright test --list",
+    "check": "tsc -p . && tsc -p src && tsc -p tests",
     "test": "playwright test"
   },
   "dependencies": {
@@ -12,6 +12,9 @@
     "@lowland/kernel": "workspace:*"
   },
   "devDependencies": {
-    "@playwright/test": "catalog:"
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:"
   }
 }

@@ -23,7 +23,7 @@
 
 ## Test infrastructure
 
-- Fix `vm-test/run-test.js` settling on console close and masking later machine
+- Fix `vm-test/run-test.ts` settling on console close and masking later machine
   errors.
 - Make basic-init's clone-job-control test fail rather than falling back to
   `SIGSTOP`.

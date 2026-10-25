@@ -18,7 +18,7 @@ let
       "packages/kernel"
       # @lowland/guest is the built package, linked in below.
       "packages/runner/src"
-      "scripts/pack-package.mjs"
+      "scripts/pack-package.ts"
       "tsconfig.base.json"
     ];
     env.CI = "true";

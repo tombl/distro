@@ -1,0 +1,10 @@
+// Playwright specs: Node code whose page.evaluate() callbacks run in the page.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2024", "esnext.disposable", "dom", "dom.iterable", "dom.asynciterable"],
+    "types": ["node"],
+    "noEmit": true,
+    "erasableSyntaxOnly": true
+  }
+}
