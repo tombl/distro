@@ -204,29 +204,54 @@ test("booted hooks finish in plugin order", async () => {
   assert.deepEqual(calls, ["first started", "first finished", "second"]);
 });
 
-test("closing hooks all settle before the first failure is reported", async () => {
-  const failure = new Error("closing failed");
-  const slow = Promise.withResolvers<void>();
-  let slow_finished = false;
+test("every closing hook runs and the first failure is reported", async () => {
+  const first_failure = new Error("last plugin failed");
+  let earliest_ran = false;
   const plugins: MachinePlugin[] = [
     {
       configure() {},
       closing() {
-        throw failure;
+        earliest_ran = true;
+        throw new Error("first plugin failed");
       },
     },
     { configure() {} },
     {
       configure() {},
       async closing() {
-        await slow.promise;
-        slow_finished = true;
+        throw first_failure;
+      },
+    },
+  ];
+
+  await assert.rejects(run_machine_closing(plugins), (error) => error === first_failure);
+  assert(earliest_ran);
+});
+
+test("closing hooks run one at a time in reverse plugin order", async () => {
+  const calls: string[] = [];
+  const last = Promise.withResolvers<void>();
+  const plugins: MachinePlugin[] = [
+    {
+      configure() {},
+      closing() {
+        calls.push("first");
+      },
+    },
+    {
+      configure() {},
+      async closing() {
+        calls.push("last started");
+        await last.promise;
+        calls.push("last finished");
       },
     },
   ];
 
   const closing = run_machine_closing(plugins);
-  slow.resolve();
-  await assert.rejects(closing, (error) => error === failure);
-  assert(slow_finished);
+  await Promise.resolve();
+  assert.deepEqual(calls, ["last started"]);
+  last.resolve();
+  await closing;
+  assert.deepEqual(calls, ["last started", "last finished", "first"]);
 });
