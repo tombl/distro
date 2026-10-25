@@ -67,6 +67,9 @@ function compilerOptions(imports: Record<string, string>, base: string): ts.Comp
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     lib: rootLibraries,
     strict: true,
+    // Examples may be JavaScript, which the service only reads with allowJs.
+    allowJs: true,
+    checkJs: true,
     noEmit: true,
     skipLibCheck: true,
     types: [],
@@ -160,21 +163,38 @@ function handle(request: TypesRequest, service: ts.LanguageService): TypesRespon
   }
 }
 
+type InitRequest = Extract<TypesRequest, { type: "init" }>;
+
+let initRequest: InitRequest | undefined;
 let ready: Promise<ts.LanguageService> | undefined;
+
+// A failed download is forgotten, so the next request retries it.
+function languageService(request?: InitRequest): Promise<ts.LanguageService> {
+  if (request) initRequest = request;
+  if (!initRequest) return Promise.reject(new Error("the type checker was not initialized"));
+  const { base, typeFiles, imports } = initRequest;
+  if (!ready) {
+    const attempt = (async () => {
+      await Promise.all([loadLibraries(), loadPackages(base, typeFiles)]);
+      return createService(compilerOptions(imports, base));
+    })();
+    ready = attempt;
+    attempt.catch(() => {
+      if (ready === attempt) ready = undefined;
+    });
+  }
+  return ready;
+}
 
 addEventListener("message", async (event: MessageEvent<TypesRequest & { id: number }>) => {
   const request = event.data;
   let response: TypesResponse;
   try {
     if (request.type === "init") {
-      ready ??= (async () => {
-        await Promise.all([loadLibraries(), loadPackages(request.base, request.typeFiles)]);
-        return createService(compilerOptions(request.imports, request.base));
-      })();
-      await ready;
+      await languageService(request);
       response = { id: request.id, result: null };
     } else {
-      response = { id: request.id, result: handle(request, await ready!) };
+      response = { id: request.id, result: handle(request, await languageService()) };
     }
   } catch (error) {
     response = { id: request.id, result: null, error: String(error) };
