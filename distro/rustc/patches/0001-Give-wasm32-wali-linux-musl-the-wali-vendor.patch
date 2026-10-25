@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Stokes <git@tombl.dev>
+Date: Sun, 25 Oct 2026 15:37:35 +0800
+Subject: [PATCH 1/2] Give wasm32-wali-linux-musl the "wali" vendor
+
+WALI's ABI (LP64-style c_long, syscalls imported from the host) is
+specific to WALI, but its target shares arch, os and env with any other
+wasm32 Linux port, so library code had no cfg to tell them apart. Setting
+target_vendor = "wali" gives core, std and libc that discriminator.
+---
+ .../rustc_target/src/spec/targets/wasm32_wali_linux_musl.rs    | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/compiler/rustc_target/src/spec/targets/wasm32_wali_linux_musl.rs b/compiler/rustc_target/src/spec/targets/wasm32_wali_linux_musl.rs
+index 3c64948a..6aef6401 100644
+--- a/compiler/rustc_target/src/spec/targets/wasm32_wali_linux_musl.rs
++++ b/compiler/rustc_target/src/spec/targets/wasm32_wali_linux_musl.rs
+@@ -5,6 +5,9 @@
+ 
+ pub(crate) fn target() -> Target {
+     let mut options = base::linux_wasm::opts();
++    // WALI's ABI (LP64-style c_long, syscalls as host imports) differs from
++    // other wasm32 Linux targets, which share arch, os and env with it.
++    options.vendor = "wali".into();
+ 
+     options.add_pre_link_args(
+         LinkerFlavor::WasmLld(Cc::No),
