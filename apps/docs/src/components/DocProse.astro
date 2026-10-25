@@ -1,0 +1,26 @@
+---
+import CodeBlock from "./CodeBlock.astro";
+import type { Example } from "../lib/reference-model";
+import type { DocBlock } from "../lib/render-doc";
+
+interface Props {
+  blocks?: DocBlock[];
+  examples?: Example[];
+}
+
+const { blocks = [], examples = [] } = Astro.props;
+---
+
+{blocks.map((block) =>
+  block.kind === "code" ? (
+    <CodeBlock code={block.code!} language={block.language} />
+  ) : (
+    <Fragment set:html={block.html} />
+  ),
+)}
+{examples.map((example) => (
+  <>
+    {example.description && <p>{example.description}</p>}
+    <CodeBlock code={example.code} language={example.language} />
+  </>
+))}

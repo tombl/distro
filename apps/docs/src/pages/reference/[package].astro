@@ -4,12 +4,10 @@ import type { MarkdownHeading } from "astro";
 
 import ReferenceDocumentation from "../../components/ReferenceDocumentation.astro";
 import Docs from "../../layouts/Docs.astro";
+import { buildReference } from "../../lib/reference-model";
 import { generateReferenceDocs } from "../../lib/reference-docs";
-import {
-  referenceGroupId,
-  referencePackages,
-  type ReferencePackage,
-} from "../../lib/reference-packages";
+import { referencePackages, type ReferencePackage } from "../../lib/reference-packages";
+import { renderPackageReadme } from "../../lib/reference-readme";
 
 interface Props {
   pkg: ReferencePackage;
@@ -28,18 +26,15 @@ export async function getStaticPaths() {
 }
 
 const { pkg, document } = Astro.props;
-const groupedNames = new Set<string>(pkg.groups.flatMap((group) => group.symbols));
-const headings: MarkdownHeading[] = pkg.groups.map((group) => ({
-  depth: 2,
-  slug: referenceGroupId(group.title),
-  text: group.title,
-}));
-const remainingSymbols = document.symbols.filter((symbol) => !groupedNames.has(symbol.name));
-if (remainingSymbols.length > 0) {
-  headings.push(
-    { depth: 2, slug: referenceGroupId("Other exports"), text: "Other exports" },
-  );
-}
+const readme = await renderPackageReadme(pkg);
+const groups = buildReference(pkg, document);
+const headings: MarkdownHeading[] = [
+  ...readme.headings.filter(({ depth }) => depth === 2),
+  ...groups.flatMap((group) => [
+    { depth: 2, slug: group.id, text: group.title },
+    ...group.entries.map((entry) => ({ depth: 3, slug: entry.id, text: entry.name })),
+  ]),
+];
 ---
 
 <Docs
@@ -49,11 +44,13 @@ if (remainingSymbols.length > 0) {
   headings={headings}
   markdownHref={`/reference/${pkg.slug}.md`}
 >
-  <ReferenceDocumentation
-    name={pkg.name}
-    description={pkg.description}
-    npm={pkg.npm}
-    document={document}
-    groups={pkg.groups}
-  />
+  <h1><code>{pkg.name}</code></h1>
+  <Fragment set:html={readme.html} />
+  <ReferenceDocumentation document={document} groups={groups} />
 </Docs>
+
+<style>
+  h1 code {
+    font-size: inherit;
+  }
+</style>

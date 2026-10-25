@@ -15,12 +15,16 @@ function declarationUrl(specifier: string): string {
   return pathToFileURL(runtime.replace(/\.js$/, ".d.ts")).href;
 }
 
-const kernelDeclaration = declarationUrl("@lowland/kernel");
-const declarations = new Map([
-  ["@lowland/kernel", kernelDeclaration],
-  ["@lowland/bytes", declarationUrl("@lowland/bytes")],
-  ["@lowland/guest", declarationUrl("@lowland/guest")],
-]);
+const declarations = new Map(
+  [
+    "@lowland/kernel",
+    "@lowland/kernel/plugin",
+    "@lowland/bytes",
+    "@lowland/guest",
+    "@lowland/guest/browser",
+    "@lowland/guest/node",
+  ].map((specifier) => [specifier, declarationUrl(specifier)]),
+);
 
 function resolve(specifier: string, referrer: string): string {
   const declaration = declarations.get(specifier);
@@ -42,14 +46,29 @@ async function load(specifier: string): Promise<LoadResponse | undefined> {
   }
 }
 
-export async function generateReferenceDocs(pkg: ReferencePackage): Promise<Document> {
-  const entrypoint = declarations.get(pkg.name);
-  if (!entrypoint) throw new Error(`No declaration entrypoint for ${pkg.name}`);
+function entrypointUrl(specifier: string): string {
+  const entrypoint = declarations.get(specifier);
+  if (!entrypoint) throw new Error(`No declaration entrypoint for ${specifier}`);
+  return entrypoint;
+}
 
-  const documents = await doc([entrypoint], { load, resolve });
-  const document = documents[entrypoint];
-  if (!document) throw new Error(`@deno/doc did not return ${pkg.name}`);
-  return document;
+// One document for the whole package: the symbols of every public entrypoint,
+// in entrypoint order. Subpaths only add names the root entrypoint lacks.
+export async function generateReferenceDocs(pkg: ReferencePackage): Promise<Document> {
+  const entrypoints = pkg.entrypoints.map(entrypointUrl);
+  const documents = await doc(entrypoints, { load, resolve });
+  const symbols: Document["symbols"] = [];
+  const seen = new Set<string>();
+  for (const [index, entrypoint] of entrypoints.entries()) {
+    const document = documents[entrypoint];
+    if (!document) throw new Error(`@deno/doc did not return ${pkg.entrypoints[index]}`);
+    for (const symbol of document.symbols) {
+      if (seen.has(symbol.name)) continue;
+      seen.add(symbol.name);
+      symbols.push(symbol);
+    }
+  }
+  return { ...documents[entrypoints[0]], symbols };
 }
 
 function sourceLabel(specifier: string): string {
@@ -61,11 +80,11 @@ function sourceLabel(specifier: string): string {
 }
 
 export async function generateReferenceMarkdown(pkg: ReferencePackage): Promise<string> {
-  const entrypoint = declarations.get(pkg.name);
-  if (!entrypoint) throw new Error(`No declaration entrypoint for ${pkg.name}`);
+  const entrypoints = pkg.entrypoints.map(entrypointUrl);
+  const entrypoint = entrypoints[0];
 
   const sources = new Map<string, string>();
-  await doc([entrypoint], {
+  await doc(entrypoints, {
     resolve,
     async load(specifier) {
       const response = await load(specifier);
@@ -82,7 +101,10 @@ export async function generateReferenceMarkdown(pkg: ReferencePackage): Promise<
 
   const modules = [...sources]
     .toSorted(
-      ([a], [b]) => Number(b === entrypoint) - Number(a === entrypoint) || a.localeCompare(b),
+      ([a], [b]) =>
+        Number(entrypoints.includes(b)) - Number(entrypoints.includes(a)) ||
+        Number(b === entrypoint) - Number(a === entrypoint) ||
+        a.localeCompare(b),
     )
     .flatMap(([specifier, source]) => [
       `## ${sourceLabel(specifier)}`,
