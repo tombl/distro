@@ -138,6 +138,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
         checks = {
           inherit (self.apk-checks) install store-references userland;
           image-resolver = self.image-checks.resolver;
+          image-modes = self.image-checks.modes;
         };
       };
 
