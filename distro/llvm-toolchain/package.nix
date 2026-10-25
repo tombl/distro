@@ -36,13 +36,39 @@ pkgs.runCommand "llvm-toolchain-${version}"
     };
   }
   ''
-    cp -r ${llvm-toolchain-unwrapped} $out
-    chmod -R u+w $out
-    mkdir -p $out/lib/clang/${llvmMajorVersion}/lib
+    unwrapped=${llvm-toolchain-unwrapped}
+    resources=lib/clang/${llvmMajorVersion}
 
-    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/${platform.targetTriple} $out/lib/clang/${llvmMajorVersion}/lib/
-    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32 $out/lib/clang/${llvmMajorVersion}/lib/
-    cp -r ${llvm-runtimes}/lib/clang/${llvmMajorVersion}/lib/wasm32-unknown $out/lib/clang/${llvmMajorVersion}/lib/
+    # Clang locates its resource directory from its real executable, so that
+    # one file is copied; everything else links into the unwrapped toolchain
+    # instead of duplicating its 2.5 GB.
+    mkdir -p $out/bin $out/$resources/lib
+    clang=$(readlink -f $unwrapped/bin/clang)
+    cp $clang $out/bin/
+    for path in $unwrapped/bin/*; do
+      name=$(basename $path)
+      if [ -e $out/bin/$name ]; then
+        continue
+      elif [ "$(readlink -f $path)" = "$clang" ]; then
+        ln -s $(basename $clang) $out/bin/$name
+      else
+        ln -s $path $out/bin/$name
+      fi
+    done
+    for path in $unwrapped/*; do
+      case $(basename $path) in
+        bin | lib) ;;
+        *) ln -s $path $out/ ;;
+      esac
+    done
+    for path in $unwrapped/lib/*; do
+      [ $(basename $path) = clang ] || ln -s $path $out/lib/
+    done
+    ln -s $unwrapped/$resources/include $out/$resources/include
+
+    cp -r ${llvm-runtimes}/$resources/lib/${platform.targetTriple} $out/$resources/lib/
+    cp -r ${llvm-runtimes}/$resources/lib/wasm32 $out/$resources/lib/
+    cp -r ${llvm-runtimes}/$resources/lib/wasm32-unknown $out/$resources/lib/
 
     ln -sf wasm-ld $out/bin/ld
   ''
