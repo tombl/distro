@@ -6,10 +6,13 @@
   ca-certificates,
   mkImage,
   pkgs,
+  format ? "erofs",
+  size ? "256M",
 }:
 
 mkImage {
   name = "lowland-image-rootfs";
+  inherit format size;
   packages = [
     busybox
     apk-tools

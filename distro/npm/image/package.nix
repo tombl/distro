@@ -1,5 +1,6 @@
 {
   bytes,
+  ext4Root,
   kernel,
   linux-guest,
   node-workspace,
@@ -69,7 +70,8 @@ let
       runHook preBuild
 
       ${materialize}
-      timeout --kill-after=5 300 pnpm --filter=@lowland/image test
+      LOWLAND_IMAGE_TEST_EXT4=${ext4Root} \
+        timeout --kill-after=5 300 pnpm --filter=@lowland/image test
 
       runHook postBuild
     '';
@@ -82,6 +84,7 @@ in
 package
 // {
   checks.tests = {
+    ext4-root = ext4Root;
     inherit integration;
   };
 }
