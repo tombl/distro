@@ -26,18 +26,17 @@ const clientNet = network.attach(client);
 
 await using serverMachine = await bootMachine({
   cpus: 1,
-  plugins: [rootDevice(), server, serverNet],
+  plugins: [rootImage(), server, serverNet],
 });
 await using clientMachine = await bootMachine({
   cpus: 1,
-  plugins: [rootDevice(), client, clientNet],
+  plugins: [rootImage(), client, clientNet],
 });
 ```
 
-Each machine needs its own root filesystem device, so `rootDevice()` here creates a new one
-each time, as in the [`@lowland/guest` usage example](/reference/guest/#usage).
-`connectTcp` and `resolveDns` give the guests internet access, as described in
-[Access the internet](/access-the-internet/).
+`rootImage()` comes from `@lowland/image`, as in the
+[`@lowland/guest` usage example](/reference/guest/#usage). `connectTcp` and `resolveDns` give
+the guests internet access, as described in [Access the internet](/access-the-internet/).
 
 Each attachment has an address. The first guest gets `192.0.2.2`, the next `192.0.2.3`, and so
 on. The network itself is at `192.0.2.1`.
