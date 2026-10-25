@@ -2,8 +2,7 @@ import { unified } from "@astrojs/markdown-remark";
 import mdx from "@astrojs/mdx";
 import { defineConfig } from "astro/config";
 
-// External links in rendered markdown open in a new tab; the global
-// a[target="_blank"]::after rule then annotates them with an arrow.
+// External links in rendered markdown open in a new tab.
 function externalLinkTargets() {
   return (tree: unknown) => {
     (function walk(node: any): void {

@@ -1,34 +1,17 @@
 ---
 import Base from "../layouts/Base.astro";
+
+const heading = "The Linux kernel, compiled to WebAssembly, running in your browser.";
 ---
 
 <Base
-  title="lowland: Linux in your browser"
-  description="Linux compiled for wasm32, with Web Workers as virtual CPUs and browser-provided virtio devices."
+  title="lowland: the Linux kernel, compiled to WebAssembly, running in your browser"
+  heading={heading}
+  description="Linux ported to WebAssembly, not emulated. Open a shell in your browser, or embed the same sandbox in your own JavaScript app."
 >
-  <div slot="middle" class="root-header-info">
-    <details open class="header-disclosure" data-persist-disclosure>
-      <summary>how it works</summary>
-      <div class="header-copy plain-copy">
-        <p>
-          Lowland runs a Linux kernel compiled for wasm32. Each virtual CPU runs in a Web Worker.
-          JavaScript provides shared memory and virtio devices. No CPU emulator is involved.
-        </p>
-        <p>
-          The terminal is connected to <code>/dev/hvc0</code> in the guest. Use the shell to inspect
-          the system, run programs, or install packages with <code>apk</code>.
-        </p>
-        <p class="header-links">
-          <a href="https://docs.low.land/getting-started/">browser tutorial →</a>
-          <a href="https://github.com/tombl/linux">kernel source →</a>
-        </p>
-      </div>
-    </details>
-
-  </div>
+  <h1 slot="middle" class="intro">{heading}</h1>
 
   <main class="root-stage">
-    <h1 class="visually-hidden">Lowland Linux terminal</h1>
     <section class="machine" id="terminal" aria-label="Interactive Linux terminal">
       <pre class="terminal-placeholder" data-terminal-placeholder aria-live="polite">Loading Lowland Linux...
 Fetching the kernel and root filesystem.

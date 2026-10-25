@@ -5,10 +5,11 @@ import "../styles/site.css";
 
 interface Props {
   title: string;
+  heading: string;
   description: string;
 }
 
-const { title, description } = Astro.props;
+const { title, heading, description } = Astro.props;
 ---
 
 <!doctype html>
@@ -20,7 +21,7 @@ const { title, description } = Astro.props;
     <meta name="description" content={description} />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117" />
-    <meta property="og:title" content={title} />
+    <meta property="og:title" content={heading} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

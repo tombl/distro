@@ -2,6 +2,7 @@
 interface Item {
   href: string;
   label: string;
+  depth?: number;
 }
 
 interface Props {
@@ -16,7 +17,7 @@ const { items, heading = false } = Astro.props;
   {heading && <h2>On this page</h2>}
   <ul>
     {items.map((item) => (
-      <li>
+      <li class={item.depth && item.depth > 2 ? "nested" : undefined}>
         <a href={item.href} data-section-link>{item.label}</a>
       </li>
     ))}
@@ -118,6 +119,10 @@ const { items, heading = false } = Astro.props;
   a {
     color: inherit;
     text-decoration: none;
+  }
+
+  .nested {
+    padding-inline-start: 0.875rem;
   }
 
   [data-section-link] {
