@@ -1256,7 +1256,10 @@ class FileSystemDevice extends VirtioDevice {
     finalize: () => Promise<void>,
   ) {
     // 26 is the virtio-fs device ID: a high-priority queue and one request queue.
-    super({ id: 26, queues: 2, config });
+    // Replies are scattered straight into guest memory; a guest reset waits
+    // for the request in flight. Requests are still copied out before the
+    // filesystem sees them, so it never holds guest memory.
+    super({ id: 26, queues: 2, config, views: true });
     this.#notify = notify;
     this.#finalize = finalize;
   }

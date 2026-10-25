@@ -6,7 +6,9 @@ import { once } from "node:events";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
 import { blockDevice } from "../src/virtio/block.ts";
+import type { Device } from "../src/virtio/device.ts";
 import { consoleDevice } from "../src/virtio/console.ts";
+import { fileSystemDevice } from "../src/virtio/fs.ts";
 import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
 import { vsockDevice } from "../src/virtio/vsock.ts";
 import { serveDevice, workerDevice } from "../src/virtio/remote.ts";
@@ -1520,5 +1522,206 @@ test(
   { timeout: 5_000 },
   async () => {
     await reset_during_slow_read(remote_block, { close_while_waiting: true });
+  },
+);
+
+// A virtio-fs request queue driven by hand: requests and replies are raw FUSE.
+function fs_ring(memory: WebAssembly.Memory) {
+  const view = new DataView(memory.buffer);
+  const AVAIL = 1 << 7;
+  const USED = 1 << 15;
+  const NEXT = 1 << 0;
+  const WRITE = 1 << 1;
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    view.setBigUint64(index * 16, BigInt(address), true);
+    view.setUint32(index * 16 + 8, length, true);
+    view.setUint16(index * 16 + 12, index, true);
+    view.setUint16(index * 16 + 14, flags | AVAIL, true);
+  };
+  const header = (address: number, length: number, opcode: number, unique: number) => {
+    view.setUint32(address, length, true);
+    view.setUint32(address + 4, opcode, true);
+    view.setBigUint64(address + 8, BigInt(unique), true);
+    view.setBigUint64(address + 16, 1n, true);
+  };
+  return {
+    view,
+    NEXT,
+    WRITE,
+    descriptor,
+    used: (index: number) => (view.getUint16(index * 16 + 14, true) & USED) !== 0,
+    async completed(index: number) {
+      for (let i = 0; i < 1000 && !this.used(index); i++) await turns(1);
+      assert(this.used(index), `descriptor ${index} was not used`);
+    },
+    /** OPENs the root into descriptors 0 and 1, returning the file handle. */
+    open(notify: () => void) {
+      header(1024, 48, 14, 1);
+      descriptor(0, 1024, 48, NEXT);
+      descriptor(1, 2048, 32, WRITE);
+      notify();
+      return this.completed(0).then(() => {
+        assert.equal(view.getInt32(2048 + 4, true), 0);
+        return view.getBigUint64(2048 + 16, true);
+      });
+    },
+    /**
+     * READs `length` bytes into descriptors 2-4: a 16-byte reply header and
+     * 8 bytes of data in one writable buffer, the rest in another.
+     */
+    read(fh: bigint, length: number) {
+      header(1100, 80, 15, 2);
+      view.setBigUint64(1140, fh, true);
+      view.setBigUint64(1148, 0n, true);
+      view.setUint32(1156, length, true);
+      descriptor(2, 1100, 80, NEXT);
+      descriptor(3, 3072, 24, NEXT | WRITE);
+      descriptor(4, 3200, 64, WRITE);
+    },
+  };
+}
+
+function readable_file(read: (offset: number, length: number) => Promise<Uint8Array> | Uint8Array) {
+  return fileSystemDevice(
+    {
+      root: {},
+      lookup: () => undefined,
+      getattr: () => ({ mode: 0o100644, size: 100n }),
+      open: () => "handle",
+      read: (_node, _handle, offset, length) => read(Number(offset), length),
+    },
+    { tag: "test", cache: false },
+  );
+}
+
+async function remote(served: Device) {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, served);
+  const device = await workerDevice(channel.port2);
+  const interrupts: number[] = [];
+  const errors: unknown[] = [];
+  const imports = attach_devices({
+    memory,
+    devices: [device],
+    trigger_irq: (irq) => interrupts.push(irq),
+    on_error: (error) => errors.push(error),
+  });
+  return {
+    memory,
+    imports,
+    interrupts,
+    errors,
+    async close() {
+      await close_device(device);
+      channel.port1.close();
+      channel.port2.close();
+    },
+  };
+}
+
+async function local(device: Device) {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const interrupts: number[] = [];
+  const errors: unknown[] = [];
+  const imports = attach_devices({
+    memory,
+    devices: [device],
+    trigger_irq: (irq) => interrupts.push(irq),
+    on_error: (error) => errors.push(error),
+  });
+  return { memory, imports, interrupts, errors, close: () => close_device(device) };
+}
+
+test(
+  "a remote virtio-fs read split across descriptors reaches guest memory",
+  { timeout: 5_000 },
+  async () => {
+    const contents = Uint8Array.from({ length: 100 }, (_, index) => index);
+    // The read returns a view of the filesystem's own storage, which the
+    // remote transport must not detach.
+    const { memory, imports, interrupts, errors, close } = await remote(
+      readable_file((offset, length) => contents.subarray(offset, offset + length)),
+    );
+    const ring = fs_ring(memory);
+    imports.enable_vring(0, 1, 8, 0, 4);
+    const fh = await ring.open(() => imports.notify(0, 1));
+
+    ring.read(fh, 40);
+    imports.notify(0, 1);
+    await ring.completed(2);
+
+    const { view } = ring;
+    assert.equal(view.getUint32(3072, true), 56);
+    assert.equal(view.getInt32(3072 + 4, true), 0);
+    assert.equal(view.getBigUint64(3072 + 8, true), 2n);
+    assert.equal(view.getUint32(2 * 16 + 8, true), 56);
+    assert.deepEqual(
+      [...new Uint8Array(memory.buffer, 3088, 8), ...new Uint8Array(memory.buffer, 3200, 32)],
+      [...contents.subarray(0, 40)],
+    );
+    assert.equal(contents.byteLength, 100, "the filesystem's storage was not detached");
+    for (let i = 0; i < 100 && interrupts.length < 2; i++) await turns(1);
+    assert.deepEqual(interrupts, [4, 4]);
+    assert.deepEqual(errors, []);
+    await close();
+  },
+);
+
+// virtio-fs writes replies into guest memory in place, so a guest reset must
+// wait for a request in flight, and nothing may write the reply afterwards.
+async function fs_reset_during_slow_read(attach: typeof local) {
+  const slow = Promise.withResolvers<void>();
+  let finished = false;
+  const { memory, imports, errors, close } = await attach(
+    readable_file(async (_offset, length) => {
+      await slow.promise;
+      finished = true;
+      return new Uint8Array(length).fill(0xaa);
+    }),
+  );
+  try {
+    const ring = fs_ring(memory);
+    imports.enable_vring(0, 1, 8, 0, 4);
+    const fh = await ring.open(() => imports.notify(0, 1));
+    ring.read(fh, 40);
+    imports.notify(0, 1);
+    await turns();
+
+    const done = 0x8000;
+    const done_word = () => new Int32Array(memory.buffer, done, 1)[0];
+    imports.reset(0, done);
+    imports.disable_vring(0, 1);
+    await turns();
+    assert.equal(done_word(), 0, "reset waits for the request that holds guest memory");
+
+    slow.resolve();
+    for (let i = 0; i < 100 && done_word() === 0; i++) await turns(1);
+    assert.equal(done_word(), 1);
+    assert.equal(finished, true, "the filesystem finished before the reset was acknowledged");
+
+    // The guest now reuses the reply buffers; nothing may write to them, and
+    // the stale completion is never published.
+    const reply = new Uint8Array(memory.buffer, 3072, 24);
+    reply.fill(0x55);
+    await turns();
+    assert.ok(reply.every((byte) => byte === 0x55));
+    assert.equal(ring.used(2), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    slow.resolve();
+    await close();
+  }
+}
+
+test("a virtio-fs reset waits for the request in flight", async () => {
+  await fs_reset_during_slow_read(local);
+});
+
+test(
+  "a remote virtio-fs reset waits for the worker's request in flight",
+  { timeout: 5_000 },
+  async () => {
+    await fs_reset_during_slow_read(remote);
   },
 );
