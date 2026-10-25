@@ -22,7 +22,7 @@ import { closed_input, console_output } from "./helpers.ts";
 
 export interface TestFixture {
   network: Network;
-  spawn(devices?: readonly VirtioDevice[], options?: { cmdline?: string }): Promise<TestGuest>;
+  spawn(devices?: readonly VirtioDevice[]): Promise<TestGuest>;
 }
 
 export interface TestGuest extends GuestAgent {
@@ -54,15 +54,11 @@ export function guest_test(
     const guests: TestGuest[] = [];
     const consoles: Promise<void>[] = [];
 
-    async function spawn(
-      extra_devices: readonly VirtioDevice[] = [],
-      options: { cmdline?: string } = {},
-    ) {
+    async function spawn(extra_devices: readonly VirtioDevice[] = []) {
       const agent = guestAgent();
       const attachment = network.attach(agent);
       const machine = await bootMachine({
         cpus: 1,
-        args: options.cmdline ? [options.cmdline] : [],
         // Put both a system disk and an agent-dependent plugin before the
         // agent deliberately. Neither device discovery nor readiness depends
         // on plugin array order.
