@@ -516,11 +516,15 @@ listen_endpoint(endpoint, {
     // spawned by another worker receive their InitMessage over this port, which
     // works around a WebKit bug reclaiming shared Wasm memory across JS VMs.
     if (message.type === "forwarded_init") {
-      message.port.onmessage = ({ data }) => {
-        message.port.close();
-        start(data as InitMessage);
-      };
-      message.port.start();
+      const { port } = message;
+      const stop_listening = listen_endpoint(port, {
+        message(data) {
+          stop_listening();
+          port.close();
+          start(data as InitMessage);
+        },
+      });
+      port.start();
       return;
     }
 
