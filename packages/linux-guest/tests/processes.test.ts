@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { bootMachine, vsockDevice } from "@lowland/kernel";
+import { bootConsole, bootMachine, vsockDevice } from "@lowland/kernel";
+import { test } from "node:test";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
-import { SystemError } from "../src/index.ts";
+import { guestAgent, SystemError, type GuestAgent } from "../src/index.ts";
 import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
 import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
-import { collect, pattern_bytes } from "./helpers.ts";
+import { collect, console_output, pattern_bytes } from "./helpers.ts";
+
+async function assert_missing_program(guest: GuestAgent) {
+  const missing = (error: unknown) => error instanceof SystemError && error.code === "ENOENT";
+  await assert.rejects(guest.exec(["no-such-program"]), missing);
+  await assert.rejects(guest.run(["no-such-program"]), missing);
+}
 
 guest_test("processes", async (t, fixture) => {
   const guest = await fixture.spawn();
@@ -131,6 +138,8 @@ guest_test("processes", async (t, fixture) => {
       assert.equal(new TextDecoder().decode(await output), `custom-bin:${directory}`);
     });
 
+    await t.test("rejects missing programs", () => assert_missing_program(guest));
+
     await t.test("aborts processes", async () => {
       const abort_controller = new AbortController();
       const aborted = await guest.exec(["sleep", "30"], {
@@ -192,6 +201,22 @@ guest_test("processes", async (t, fixture) => {
     });
   } finally {
     await guest.fs.remove(directory, { recursive: true });
+  }
+});
+
+// Without a console the kernel starts the agent with no stdio descriptors, so
+// child stdio pipes must not be allocated in their place.
+test("guest without a console", async (t) => {
+  const guest = guestAgent();
+  const machine = await bootMachine({
+    cpus: 1,
+    plugins: [bootConsole(console_output()), root_device(), guest],
+  });
+  try {
+    await t.test("rejects missing programs", () => assert_missing_program(guest));
+  } finally {
+    machine.close();
+    await machine.closed;
   }
 });
 
