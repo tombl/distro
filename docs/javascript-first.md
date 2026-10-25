@@ -237,16 +237,16 @@ virtio device order, a kernel argument, or information returned by
 `devices.add()` to choose a disk. `LOWLAND_AGENT` identifies the private boot
 disk and cannot be mistaken for the system image.
 
-The default behavior mounts the selected filesystem directly: EROFS is
-read-only and ext4 is read-write. The exact kernel argument
-`lowland.root.overlay=tmpfs` instead mounts the selected filesystem read-only
-and places a temporary OverlayFS upper layer over it. This option is a general
-embedding contract, not site-specific logic. It makes an immutable image feel
-writable for one boot without claiming persistence.
+An ext4 filesystem is persistent and mounts read-write directly. An EROFS
+filesystem is immutable, so the agent always mounts it read-only beneath a
+temporary OverlayFS upper layer. The system then behaves like a normal
+writable root for one boot without claiming persistence. There is no option
+to disable the overlay.
 
-The canonical live site attaches one `LOWLAND_ROOT` EROFS image and enables the
-temporary overlay. It also attaches an unformatted persistent block device;
-the installer creates and labels its ext4 filesystem inside the guest. Once
+The canonical live site attaches one `LOWLAND_ROOT` EROFS image, which the
+agent mounts beneath the temporary overlay. It also attaches an unformatted
+persistent block device; the installer creates and labels its ext4 filesystem
+inside the guest. Once
 installed, the site does not attach the live EROFS image and mounts only that
 `LOWLAND_ROOT` ext4 disk directly. A `?live=1` recovery boot does not attach an
 existing installed disk, because exposing it alongside the live image would

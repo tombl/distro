@@ -49,17 +49,9 @@ agent then requires exactly one attached EROFS or ext4 filesystem labeled
 Missing and duplicate system roots fail `bootMachine()` through the plugin
 readiness hook.
 
-Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
-image read-only beneath a temporary writable OverlayFS:
-
-```js
-const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  args: ["lowland.root.overlay=tmpfs"],
-  plugins: [guest, root],
-});
-```
+An EROFS system image is always mounted read-only beneath a temporary writable
+OverlayFS, so the system root is writable for the lifetime of the boot. An ext4
+system disk is mounted read-write directly.
 
 ## Networking
 
