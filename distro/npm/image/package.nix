@@ -1,4 +1,5 @@
 {
+  apk-tools-host,
   builderImage,
   bytes,
   busybox,
@@ -29,6 +30,19 @@ let
   busyboxPackage = testPackages.busybox;
   jqPackage = testPackages.jq;
 
+  # A repository index that nothing signs, which the build helper must refuse
+  # even when local packages are installed without signature checks.
+  unsignedRepository =
+    pkgs.runCommand "lowland-image-unsigned-repository"
+      {
+        nativeBuildInputs = [ apk-tools-host ];
+      }
+      ''
+        mkdir -p $out/wasm32
+        cp ${jqPackage}/${jqPackage.filename} $out/wasm32/${jqPackage.filename}
+        apk --allow-untrusted mkndx --output $out/wasm32/Packages.adb $out/wasm32/*.apk
+      '';
+
   # The directory layout test/assets.ts consumes, via LOWLAND_IMAGE_TEST_ASSETS
   # or by building this attribute itself. A local package keeps the build
   # helper test hermetic in the network-less Nix sandbox.
@@ -36,6 +50,7 @@ let
     "busybox.apk" = "${busyboxPackage}/${busyboxPackage.filename}";
     "jq.apk" = "${jqPackage}/${jqPackage.filename}";
     "rootfs.ext4" = ext4Root;
+    "unsigned-repository" = unsignedRepository;
   };
 
   # The workspace with every native artifact @lowland/image and its tests load

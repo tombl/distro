@@ -4,11 +4,12 @@
 # has already validated. Host inputs are mounted at the --input directory.
 #
 #   lowland-build-image --format F --label L --input DIR [--repository URL]
-#     [--allow-untrusted] OPERATION...
+#     OPERATION...
 #
-# Packages are installed first, then files and links are applied in order.
-# The build helper passes files sorted by path, so a parent comes before its
-# children:
+# Named packages are installed first from the repository, which must sign
+# them. Local packages are installed next without signature checks and with
+# no repository, then files and links are applied in order. The build helper
+# passes files sorted by path, so a parent comes before its children:
 #   --package NAME        install NAME from the repository
 #   --local PATH          install the .apk at PATH, relative to the input
 #   --file DEST SRC MODE  copy SRC, relative to the input, to DEST; MODE - keeps it.
@@ -25,14 +26,12 @@ format=
 label=
 input=
 repository=
-untrusted=
 while [ $# -gt 0 ]; do
   case "$1" in
   --format) format=$2 && shift 2 ;;
   --label) label=$2 && shift 2 ;;
   --input) input=$2 && shift 2 ;;
   --repository) repository=$2 && shift 2 ;;
-  --allow-untrusted) untrusted=1 && shift ;;
   *) break ;;
   esac
 done
@@ -65,17 +64,46 @@ cp /etc/apk/keys/site.rsa.pub "$root/etc/apk/keys/"
 
 # Some shells, such as BusyBox hush, trip set -e when a while condition ends the
 # loop, so these loops end with break instead.
-packages() {
+
+# Installs the operand of every OPERATION (--package or --local) among the
+# operations that follow it. Each operation is rotated behind a marker and
+# only the selected operands are kept, so they reach apk as separate
+# arguments however they are spelled. The marker only ever appears where an
+# operation starts, and operations never start with it.
+install() {
+  operation=$1
+  shift
+  set -- "$@" --end-of-operations
   while :; do
     case "$1" in
-    '') break ;;
-    --package) echo "$2" && shift 2 ;;
-    --local) echo "$input/$2" && shift 2 ;;
+    --end-of-operations) shift && break ;;
+    --package | --local)
+      if [ "$1" != "$operation" ]; then
+        :
+      elif [ "$1" = --local ]; then
+        set -- "$@" "$input/$2"
+      else set -- "$@" "$2"; fi
+      shift 2
+      ;;
     --file) shift 4 ;;
     --link) shift 3 ;;
     *) fail "unknown operation: $1" ;;
     esac
   done
+  [ $# -gt 0 ] || return 0
+  # $initdb is either empty or the single word --initdb.
+  # shellcheck disable=SC2086
+  if [ "$operation" = --package ]; then
+    # Named packages come from the repository, verified with its key.
+    apk --root "$root" --arch wasm32 --no-cache --repository "$repository" add $initdb "$@"
+  else
+    # Local packages are trusted because the caller supplied them, so apk
+    # skips their signatures. It may only resolve their dependencies from what
+    # is already installed or other local packages: no repository, no network.
+    apk --root "$root" --arch wasm32 --no-cache --allow-untrusted --no-network \
+      --repositories-file /dev/null add $initdb "$@"
+  fi
+  initdb=
 }
 
 # Like apk.mkSystem's files: copied entries are owned by root and gain owner
@@ -117,15 +145,11 @@ contents() {
   done
 }
 
-# Package names and staged input paths never contain whitespace.
-# shellcheck disable=SC2046
-apk \
-  --root "$root" \
-  --arch wasm32 \
-  --no-cache \
-  ${untrusted:+--allow-untrusted} \
-  ${repository:+--repository "$repository"} \
-  add --initdb $(packages "$@")
+# The first install creates the database. Named packages only exist when the
+# build helper passes a repository.
+initdb=--initdb
+[ -z "$repository" ] || install --package "$@"
+install --local "$@"
 # The log records the build command and a timestamp, like apk.mkSystem drops.
 rm -f "$root/var/log/apk.log"
 
