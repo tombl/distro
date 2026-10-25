@@ -73,13 +73,21 @@ function internalTarget(href: string, page: string, site: string) {
   return { path: decode(url.pathname), hash: decode(url.hash.slice(1)) };
 }
 
-// Fragments and paths may contain a literal "%" that is not an escape.
+// Percent-decodes as browsers do: valid escapes become bytes and a stray
+// "%" stays literal, so "#café-100%complete" still matches its id.
 function decode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  for (let i = 0; i < value.length; i++) {
+    const escape = value.slice(i + 1, i + 3);
+    if (value[i] === "%" && /^[0-9a-f]{2}$/i.test(escape)) {
+      bytes.push(Number.parseInt(escape, 16));
+      i += 2;
+    } else {
+      bytes.push(...encoder.encode(value[i]));
+    }
   }
+  return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
 async function listFiles(dir: string): Promise<string[]> {
