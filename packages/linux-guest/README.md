@@ -34,7 +34,7 @@ console.log(new TextDecoder().decode(result.stdout));
 ```
 
 The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
-[Build a root filesystem](https://docs.low.land/build-a-rootfs/) explains how to make one.
+[Build an image](https://docs.low.land/build-an-image/) explains how to make one.
 
 The same code runs in a browser, with the image fetched instead of read from disk. The page must
 be served with the cross-origin isolation headers described in the
