@@ -32,6 +32,7 @@ let
     cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
     mkdir $out/tests
     cp ${source}/tests/boot.spec.js $out/tests/
+    cp ${source}/tests/exec-reservations.spec.js $out/tests/
     cp ${source}/tests/opfs-disk.spec.js $out/tests/
     cp ${source}/tests/posix-spawn-stress.spec.js $out/tests/
     cp ${source}/tests/remote-memory.spec.js $out/tests/

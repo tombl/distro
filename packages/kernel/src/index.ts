@@ -14,6 +14,7 @@ import {
   kernel_imports,
   MachineTerminationReason,
   type UserContext,
+  UserMemory,
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
@@ -357,12 +358,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       fn: number,
       arg: number,
       name: string,
+      user_memory: UserMemory,
       user: UserContext | null,
-      copy_user_memory: boolean,
     ) => {
-      // COPY originates only from userspace clone in a worker; never block the
-      // browser's main agent waiting for a memory snapshot.
-      assert(!copy_user_memory);
+      // COPY and EXEC originate only from userspace in a worker; never block
+      // the browser's main agent waiting for another worker's allocation.
+      assert(user_memory === UserMemory.None || user_memory === UserMemory.Share);
       start_worker(name, {
         type: "init",
         fn,
@@ -371,6 +372,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         memory: wasm_memory,
         user,
         user_copy_status: null,
+        exec: null,
       });
       return 0;
     };
@@ -414,11 +416,10 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         compile_write: unavailable,
         compile_end: unavailable,
         compile_abort: unavailable,
-        instantiate: unavailable,
+        exec_handoff: unavailable,
         call: unavailable,
         switch_entry: unavailable,
         call_signal_handler: unavailable,
-        unwind: unavailable,
         rethrow: unavailable,
         call_siginfo_handler: unavailable,
         read: unavailable,

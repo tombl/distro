@@ -165,6 +165,53 @@ globalThis.spawnStress = () =>
     return collectProcess(await guest.exec(["sh", "-c", script]));
   });
 
+// Counts the 4 GiB shared memories a fresh worker can still reserve: the
+// renderer-wide budget Chromium checks when the guest allocates user memory.
+async function memoryHeadroom() {
+  const source = `const memories = [];
+    try {
+      while (memories.length < 1000)
+        memories.push(new WebAssembly.Memory({ initial: 1, maximum: 65536, shared: true }));
+    } catch {}
+    postMessage(memories.length);`;
+  const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(url);
+  try {
+    return await new Promise((resolve, reject) => {
+      worker.onmessage = ({ data }) => resolve(data);
+      worker.onerror = reject;
+    });
+  } finally {
+    worker.terminate();
+    URL.revokeObjectURL(url);
+  }
+}
+
+globalThis.execReservations = (depth) =>
+  withGuest(async (guest) => {
+    const before = await memoryHeadroom();
+    // Each image execs the next, and the last waits for its stdin to close.
+    const chain = 'n=$((n-1)); [ $n -gt 0 ] && exec sh -c "$S"; echo ready; read line || true';
+    const child = await guest.exec(["env", `n=${depth}`, `S=${chain}`, "sh", "-c", chain]);
+    const stderr = new Response(child.stderr).text();
+    const reader = child.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const read = async () => {
+      const { done, value } = await reader.read();
+      if (!done) stdout += decoder.decode(Uint8Array.from(value), { stream: true });
+      return !done;
+    };
+    while (!stdout.includes("ready") && (await read()));
+    // Only the last image is live now. Exec used to leave every earlier
+    // image's memory reachable from the process's worker, which Chromium
+    // never collects, so the chain held one reservation per exec.
+    const during = await memoryHeadroom();
+    await child.stdin.close();
+    while (await read());
+    return { before, during, status: await child.status, stdout, stderr: await stderr };
+  });
+
 globalThis.remoteMemoryMetadata = () =>
   withGuest(
     async (guest) => {
