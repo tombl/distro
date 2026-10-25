@@ -176,6 +176,7 @@ in
       proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;
       pty = installedCheck { name = "pty"; };
+      ramfs-fallocate = installedCheck { name = "ramfs-fallocate"; };
       remote-memory = remoteMemoryCheck;
       scheduler-handoff = schedulerHandoffCheck;
       setjmp = setjmpCheck;
@@ -184,6 +185,7 @@ in
       signal-correctness = installedCheck { name = "signal-correctness"; };
       sigsetjmp = sigsetjmpCheck;
       sigsetjmp-handler = sigsetjmpHandlerCheck;
+      pthread-getattr-main = installedCheck { name = "pthread-getattr-main"; };
       pthread-no-tls = installedCheck { name = "pthread-no-tls"; };
       thread-local = installedCheck { name = "thread-local"; };
       threads = installedCheck { name = "threads"; };
@@ -192,6 +194,7 @@ in
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
       wallclock = installedCheck { name = "wallclock"; };
+      writev-empty-segment = installedCheck { name = "writev-empty-segment"; };
     };
   };
 })
