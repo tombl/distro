@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import {
+import fs, {
   chmod,
   copyFile,
   mkdir,
@@ -15,6 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
+import { syncBuiltinESMExports } from "node:module";
 import { createConnection, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -198,6 +199,39 @@ test("copies a read-only source directory and cleans up after it", async (t) => 
   assert.deepEqual(await readdir(temporary), []);
   const guest = await boot(t, output);
   assert.equal(await guest.fs.readTextFile("/srv/data/value"), "read-only\n");
+});
+
+test("cleans up the output even when removing the staged inputs fails", async (t) => {
+  const directory = await scratch(t);
+  const broken = join(directory, "broken.apk");
+  await writeFile(broken, "not an apk\n");
+  const output = join(directory, "image.erofs");
+  // Fail only the removal of the staging directory, which comes before the
+  // temporary output's.
+  const real = fs.rm;
+  const staged: string[] = [];
+  t.mock.method(fs, "rm", (path: string, options: object) => {
+    if (/^lowland-image-\w{6}$/.test(basename(path))) {
+      staged.push(path);
+      return Promise.reject(new Error("cannot remove the staged inputs"));
+    }
+    return real(path, options);
+  });
+  syncBuiltinESMExports();
+  t.after(async () => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    for (const path of staged) await rm(path, { recursive: true, force: true });
+  });
+  const error = await buildImage({ packages: [broken], output }).then(
+    () => assert.fail("the build succeeded"),
+    (error: unknown) => error,
+  );
+  assert.ok(error instanceof AggregateError, String(error));
+  assert.match(String(error.errors[0]), /^Error: image build failed:\n/);
+  assert.equal(String(error.errors[1]), "Error: cannot remove the staged inputs");
+  assert.equal(staged.length, 1);
+  assert.deepEqual(await readdir(directory), ["broken.apk"]);
 });
 
 // The fixture's address is never routed: every connection reaches the server.
