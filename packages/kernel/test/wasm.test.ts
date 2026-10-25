@@ -224,7 +224,7 @@ test("virtio-net preserves pending frames but drops receive chains on reset", as
   queue_receive(0, 64);
   imports.enable_vring(0, 0, 1, 0, 1);
   imports.notify(0, 0);
-  imports.reset(0);
+  imports.reset(0, 0);
   imports.disable_vring(0, 0);
 
   const frame = Uint8Array.from([0x02, 0, 0, 0, 0, 1, 0x02, 0, 0, 0, 0, 2, 0x08, 0x00]);
@@ -335,7 +335,7 @@ test("console input is held until the guest opens its port", async () => {
   // Linux resets the device while probing it. The old descriptor must be
   // discarded, while input queued by the host survives for the replacement
   // queue that represents the opened console port.
-  imports.reset(0);
+  imports.reset(0, 0);
   imports.disable_vring(0, 0);
   const replacement_ring = 128;
   const replacement = new DataView(console_memory.buffer, replacement_ring, 16);
@@ -397,12 +397,12 @@ test("virtio-vsock drops guest buffers and connections on reset", async () => {
   descriptor.setUint16(14, (1 << 7) | (1 << 1), true);
   imports.enable_vring(0, 0, 1, 0, 1);
   imports.notify(0, 0);
-  imports.reset(0);
+  imports.reset(0, 0);
 
   const connecting = device.connect(1024, { timeoutMs: 5000 });
   await Promise.resolve();
   assert.deepEqual([...new Uint8Array(vsock_memory.buffer, 64, 64)], Array(64).fill(0));
-  imports.reset(0);
+  imports.reset(0, 0);
   await assert.rejects(connecting, /vsock device reset while connecting/);
   await close_device(device);
 });
@@ -466,7 +466,7 @@ test("virtio reset invalidates stale chains and pending notifications", async ()
   imports.notify(0, 0);
   assert.equal(notifications, 1);
 
-  imports.reset(0);
+  imports.reset(0, 0);
   assert.equal(resets, 1);
   // Linux deletes each queue after resetting the device. This must remain
   // harmless even though reset already invalidated and detached the queue.
@@ -582,7 +582,7 @@ test("a remote virtio worker owns chains but the main thread publishes completio
   imports.enable_vring(0, 0, 1, 128, 6);
   imports.notify(0, 0);
   const stale = await stale_chain.promise;
-  imports.reset(0);
+  imports.reset(0, 0);
   stale.array[0] = 0xbb;
   stale.release(1);
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -930,7 +930,7 @@ test("a stalled recipient does not hold a NIC through reset or close", async () 
 
   // The old transmit waits on the stalled port; the replacement queue must
   // not wait behind it.
-  imports.reset(0);
+  imports.reset(0, 0);
   transmit(0xa00, 0xb00, 0x0b, 2);
   for (let i = 0; i < 100 && delivered.length === 0; i++) await tick();
   assert.deepEqual(delivered, [2]);
@@ -1091,6 +1091,40 @@ test("virtio block completes independent requests out of order", async () => {
   await close_device(device);
 });
 
+test("virtio block fails requests outside its sectors or segment limit", async () => {
+  const calls: number[] = [];
+  const { device, imports, ring } = block_machine({
+    capacity: 4096 + 100,
+    read(offset, target) {
+      calls.push(offset);
+      return target.byteLength;
+    },
+  });
+  // The trailing partial sector is not advertised, so it is out of range too.
+  const straddling = ring.request(0, 7, [{ length: 1024 }]);
+  const beyond = ring.request(0, 2 ** 60, [{ length: 512 }]);
+  // SEG_MAX is 128; separate addresses keep the segments from merging.
+  const segments = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({ address: 0x8000 + i * 2, length: 1 }));
+  // The ring is laid out below 0x1000, so 255 descriptors at most.
+  const too_many = ring.request(0, 0, segments(129));
+  const most = ring.request(0, 0, segments(114));
+  const last = ring.request(0, 7, [{ length: 512 }]);
+  imports.enable_vring(0, 0, 256, 0, 1);
+  imports.notify(0, 0);
+  await turns();
+
+  assert.equal(straddling.status(), 1);
+  assert.equal(beyond.status(), 1);
+  assert.equal(too_many.status(), 1);
+  assert.equal(most.status(), 0);
+  assert.equal(last.status(), 0);
+  assert.ok(
+    calls.every((offset) => offset < 4096),
+    "storage only sees advertised sectors",
+  );
+  await close_device(device);
+});
 
 test(
   "a block request failure that closes the device lets the close finish",
@@ -1123,6 +1157,10 @@ test(
   },
 );
 
+test("virtio block rejects storage it cannot address exactly", () => {
+  assert.throws(() => blockDevice({ capacity: 2 ** 62, read: () => 0 }), /safe integer/);
+});
+
 test("virtio block flushes only after earlier writes complete", async () => {
   const write = Promise.withResolvers<void>();
   const events: string[] = [];
@@ -1154,12 +1192,17 @@ test("virtio block flushes only after earlier writes complete", async () => {
   await close_device(device);
 });
 
-test("virtio block issues one storage call per request", async () => {
-  const calls: { kind: string; offset: number; length: number; shared: boolean }[] = [];
+test("virtio block hands storage guest memory in as few calls as it can", async () => {
+  const calls: { kind: string; offset: number; length: number; guest: boolean }[] = [];
   const { memory, device, imports, ring } = block_machine({
     capacity: 8192,
     read(offset, target) {
-      calls.push({ kind: "read", offset, length: target.byteLength, shared: false });
+      calls.push({
+        kind: "read",
+        offset,
+        length: target.byteLength,
+        guest: target.buffer === memory.buffer,
+      });
       for (let i = 0; i < target.byteLength; i++) target[i] = (offset + i) & 0xff;
       return target.byteLength;
     },
@@ -1168,14 +1211,14 @@ test("virtio block issues one storage call per request", async () => {
         kind: "write",
         offset,
         length: data.byteLength,
-        shared: data.buffer === memory.buffer,
+        guest: data.buffer === memory.buffer,
       });
       return data.byteLength;
     },
   });
+  // Segments adjacent in guest memory merge into one call; split ones take
+  // one call each when storage has no vectored method.
   const read = ring.request(0, 1, [{ length: 512 }, { length: 512 }]);
-  // Guest buffers are copied once, whether or not they are adjacent in guest
-  // memory, and each request's data reaches storage in a single call.
   ring.request(1, 4, [
     { address: 0x4000, length: 512 },
     { address: 0x4200, length: 512 },
@@ -1189,12 +1232,46 @@ test("virtio block issues one storage call per request", async () => {
   await turns();
 
   assert.deepEqual(calls, [
-    { kind: "read", offset: 512, length: 1024, shared: false },
-    { kind: "write", offset: 2048, length: 1024, shared: false },
-    { kind: "write", offset: 4096, length: 1024, shared: false },
+    { kind: "read", offset: 512, length: 1024, guest: true },
+    { kind: "write", offset: 2048, length: 1024, guest: true },
+    { kind: "write", offset: 4096, length: 512, guest: true },
+    { kind: "write", offset: 4608, length: 512, guest: true },
   ]);
   assert.equal(read.status(), 0);
   assert.equal(new Uint8Array(memory.buffer, read.addresses[1]!, 1)[0], (512 + 512) & 0xff);
+  await close_device(device);
+});
+
+test("virtio block makes one vectored call for a split request", async () => {
+  const calls: string[] = [];
+  const { device, imports, ring } = block_machine({
+    capacity: 8192,
+    read: (_offset, target) => target.byteLength,
+    readv(offset, targets) {
+      calls.push(`readv ${offset} ${targets.map((target) => target.byteLength)}`);
+      return targets.reduce((total, target) => total + target.byteLength, 0);
+    },
+    write: (_offset, data) => data.byteLength,
+    writev(offset, sources) {
+      calls.push(`writev ${offset} ${sources.map((source) => source.byteLength)}`);
+      return sources.reduce((total, source) => total + source.byteLength, 0);
+    },
+  });
+  const read = ring.request(0, 0, [
+    { address: 0x5000, length: 512 },
+    { address: 0x6000, length: 1024 },
+  ]);
+  const write = ring.request(1, 4, [
+    { address: 0x7000, length: 512 },
+    { address: 0x7800, length: 512 },
+  ]);
+  imports.enable_vring(0, 0, 32, 0, 1);
+  imports.notify(0, 0);
+  await turns();
+
+  assert.deepEqual(calls, ["readv 0 512,1024", "writev 2048 512,512"]);
+  assert.equal(read.status(), 0);
+  assert.equal(write.status(), 0);
   await close_device(device);
 });
 
@@ -1262,7 +1339,7 @@ test(
   },
 );
 
-test("a device with views reads guest memory in place but still copies writes", async () => {
+test("a device with views works on guest memory in place", async () => {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   const seen = Promise.withResolvers<{ readable: Uint8Array; writable: Uint8Array }>();
   const device = new TestDevice({
@@ -1299,6 +1376,149 @@ test("a device with views reads guest memory in place but still copies writes", 
   const { readable, writable } = await seen.promise;
   assert.equal(readable.buffer, memory.buffer);
   assert.equal(readable.byteOffset, 0x100);
-  assert.notEqual(writable.buffer, memory.buffer);
+  assert.equal(writable.buffer, memory.buffer);
+  assert.equal(writable.byteOffset, 0x200);
   await close_device(device.handle);
 });
+
+test("a virtqueue rejects an indirect table longer than the queue", async () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  let kicked = false;
+  const failure = Promise.withResolvers<unknown>();
+  const device = new TestDevice({
+    queues: [
+      (queue) => {
+        kicked = true;
+        for (const _chain of queue);
+      },
+    ],
+  });
+  const imports = attach_devices({
+    memory,
+    devices: [device.handle],
+    trigger_irq() {},
+    on_error: failure.resolve,
+  });
+  // One ring entry pointing at a two-entry indirect table.
+  const descriptor = new DataView(memory.buffer, 0, 16);
+  descriptor.setBigUint64(0, 0x100n, true);
+  descriptor.setUint32(8, 2 * 16, true);
+  descriptor.setUint16(14, (1 << 7) | (1 << 2), true);
+  imports.enable_vring(0, 0, 1, 0, 1);
+  imports.notify(0, 0);
+  assert.match(String(await failure.promise), /malformed indirect buffer/);
+  assert(kicked);
+  await close_device(device.handle).catch(() => {});
+});
+
+// A reset of a device that works on guest memory in place must not let the
+// guest reuse that memory until in-flight storage calls have finished with it,
+// even if the machine starts closing while the guest waits.
+async function reset_during_slow_read(
+  attach: (storage: Parameters<typeof blockDevice>[0]) => Promise<{
+    memory: WebAssembly.Memory;
+    imports: ReturnType<typeof attach_devices>;
+    close(): Promise<void>;
+  }>,
+  { close_while_waiting = false } = {},
+) {
+  const slow = Promise.withResolvers<void>();
+  let finished_with_memory = false;
+  const { memory, imports, close } = await attach({
+    capacity: 4096,
+    async read(_offset, target) {
+      await slow.promise;
+      target.fill(0xaa);
+      finished_with_memory = true;
+      return target.byteLength;
+    },
+  });
+  // A failed assertion must not leave the read, and so the close, hanging.
+  try {
+    const ring = block_ring(memory);
+    const read = ring.request(0, 0, [{ length: 512 }]);
+    imports.enable_vring(0, 0, 16, 0, 1);
+    imports.notify(0, 0);
+    await turns();
+
+    const done = 0x8000;
+    const done_word = () => new Int32Array(memory.buffer, done, 1)[0];
+    imports.reset(0, done);
+    imports.disable_vring(0, 0);
+    const closing = close_while_waiting ? close() : undefined;
+    await turns();
+    assert.equal(done_word(), 0, "reset waits for the read that holds guest memory");
+
+    slow.resolve();
+    for (let i = 0; i < 100 && done_word() === 0; i++) await turns(1);
+    assert.equal(done_word(), 1);
+    assert.equal(finished_with_memory, true, "storage finished before the reset was acknowledged");
+
+    // The guest now reuses the buffer and the status byte. Nothing may write
+    // to them afterwards, and the stale completion is never published.
+    const target = new Uint8Array(memory.buffer, read.addresses[0]!, 512);
+    target.fill(0x55);
+    const status = new Uint8Array(memory.buffer, read.addresses[0]! + 512, 1);
+    status[0] = 0x55;
+    await turns();
+    assert.ok(target.every((byte) => byte === 0x55));
+    assert.equal(status[0], 0x55);
+    assert.equal(new DataView(memory.buffer, 0, 16).getUint16(14, true) & (1 << 15), 0);
+    await (closing ?? close());
+  } finally {
+    slow.resolve();
+  }
+}
+
+async function local_block(storage: Parameters<typeof blockDevice>[0]) {
+  const { memory, device, imports } = block_machine(storage);
+  return { memory, imports, close: () => close_device(device) };
+}
+
+async function remote_block(storage: Parameters<typeof blockDevice>[0]) {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const channel = new MessageChannel();
+  serveDevice(channel.port1, blockDevice(storage));
+  const device = await workerDevice(channel.port2);
+  const imports = attach_devices({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  return {
+    memory,
+    imports,
+    async close() {
+      await close_device(device);
+      channel.port1.close();
+      channel.port2.close();
+    },
+  };
+}
+
+test("a block reset waits for in-flight storage to finish with guest memory", async () => {
+  await reset_during_slow_read(local_block);
+});
+
+test("a block reset still waits for storage when the device closes meanwhile", async () => {
+  await reset_during_slow_read(local_block, { close_while_waiting: true });
+});
+
+test(
+  "a remote block reset waits for the worker to finish with guest memory",
+  { timeout: 5_000 },
+  async () => {
+    await reset_during_slow_read(remote_block);
+  },
+);
+
+test(
+  "a remote block reset still waits for the worker when the device closes meanwhile",
+  { timeout: 5_000 },
+  async () => {
+    await reset_during_slow_read(remote_block, { close_while_waiting: true });
+  },
+);
