@@ -14,6 +14,8 @@ import {
   memory_bytes,
   user_module_imports_supported,
   type UserContext,
+  type UserWord,
+  user_word_number,
 } from "./wasm.ts";
 
 export interface InitMessage {
@@ -122,25 +124,11 @@ function user_imports({
     return new WebAssembly.Instance(context.module, {
       env: { memory: context.memory },
       linux: {
-        syscall: (
-          nr: number,
-          arg0: number,
-          arg1: number,
-          arg2: number,
-          arg3: number,
-          arg4: number,
-          arg5: number,
-        ) => {
-          const original_instance = instance;
-          const ret = kernel_instance.exports.syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5);
-          if (instance !== original_instance) {
-            call_entry = call_start;
-            throw HALT_USER;
-          }
-          return ret;
-        },
+        // A direct wasm-to-wasm link with no JS frame. The kernel calls
+        // user.unwind when an execve replaced this instance.
+        syscall: kernel_instance.exports.syscall,
         get_thread_area: kernel_instance.exports.get_thread_area,
-        copy_siginfo: (to: number) => {
+        copy_siginfo: (to: UserWord) => {
           const result = kernel_instance.exports.copy_siginfo(to);
           const current = siginfo_copy_results.length - 1;
           if (current >= 0) siginfo_copy_results[current] = result;
@@ -221,7 +209,7 @@ function user_imports({
           }
 
           module = new WebAssembly.Module(bytes);
-          if (!user_module_imports_supported(module)) {
+          if (!user_module_imports_supported(module, bytes, memory_import.type.address)) {
             return -8; // exec format error
           }
 
@@ -277,7 +265,7 @@ function user_imports({
           const { __indirect_function_table } = instance.exports;
           assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-          const f = __indirect_function_table.get(fn >>> 0);
+          const f = __indirect_function_table.get(user_word_number(fn));
           assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
           f(arg);
@@ -287,6 +275,14 @@ function user_imports({
         };
       },
 
+      unwind() {
+        // The kernel's syscall export calls this once an execve has replaced
+        // the instance whose frames are still beneath it. Restart at the new
+        // instance's entry point.
+        call_entry = call_start;
+        throw HALT_USER;
+      },
+
       // signal handling:
       call_signal_handler(fn, sig) {
         assert(instance);
@@ -294,7 +290,7 @@ function user_imports({
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-        const f = __indirect_function_table.get(fn >>> 0);
+        const f = __indirect_function_table.get(user_word_number(fn));
         assert(typeof f === "function" && f.length === 1, "Invalid function signature");
 
         f(sig);
@@ -305,7 +301,7 @@ function user_imports({
         const { __indirect_function_table } = instance.exports;
         assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
 
-        const f = __indirect_function_table.get(trampoline >>> 0);
+        const f = __indirect_function_table.get(user_word_number(trampoline));
         assert(typeof f === "function" && f.length === 2, "Invalid siginfo trampoline");
 
         siginfo_copy_results.push(null);

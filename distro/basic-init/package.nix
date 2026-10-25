@@ -33,12 +33,16 @@ let
       name,
       source ? "tests/${name}.c",
       extraFlags ? "",
+      # Raises the program's declared memory maximum above the platform's
+      # defaultMaxMemory.
+      maxMemory ? null,
       contents ? [ ],
       cpus ? 1,
       heavy ? true,
     }:
     let
-      initPackage = buildInitWith "basic-init-${name}" source extraFlags;
+      package = buildInitWith "basic-init-${name}" source extraFlags;
+      initPackage = if maxMemory == null then package else package.overrideAttrs { inherit maxMemory; };
     in
     vm-test.installedTest {
       name = "basic-init-${name}";
@@ -187,6 +191,12 @@ in
       pthread-no-tls = installedCheck { name = "pthread-no-tls"; };
       thread-local = installedCheck { name = "thread-local"; };
       threads = installedCheck { name = "threads"; };
+      syscall-64bit-args = installedCheck {
+        name = "syscall-64bit-args";
+        # The test grows its memory past 2 GiB for pointers with the sign bit set.
+        maxMemory = 3 * 1024 * 1024 * 1024;
+      };
+      syscall-latency = installedCheck { name = "syscall-latency"; };
       timer = installedCheck { name = "timer"; };
       tls = installedCheck { name = "tls"; };
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
