@@ -63,16 +63,12 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
   throw new Error("guest agent did not become ready", { cause: failure });
 }
 
-// Bounds how long close() waits for the guest to write back its page cache,
-// so a wedged guest cannot hang teardown.
-const CLOSE_SYNC_TIMEOUT_MS = 30_000;
-
-async function sync_before_close(client: GuestClientCapabilities) {
+async function sync_before_close(client: GuestClientCapabilities, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
       () => reject(new Error("guest did not sync its filesystems before close")),
-      CLOSE_SYNC_TIMEOUT_MS,
+      timeoutMs,
     );
   });
   try {
@@ -108,6 +104,15 @@ export interface GuestAgent extends MachinePluginProvider {
   readonly unmount: Unmount;
 }
 
+/** Options for {@link guestAgent}. */
+export interface GuestAgentOptions {
+  /**
+   * How long `machine.close()` waits for the guest to sync its filesystems
+   * before forcing teardown. Defaults to 30 000 ms.
+   */
+  syncTimeoutMs?: number;
+}
+
 const readiness = new WeakMap<GuestAgent, (machine: Machine) => Promise<void>>();
 const machines_with_agent = new WeakSet<MachineSetup>();
 
@@ -123,15 +128,18 @@ export function wait_for_agent(agent: GuestAgent, machine: Machine): Promise<voi
  * GPT-wrapped agent EROFS, its vsock transport, and its boot arguments. The
  * partition label makes discovery independent of virtio device ordering. The
  * plugin does not finish booting until the agent is ready to accept requests.
- * `machine.close()` first syncs the guest's filesystems through the agent,
- * waiting at most 30 seconds; if that fails, `machine.closed` rejects.
+ * `machine.close()` first syncs the guest's filesystems through a ready agent,
+ * waiting at most `syncTimeoutMs`; if that fails, teardown is forced and
+ * `machine.closed` rejects. Closing before the agent is ready skips the sync.
  */
-export function guestAgent(): GuestAgent {
+export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
+  const sync_timeout = options.syncTimeoutMs ?? 30_000;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
   let configured = false;
   let attached_machine: Machine | undefined;
   let ready: Promise<void> | undefined;
+  let is_ready = false;
 
   const wait = (machine: Machine) => {
     if (!configured)
@@ -140,7 +148,9 @@ export function guestAgent(): GuestAgent {
       return Promise.reject(new Error("guest agent is attached to a different machine"));
     }
     attached_machine = machine;
-    return (ready ??= wait_for_guest(client, machine));
+    return (ready ??= wait_for_guest(client, machine).then(() => {
+      is_ready = true;
+    }));
   };
 
   const plugin: MachinePlugin = {
@@ -168,16 +178,9 @@ export function guestAgent(): GuestAgent {
       await wait(machine);
     },
     async closing() {
-      // Without a ready agent there is no session to sync through.
-      if (
-        !ready ||
-        !(await ready.then(
-          () => true,
-          () => false,
-        ))
-      )
-        return;
-      await sync_before_close(client);
+      // Readiness has its own deadline; waiting for it here would leave close
+      // unbounded, and an agent that never answered has written nothing.
+      if (is_ready) await sync_before_close(client, sync_timeout);
     },
   };
 
