@@ -2,12 +2,9 @@
 
 import { Struct, U16LE, U32LE, U64LE } from "@lowland/bytes";
 import { assert } from "../util.ts";
-import {
-  VirtioController,
-  type VirtioDevice,
-  type Virtqueue,
-  type VirtqueueChain,
-} from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue, VirtqueueChain } from "./queue.ts";
+import { RxQueue } from "./rx.ts";
 
 class VsockConfig extends Struct({ guest_cid: U64LE }) {}
 
@@ -219,7 +216,7 @@ interface VsockConnectionState {
  * A virtio-vsock device: stream sockets between the guest and this process,
  * addressed by port.
  */
-export interface VsockDevice extends VirtioDevice {
+export interface VsockDevice extends Device {
   /** Connects to a vsock listener on `port` in the guest. */
   connect(
     port: number,
@@ -228,49 +225,61 @@ export interface VsockDevice extends VirtioDevice {
       timeoutMs?: number;
     },
   ): Promise<VsockConnection>;
-  /** Closes the device and every connection on it. */
-  close(): void;
 }
 
-/**
- * A virtio-vsock device. `guestCid` is the context ID assigned to the
- * guest, defaulting to 3.
- */
-export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): VsockDevice {
-  const config = new Uint8Array(VsockConfig.size);
-  new VsockConfig(config).guest_cid = guestCid;
+function read_tx_packet(chain: VirtqueueChain) {
+  const readable = Array.from(chain, (desc) => {
+    assert(!desc.writable, "vsock tx descriptor must be readable");
+    return desc.array;
+  });
+  const header_bytes = concat_bytes(readable);
+  assert(header_bytes.byteLength >= VsockHeader.size, "short vsock header");
+  const header = new VsockHeader(header_bytes);
+  const payload = header_bytes.subarray(VsockHeader.size, VsockHeader.size + header.len);
+  return { header, payload };
+}
 
-  const rx_buffers: VirtqueueChain[] = [];
-  const pending_packets: Uint8Array[] = [];
-  const connections = new Map<number, VsockConnectionState>();
-  let next_port = 49152;
-  let closed = false;
+class VirtioVsock extends VirtioDevice {
+  readonly #guest_cid: bigint;
+  readonly #rx = new RxQueue();
+  // Packets are small and bounded by the peer's credit, so they queue here
+  // until the guest posts buffers for them.
+  readonly #pending: Uint8Array[] = [];
+  readonly #connections = new Map<number, VsockConnectionState>();
+  #next_port = 49152;
 
-  function allocate_port() {
+  constructor(guest_cid: bigint) {
+    const config = new Uint8Array(VsockConfig.size);
+    new VsockConfig(config).guest_cid = guest_cid;
+    super({ id: 19, queues: 3, config });
+    this.#guest_cid = guest_cid;
+  }
+
+  #allocate_port() {
     for (let attempts = 0; attempts < 65536 - 49152; attempts++) {
-      const port = next_port;
-      next_port = port === 65535 ? 49152 : port + 1;
-      if (!connections.has(port)) return port;
+      const port = this.#next_port;
+      this.#next_port = port === 65535 ? 49152 : port + 1;
+      if (!this.#connections.has(port)) return port;
     }
     throw new Error("no local vsock ports available");
   }
 
-  function flush_rx(_controller: VirtioController) {
-    while (pending_packets.length > 0 && rx_buffers.length > 0) {
-      const packet = pending_packets.shift()!;
-      const chain = rx_buffers.shift()!;
-      const [desc, next_desc] = chain;
-      assert(desc && desc.writable, "vsock rx buffer must be writable");
-      assert(!next_desc, "vsock rx buffer should be a single descriptor");
-      assert(desc.array.byteLength >= packet.byteLength, "vsock rx buffer too small");
-
-      desc.array.set(packet);
-      chain.release(packet.byteLength);
-    }
+  #flush() {
+    while (
+      this.#pending.length > 0 &&
+      this.#rx.deliver((chain) => {
+        const packet = this.#pending.shift()!;
+        const [desc, next_desc] = chain;
+        assert(desc && desc.writable, "vsock rx buffer must be writable");
+        assert(!next_desc, "vsock rx buffer should be a single descriptor");
+        assert(desc.array.byteLength >= packet.byteLength, "vsock rx buffer too small");
+        desc.array.set(packet);
+        return packet.byteLength;
+      })
+    );
   }
 
-  function send_packet(
-    controller: VirtioController,
+  #send(
     connection: VsockConnectionController,
     op: number,
     flags: number,
@@ -280,7 +289,7 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
     const packet = new Uint8Array(VsockHeader.size + payload.byteLength);
     const hdr = new VsockHeader(packet);
     hdr.src_cid = HOST_CID;
-    hdr.dst_cid = guestCid;
+    hdr.dst_cid = this.#guest_cid;
     hdr.src_port = connection.local_port;
     hdr.dst_port = connection.peer_port;
     hdr.len = payload.byteLength;
@@ -291,29 +300,13 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
     hdr.fwd_cnt = fwd_cnt;
     packet.set(payload, VsockHeader.size);
 
-    pending_packets.push(packet);
-    flush_rx(controller);
+    this.#pending.push(packet);
+    this.#flush();
   }
 
-  function read_tx_packet(chain: VirtqueueChain) {
-    const readable = Array.from(chain, (desc) => {
-      assert(!desc.writable, "vsock tx descriptor must be readable");
-      return desc.array;
-    });
-    const header_bytes = concat_bytes(readable);
-    assert(header_bytes.byteLength >= VsockHeader.size, "short vsock header");
-    const header = new VsockHeader(header_bytes);
-    const payload = header_bytes.subarray(VsockHeader.size, VsockHeader.size + header.len);
-    return { header, payload };
-  }
-
-  function handle_tx_packet(
-    controller: VirtioController,
-    header: VsockHeader,
-    payload: Uint8Array,
-  ) {
+  #handle_tx_packet(header: VsockHeader, payload: Uint8Array) {
     const local_port = header.dst_port;
-    const state = connections.get(local_port);
+    const state = this.#connections.get(local_port);
     if (!state) return;
 
     const connection = state.controller;
@@ -330,103 +323,87 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
       case VsockOp.CREDIT_UPDATE:
         break;
       case VsockOp.CREDIT_REQUEST:
-        send_packet(controller, connection, VsockOp.CREDIT_UPDATE, 0, new Uint8Array());
+        this.#send(connection, VsockOp.CREDIT_UPDATE, 0, new Uint8Array());
         break;
       case VsockOp.SHUTDOWN:
-        send_packet(controller, connection, VsockOp.RST, 0, new Uint8Array());
+        this.#send(connection, VsockOp.RST, 0, new Uint8Array());
         if (!state.connected) {
           state.reject(new Error("guest shut down vsock connection"));
         }
         connection.close_from_peer();
-        connections.delete(local_port);
+        this.#connections.delete(local_port);
         break;
       case VsockOp.RST:
         if (!state.connected) {
           state.reject(new Error("guest reset vsock connection"));
         }
         connection.close_from_peer();
-        connections.delete(local_port);
+        this.#connections.delete(local_port);
         break;
       default:
         console.warn("unknown vsock op", header.op);
     }
   }
 
-  function notify_rx(queue: Virtqueue, controller: VirtioController) {
-    for (const chain of queue) rx_buffers.push(chain);
-    flush_rx(controller);
-  }
-
-  function notify_tx(queue: Virtqueue, controller: VirtioController) {
-    for (const chain of queue) {
-      const { header, payload } = read_tx_packet(chain);
-      handle_tx_packet(controller, header, payload);
-      chain.release(0);
+  protected kick(vq: number, queue: Virtqueue) {
+    switch (vq) {
+      case 0:
+        this.#rx.post(queue);
+        this.#flush();
+        break;
+      case 1:
+        for (const chain of queue) {
+          const { header, payload } = read_tx_packet(chain);
+          this.#handle_tx_packet(header, payload);
+          chain.release(0);
+        }
+        break;
+      // Event buffers (queue 2) are only needed for host transport reset,
+      // which is not supported yet.
     }
   }
 
-  function reset_device() {
-    rx_buffers.length = 0;
-    pending_packets.length = 0;
-    for (const state of connections.values()) {
+  protected reset() {
+    this.#rx.reset();
+    this.#pending.length = 0;
+    for (const state of this.#connections.values()) {
       if (!state.connected) {
         state.reject(new Error("vsock device reset while connecting"));
       }
       state.controller.close_from_peer();
     }
-    connections.clear();
+    this.#connections.clear();
   }
 
-  function close_device(controller: VirtioController) {
-    if (closed) return;
-    for (const state of connections.values()) {
-      send_packet(controller, state.controller, VsockOp.RST, 0, new Uint8Array());
+  protected close() {
+    for (const state of this.#connections.values()) {
+      this.#send(state.controller, VsockOp.RST, 0, new Uint8Array());
       if (!state.connected) {
         state.reject(new Error("vsock device closed while connecting"));
       }
       state.controller.close_from_peer();
     }
-    connections.clear();
-    closed = true;
+    this.#connections.clear();
+    this.#rx.close();
   }
 
-  const controller = new VirtioController(
-    { deviceId: 19, config },
-    {
-      queues: [
-        notify_rx,
-        notify_tx,
-        () => {
-          // Event buffers are only needed for host transport reset, which is
-          // not supported yet.
-        },
-      ],
-      reset: reset_device,
-      close: close_device,
-    },
-  );
-
-  function connect(
-    port: number,
-    { timeoutMs = 5000 }: { timeoutMs?: number } = {},
-  ): Promise<VsockConnection> {
-    if (closed) {
+  connect(port: number, { timeoutMs = 5000 }: { timeoutMs?: number } = {}) {
+    if (this.stopped) {
       return Promise.reject(new Error("vsock device is closed"));
     }
-    const local_port = allocate_port();
+    const local_port = this.#allocate_port();
     const connection = create_vsock_connection(
       {
-        send(op, flags, payload, fwd_cnt) {
-          if (closed) return;
-          const connection = connections.get(local_port)?.controller;
+        send: (op, flags, payload, fwd_cnt) => {
+          if (this.stopped) return;
+          const connection = this.#connections.get(local_port)?.controller;
           if (!connection) return;
-          send_packet(controller, connection, op, flags, payload, fwd_cnt);
+          this.#send(connection, op, flags, payload, fwd_cnt);
         },
-        close() {
-          const connection = connections.get(local_port)?.controller;
+        close: () => {
+          const connection = this.#connections.get(local_port)?.controller;
           if (!connection) return;
-          send_packet(
-            controller,
+          this.#send(
             connection,
             VsockOp.SHUTDOWN,
             VsockShutdown.RCV | VsockShutdown.SEND,
@@ -440,13 +417,13 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
 
     const promise = new Promise<VsockConnection>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        send_packet(controller, connection, VsockOp.RST, 0, new Uint8Array());
-        connections.delete(local_port);
+        this.#send(connection, VsockOp.RST, 0, new Uint8Array());
+        this.#connections.delete(local_port);
         connection.close_from_peer();
         reject(new Error(`timed out connecting to guest vsock port ${port}`));
       }, timeoutMs);
 
-      connections.set(local_port, {
+      this.#connections.set(local_port, {
         controller: connection,
         connected: false,
         resolve(value) {
@@ -460,9 +437,18 @@ export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): Vsoc
       });
     });
 
-    send_packet(controller, connection, VsockOp.REQUEST, 0, new Uint8Array());
+    this.#send(connection, VsockOp.REQUEST, 0, new Uint8Array());
     return promise;
   }
+}
 
-  return controller.expose({ connect, close: controller.close });
+/**
+ * A virtio-vsock device. `guestCid` is the context ID assigned to the
+ * guest, defaulting to 3.
+ */
+export function vsockDevice({ guestCid = 3n }: { guestCid?: bigint } = {}): VsockDevice {
+  const device = new VirtioVsock(guestCid);
+  return public_handle(device, {
+    connect: (port: number, options?: { timeoutMs?: number }) => device.connect(port, options),
+  });
 }

@@ -29,6 +29,14 @@
   system images from SquashFS to EROFS.
 - Published packages bundle their private binary-data helpers so applications
   only need to install the public kernel and guest packages.
+- **Breaking:** `@lowland/kernel` no longer exposes its virtio layer. Custom
+  devices built on `VirtioController`, `VirtioDriver`, `VirtioDeviceOptions`,
+  `VirtqueueHandler`, and the `Virtqueue*` types are no longer supported, and
+  `DeviceTreeNode` and `MachineSetup.deviceTree` are removed. Devices are typed
+  as the opaque `Device`, and `VsockDevice.close()` is removed because the
+  machine owns device lifetime. `BlockDeviceStorage` is now `BlockStorage`; the
+  old name remains as a deprecated alias.
+- Console input is read from its stream only as the guest consumes it.
 
 ### Fixed
 

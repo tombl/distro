@@ -17,7 +17,7 @@ API without preserving its multiple machine constructors.
   Node, browsers, bundlers, and unbundled applications.
 - Devices are the kernel's extension mechanism. Plugins are the small amount of
   composition needed when one logical integration contributes several devices,
-  kernel arguments, device-tree entries, or post-boot work.
+  kernel arguments, or post-boot work.
 - Canonical machines boot from block devices. The kernel's initramfs ABI stays
   available for lower-level embeddings, but Lowland does not bundle or depend
   on an initramfs.
@@ -178,7 +178,6 @@ export interface MachinePlugin {
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
-  readonly deviceTree: DeviceTreeBuilder;
   readonly bootConsole: ReadableStream<Uint8Array>;
 }
 ```
@@ -192,7 +191,7 @@ on the resulting machine; plugin authors are responsible for not retaining and
 misusing a configure-only value.
 
 Simple devices can implement the plugin protocol themselves. A logical
-integration can contribute multiple devices, arguments, or device-tree changes.
+integration can contribute multiple devices and kernel arguments.
 The protocol does not mix capabilities into `Machine`: callers invoke guest
 operations on the object returned by `guestAgent()`.
 

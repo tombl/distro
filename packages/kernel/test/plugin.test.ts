@@ -2,7 +2,6 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { DeviceTreeNode } from "../src/devicetree.ts";
 import type { Machine } from "../src/index.ts";
 import { configure_machine, run_machine_booted } from "../src/plugin-internal.ts";
 import {
@@ -11,7 +10,8 @@ import {
   type MachinePlugin,
   type MachinePluginProvider,
 } from "../src/plugin.ts";
-import { VirtioController } from "../src/virtio/core.ts";
+import { public_handle } from "../src/virtio/device.ts";
+import { close_device, TestDevice } from "./virtio-fixture.ts";
 
 function machine_stub(): Machine {
   const closed = Promise.resolve();
@@ -25,20 +25,14 @@ function machine_stub(): Machine {
 }
 
 test("plugins configure a machine in array order", async () => {
-  const first = new VirtioController({ deviceId: 1 }, { queues: [] }).device;
-  const second = new VirtioController({ deviceId: 2 }, { queues: [] }).device;
+  const first = new TestDevice({ id: 1 }).handle;
+  const second = new TestDevice({ id: 2 }).handle;
   const calls: string[] = [];
   const plugin: MachinePlugin = {
     configure(setup) {
       calls.push("plugin");
       setup.args.add("plugin=one", "plugin=two");
       setup.devices.add(first);
-      setup.deviceTree.merge({
-        chosen: { mode: "first", nested: { one: 1 } },
-      });
-      setup.deviceTree.merge({
-        chosen: { mode: "second", nested: { two: 2 } },
-      });
     },
   };
   const provider: MachinePluginProvider = {
@@ -58,9 +52,6 @@ test("plugins configure a machine in array order", async () => {
   assert.deepEqual(calls, ["plugin", "provider", "provided plugin"]);
   assert.deepEqual(configured.args, ["caller=first", "plugin=one", "plugin=two"]);
   assert.deepEqual(configured.devices, [first, second]);
-  assert.deepEqual(configured.deviceTree, {
-    chosen: { mode: "second", nested: { one: 1, two: 2 } },
-  } satisfies DeviceTreeNode);
 });
 
 test("boot console output attaches during configuration", async () => {
@@ -85,8 +76,7 @@ test("boot console output attaches during configuration", async () => {
 });
 
 test("virtio devices provide plugins without changing their device API", async () => {
-  const controller = new VirtioController({ deviceId: 1 }, { queues: [] });
-  const device = controller.expose({ capability: "available" as const });
+  const device = public_handle(new TestDevice(), { capability: "available" as const });
 
   const configured = await configure_machine([], [device]);
 
@@ -96,22 +86,18 @@ test("virtio devices provide plugins without changing their device API", async (
 
 test("configuration failure closes devices already contributed", async () => {
   let closes = 0;
-  const controller = new VirtioController(
-    { deviceId: 1 },
-    {
-      queues: [],
-      close() {
-        closes += 1;
-      },
+  const device = new TestDevice({
+    close() {
+      closes += 1;
     },
-  );
+  });
   const failure = new Error("configuration failed");
 
   await assert.rejects(
     configure_machine(
       [],
       [
-        controller.device,
+        device.handle,
         {
           configure() {
             throw failure;
@@ -122,20 +108,20 @@ test("configuration failure closes devices already contributed", async () => {
     (error) => error === failure,
   );
   assert.equal(closes, 1);
-  await controller.device.closed;
+  await device.handle.closed;
 });
 
 test("virtio devices expose their generic lifecycle", async () => {
-  const controller = new VirtioController({ deviceId: 1 }, { queues: [] });
+  const device = new TestDevice().handle;
   let settled = false;
-  void controller.device.closed.then(() => {
+  void device.closed.then(() => {
     settled = true;
   });
 
   await Promise.resolve();
   assert.equal(settled, false);
-  controller.close();
-  await controller.device.closed;
+  void close_device(device);
+  await device.closed;
   assert.equal(settled, true);
 });
 
