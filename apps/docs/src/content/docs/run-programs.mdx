@@ -1,0 +1,133 @@
+---
+title: Run programs
+description: Run programs in a guest, stream their input and output, and wait for them to exit.
+section: howtos
+order: 1
+---
+
+# Run programs
+
+The examples on this page assume a booted machine and its `guest`, set up as in the
+[`@lowland/guest` usage example](/reference/guest/#usage).
+
+## Run a program and collect its output
+
+`guest.run()` starts a program, waits for it to exit, and returns its status and
+everything it wrote:
+
+```ts
+const result = await guest.run(["echo", "hello world"]);
+console.log(new TextDecoder().decode(result.stdout)); // "hello world\n"
+console.log(result.status); // { success: true, code: 0, signal: null }
+```
+
+`stdout` and `stderr` are `Uint8Array`s. A program that exits with a nonzero code does not
+make `run()` reject. Check `status.success` instead.
+
+Use `run()` for commands with a bounded amount of output. For long-running programs or large
+output, use `exec()`.
+
+## Pass arguments
+
+Both methods take an argv array. The array is exactly what the program receives. No shell
+is involved, so nothing is split, quoted, or expanded:
+
+```ts
+await guest.run(["echo", "$HOME", "a b"]); // prints "$HOME a b"
+```
+
+The first element is looked up on the guest's `PATH`. If no such program exists, the call
+rejects with a `SystemError` whose `code` is `"ENOENT"`.
+
+To use pipes, redirection, or variables, run a shell explicitly:
+
+```ts
+await guest.run(["sh", "-c", "echo hello | tr a-z A-Z"]);
+```
+
+## Stream output as it arrives
+
+`guest.exec()` returns as soon as the program starts. The returned process exposes its output
+as `ReadableStream`s:
+
+```ts
+const process = await guest.exec([
+  "sh",
+  "-c",
+  "for i in 1 2 3; do echo line $i; sleep 1; done",
+]);
+for await (const chunk of process.stdout) {
+  console.log(new TextDecoder().decode(chunk));
+}
+console.log(await process.status);
+```
+
+`process.status` resolves when the program exits. `new Response(process.stdout).text()` is a
+short way to collect a whole stream.
+
+## Write to standard input
+
+`process.stdin` is a `WritableStream`. Close it to send end of file:
+
+```ts
+const process = await guest.exec(["tr", "a-z", "A-Z"]);
+const writer = process.stdin.getWriter();
+await writer.write(new TextEncoder().encode("shout\n"));
+await writer.close();
+console.log(await new Response(process.stdout).text()); // "SHOUT\n"
+```
+
+Input is buffered on the host, so writing all of it before reading the output does not
+deadlock.
+
+## Set the working directory and environment
+
+Programs start in `/tmp` with `PATH=/bin:/usr/bin:/sbin:/usr/sbin` and `HOME=/root`. Pass
+`cwd` and `env` to change them. Variables in `env` are merged over the defaults:
+
+```ts
+await guest.run(["sh", "-c", "pwd; echo $GREETING"], {
+  cwd: "/",
+  env: { GREETING: "hi" },
+});
+```
+
+## Stop a program
+
+`process.kill()` sends `SIGTERM`, or another signal you name. The status then reports the
+signal:
+
+```ts
+const process = await guest.exec(["sleep", "30"]);
+await process.kill();
+console.log(await process.status); // { success: false, code: 0, signal: "SIGTERM" }
+```
+
+To give a program a time limit, pass an `AbortSignal`. When it aborts, the program is killed
+and `status` rejects with the abort reason:
+
+```ts
+const process = await guest.exec(["sleep", "30"], {
+  signal: AbortSignal.timeout(1000),
+});
+try {
+  await process.status;
+} catch {
+  console.log("the command ran out of time");
+}
+```
+
+A process is also an async disposable. With `await using`, it is killed and cleaned up when
+the block ends.
+
+## Run several programs at once
+
+Calls can overlap. A guest runs up to eight processes started this way at a time. Further
+calls wait for a free slot rather than failing.
+
+```ts
+const [date, uname] = await Promise.all([
+  guest.run(["date"]),
+  guest.run(["uname", "-a"]),
+]);
+```
