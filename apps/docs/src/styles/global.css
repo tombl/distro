@@ -64,6 +64,7 @@
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.9375rem;
     padding: 1rem;
+    margin-inline: -1rem;
     background-color: var(--surface) !important;
   }
 
