@@ -360,7 +360,8 @@ export function serveDevice(endpoint: Endpoint, handle: Device): void {
                 Atomics.load(control!, 1 + vq) !== queue_epochs[vq]
               )
                 return;
-              const transfer = completion.outputs.map(({ data }) => data.buffer);
+              // A chain's outputs may share one buffer, which can be transferred once.
+              const transfer = [...new Set(completion.outputs.map(({ data }) => data.buffer))];
               post_endpoint(
                 endpoint,
                 {
