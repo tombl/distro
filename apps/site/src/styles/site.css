@@ -45,7 +45,10 @@ body {
   z-index: 1;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 15px;
-  line-height: 1.2;
+  /* xterm uses the font's natural height. JavaScript refines both metrics to
+     xterm's device-pixel grid before the first paint. */
+  line-height: normal;
+  font-kerning: none;
   color: var(--terminal-foreground);
   white-space: pre;
   overflow: hidden;
