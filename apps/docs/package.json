@@ -10,8 +10,11 @@
   },
   "dependencies": {
     "@lowland/guest": "workspace:*",
+    "@lowland/image": "workspace:*",
     "@lowland/kernel": "workspace:*",
-    "@lowland/web-ui": "workspace:*"
+    "@lowland/web-ui": "workspace:*",
+    "@pierre/diffs": "^1.6.1",
+    "sucrase": "^3.35.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.9",

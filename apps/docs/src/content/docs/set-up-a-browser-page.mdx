@@ -20,14 +20,15 @@ npm install @lowland/kernel @lowland/guest @lowland/image
 `@lowland/image` provides `rootImage()`, which attaches the standard root filesystem. A
 machine boots with it and the guest agent:
 
-```ts
+```ts run
 import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "@lowland/image";
 
 const guest = guestAgent();
-const machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
 const result = await guest.run(["uname", "-a"]);
+console.log(new TextDecoder().decode(result.stdout));
 ```
 
 In a browser, `rootImage()` downloads the whole image, about 6.5 MB, before the machine boots.
