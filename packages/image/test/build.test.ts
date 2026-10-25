@@ -2,13 +2,14 @@
 
 import assert from "node:assert/strict";
 import { lookup } from "node:dns/promises";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { blockDevice, bootMachine } from "@lowland/kernel";
+import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { buildImage, type BuildImageOptions } from "../src/build.ts";
+import { rootImage } from "../src/index.ts";
 import { busybox_package, jq_package } from "./assets.ts";
 
 const decoder = new TextDecoder();
@@ -36,26 +37,10 @@ async function build(t: TestContext, options: Omit<BuildImageOptions, "output">)
 }
 
 async function boot(t: TestContext, path: string) {
-  const disk = new Uint8Array(await readFile(path));
   const guest = guestAgent();
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [
-      blockDevice({
-        capacity: disk.byteLength,
-        read(offset, target) {
-          const source = disk.subarray(offset, offset + target.byteLength);
-          target.set(source);
-          return source.byteLength;
-        },
-        write(offset, data) {
-          disk.set(data, offset);
-          return data.byteLength;
-        },
-        flush() {},
-      }),
-      guest,
-    ],
+    plugins: [rootImage(path, { writable: true }), guest],
   });
   t.after(() => machine[Symbol.asyncDispose]());
   return guest;
