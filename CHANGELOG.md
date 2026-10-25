@@ -40,6 +40,8 @@
   the frame, so awaiting senders are throttled to the guest's pace. Floods
   never wait for a stalled port.
 - Console input is read from its stream only as the guest consumes it.
+- Block devices process independent requests concurrently and make one
+  storage call per request. A flush waits for every earlier write.
 
 ### Fixed
 

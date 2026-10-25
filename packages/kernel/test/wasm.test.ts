@@ -1006,3 +1006,299 @@ test("console input is read only as the guest consumes it", async () => {
 
   await close_device(device);
 });
+
+// Lays out block requests on a packed ring: each request is a readable
+// header, its data descriptors, and a writable status byte.
+function block_ring(memory: WebAssembly.Memory) {
+  const available = 1 << 7;
+  const next = 1;
+  const writable = 1 << 1;
+  let index = 0;
+  let id = 0;
+  let heap = 0x1000;
+  const descriptor = (address: number, length: number, flags: number, chain_id: number) => {
+    const view = new DataView(memory.buffer, index++ * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, length, true);
+    view.setUint16(12, chain_id, true);
+    view.setUint16(14, available | flags, true);
+  };
+  return {
+    request(type: number, sector: number, data: readonly { address?: number; length: number }[]) {
+      const chain_id = id++;
+      const header = heap;
+      heap += 16;
+      const view = new DataView(memory.buffer, header, 16);
+      view.setUint32(0, type, true);
+      view.setBigUint64(8, BigInt(sector), true);
+      descriptor(header, 16, next, chain_id);
+      const addresses = data.map(({ address, length }) => {
+        const at = address ?? heap;
+        if (address === undefined) heap += length;
+        descriptor(at, length, next | (type === 0 ? writable : 0), chain_id);
+        return at;
+      });
+      const status = heap++;
+      new Uint8Array(memory.buffer, status, 1)[0] = 0xff;
+      descriptor(status, 1, writable, chain_id);
+      return { status: () => new Uint8Array(memory.buffer, status, 1)[0], addresses };
+    },
+  };
+}
+
+function block_machine(storage: Parameters<typeof blockDevice>[0]) {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const device = blockDevice(storage);
+  const imports = attach_devices({
+    memory,
+    devices: [device],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  return { memory, device, imports, ring: block_ring(memory) };
+}
+
+const turns = async (n = 10) => {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+};
+
+test("virtio block completes independent requests out of order", async () => {
+  const slow = Promise.withResolvers<void>();
+  const { memory, device, imports, ring } = block_machine({
+    capacity: 4096,
+    async read(offset, target) {
+      if (offset === 0) await slow.promise;
+      target.fill(offset === 0 ? 1 : 2);
+      return target.byteLength;
+    },
+  });
+  const first = ring.request(0, 0, [{ length: 512 }]);
+  const second = ring.request(0, 1, [{ length: 512 }]);
+  imports.enable_vring(0, 0, 16, 0, 1);
+  imports.notify(0, 0);
+
+  await turns();
+  assert.equal(second.status(), 0, "the second request completes while the first is pending");
+  assert.equal(new Uint8Array(memory.buffer, second.addresses[0]!, 1)[0], 2);
+  assert.equal(first.status(), 0xff);
+
+  slow.resolve();
+  await turns();
+  assert.equal(first.status(), 0);
+  assert.equal(new Uint8Array(memory.buffer, first.addresses[0]!, 1)[0], 1);
+  await close_device(device);
+});
+
+
+test(
+  "a block request failure that closes the device lets the close finish",
+  { timeout: 5_000 },
+  async () => {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const device = blockDevice({
+      capacity: 4096,
+      read() {
+        throw new Error("disk failed");
+      },
+    });
+    // Like a machine, report the failure by shutting down and returning that.
+    let closing: Promise<void> | undefined;
+    const imports = attach_devices({
+      memory,
+      devices: [device],
+      trigger_irq() {},
+      on_error() {
+        return (closing ??= close_device(device));
+      },
+    });
+    block_ring(memory).request(0, 0, [{ length: 512 }]);
+    imports.enable_vring(0, 0, 16, 0, 1);
+    imports.notify(0, 0);
+    for (let i = 0; i < 100 && !closing; i++) await turns(1);
+    assert(closing, "the failure was reported");
+    // The failure went to on_error; the close itself just has to finish.
+    await closing;
+  },
+);
+
+test("virtio block flushes only after earlier writes complete", async () => {
+  const write = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const { device, imports, ring } = block_machine({
+    capacity: 4096,
+    read: (_offset, target) => target.byteLength,
+    async write(_offset, data) {
+      events.push("write started");
+      await write.promise;
+      events.push("write done");
+      return data.byteLength;
+    },
+    flush() {
+      events.push("flush");
+    },
+  });
+  ring.request(1, 0, [{ length: 512 }]);
+  const flush = ring.request(4, 0, []);
+  imports.enable_vring(0, 0, 16, 0, 1);
+  imports.notify(0, 0);
+
+  await turns();
+  assert.deepEqual(events, ["write started"]);
+  assert.equal(flush.status(), 0xff);
+  write.resolve();
+  await turns();
+  assert.deepEqual(events, ["write started", "write done", "flush"]);
+  assert.equal(flush.status(), 0);
+  await close_device(device);
+});
+
+test("virtio block issues one storage call per request", async () => {
+  const calls: { kind: string; offset: number; length: number; shared: boolean }[] = [];
+  const { memory, device, imports, ring } = block_machine({
+    capacity: 8192,
+    read(offset, target) {
+      calls.push({ kind: "read", offset, length: target.byteLength, shared: false });
+      for (let i = 0; i < target.byteLength; i++) target[i] = (offset + i) & 0xff;
+      return target.byteLength;
+    },
+    write(offset, data) {
+      calls.push({
+        kind: "write",
+        offset,
+        length: data.byteLength,
+        shared: data.buffer === memory.buffer,
+      });
+      return data.byteLength;
+    },
+  });
+  const read = ring.request(0, 1, [{ length: 512 }, { length: 512 }]);
+  // Guest buffers are copied once, whether or not they are adjacent in guest
+  // memory, and each request's data reaches storage in a single call.
+  ring.request(1, 4, [
+    { address: 0x4000, length: 512 },
+    { address: 0x4200, length: 512 },
+  ]);
+  ring.request(1, 8, [
+    { address: 0x5000, length: 512 },
+    { address: 0x6000, length: 512 },
+  ]);
+  imports.enable_vring(0, 0, 32, 0, 1);
+  imports.notify(0, 0);
+  await turns();
+
+  assert.deepEqual(calls, [
+    { kind: "read", offset: 512, length: 1024, shared: false },
+    { kind: "write", offset: 2048, length: 1024, shared: false },
+    { kind: "write", offset: 4096, length: 1024, shared: false },
+  ]);
+  assert.equal(read.status(), 0);
+  assert.equal(new Uint8Array(memory.buffer, read.addresses[1]!, 1)[0], (512 + 512) & 0xff);
+  await close_device(device);
+});
+
+test("virtio block close waits for requests in flight", async () => {
+  const read = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const { device, imports, ring } = block_machine({
+    capacity: 4096,
+    async read(_offset, target) {
+      await read.promise;
+      events.push("read");
+      return target.byteLength;
+    },
+    close() {
+      events.push("close");
+    },
+  });
+  ring.request(0, 0, [{ length: 512 }]);
+  imports.enable_vring(0, 0, 16, 0, 1);
+  imports.notify(0, 0);
+  const closing = close_device(device);
+  await turns();
+  assert.deepEqual(events, []);
+  read.resolve();
+  await closing;
+  assert.deepEqual(events, ["read", "close"]);
+});
+
+test(
+  "a remote virtio block device reads a multi-descriptor request",
+  { timeout: 5_000 },
+  async () => {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    const channel = new MessageChannel();
+    serveDevice(
+      channel.port1,
+      blockDevice({
+        capacity: 4096,
+        read(offset, target) {
+          for (let i = 0; i < target.byteLength; i++) target[i] = (offset + i) & 0xff;
+          return target.byteLength;
+        },
+      }),
+    );
+    const device = await workerDevice(channel.port2);
+    const interrupted = Promise.withResolvers<void>();
+    const imports = attach_devices({
+      memory,
+      devices: [device],
+      trigger_irq: () => interrupted.resolve(),
+      on_error: (error) => interrupted.reject(error),
+    });
+    const ring = block_ring(memory);
+    const read = ring.request(0, 1, [{ length: 512 }, { length: 512 }]);
+    imports.enable_vring(0, 0, 16, 0, 1);
+    imports.notify(0, 0);
+    await interrupted.promise;
+
+    assert.equal(read.status(), 0);
+    assert.equal(new Uint8Array(memory.buffer, read.addresses[0]!, 1)[0], 512 & 0xff);
+    assert.equal(new Uint8Array(memory.buffer, read.addresses[1]!, 1)[0], 1024 & 0xff);
+    await close_device(device);
+    channel.port1.close();
+    channel.port2.close();
+  },
+);
+
+test("a device with views reads guest memory in place but still copies writes", async () => {
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const seen = Promise.withResolvers<{ readable: Uint8Array; writable: Uint8Array }>();
+  const device = new TestDevice({
+    views: true,
+    queues: [
+      (queue) => {
+        const [chain] = queue;
+        assert(chain);
+        const [readable, writable] = chain;
+        assert(readable && writable);
+        seen.resolve({ readable: readable.array, writable: writable.array });
+      },
+    ],
+  });
+  const imports = attach_devices({
+    memory,
+    devices: [device.handle],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const descriptor = (index: number, address: number, flags: number) => {
+    const view = new DataView(memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, 4, true);
+    view.setUint16(14, (1 << 7) | flags, true);
+  };
+  descriptor(0, 0x100, 1);
+  descriptor(1, 0x200, 1 << 1);
+  imports.enable_vring(0, 0, 4, 0, 1);
+  imports.notify(0, 0);
+
+  const { readable, writable } = await seen.promise;
+  assert.equal(readable.buffer, memory.buffer);
+  assert.equal(readable.byteOffset, 0x100);
+  assert.notEqual(writable.buffer, memory.buffer);
+  await close_device(device.handle);
+});
