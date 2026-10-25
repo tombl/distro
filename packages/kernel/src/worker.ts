@@ -381,6 +381,7 @@ function user_imports({
       },
       call_siginfo_handler(trampoline, fn, sig) {
         siginfo_copy_results.push(null);
+        let halted = false;
         try {
           try {
             const f = user_function(trampoline, 2, "Invalid siginfo trampoline");
@@ -389,10 +390,15 @@ function user_imports({
             throw guest_safe(error);
           }
           return siginfo_copy_results.at(-1) ?? -22;
+        } catch (error) {
+          // After exec_handoff(), the successor owns the task: this worker
+          // must not run kernel code again.
+          halted = error === HALT_KERNEL;
+          throw error;
         } finally {
           // Non-local exits can unwind the kernel callback before its C cleanup.
           try {
-            get_kernel_instance().exports.clear_siginfo();
+            if (!halted) get_kernel_instance().exports.clear_siginfo();
           } finally {
             siginfo_copy_results.pop();
           }
