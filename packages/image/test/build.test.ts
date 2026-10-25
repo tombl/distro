@@ -14,12 +14,15 @@ import { busybox_package, jq_package } from "./assets.ts";
 
 const decoder = new TextDecoder();
 
-// The Nix sandbox has no network, so tests that resolve packages from the
-// public repository skip there.
-const online = await lookup("assets.low.land").then(
-  () => true,
-  () => false,
-);
+// Tests that resolve packages from the public repository skip offline, and
+// inside Nix builds even when they have network (as CI's do): the repository
+// is whatever main last published, so checks must not depend on it.
+const online =
+  !process.env.NIX_BUILD_TOP &&
+  (await lookup("assets.low.land").then(
+    () => true,
+    () => false,
+  ));
 
 async function build(t: TestContext, options: Omit<BuildImageOptions, "output">) {
   const directory = await mkdtemp(join(tmpdir(), "lowland-image-test-"));
@@ -104,22 +107,26 @@ for (const mode of [undefined, "0750"]) {
   });
 }
 
-test("builds an image from the public repository", { skip: !online && "offline" }, async (t) => {
-  const output = await build(t, {
-    packages: ["busybox", "jq"],
-    files: {
-      "/usr/local/bin/answer": {
-        source: new URL("./answer.sh", import.meta.url).pathname,
-        mode: "0755",
+test(
+  "builds an image from the public repository",
+  { skip: !online && "offline or in a Nix build" },
+  async (t) => {
+    const output = await build(t, {
+      packages: ["busybox", "jq"],
+      files: {
+        "/usr/local/bin/answer": {
+          source: new URL("./answer.sh", import.meta.url).pathname,
+          mode: "0755",
+        },
       },
-    },
-  });
-  const guest = await boot(t, output);
+    });
+    const guest = await boot(t, output);
 
-  const result = await guest.run(["/usr/local/bin/answer"]);
-  assert.deepEqual(result.status, { success: true, code: 0, signal: null });
-  assert.equal(decoder.decode(result.stdout), "42\n");
-});
+    const result = await guest.run(["/usr/local/bin/answer"]);
+    assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+    assert.equal(decoder.decode(result.stdout), "42\n");
+  },
+);
 
 test("rejects unsupported formats", async () => {
   await assert.rejects(
