@@ -27,9 +27,9 @@ const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-`rootImage()` attaches the image as a read-only block device. The image is an
-EROFS filesystem labeled `LOWLAND_ROOT`, which the guest agent finds and mounts
-as the root filesystem. Changes to the root filesystem last only for the life
+`rootImage()` attaches the image as a read-only block device. The image is a
+deflate-compressed EROFS filesystem labeled `LOWLAND_ROOT`, which the guest
+agent finds and mounts as the root filesystem. Changes to the root filesystem last only for the life
 of the machine.
 
 The image ships inside this package and is loaded relative to the module, so
@@ -157,6 +157,11 @@ The default format is EROFS, which the guest agent mounts read-only. Pass
 label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
 it with `rootImage("app.erofs")`, or with
 `rootImage("app.ext4", { writable: true })` for an ext4 image.
+
+EROFS images are compressed with deflate by default, which typically makes
+them 2 to 3 times smaller at a modest cost on reads. `compression: "lzma"` is
+about 14% smaller again but reads about half as fast, and `compression:
+"none"` stores data as is. ext4 images are never compressed.
 
 The command-line equivalent is `npx lowland build`, provided by the `lowland`
 package.
