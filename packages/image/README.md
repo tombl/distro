@@ -133,10 +133,15 @@ await buildImage({
 });
 ```
 
-Package names resolve from the public repository with signature checks, and
-the builder downloads them through the host network. Paths to local `.apk`
-files are installed without signature checks. A build whose packages are all
-local files uses no network.
+Package names resolve from the public repository, and the builder downloads
+them through the host network and verifies that the repository signed them.
+Paths to local `.apk` files are trusted because you supplied them, so they are
+installed without signature checks. Local packages install after the named
+ones with no repository and no network, so their dependencies must be named or
+local packages too. A build whose packages are all local files uses no network.
+
+The output is written to a temporary file beside it and renamed into place
+once the build succeeds, so a failed build leaves an existing file untouched.
 
 Files and links are layered over the installed packages, as in the Nix
 `mkImage`. A file mode is an octal string applied exactly, setuid, setgid, and
