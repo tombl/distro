@@ -2,11 +2,11 @@
 
 import { type DeviceTreeNode, generate_devicetree } from "./devicetree.ts";
 import { platform, type WorkerHandle } from "./platform.ts";
-import { configure_machine, merge_device_tree, run_machine_booted } from "./plugin-internal.ts";
+import { configure_machine, run_machine_booted } from "./plugin-internal.ts";
 import type { MachinePluginInput } from "./plugin.ts";
 import { assert, unreachable } from "./util.ts";
 import { read_wasm_memories, type WasmMemoryType } from "./wasm_binary.ts";
-import { close_virtio_device, virtio_device_description, virtio_imports } from "./virtio/core.ts";
+import { VirtioBus } from "./virtio/bus.ts";
 import {
   allocate_shared_memory,
   type Imports,
@@ -17,19 +17,9 @@ import {
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
-export type { DeviceTreeNode } from "./devicetree.ts";
 export { bootConsole } from "./plugin.ts";
-export {
-  VirtioController,
-  type VirtioDevice,
-  type VirtioDeviceOptions,
-  type VirtioDriver,
-  type Virtqueue,
-  type VirtqueueBuffer,
-  type VirtqueueChain,
-  type VirtqueueHandler,
-} from "./virtio/core.ts";
-export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
+export type { Device } from "./virtio/device.ts";
+export { blockDevice, type BlockStorage } from "./virtio/block.ts";
 export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
@@ -194,7 +184,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     boot_console_close();
     throw error;
   }
-  const { devices, plugins } = configured;
+  const { plugins } = configured;
+  const bus = new VirtioBus(configured.devices);
   const workers = new Set<WorkerHandle>();
   let closed = false;
   let failed = false;
@@ -217,11 +208,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
-      const device_closes = devices.map((device) => close_virtio_device(device));
-      for (const result of await Promise.allSettled(device_closes)) {
-        if (result.status === "rejected" && !failed) {
+      try {
+        await bus.close();
+      } catch (device_error) {
+        if (!failed) {
           failed = true;
-          finish_error = result.reason;
+          finish_error = device_error;
         }
       }
       try {
@@ -279,16 +271,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       },
     };
 
-    for (const [i, dev] of devices.entries()) {
-      const device = virtio_device_description(dev);
-      devicetree[`virtio${i}`] = {
-        compatible: `virtio,wasm`,
-        "host-id": i,
-        "virtio-device-id": device.device_id,
-        features: device.features,
-        config: device.config,
-      };
-    }
+    Object.assign(devicetree, bus.describe());
     const memory_reservations: { address: number; size: number }[] = [];
 
     if (initcpio) {
@@ -306,7 +289,6 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     }
 
     (devicetree.chosen as DeviceTreeNode).sections = sections;
-    merge_device_tree(devicetree, configured.deviceTree);
 
     const generated_devicetree = generate_devicetree(devicetree, {
       memory_reservations,
@@ -444,9 +426,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         futex_atomic_op: unavailable,
         futex_atomic_cmpxchg: unavailable,
       },
-      virtio: virtio_imports({
+      virtio: bus.attach({
         memory: wasm_memory,
-        devices,
         on_error: fail,
         trigger_irq(irq) {
           assert(instance);
