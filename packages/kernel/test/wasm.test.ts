@@ -14,12 +14,12 @@ import {
   allocate_shared_memory,
   memory_bytes,
   user_module_imports_supported,
+  type UserWidth,
 } from "../src/wasm.ts";
+import { read_wasm_function_imports } from "../src/wasm_binary.ts";
 
-function wasm_module(hex: string) {
-  return new WebAssembly.Module(
-    Uint8Array.from(hex.match(/../g)!, (byte) => Number.parseInt(byte, 16)),
-  );
+function wasm_bytes(hex: string) {
+  return Uint8Array.from(hex.match(/../g)!, (byte) => Number.parseInt(byte, 16));
 }
 
 const memory = new WebAssembly.Memory({
@@ -110,17 +110,51 @@ test("memory views include growth performed by another worker", async () => {
   }
 });
 
+// Imports linux.syscall, linux.get_thread_area and linux.copy_siginfo with
+// slots, pointers and longs of the given width.
+const user_abi_modules = {
+  i32: wasm_bytes(
+    "0061736d0100000001150360077f7f7f7f7f7f7f017f6000017f60017f017f024d0403656e76066d656d" +
+      "6f727902030101056c696e75780773797363616c6c0000056c696e75780f6765745f7468726561645f" +
+      "617265610001056c696e75780c636f70795f736967696e666f0002",
+  ),
+  i64: wasm_bytes(
+    "0061736d0100000001150360077e7e7e7e7e7e7e017e6000017e60017e017f024d0403656e76066d656d" +
+      "6f727902030101056c696e75780773797363616c6c0000056c696e75780f6765745f7468726561645f" +
+      "617265610001056c696e75780c636f70795f736967696e666f0002",
+  ),
+};
+
+function supported(bytes: Uint8Array<ArrayBuffer>, width: UserWidth) {
+  return user_module_imports_supported(new WebAssembly.Module(bytes), bytes, width);
+}
+
 test("userspace modules may only import the supported host ABI", () => {
-  const supported = wasm_module(
-    "0061736d0100000001040160000002200203656e76066d656d6f727902030101" +
-      "056c696e75780773797363616c6c0000",
-  );
-  const unsupported = wasm_module(
-    "0061736d0100000001040160000002190203656e76066d656d6f727902030101" + "046576696c01660000",
+  const unsupported = wasm_bytes(
+    "0061736d01000000010c0160077f7f7f7f7f7f7f017f02190203656e76066d656d6f727902030101046576" +
+      "696c01660000",
   );
 
-  assert.equal(user_module_imports_supported(supported), true);
-  assert.equal(user_module_imports_supported(unsupported), false);
+  assert.equal(supported(user_abi_modules.i32, "i32"), true);
+  assert.equal(supported(unsupported, "i32"), false);
+});
+
+test("userspace imports must match the width of the user memory", () => {
+  assert.equal(supported(user_abi_modules.i64, "i64"), true);
+  assert.equal(supported(user_abi_modules.i64, "i32"), false);
+  assert.equal(supported(user_abi_modules.i32, "i64"), false);
+});
+
+test("function import signatures are read through GC type groups", () => {
+  // A recursive group holding a struct type, then the syscall function type.
+  const module = wasm_bytes(
+    "0061736d010000000114014e025f017801500060077e7e7e7e7e7e7e017e02200203656e76066d656d6f72" +
+      "7902030101056c696e75780773797363616c6c0001",
+  );
+
+  assert.deepEqual(read_wasm_function_imports(module), [
+    { module: "linux", name: "syscall", type: "i64,i64,i64,i64,i64,i64,i64->i64" },
+  ]);
 });
 
 test("closing an Ethernet network drops traffic from attached ports", async () => {
