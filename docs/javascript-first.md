@@ -236,11 +236,12 @@ virtio device order, a kernel argument, or information returned by
 `devices.add()` to choose a disk. `LOWLAND_AGENT` identifies the private boot
 disk and cannot be mistaken for the system image.
 
-An ext4 filesystem is persistent and mounts read-write directly. An EROFS
-filesystem is immutable, so the agent always mounts it read-only beneath a
-temporary OverlayFS upper layer. The system then behaves like a normal
-writable root for one boot without claiming persistence. There is no option
-to disable the overlay.
+Read-only roots get an overlay. EROFS is always read-only, and an ext4
+filesystem is read-only when its block device is. The agent mounts a read-only
+root beneath a temporary OverlayFS upper layer, so the system behaves like a
+normal writable root for one boot without claiming persistence. An ext4
+filesystem on a writable block device is persistent and mounts read-write
+directly. There is no option to disable the overlay.
 
 The canonical live site attaches one `LOWLAND_ROOT` EROFS image, which the
 agent mounts beneath the temporary overlay. It also attaches an unformatted
