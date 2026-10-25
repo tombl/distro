@@ -68,14 +68,14 @@ meson setup build --cross-file wasm32-unknown-linux-musl && meson compile -C bui
 ```
 
 To put the result in an image, install it into a staging directory and copy it with
-`buildImage()` or the `lowland-image` command:
+`buildImage()` or the `lowland build` command:
 
 ```sh
 ./configure --prefix=/usr && make && make install DESTDIR=$PWD/stage
-npx lowland-image build -p busybox -f ./stage/usr/bin/hello:/usr/bin/hello -o hello.erofs
+npx lowland build -p busybox -f ./stage/usr/bin/hello:/usr/bin/hello -o hello.erofs
 ```
 
-[Build an image](/build-an-image/) explains `lowland-image` and how to boot the result.
+[Build an image](/build-an-image/) explains `lowland build` and how to boot the result.
 
 ## What to change
 

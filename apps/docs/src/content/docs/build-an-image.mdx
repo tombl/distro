@@ -64,14 +64,14 @@ The [Images reference](/images/#buildimage) lists every option.
 
 ### From the command line
 
-The same build is available as the `lowland-image` command:
+The same build is available as the `lowland build` command, from the `lowland` package:
 
 ```sh
-npx lowland-image build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
+npx lowland build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
 ```
 
 `-p` adds a package, `-f` copies a file as `host:guest[:mode]`, and `-l` creates a link as
-`guest=target`. Run `npx lowland-image --help` for the other options.
+`guest=target`. Run `npx lowland build --help` for the other options.
 
 ## Build an image with Nix
 
@@ -166,7 +166,7 @@ An EROFS image never changes. Changes that programs make to the root filesystem 
 the machine closes. To keep them, build an ext4 image instead:
 
 ```sh
-npx lowland-image build -p busybox --format ext4 --size 64M -o data.ext4
+npx lowland build -p busybox --format ext4 --size 64M -o data.ext4
 ```
 
 With Nix, pass `format = "ext4";` and `size = "64M";` to `mkImage`. Files in the Nix store are
