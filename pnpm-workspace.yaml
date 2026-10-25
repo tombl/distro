@@ -3,6 +3,7 @@ packages:
   - packages/bridge-site
   - packages/kernel
   - packages/image
+  - packages/lowland
   - packages/browser-tests
   - packages/linux-guest
   - packages/runner
