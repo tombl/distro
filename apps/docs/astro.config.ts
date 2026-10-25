@@ -2,6 +2,8 @@ import { unified } from "@astrojs/markdown-remark";
 import mdx from "@astrojs/mdx";
 import { defineConfig } from "astro/config";
 
+import { checkLinks } from "./src/integrations/check-links";
+
 // External links in rendered markdown open in a new tab.
 function externalLinkTargets() {
   return (tree: unknown) => {
@@ -14,8 +16,10 @@ function externalLinkTargets() {
   };
 }
 
+const site = "https://docs.low.land";
+
 export default defineConfig({
-  site: "https://docs.low.land",
+  site,
   markdown: {
     syntaxHighlight: "shiki",
     shikiConfig: {
@@ -27,6 +31,7 @@ export default defineConfig({
     processor: unified({ smartypants: false, rehypePlugins: [externalLinkTargets] }),
   },
   integrations: [
+    checkLinks(site),
     mdx({
       optimize: {
         ignoreElementNames: ["pre"],
