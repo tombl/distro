@@ -13,7 +13,7 @@ page describes what an image must contain, and the three ways to get one:
 - `rootImage()` from `@lowland/image` attaches a ready-made image. It is a JavaScript plugin
   for `bootMachine()`.
 - `buildImage()` from `@lowland/image/build` builds an image file in Node.js. It is also
-  available as the `lowland-image build` command.
+  available as the `lowland build` command.
 - `mkImage` is a Nix function that builds an image file from Nix packages.
 
 ## Which to use
@@ -124,10 +124,10 @@ The machine that runs the build uses the host's network only when a package is g
 Files and links are applied after the packages are installed. Like `mkImage`, `buildImage()`
 creates the directories that the image contract requires.
 
-### `lowland-image build`
+### `lowland build`
 
 ```sh
-npx lowland-image build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
+npx lowland build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
 ```
 
 The command takes the same options as `buildImage()`:
