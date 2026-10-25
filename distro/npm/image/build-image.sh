@@ -9,7 +9,8 @@
 # Packages are installed first, then files and links are applied in order:
 #   --package NAME        install NAME from the repository
 #   --local PATH          install the .apk at PATH, relative to the input
-#   --file DEST SRC MODE  copy SRC, relative to the input, to DEST; MODE - keeps it
+#   --file DEST SRC MODE  copy SRC, relative to the input, to DEST; MODE - keeps it.
+#                         A directory merges into an existing directory DEST.
 #   --link DEST TARGET    create a symbolic link at DEST pointing to TARGET
 set -e
 
@@ -82,7 +83,13 @@ contents() {
     --package | --local) shift 2 ;;
     --file)
       mkdir -p "$(dirname "$root$2")"
-      cp -a "$input/$3" "$root$2"
+      # A directory onto an existing directory merges into it. cp -a would
+      # otherwise nest it under its staged name.
+      if [ -d "$input/$3" ] && [ -d "$root$2" ]; then
+        cp -a "$input/$3/." "$root$2"
+      else
+        cp -a "$input/$3" "$root$2"
+      fi
       chown -R 0:0 "$root$2"
       [ "$4" = - ] || chmod "$4" "$root$2"
       shift 4
