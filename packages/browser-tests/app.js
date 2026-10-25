@@ -115,6 +115,45 @@ globalThis.opfsWorkerDiskRoundTrip = async () => {
   }
 };
 
+// A second worker opening a disk that is already open, as a second tab would,
+// must surface the browser's own error rather than a generic worker failure.
+globalThis.opfsWorkerDiskLocked = async () => {
+  const directory = await navigator.storage.getDirectory();
+  const name = "virtio-worker-locked.img";
+  await directory.removeEntry(name).catch((error) => {
+    if (error.name !== "NotFoundError") throw error;
+  });
+  const handle = await directory.getFileHandle(name, { create: true });
+  const holder = new Worker("/opfs-disk-worker.js", { type: "module" });
+  const challenger = new Worker("/opfs-disk-worker.js", { type: "module" });
+  try {
+    const held = workerDevice(holder);
+    holder.postMessage({ handle, capacity: 1024 * 1024 });
+    await held;
+    const challenged = workerDevice(challenger);
+    challenger.postMessage({ handle });
+    try {
+      await challenged;
+      return { rejected: false };
+    } catch (error) {
+      return { rejected: true, name: error.name, message: error.message };
+    }
+  } finally {
+    holder.terminate();
+    challenger.terminate();
+    // Termination releases the access handle asynchronously.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await directory.removeEntry(name);
+        break;
+      } catch (error) {
+        if (attempt === 20) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+};
+
 globalThis.spawnStress = () =>
   withGuest(async (guest) => {
     // One in-guest shell spawning a vfork+exec pair per iteration at full
