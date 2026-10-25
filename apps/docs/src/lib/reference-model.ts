@@ -103,7 +103,7 @@ function typeText(type: TsTypeDef | undefined): string {
     case "this":
       return "this";
     case "fnOrConstructor":
-      return `${type.value.constructor ? "new " : ""}(${type.value.params.map(paramText).join(", ")}) => ${typeText(type.value.tsType)}`;
+      return `${type.value.constructor ? "new " : ""}${typeParams(type.value.typeParams)}(${type.value.params.map(paramText).join(", ")}) => ${typeText(type.value.tsType)}`;
     case "conditional":
       return `${typeText(type.value.checkType)} extends ${typeText(type.value.extendsType)} ? ${typeText(type.value.trueType)} : ${typeText(type.value.falseType)}`;
     case "indexedAccess":
@@ -121,11 +121,11 @@ function typeText(type: TsTypeDef | undefined): string {
         ),
         ...properties.map(
           (property) =>
-            `${property.readonly ? "readonly " : ""}${property.name}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
+            `${property.readonly ? "readonly " : ""}${memberName(property)}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
         ),
         ...methods.map(
           (method) =>
-            `${method.name}${method.optional ? "?" : ""}${typeParams(method.typeParams)}(${method.params.map(paramText).join(", ")}): ${typeText(method.returnType)}`,
+            `${memberName(method)}${method.optional ? "?" : ""}${typeParams(method.typeParams)}(${method.params.map(paramText).join(", ")}): ${typeText(method.returnType)}`,
         ),
       ];
       return parts.length ? `{ ${parts.join("; ")} }` : "{}";
@@ -152,9 +152,17 @@ function paramName(param: ParamDef): string {
   return `{ ${param.props.map((prop) => ("key" in prop ? prop.key : "…")).join(", ")} }`;
 }
 
+// Computed keys such as `[getMachinePlugin]` keep their brackets.
+function memberName(member: { name: string; computed?: true }): string {
+  return member.computed ? `[${member.name}]` : member.name;
+}
+
 function paramText(param: ParamDef): string {
   if (param.kind === "assign") return `${paramText(param.left)} = ${param.right}`;
-  if (param.kind === "rest") return `...${paramText(param.arg)}`;
+  if (param.kind === "rest") {
+    const type = param.tsType ?? paramType(param.arg);
+    return `...${paramName(param.arg)}${type ? `: ${typeText(type)}` : ""}`;
+  }
   return `${paramName(param)}${param.optional ? "?" : ""}: ${typeText(param.tsType)}`;
 }
 
@@ -213,20 +221,29 @@ function memberEntry(owner: string, name: string, signature: string, jsDoc?: JsD
 
 function interfaceMembers(owner: string, def: InterfaceDef): Member[] {
   return [
+    ...(def.indexSignatures ?? []).map((signature) => {
+      const key = `[${signature.params.map(paramText).join(", ")}]`;
+      return memberEntry(
+        owner,
+        key,
+        `${signature.readonly ? "readonly " : ""}${key}: ${typeText(signature.tsType)}`,
+        (signature as { jsDoc?: JsDoc }).jsDoc,
+      );
+    }),
     ...(def.properties ?? []).map((property) =>
       memberEntry(
         owner,
-        property.name,
-        `${property.readonly ? "readonly " : ""}${property.name}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
+        memberName(property),
+        `${property.readonly ? "readonly " : ""}${memberName(property)}${property.optional ? "?" : ""}: ${typeText(property.tsType)}`,
         property.jsDoc,
       ),
     ),
     ...(def.methods ?? []).map((method) =>
       memberEntry(
         owner,
-        method.name,
+        memberName(method),
         callText(
-          `${method.name}${method.optional ? "?" : ""}${typeParams(method.typeParams)}`,
+          `${memberName(method)}${method.optional ? "?" : ""}${typeParams(method.typeParams)}`,
           method.params,
           `: ${typeText(method.returnType)}`,
           "  ",
@@ -374,6 +391,19 @@ function splitSummary(doc: string | undefined): { summary?: string; rest?: strin
   return { summary, rest: rest.length ? rest.join("\n\n") : undefined };
 }
 
+// Only plain records of properties are folded into a parameter. Anything
+// with inheritance, methods, or signatures keeps its own entry.
+function isOptionsRecord(symbol: Symbol): boolean {
+  return symbol.declarations.every(
+    (declaration) =>
+      declaration.kind === "interface" &&
+      !declaration.def.extends?.length &&
+      !declaration.def.methods?.length &&
+      !declaration.def.indexSignatures?.length &&
+      !declaration.def.callSignatures?.length,
+  );
+}
+
 export function buildReference(pkg: ReferencePackage, document: Document): Group[] {
   const symbolsByName = new Map(document.symbols.map((symbol) => [symbol.name, symbol]));
   const referenceCounts = typeReferenceCounts(document.symbols);
@@ -387,11 +417,7 @@ export function buildReference(pkg: ReferencePackage, document: Document): Group
         const type = paramType(param);
         if (type?.kind !== "typeRef") continue;
         const target = symbolsByName.get(type.value.typeName);
-        if (
-          target &&
-          target.declarations.every((d) => d.kind === "interface") &&
-          referenceCounts.get(target.name) === 1
-        ) {
+        if (target && isOptionsRecord(target) && referenceCounts.get(target.name) === 1) {
           folded.set(target.name, target);
         }
       }
@@ -462,21 +488,37 @@ export function buildReference(pkg: ReferencePackage, document: Document): Group
     .filter((group) => group.entries.length > 0);
 }
 
-// Resolves `{@link Target}` and signature type names to anchors on the page.
-// The target is a top-level symbol (`GuestAgent`) or a member (`GuestAgent.mount`).
-export function linkResolver(document: Document) {
-  const symbolsByName = new Map(document.symbols.map((symbol) => [symbol.name, symbol]));
-  return (target: string): string | undefined => {
-    if (/^https?:/i.test(target)) return target;
-    const [symbolName, memberName] = target.split(".");
-    const symbol = symbolsByName.get(symbolName);
-    if (!symbol) return undefined;
-    if (memberName) {
-      const members = symbol.declarations.flatMap((d) => declarationMembers(symbolName, d));
-      if (members.some((member) => member.name === memberName)) {
-        return `#${referenceSymbolId(`${symbolName}.${memberName}`)}`;
+/** Every anchor ID the reference page renders for these groups. */
+export function renderedAnchors(groups: Group[]): Set<string> {
+  const ids = new Set<string>();
+  for (const group of groups) {
+    ids.add(group.id);
+    for (const entry of group.entries) {
+      ids.add(entry.id);
+      for (const member of entry.members) ids.add(member.id);
+      for (const parameter of entry.parameters) {
+        if (!parameter.fields) continue;
+        ids.add(parameter.fields.id);
+        for (const member of parameter.fields.members) ids.add(member.id);
       }
     }
-    return `#${referenceSymbolId(symbolName)}`;
+  }
+  return ids;
+}
+
+// Resolves `{@link Target}` and signature type names to anchors on the page.
+// The target is a top-level symbol (`GuestAgent`) or a member (`GuestAgent.mount`).
+// A member without its own rendered anchor links to its symbol instead.
+export function linkResolver(document: Document, anchors: Set<string>) {
+  const symbols = new Set(document.symbols.map((symbol) => symbol.name));
+  return (target: string): string | undefined => {
+    if (/^https?:/i.test(target)) return target;
+    const [symbolName, member] = target.split(".");
+    if (!symbols.has(symbolName)) return undefined;
+    const candidates = member
+      ? [referenceSymbolId(`${symbolName}.${member}`), referenceSymbolId(symbolName)]
+      : [referenceSymbolId(symbolName)];
+    const id = candidates.find((candidate) => anchors.has(candidate));
+    return id === undefined ? undefined : `#${id}`;
   };
 }
