@@ -111,6 +111,27 @@ let
     contents = [ moduleDefinedMemory ];
   };
 
+  vforkExecModules =
+    pkgs.runCommand "vfork-exec-modules"
+      {
+        nativeBuildInputs = [ pkgs.wabt ];
+      }
+      ''
+        mkdir -p $out/bin
+        wat2wasm --enable-threads ${./tests/data-past-memory.wat} -o $out/bin/data-past-memory
+        wat2wasm --enable-threads ${./tests/start-syscall.wat} -o $out/bin/start-syscall
+        wat2wasm --enable-threads ${./tests/start-trap.wat} -o $out/bin/start-trap
+        chmod 0755 $out/bin/*
+      '';
+
+  vforkExecCheck =
+    name: cpus:
+    installedCheck {
+      inherit name cpus;
+      source = "tests/vfork-exec.c";
+      contents = [ vforkExecModules ];
+    };
+
   initcpioPayload = pkgs.runCommand "basic-init-initcpio-payload" { } ''
     mkdir -p $out
     dd if=/dev/zero of=$out/payload bs=1M count=3 status=none
@@ -234,6 +255,8 @@ in
       };
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
+      vfork-exec = vforkExecCheck "vfork-exec" 1;
+      vfork-exec-smp = vforkExecCheck "vfork-exec-smp" 2;
       wallclock = installedCheck { name = "wallclock"; };
     };
   };
