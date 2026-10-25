@@ -23,6 +23,7 @@ stdenv.mkDerivation (finalAttrs: {
   patches = [
     ./wasm-ash-nommu.patch
     ./wasm-ash-callback-clone.patch
+    ./wasm-ash-preempt.patch
     ./wasm-timeout-detach-watcher.patch
   ];
 

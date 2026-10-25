@@ -118,6 +118,20 @@ wait
 [ "$(cat /tmp/job1 /tmp/job2 /tmp/job3 | tr -d '\n')" = 123 ] ||
   fail "wait without arguments missed jobs"
 
+# A builtin-only loop makes no syscalls of its own, yet on this single CPU it
+# must still let other processes run and must die to SIGKILL.
+[ "$(grep -c '^processor' /proc/cpuinfo)" -eq 1 ] || fail "spinner check expects one CPU"
+sh -c 'while :; do :; done' &
+spinner=$!
+rm -f /tmp/progress
+sh -c 'echo ran >/tmp/progress'
+sleep .2
+[ "$(cat /tmp/progress)" = ran ] || fail "a builtin-only loop starved other processes"
+kill -KILL "$spinner"
+wait "$spinner"
+status=$?
+[ "$status" -eq 137 ] || fail "killed spinner returned $status instead of 137"
+
 # Traps: EXIT, signals delivered to the shell, ERR, and reset in subshells.
 [ "$(sh -c 'trap "echo bye" EXIT; echo hi')" = "hi
 bye" ] || fail "EXIT trap did not run"

@@ -1,0 +1,28 @@
+wasm Linux cannot interrupt userspace: the scheduler and signal delivery run
+only when a task enters the kernel. Hush happened to call waitpid() for each
+command, but ash runs a loop of builtins with no syscalls at all, so
+`sh -c 'while :; do :; done' &` held its CPU until a reboot and could not be
+killed. ash now makes one cheap syscall per evaluated node. getppid() is
+used because its entry polls the timer deadline (driving the tick and
+preemption) and its exit runs pending signals; sched_yield() would give the
+CPU away on every builtin regardless of the timeslice.
+
+diff --git a/shell/ash.c b/shell/ash.c
+index 02a665f..b710c14 100644
+--- a/shell/ash.c
++++ b/shell/ash.c
+@@ -9415,6 +9415,14 @@ evaltree(union node *n, int flags)
+ 	}
+ 	TRACE(("evaltree(%p: %d, %d) called\n", n, n->type, flags));
+ 
++	/* wasm Linux preempts a task and delivers its signals only when it
++	 * enters the kernel. A loop of builtins makes no syscalls, so it would
++	 * hold its CPU and ignore even SIGKILL. Enter the kernel once per node,
++	 * as hush's per-command waitpid() did. The syscall's tick check lets
++	 * the scheduler run others when the slice is up, and a signal it
++	 * delivers is handled by dotrap() below. */
++	getppid();
++
+ 	dotrap();
+ 
+ 	switch (n->type) {
