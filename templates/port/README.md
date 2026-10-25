@@ -19,6 +19,11 @@ nix build .#hello
 nix build .#image
 ```
 
+The flakes have no Darwin outputs, so on macOS add the builder's Linux system
+to each `nix build` in this README, for example
+`nix build --system aarch64-linux .#image`, or `x86_64-linux` for an Intel
+builder.
+
 `hello` is the program alone. `image` is an EROFS root filesystem that
 contains BusyBox and `hello`, and `result` links to it.
 
@@ -27,6 +32,16 @@ contains BusyBox and `hello`, and `result` links to it.
 ```sh
 npm install
 node boot.mjs result
+```
+
+Until `@lowland/kernel` and `@lowland/guest` have a release on npm, the
+registry only holds empty placeholders. Install the packages from the distro
+flake instead:
+
+```sh
+kernel=$(nix build --no-link --print-out-paths github:tombl/distro#kernel)
+guest=$(nix build --no-link --print-out-paths github:tombl/distro#linux-guest)
+npm install "$kernel/package.tgz" "$guest/package.tgz"
 ```
 
 The script attaches the image as a block device, boots a machine with the
