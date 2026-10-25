@@ -1,5 +1,5 @@
 export { MountFlags, ProtocolError, SystemError, UnmountFlags } from "./abi.ts";
-export { guestAgent, type GuestAgent, type RunResult } from "./agent.ts";
+export { guestAgent, type GuestAgent, type GuestAgentOptions, type RunResult } from "./agent.ts";
 export {
   type Exec,
   type ExecOptions,

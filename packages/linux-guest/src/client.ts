@@ -22,6 +22,7 @@ import {
   renameat,
   spawn,
   symlinkat,
+  sync,
   unlinkat,
   umount2,
   write,
@@ -234,6 +235,8 @@ export type Unmount = (target: string, options?: { flags?: number }) => Promise<
 
 export interface GuestClientCapabilities {
   ping(timeoutMs?: number): Promise<void>;
+  /** Writes every dirty guest filesystem back to its storage. */
+  sync(): Promise<void>;
   readonly fs: FileSystem;
   readonly exec: Exec;
   readonly mount: Mount;
@@ -310,6 +313,10 @@ class GuestClient {
 
   async ping(timeoutMs = 5000) {
     await getpid(await this.#connect(timeoutMs));
+  }
+
+  async sync() {
+    await sync(await this.#connect());
   }
 
   async mount(source: string | null, target: string, options: MountOptions = {}) {
@@ -587,6 +594,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
   const client = new GuestClient(vsock);
   return {
     ping: client.ping.bind(client),
+    sync: client.sync.bind(client),
     fs: {
       readFile: client.readFile.bind(client),
       readTextFile: client.readTextFile.bind(client),
