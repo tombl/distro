@@ -140,6 +140,18 @@ test("rejects a writable URL", () => {
   );
 });
 
+test("rejects a writable EROFS path when it boots", async () => {
+  await using directory = await scratch_directory();
+  const path = join(directory.path, "root.erofs");
+  await writeFile(path, await readFile(canonical_image));
+  const before = await readFile(path);
+  await assert.rejects(
+    () => boot(rootImage(path, { writable: true })),
+    new Error(`${path}: EROFS images are read-only; writable has no effect`),
+  );
+  assert.ok(before.equals(await readFile(path)));
+});
+
 test("rejects a file that is not a filesystem image", async () => {
   await using directory = await scratch_directory();
   const path = join(directory.path, "index.html");

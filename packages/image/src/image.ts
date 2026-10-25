@@ -3,7 +3,7 @@
 import { blockDevice, type BlockDeviceStorage } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { file_storage, platform, type ImageFileHandle } from "./platform.ts";
-import { check_bytes } from "./validate.ts";
+import { check_bytes, check_writable } from "./validate.ts";
 
 /** @internal An image source after string resolution. */
 export type ResolvedSource =
@@ -73,10 +73,12 @@ export function image_plugin(source: ResolvedSource, writable: boolean): Machine
         return memory_storage(await fetch_image(source.url), false);
       case "handle":
         // The caller opened the handle, so the caller closes it.
-        return file_storage("the file handle is not", source.handle, writable);
-      case "bytes":
-        check_bytes("the image bytes are not", source.bytes);
+        return file_storage("the file handle", source.handle, writable);
+      case "bytes": {
+        const filesystem = check_bytes("the image bytes are not", source.bytes);
+        if (writable) check_writable("the image bytes", filesystem);
         return memory_storage(source.bytes, writable);
+      }
       case "blob":
         blob_bytes ??= read_blob(source.blob);
         return memory_storage(await blob_bytes, false);

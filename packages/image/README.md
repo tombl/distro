@@ -79,7 +79,9 @@ await using machine = await bootMachine({
 A path is opened for reading and writing. A `FileHandle` must already be open
 for writing, and it stays open after the machine closes. A `Uint8Array` or
 `ArrayBuffer` is modified in place. Fetched images, blobs, and responses cannot
-be writable. Attach a writable image to only one running machine at a time.
+be writable. EROFS is always read-only, so `rootImage()` throws for writable
+EROFS bytes, and `bootMachine()` rejects a writable EROFS path or `FileHandle`.
+Attach a writable image to only one running machine at a time.
 
 The guest decides when its writes reach the image. Data is written once the
 guest flushes it, for example by running `sync` or unmounting the filesystem,

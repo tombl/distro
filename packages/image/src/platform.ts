@@ -5,7 +5,7 @@
 // and never try to resolve Node builtins.
 
 import type { BlockDeviceStorage } from "@lowland/kernel";
-import { check_image, HEADER_OFFSET, HEADER_SIZE } from "./validate.ts";
+import { check_image, check_writable, HEADER_OFFSET, HEADER_SIZE } from "./validate.ts";
 
 /**
  * The parts of a Node `FileHandle` that an image needs.
@@ -45,9 +45,12 @@ const web: Platform = {
   },
 };
 
-/** @internal Wraps an open file in block storage, validating it with one small read. */
+/**
+ * @internal Wraps an open file, named `name` in errors, in block storage,
+ * validating it with one small read.
+ */
 export async function file_storage(
-  subject: string,
+  name: string,
   handle: ImageFileHandle,
   writable: boolean,
 ): Promise<BlockDeviceStorage> {
@@ -69,7 +72,8 @@ export async function file_storage(
   const { size } = await handle.stat();
   const header = new Uint8Array(HEADER_SIZE);
   const length = size < HEADER_OFFSET + HEADER_SIZE ? 0 : await read(HEADER_OFFSET, header);
-  check_image(subject, header.subarray(0, length), size);
+  const filesystem = check_image(`${name} is not`, header.subarray(0, length), size);
+  if (writable) check_writable(name, filesystem);
 
   const storage: BlockDeviceStorage = { capacity: size, read };
   if (writable) {
@@ -115,7 +119,7 @@ function node(getBuiltinModule: GetBuiltinModule): Platform {
       const handle = await open(path, writable ? "r+" : "r");
       try {
         const name = path instanceof URL ? decodeURIComponent(path.pathname) : path;
-        const storage = await file_storage(`${name} is not`, handle, writable);
+        const storage = await file_storage(name, handle, writable);
         storage.close = () => handle.close();
         return storage;
       } catch (error) {

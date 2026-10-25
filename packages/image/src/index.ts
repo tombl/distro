@@ -3,6 +3,7 @@
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { image_plugin, type ResolvedSource } from "./image.ts";
 import { platform, type ImageFileHandle } from "./platform.ts";
+import { check_writable, filesystem_of, header_of } from "./validate.ts";
 
 export type { ImageFileHandle };
 
@@ -25,7 +26,7 @@ export type ImageSource =
 /** Options for `rootImage()`. */
 export interface RootImageOptions {
   /**
-   * Lets the guest write to the image, which defaults to read-only.
+   * Lets the guest write to an ext4 image, which defaults to read-only.
    *
    * The guest agent boots a read-only image beneath a temporary writable
    * overlay, so the guest can still write to its root, but those changes are
@@ -33,7 +34,9 @@ export interface RootImageOptions {
    *
    * A path is opened for reading and writing, a file handle must already be
    * open for writing, and byte arrays are modified in place. Fetched images,
-   * blobs, and responses cannot be writable. Writes reach the source when the
+   * blobs, and responses cannot be writable. EROFS is always read-only, so a
+   * writable EROFS image is rejected: immediately for bytes, and when the
+   * machine boots for a path or file handle. Writes reach the source when the
    * guest flushes them, such as by running `sync` or unmounting the
    * filesystem, so data the guest has not flushed before the machine closes
    * may be lost.
@@ -108,6 +111,10 @@ export function rootImage(source?: ImageSource, options: RootImageOptions = {}):
   }
   if (writable && (resolved.kind === "url" || resolved.kind === "blob")) {
     throw new Error("a writable image needs a file path, file handle, or bytes");
+  }
+  // Bytes can be checked now. Files are checked when the machine boots.
+  if (writable && resolved.kind === "bytes") {
+    check_writable("the image bytes", filesystem_of(header_of(resolved.bytes)));
   }
   return image_plugin(resolved, writable);
 }

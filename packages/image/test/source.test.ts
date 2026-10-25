@@ -107,3 +107,42 @@ test("rejects a writable blob or canonical image", () => {
   assert.throws(() => rootImage(new Blob([erofs_image()]), { writable: true }), /writable/);
   assert.throws(() => rootImage(undefined, { writable: true }), /canonical image/);
 });
+
+function file_handle(bytes: Uint8Array) {
+  return {
+    async read(buffer: Uint8Array, offset: number, length: number, position: number) {
+      const source = bytes.subarray(position, position + length);
+      buffer.set(source, offset);
+      return { bytesRead: source.byteLength };
+    },
+    async write(buffer: Uint8Array, offset: number, length: number, position: number) {
+      bytes.set(buffer.subarray(offset, offset + length), position);
+      return { bytesWritten: length };
+    },
+    async stat() {
+      return { size: bytes.byteLength };
+    },
+    async datasync() {},
+  };
+}
+
+test("rejects writable EROFS bytes immediately", () => {
+  assert.throws(
+    () => rootImage(erofs_image(), { writable: true }),
+    new Error("the image bytes: EROFS images are read-only; writable has no effect"),
+  );
+});
+
+test("rejects a writable EROFS file handle when it boots", async () => {
+  const image = rootImage(file_handle(erofs_image()), { writable: true });
+  await assert.rejects(
+    () => configure(image),
+    new Error("the file handle: EROFS images are read-only; writable has no effect"),
+  );
+});
+
+test("accepts writable ext4 bytes and file handles", async () => {
+  assert.equal((await configure(rootImage(ext4_image(), { writable: true }))).length, 1);
+  const handle = file_handle(ext4_image());
+  assert.equal((await configure(rootImage(handle, { writable: true }))).length, 1);
+});
