@@ -149,6 +149,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     node-workspace = callPackage ./npm/node-workspace.nix { };
     playwright = callPackage ./npm/playwright.nix { };
     linux-guest = callPackage ./npm/linux-guest { };
+    lowland-image = callPackage ./npm/image { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
   }

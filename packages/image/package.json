@@ -1,0 +1,36 @@
+{
+  "name": "@lowland/image",
+  "version": "0.0.0",
+  "description": "The canonical Lowland system image with BusyBox and apk-tools.",
+  "homepage": "https://linux.tombl.dev/reference/image/",
+  "license": "MIT AND GPL-2.0-only AND MPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tombl/distro.git",
+    "directory": "packages/image"
+  },
+  "files": [
+    "dist",
+    "rootfs.erofs"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit && tsc -p test",
+    "test": "node --test --test-concurrency=1"
+  },
+  "devDependencies": {
+    "@lowland/guest": "workspace:*",
+    "@types/node": "^24",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@lowland/kernel": "workspace:^"
+  }
+}
