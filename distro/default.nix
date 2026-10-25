@@ -81,6 +81,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     diffutils = callPackage ./diffutils/package.nix { };
     dropbear = callPackage ./dropbear/package.nix { };
     e2fsprogs = callPackage ./e2fsprogs/package.nix { };
+    erofs-utils = callPackage ./erofs-utils/package.nix { };
     file = callPackage ./file/package.nix { };
     findutils = callPackage ./findutils/package.nix { };
     gawk = callPackage ./gawk/package.nix { };
