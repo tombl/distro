@@ -22,11 +22,9 @@ case "$cmdline" in
   ;;
 *" lifecycle=multi-cpu-panic "*)
   echo "lifecycle: starting work on multiple cpus"
-  # A pure userspace loop is only preempted when it enters the kernel, so
-  # each spinner makes a syscall per iteration and init still gets a CPU.
   i=0
   while [ "$i" -lt 8 ]; do
-    sh -c 'while :; do kill -0 $$; done' &
+    sh -c 'while :; do :; done' &
     i=$((i + 1))
   done
   sleep 0.1
