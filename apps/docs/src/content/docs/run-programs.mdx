@@ -36,8 +36,8 @@ is involved, so nothing is split, quoted, or expanded:
 await guest.run(["echo", "$HOME", "a b"]); // prints "$HOME a b"
 ```
 
-The first element is looked up on the guest's `PATH`. If no such program exists, the call
-rejects with a `SystemError` whose `code` is `"ENOENT"`.
+The first element is looked up on the guest's `PATH`. If no such program exists, `run()`
+rejects with a `SystemError`.
 
 To use pipes, redirection, or variables, run a shell explicitly:
 
