@@ -57,7 +57,13 @@ let
     inherit ((builtins.fromJSON (builtins.readFile ../../../packages/linux-guest/package.json)))
       version
       ;
-    src = ../../..;
+    src = node-workspace.source [
+      "packages/bytes"
+      "packages/kernel"
+      "packages/linux-guest"
+      "scripts/pack-package.mjs"
+      "tsconfig.base.json"
+    ];
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
@@ -94,7 +100,13 @@ let
     pname = "linux-guest-integration-test";
     version = "0.0.0";
     passthru.ci.heavy = true;
-    src = ../../..;
+    src = node-workspace.source [
+      "packages/bytes"
+      "packages/kernel"
+      "packages/linux-guest"
+      "scripts/pack-package.mjs"
+      "tsconfig.base.json"
+    ];
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [

@@ -6,12 +6,8 @@
 // little-endian and every fixed-layout struct is padded to a 64-bit boundary.
 
 import { Bytes, FixedArray, Reader, Struct, U16LE, U32LE, U64LE, I32LE } from "@lowland/bytes";
-import {
-  VirtioController,
-  type VirtioDevice,
-  type Virtqueue,
-  type VirtqueueBuffer,
-} from "./core.ts";
+import { type Device, public_handle, VirtioDevice } from "./device.ts";
+import type { Virtqueue, VirtqueueBuffer } from "./queue.ts";
 
 type MaybePromise<T> = T | PromiseLike<T>;
 
@@ -689,7 +685,7 @@ async function async_iterable<T>(source: Iterable<T> | AsyncIterable<T>): Promis
 export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNode, THandle>>(
   filesystem: T & RequiresDurability<T>,
   options: FSDeviceOptions,
-): VirtioDevice {
+): Device {
   const { tag, cache = true } = options;
   const validity = cache ? 1n : 0n;
   const encoded_tag = utf8_encoder.encode(tag);
@@ -1247,9 +1243,29 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
     }
   }
 
-  return new VirtioController(
-    // 26 is the virtio-fs device ID.
-    { deviceId: 26, config },
-    { queues: [notify, notify], close: finalize },
-  ).device;
+  return public_handle(new FileSystemDevice(config, notify, finalize), {});
+}
+
+class FileSystemDevice extends VirtioDevice {
+  readonly #notify: (queue: Virtqueue) => Promise<void>;
+  readonly #finalize: () => Promise<void>;
+
+  constructor(
+    config: Uint8Array,
+    notify: (queue: Virtqueue) => Promise<void>,
+    finalize: () => Promise<void>,
+  ) {
+    // 26 is the virtio-fs device ID: a high-priority queue and one request queue.
+    super({ id: 26, queues: 2, config });
+    this.#notify = notify;
+    this.#finalize = finalize;
+  }
+
+  protected kick(_vq: number, queue: Virtqueue) {
+    return this.#notify(queue);
+  }
+
+  protected close() {
+    return this.#finalize();
+  }
 }

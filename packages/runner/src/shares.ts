@@ -1,4 +1,4 @@
-import { type VirtioDevice, fileSystemDevice } from "@lowland/kernel";
+import { type Device, fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "@lowland/guest/node";
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
@@ -9,7 +9,7 @@ export interface ShareArgument {
 }
 
 export interface ConfiguredShares {
-  devices: VirtioDevice[];
+  devices: Device[];
   cmdline: string;
 }
 
