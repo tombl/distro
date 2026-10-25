@@ -140,8 +140,8 @@ One `rootImage()` plugin can be passed to any number of machines. In a browser t
 downloaded once and shared, and in Node.js it is read from disk as each machine needs it. A
 guest agent belongs to exactly one machine, so each run creates a new one.
 
-If the deadline closes the machine, the pending calls reject because the machine closed. The
-service can catch that and report a timeout.
+If the deadline closes the machine, the pending calls reject with a `ProtocolError`, because
+the guest's connection closed mid-request. The service can catch that and report a timeout.
 
 ## Terminals
 
