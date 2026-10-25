@@ -22,10 +22,11 @@ The setup has three parts:
 
 Browsers give fast, synchronous access to an OPFS file only in a dedicated worker, through
 `createSyncAccessHandle()`. The worker opens the file, gives it a size on first use, and serves
-it with `serveDevice()`:
+it with `serveDevice()`. If opening the file fails, the worker reports the error with
+`serveDeviceError()` instead:
 
 ```ts title="disk-worker.ts"
-import { blockDevice, type BlockStorage, serveDevice } from "@lowland/kernel";
+import { blockDevice, type BlockStorage, serveDevice, serveDeviceError } from "@lowland/kernel";
 
 const capacity = 256 * 1024 * 1024;
 
@@ -65,10 +66,11 @@ async function openStorage(): Promise<BlockStorage> {
   };
 }
 
-serveDevice(
-  self,
-  openStorage().then((storage) => blockDevice(storage)),
-);
+try {
+  serveDevice(self, blockDevice(await openStorage()));
+} catch (error) {
+  serveDeviceError(self, error);
+}
 ```
 
 `read` and `write` receive views of the guest's memory and pass them to the access handle
@@ -79,8 +81,8 @@ whole view is done, because the guest treats a short read or write as an I/O err
 the origin's storage quota from the start. Choose the capacity before the first run. Changing
 `capacity` later has no effect on a file that already exists.
 
-`serveDevice()` accepts a promise of the device. If the file cannot be opened, the promise
-rejects, and the page receives the same error.
+When the worker calls `serveDeviceError()`, the page receives an `Error` with the same `name`
+and `message` as the original.
 
 ## Attach the disk
 
@@ -174,8 +176,8 @@ lost when the machine closes:
 
 - The root image is read-only, and every page load starts from the same copy.
 - `/tmp`, apart from the mounted disk, is kept in memory.
-- A writable layer added with `lowland.root.overlay=tmpfs` is also kept in memory. Changes to
-  `/etc` or `/usr` are lost, even though the whole filesystem appears writable.
+- The writable layer above an EROFS root is also kept in memory. Changes to `/etc` or `/usr`
+  are lost, even though the whole filesystem appears writable.
 
 Keep data that must persist under the disk's mount point. To keep a program's configuration,
 point the program at a path on the disk.
@@ -184,7 +186,7 @@ point the program at a path on the disk.
 
 Only one access handle can be open on an OPFS file at a time. While one tab has the disk open,
 `createSyncAccessHandle()` in a second tab throws a `DOMException` named
-`NoModificationAllowedError`, and `openDisk()` rejects with it. The file becomes available again
+`NoModificationAllowedError`, and `openDisk()` rejects with an error of that name. The file becomes available again
 when the first tab closes its machine, or when that tab closes.
 
 Check for this error and tell the user that the page is already open elsewhere:
