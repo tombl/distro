@@ -21,6 +21,11 @@ pkgs.treefmt.withConfig {
     formatter = {
       actionlint = {
         command = "actionlint";
+        # Explicit, since the flake check's tree has no .git to locate it by.
+        options = [
+          "-config-file"
+          ".github/actionlint.yaml"
+        ];
         includes = [ ".github/workflows/*.yml" ];
       };
       deadnix = {

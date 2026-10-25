@@ -270,10 +270,13 @@ jobs:
     # Production publishes prune the apk repository against its live index, so
     # they must not interleave. Previews stay independent. The group gives
     # mutual exclusion, not ordering, so production steps also check that this
-    # run is still main's head.
+    # run is still main's head. The default queue keeps one pending job, so an
+    # older run arriving late would cancel main's pending deploy and then skip
+    # itself; queue: max keeps every waiting job.
     concurrency:
       group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.run_id) }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
