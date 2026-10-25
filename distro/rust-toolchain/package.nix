@@ -109,6 +109,7 @@ let
     ./patches/0001-core-gate-wali-c_long-on-vendor.patch
     ./patches/0002-std-args-gate-wali-on-vendor.patch
     ./patches/0003-std-no-stack-overflow-handler-on-wasm32.patch
+    ./patches/0004-std-fd-dup-on-wasm-linux.patch
   ];
 
   # Registry dependencies of the std workspace, resolved by ./Cargo.lock. The

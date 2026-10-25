@@ -35,6 +35,18 @@ fn main() {
     fs::write(path, b"rust stat ok").unwrap();
     assert_eq!(fs::read(path).unwrap(), b"rust stat ok");
     assert_eq!(fs::metadata(path).unwrap().len(), 12);
+
+    // std assumes wasm32 has no OS and refuses to duplicate descriptors
+    // unless patched. A clone shares the file offset with the original.
+    {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = fs::File::open(path).unwrap();
+        let mut clone = file.try_clone().unwrap();
+        file.seek(SeekFrom::Start(5)).unwrap();
+        let mut rest = String::new();
+        clone.read_to_string(&mut rest).unwrap();
+        assert_eq!(rest, "stat ok");
+    }
     fs::remove_file(path).unwrap();
 
     let n_threads = 4;
