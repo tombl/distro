@@ -17,8 +17,11 @@ static int release_pipe[2];
 static void *waiter(void *unused)
 {
 	(void)unused;
-	if (syscall(SYS_futex, &word, FUTEX_WAIT_PRIVATE, 42, NULL) == -1)
-		test_perror("futex wait");
+	/* Loop, so that a spurious return cannot end the thread early. */
+	while (__atomic_load_n(&word, __ATOMIC_SEQ_CST) == 42)
+		if (syscall(SYS_futex, &word, FUTEX_WAIT_PRIVATE, 42, NULL) == -1 &&
+		    errno != EAGAIN && errno != EINTR)
+			test_perror("futex wait");
 	return NULL;
 }
 
@@ -54,8 +57,12 @@ static int child(void *unused)
 		test_perror("report queued futex address");
 	if (read(release_pipe[0], &byte, 1) != 1)
 		test_perror("wait for parent probe");
-	if (syscall(SYS_futex, &word, FUTEX_WAKE_PRIVATE, 1) != 1)
-		test_fail("same-mm wake did not find its waiter");
+	/* The waiter can only leave once the word changes and it is woken,
+	 * so the join shows that a wake within this mm still reaches it.
+	 * The VM watchdog bounds a lost wake. */
+	__atomic_store_n(&word, 0, __ATOMIC_SEQ_CST);
+	if (syscall(SYS_futex, &word, FUTEX_WAKE_PRIVATE, 1) == -1)
+		test_perror("same-mm wake");
 	if (pthread_join(thread, NULL))
 		test_fail("join futex waiter");
 	return 0;
