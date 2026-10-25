@@ -193,13 +193,16 @@ while [ -e "/proc/$editor_pid" ] && [ "$i" -lt 100 ]; do
   i=$((i + 1))
 done
 [ "$i" -lt 100 ] || fail "more did not reap editor callback"
-printf 'q' >&3
-exec 3>&-
+# Start the watchdog before ending the session. hush remembers only $!'s
+# exit status, so a session reaped while the watchdog spawns would make
+# `wait "$more_session"` fail with "not a child of this shell".
 (
   sleep 10
   kill -KILL "$more_session" 2>/dev/null
 ) &
 watchdog=$!
+printf 'q' >&3
+exec 3>&-
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -259,13 +262,13 @@ while awk '$1 == "State:" && $2 == "T" { found = 1 } END { exit !found }' \
   i=$((i + 1))
 done
 [ "$i" -lt 100 ] || fail "more did not resume on CONT"
-printf 'q' >&3
-exec 3>&-
 (
   sleep 10
   kill -KILL "$more_session" 2>/dev/null
 ) &
 watchdog=$!
+printf 'q' >&3
+exec 3>&-
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
@@ -288,13 +291,13 @@ while ! contains "$(cat /tmp/more-int.out 2>/dev/null)" "--More--" &&
 done
 [ "$i" -lt 200 ] || fail "more INT prompt readiness"
 more_pid=$(find_more_pid) || fail "locate more INT process"
-kill -INT "$more_pid" || fail "signal more INT"
-exec 3>&-
 (
   sleep 10
   kill -KILL "$more_session" 2>/dev/null
 ) &
 watchdog=$!
+kill -INT "$more_pid" || fail "signal more INT"
+exec 3>&-
 wait "$more_session"
 more_rc=$?
 kill "$watchdog" 2>/dev/null || true
