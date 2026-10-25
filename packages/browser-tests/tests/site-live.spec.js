@@ -134,3 +134,17 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
   await expectOutput(page, /^live-only-ready$/m);
   expect(dialogs).toEqual([]);
 });
+
+// keep_bootcon keeps the boot console open for the whole session, so console
+// output must reach the terminal without waiting for it to close.
+for (const cmdline of ["keep_bootcon", '"keep-bootcon=1"']) {
+  test(`shows the shell with ${cmdline}`, async ({ page }) => {
+    await page.goto(`/?webgl=0&cmdline=${encodeURIComponent(cmdline)}`);
+    const terminal = page.locator(".xterm-rows");
+    await expect(terminal).toContainText("root@lowland", { timeout: 60_000 });
+    const input = page.locator(".xterm-helper-textarea");
+    await input.pressSequentially("printf 'console-%s\\n' visible");
+    await input.press("Enter");
+    await expect(terminal).toContainText("console-visible");
+  });
+}
