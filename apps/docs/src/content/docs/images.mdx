@@ -26,11 +26,11 @@ Use `buildImage()` when the image should already contain packages from the publi
 or programs and files from the host. It needs only Node.js.
 
 Use `mkImage` when you build programs from source with Nix, as described in
-[Port software](/port-software/). It installs Nix packages, not packages from the public
+[Your own software](/your-own-software/#compiling-your-own). It installs Nix packages, not packages from the public
 repository.
 
 `buildImage()` and `mkImage` both write an image file. Attach it with `rootImage("app.erofs")`,
-as shown in [Build an image](/build-an-image/#boot-the-image).
+as shown in [Your own software](/your-own-software/#building-an-image).
 
 ## The image contract
 
@@ -55,7 +55,7 @@ when the machine closes. One read-only image can be attached to any number of ma
 
 An ext4 image attached with `rootImage(source, { writable: true })` is mounted read-write, and
 changes are written back to it, as shown in
-[Build an image](/build-an-image/#keep-changes-between-boots). Run `sync` in the guest before
+[Your own software](/your-own-software/#erofs-or-ext4). Run `sync` in the guest before
 closing the machine, or recent changes may be lost. Attach a writable image to only one machine
 at a time.
 
@@ -91,7 +91,7 @@ EROFS and contains:
 - An `/etc/resolv.conf` that sends DNS queries to the network created by `createNetwork()`.
 
 To install packages, attach a network as described in
-[Access the internet](/access-the-internet/), then run apk:
+[Networking](/networking/), then run apk:
 
 ```js
 await guest.run(["apk", "add", "jq"]);
