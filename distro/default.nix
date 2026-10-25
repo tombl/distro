@@ -64,6 +64,10 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     };
     stdenvDebug = pkgs.stdenvAdapters.keepDebugInfo self.stdenvRelease;
 
+    # The C/C++ porting SDK: the stdenv's toolchain and platform knowledge for
+    # builds outside Nix, exposed as the flake's `sdk` devshell.
+    sdk = callPackage ./sdk/package.nix { };
+
     # rustc from source on the fork LLVM, with the wasm Linux targets in-tree.
     rustc-wasm-linux = callPackage ./rustc/package.nix { };
     # A pinned nightly rustc with a from-source std for the wasm target.

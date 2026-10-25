@@ -56,4 +56,12 @@ rec {
     "-z"
     "stack-size=8388608"
   ];
+
+  # Autoconf answers for probes that lie under cross-compilation: AC_FUNC_MMAP
+  # hard-codes yes for linux hosts though wasm has no mmap, and musl's static
+  # dlopen stub links though dynamic loading can never work, so configures
+  # enable code paths that fail at compile time or runtime. A site file states
+  # the platform truth once for every port, whether built by the stdenv or the
+  # SDK.
+  configSite = ./config.site;
 }
