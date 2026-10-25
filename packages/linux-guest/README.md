@@ -1,8 +1,7 @@
 # `@lowland/guest`
 
-`@lowland/guest` is the Lowland guest-agent integration. It contributes its
-private boot filesystem and vsock transport to an `@lowland/kernel` machine and
-exposes processes, files, mounts, and networking through the returned agent.
+`@lowland/guest` runs programs and works with files inside a Linux machine booted by
+`@lowland/kernel`.
 
 ## Installation
 
@@ -13,117 +12,79 @@ npm install @lowland/kernel @lowland/guest
 ## Usage
 
 ```js
+import { readFile } from "node:fs/promises";
 import { blockDevice, bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 
-const rootfs = new Uint8Array(
-  await fetch("/rootfs.erofs").then((response) => response.arrayBuffer()),
-);
+const image = await readFile("rootfs.erofs");
 const root = blockDevice({
-  capacity: rootfs.byteLength,
+  capacity: image.byteLength,
   read(offset, target) {
-    const source = rootfs.subarray(offset, offset + target.byteLength);
+    const source = image.subarray(offset, offset + target.byteLength);
     target.set(source);
     return source.byteLength;
   },
 });
 
 const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [root, guest],
-});
+await using machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-`exec()` returns a live `ChildProcess` with streaming standard I/O. `run()`
-collects its status, stdout, and stderr and is convenient for bounded commands.
-Both methods accept an argv array without shell parsing.
+The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
+[Build a root filesystem](https://docs.low.land/build-a-rootfs/) explains how to make one.
 
-The plugin boots its private EROFS using the GPT partition label
-`LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
-agent then requires exactly one attached EROFS or ext4 filesystem labeled
-`LOWLAND_ROOT`, pivots into it, and unmounts its private boot filesystem.
-Missing and duplicate system roots fail `bootMachine()` through the plugin
-readiness hook.
+The same code runs in a browser, with the image fetched instead of read from disk. The page must
+be served with the cross-origin isolation headers described in the
+[tutorial](https://docs.low.land/getting-started/).
 
-Pass `"lowland.root.overlay=tmpfs"` as a kernel argument to mount the system
-image read-only beneath a temporary writable OverlayFS:
+## Processes
 
-```js
-const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  args: ["lowland.root.overlay=tmpfs"],
-  plugins: [guest, root],
-});
-```
+`guest.run()` waits for a program to exit and collects its status and output. `guest.exec()`
+returns the running process with streaming standard input and output. Both take an argv array
+and do not go through a shell.
+
+## Files
+
+`guest.fs` reads and writes files inside the machine. Files written from JavaScript are
+immediately visible to programs in the guest, and the reverse is also true.
+
+The root filesystem is read-only. Pass `"lowland.root.overlay=tmpfs"` in `args` to put a
+writable layer in memory on top of it.
 
 ## Networking
 
-Networking is another composable guest integration:
+`createNetwork()` connects guests to each other and to the outside world through functions you
+provide for TCP connections and DNS lookups:
 
 ```js
 import { createNetwork } from "@lowland/guest";
 
-const guest = guestAgent();
 const network = createNetwork({ connectTcp, resolveDns });
-const attachment = network.attach(guest);
-
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [root, guest, attachment],
-});
-
-console.log(attachment.address);
-```
-
-The attachment contributes the virtio NIC and configures it after the agent is
-ready. Each agent supports one network attachment; attach multiple agents to
-the same network to put them on one private IPv4 subnet.
-
-## Host directory adapters
-
-`@lowland/guest/node` provides `NodeFS`, and
-`@lowland/guest/browser` provides `BrowserFS`. Adapt them with the kernel's
-`fileSystemDevice()` and mount the resulting virtio-fs device through the
-agent:
-
-```js
-import { fileSystemDevice } from "@lowland/kernel";
-import { NodeFS } from "@lowland/guest/node";
-
-const shared = fileSystemDevice(new NodeFS("/srv/guest-share"), {
-  tag: "host",
-  cache: false,
-});
 const guest = guestAgent();
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [root, guest, shared],
+  plugins: [root, guest, network.attach(guest)],
 });
-await guest.fs.mkdir("/tmp/host");
-await guest.mount("host", "/tmp/host", { type: "virtiofs" });
 ```
 
-Pass `{ readOnly: true }` to `NodeFS` when read-only access is part of the trust
-boundary. A read-only guest mount alone does not prevent writes through raw
-filesystem requests. The Node adapter confines paths beneath its configured
-root and does not follow final symlinks, but portable Node lacks the
-descriptor-relative operations needed to make that confinement race-free
-against an unrelated host process restructuring the directory. Use an OS
-sandbox or native helper when that stronger boundary is required.
+Guests attached to the same network share one private IPv4 subnet.
 
-`BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
-The browser API has no Unix inode metadata or atomic portable rename, so the
-adapter synthesizes metadata and implements rename as copy-then-remove. A
-failed rename can leave a partial destination or both names. Use `cache: false`
-for directories modified outside the guest; this disables metadata and name
-caching, but not the guest's data page cache.
+## Sharing host directories
+
+`NodeFS` from `@lowland/guest/node` and `BrowserFS` from `@lowland/guest/browser` expose a host
+directory to the guest, which mounts it with `guest.mount()`. Their
+[reference](https://docs.low.land/reference/guest/) describes what each one can and cannot
+protect against.
+
+## Documentation
+
+See [docs.low.land](https://docs.low.land) for guides and the
+[API reference](https://docs.low.land/reference/guest/).
 
 ## License
 
-The TypeScript and JavaScript sources are available under the MIT license. The
-published agent image also contains GPL-2.0-only BusyBox and MIT-licensed musl.
+The TypeScript and JavaScript sources are available under the MIT license. The published agent
+image also contains GPL-2.0-only BusyBox and MIT-licensed musl.
