@@ -19,6 +19,13 @@ stdenv.mkDerivation (finalAttrs: {
   version = "1.37.0";
   inherit src;
 
+  # ash is /bin/sh, as on Alpine. Upstream only supports it with fork().
+  patches = [
+    ./wasm-ash-nommu.patch
+    ./wasm-ash-callback-clone.patch
+    ./wasm-timeout-detach-watcher.patch
+  ];
+
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
 
@@ -45,9 +52,10 @@ stdenv.mkDerivation (finalAttrs: {
     config MOUNT y
     config SWITCH_ROOT y
     config CHROOT y
-    config HUSH y
-    config SH_IS_ASH n
-    config SH_IS_HUSH y
+    config ASH y
+    config HUSH n
+    config SH_IS_ASH y
+    config SH_IS_HUSH n
     config SH_IS_NONE n
     config BASH_IS_ASH n
     config BASH_IS_HUSH n
@@ -95,8 +103,6 @@ stdenv.mkDerivation (finalAttrs: {
     config RUNSVDIR n
     config SVLOGD n
 
-    config HUSH_TICK y
-
     config HWCLOCK n
     config RTCWAKE n
 
@@ -137,5 +143,7 @@ stdenv.mkDerivation (finalAttrs: {
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
       networking = check "networking" ./network-test.sh;
+      shell = check "shell" ./shell-test.sh;
+      interactive = check "interactive" ./interactive-test.sh;
     };
 })
