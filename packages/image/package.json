@@ -28,7 +28,8 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit && tsc -p test",
-    "test": "node --test --test-concurrency=1 test/*.test.ts"
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "test:online": "node --test --test-concurrency=1 test/online/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24",

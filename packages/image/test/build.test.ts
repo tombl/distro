@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { lookup } from "node:dns/promises";
 import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -14,15 +13,8 @@ import { busybox_package, jq_package } from "./assets.ts";
 
 const decoder = new TextDecoder();
 
-// Tests that resolve packages from the public repository skip offline, and
-// inside Nix builds even when they have network (as CI's do): the repository
-// is whatever main last published, so checks must not depend on it.
-const online =
-  !process.env.NIX_BUILD_TOP &&
-  (await lookup("assets.low.land").then(
-    () => true,
-    () => false,
-  ));
+// These tests never use the network. test/online covers the public
+// repository with `pnpm test:online`.
 
 async function build(t: TestContext, options: Omit<BuildImageOptions, "output">) {
   const directory = await mkdtemp(join(tmpdir(), "lowland-image-test-"));
@@ -106,27 +98,6 @@ for (const mode of [undefined, "0750"]) {
     await assert.rejects(guest.fs.stat("/usr/1"));
   });
 }
-
-test(
-  "builds an image from the public repository",
-  { skip: !online && "offline or in a Nix build" },
-  async (t) => {
-    const output = await build(t, {
-      packages: ["busybox", "jq"],
-      files: {
-        "/usr/local/bin/answer": {
-          source: new URL("./answer.sh", import.meta.url).pathname,
-          mode: "0755",
-        },
-      },
-    });
-    const guest = await boot(t, output);
-
-    const result = await guest.run(["/usr/local/bin/answer"]);
-    assert.deepEqual(result.status, { success: true, code: 0, signal: null });
-    assert.equal(decoder.decode(result.stdout), "42\n");
-  },
-);
 
 test("rejects unsupported formats", async () => {
   await assert.rejects(
