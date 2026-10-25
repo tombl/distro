@@ -16,7 +16,7 @@ let
     src = node-workspace.source [
       "packages/bytes"
       "packages/kernel"
-      "packages/linux-guest"
+      # @lowland/guest is the built package, linked in below.
       "packages/runner/src"
       "scripts/pack-package.mjs"
       "tsconfig.base.json"
