@@ -212,10 +212,12 @@ jobs:
           nix build .#kernel --out-link result-kernel --print-build-logs
           nix build .#linux-guest --out-link result-linux-guest --print-build-logs
           nix build .#lowland-image --out-link result-lowland-image --print-build-logs
+          nix build .#lowland --out-link result-lowland --print-build-logs
           mkdir npm-packages
           cp -L result-kernel/package.tgz npm-packages/kernel.tgz
           cp -L result-linux-guest/package.tgz npm-packages/linux-guest.tgz
           cp -L result-lowland-image/package.tgz npm-packages/image.tgz
+          cp -L result-lowland/package.tgz npm-packages/lowland.tgz
       - uses: actions/upload-artifact@v4
         with:
           name: npm-packages
@@ -334,6 +336,7 @@ jobs:
           test "$(jq --raw-output .version packages/kernel/package.json)" = "$version"
           test "$(jq --raw-output .version packages/linux-guest/package.json)" = "$version"
           test "$(jq --raw-output .version packages/image/package.json)" = "$version"
+          test "$(jq --raw-output .version packages/lowland/package.json)" = "$version"
           test "$(jq --raw-output .version packages/runner/package.json)" = "$version"
           node scripts/release-notes.mjs "$version" > release-notes.md
       - name: Publish packages
@@ -356,6 +359,7 @@ jobs:
           publish @lowland/kernel ./npm-packages/kernel.tgz
           publish @lowland/guest ./npm-packages/linux-guest.tgz
           publish @lowland/image ./npm-packages/image.tgz
+          publish lowland ./npm-packages/lowland.tgz
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
