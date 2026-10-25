@@ -43,8 +43,9 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 The machine's virtual CPUs are workers that share one WebAssembly memory, and browsers allow
-shared memory only on cross-origin isolated pages. The tutorial explains this in
-[Why those headers?](/getting-started/#why-those-headers).
+shared memory only on
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated)
+pages.
 
 To check a page, evaluate `crossOriginIsolated` in the browser console. It must be `true`. If
 it is `false`, inspect the document's response headers in the network panel.
