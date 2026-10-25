@@ -220,27 +220,28 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_controller.enqueue(new Uint8Array(message));
     }
   };
+  // A forced teardown stops waiting for device close, which waits for
+  // in-flight requests that may be stuck in host storage forever. It can be
+  // requested after an ordinary teardown has already started.
+  const force_requested = Promise.withResolvers<void>();
+  let forced = false;
   // Idempotent: a device request that settles after a forced teardown can
   // still reach fail(), which must then be a no-op.
   const finish = (force = false) => {
+    if (force && !forced) {
+      forced = true;
+      force_requested.resolve();
+    }
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {
-      const device_close = bus.close();
-      // Device close waits for in-flight requests, which may be stuck in host
-      // storage forever. A forced teardown terminates the workers regardless.
-      if (force) {
-        void device_close.catch(() => {});
-      } else {
-        try {
-          await device_close;
-        } catch (device_error) {
-          if (!failed) {
-            failed = true;
-            finish_error = device_error;
-          }
+      const device_close = bus.close().catch((device_error) => {
+        if (!failed && !forced) {
+          failed = true;
+          finish_error = device_error;
         }
-      }
+      });
+      await Promise.race([device_close, force_requested.promise]);
       try {
         await Promise.all(Array.from(workers, (worker) => worker.terminate()));
       } catch (termination_error) {
@@ -270,7 +271,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     // finished the machine; only an orderly close reports a closing failure.
     void run_machine_closing(plugins).then(
       () => finish(),
-      (error) => (closed ? finish() : fail(error, true)),
+      // Either way, a failed hook forces a teardown that may be stuck.
+      (error) => (closed ? finish(true) : fail(error, true)),
     );
   };
 
