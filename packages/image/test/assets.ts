@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: MIT
 
-// The nix check points LOWLAND_IMAGE_TEST_EXT4 at a writable ext4 copy of the
-// canonical system, and outside nix we build it ourselves.
-
+// The only Nix-aware part of the test suite. The Nix check points
+// LOWLAND_IMAGE_TEST_ASSETS at the asset directory, and outside Nix the tests
+// build it themselves.
 import { execFile } from "node:child_process";
-import { copyFile, chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const ATTRIBUTE = "lowland-image.checks.tests.ext4-root";
-const exec_file = promisify(execFile);
+const ATTRIBUTE = "lowland-image.package.checks.tests.assets";
 
 async function build() {
   const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const { stdout } = await exec_file("nix", [
+  const { stdout } = await promisify(execFile)("nix", [
     "build",
     `${repository_root}#${ATTRIBUTE}`,
     "--no-link",
@@ -24,10 +23,13 @@ async function build() {
   return stdout.trim();
 }
 
+const directory = process.env.LOWLAND_IMAGE_TEST_ASSETS ?? (await build());
+
+/** A local jq package with no dependencies. */
+export const jq_package = join(directory, "jq.apk");
+
 /** The canonical image shipped in this package. */
 export const canonical_image = fileURLToPath(new URL("../rootfs.erofs", import.meta.url));
-
-const ext4_image = process.env.LOWLAND_IMAGE_TEST_EXT4 ?? (await build());
 
 /** A scratch directory removed when disposed. */
 export async function scratch_directory() {
@@ -38,10 +40,10 @@ export async function scratch_directory() {
   };
 }
 
-/** Copies the ext4 system into `directory` as a file the test may write. */
-export async function writable_ext4_copy(directory: string) {
-  const path = join(directory, "root.ext4");
-  await copyFile(ext4_image, path);
+/** Copies the ext4 system into `scratch` as a file the test may write. */
+export async function writable_ext4_copy(scratch: string) {
+  const path = join(scratch, "root.ext4");
+  await copyFile(join(directory, "rootfs.ext4"), path);
   await chmod(path, 0o644);
   return path;
 }

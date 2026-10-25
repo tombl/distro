@@ -60,13 +60,13 @@ importers:
 
   packages/image:
     dependencies:
+      '@lowland/guest':
+        specifier: workspace:^
+        version: link:../linux-guest
       '@lowland/kernel':
         specifier: workspace:^
         version: link:../kernel
     devDependencies:
-      '@lowland/guest':
-        specifier: workspace:*
-        version: link:../linux-guest
       '@types/node':
         specifier: ^24
         version: 24.13.3
