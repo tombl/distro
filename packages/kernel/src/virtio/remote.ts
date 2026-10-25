@@ -14,11 +14,13 @@ import {
 import { publish_virtqueue_completion, type VirtqueueCompletion } from "./queue.ts";
 
 /*
- * The queue protocol deliberately has no request IDs or acknowledgements.
- * Transport operations flow to the worker in MessagePort order. Completions
- * flow back in the other direction. The only cross-direction queue coordination
- * is the shared revocation array used by reset. Descriptor payloads are
- * transferred back, then committed to guest memory by the main thread.
+ * The queue protocol deliberately has no request IDs. Transport operations
+ * flow to the worker in MessagePort order. Completions flow back in the other
+ * direction. Cross-direction queue coordination is the shared revocation array
+ * used by reset, plus one acknowledgement per reset once the worker has
+ * finished with guest memory. Copied descriptor payloads are transferred back,
+ * then committed to guest memory by the main thread; a device with views
+ * writes guest memory in place from the worker.
  */
 
 interface SerializedError {
@@ -48,6 +50,7 @@ type WorkerMessage =
   | ReadyMessage
   | CompletionMessage
   | { type: "config"; irq: number; config: Uint8Array; interrupt: boolean }
+  | { type: "reset_done" }
   | { type: "error"; error: SerializedError }
   | { type: "closed"; error?: SerializedError };
 
@@ -142,6 +145,9 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): Device {
     const message = value as WorkerMessage;
     if (message?.type === "closed") {
       cleanup();
+      connection?.revoke();
+      // The worker has drained its device, so nothing touches guest memory.
+      connection?.release_resets();
       if (message.error) {
         const error = deserialize_error(message.error);
         connection?.fail(error);
@@ -205,6 +211,12 @@ function connect_remote_device(
   const enabled = new Uint8Array(transport.queues);
   let config_target: Uint8Array | undefined;
   let failed = false;
+  // Resets the worker has not yet acknowledged, oldest first. Only the
+  // worker can say it has finished with guest memory: a reset is released by
+  // its acknowledgement or by the worker's report that its device has closed,
+  // never by revocation or failure alone. A worker that never answers leaves
+  // the guest waiting, which is harmless once the machine has failed.
+  const resets: (() => void)[] = [];
 
   const fail = (error: unknown) => {
     if (failed) return;
@@ -230,6 +242,9 @@ function connect_remote_device(
         transport.config.set(message.config.subarray(0, transport.config.byteLength));
         config_target?.set(message.config);
         if (message.interrupt) context.trigger_irq(message.irq);
+        return;
+      case "reset_done":
+        resets.shift()?.();
         return;
       case "error":
         fail(deserialize_error(message.error));
@@ -281,10 +296,13 @@ function connect_remote_device(
     reset() {
       // This executes inside the synchronous Wasm import. Since completions are
       // also committed on this thread, none can interleave between revocation
-      // and the rest of reset; no acknowledgement or fence is necessary.
+      // and the rest of reset. The worker may still be touching guest memory
+      // in place, though, so the guest waits for it to say it has finished.
       Atomics.add(control, 0, 1);
       enabled.fill(0);
+      const done = new Promise<void>((resolve) => resets.push(resolve));
       post_endpoint(endpoint, { type: "reset" } satisfies DeviceMessage);
+      return done;
     },
   };
 
@@ -295,6 +313,9 @@ function connect_remote_device(
     revoke() {
       Atomics.add(control, 0, 1);
       enabled.fill(0);
+    },
+    release_resets() {
+      for (const resolve of resets.splice(0)) resolve();
     },
   };
 }
@@ -401,7 +422,9 @@ export function serveDevice(endpoint: Endpoint, handle: Device): void {
           return;
         case "reset":
           device_epoch = Atomics.load(control!, 0);
-          connected?.reset();
+          void (connected?.reset() ?? Promise.resolve()).then(() =>
+            post_endpoint(endpoint, { type: "reset_done" } satisfies WorkerMessage),
+          );
           return;
         case "close":
           if (closing) return;

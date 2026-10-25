@@ -6,11 +6,16 @@ import { type Device, public_handle, VirtioDevice } from "./device.ts";
 import type { Virtqueue, VirtqueueChain } from "./queue.ts";
 
 const BlockDeviceFeatures = {
+  SEG_MAX: 1n << 2n,
   RO: 1n << 5n,
   FLUSH: 1n << 9n,
 } as const;
 
-class BlockDeviceConfig extends Struct({ capacity: U64LE }) {}
+// The most data segments the guest may put in one request. Indirect
+// descriptors let a request carry more than the ring holds.
+const SEG_MAX = 128;
+
+class BlockDeviceConfig extends Struct({ capacity: U64LE, size_max: U32LE, seg_max: U32LE }) {}
 
 class BlockDeviceRequest extends Struct({
   type: U32LE,
@@ -33,16 +38,26 @@ const BlockDeviceStatus = {
 
 type MaybePromise<T> = T | Promise<T>;
 
-/** The storage behind a block device. */
+/**
+ * The storage behind a block device.
+ *
+ * The arrays passed to storage are the guest's own memory. Use them only
+ * until the returned promise settles: a guest reset waits for that, then
+ * reuses the memory.
+ */
 export interface BlockStorage {
   /** Reads into `target` at `offset`, returning the bytes read. */
   read(offset: number, target: Uint8Array): MaybePromise<number>;
-  /**
-   * Writes `data` at `offset`, returning the bytes written. Without it the
-   * device is read-only. Do not keep `data` after the returned promise
-   * settles: it may be reused.
-   */
+  /** Writes `data` at `offset`, returning the bytes written. Without it the device is read-only. */
   write?(offset: number, data: Uint8Array): MaybePromise<number>;
+  /**
+   * Reads consecutive bytes at `offset` into each of `targets` in turn,
+   * returning the bytes read. Optional: without it, a request split across
+   * guest memory takes one `read()` per contiguous piece.
+   */
+  readv?(offset: number, targets: readonly Uint8Array[]): MaybePromise<number>;
+  /** Writes each of `sources` in turn at `offset`, returning the bytes written. Optional, like `readv`. */
+  writev?(offset: number, sources: readonly Uint8Array[]): MaybePromise<number>;
   /**
    * Flushes completed writes. Its presence advertises the flush feature.
    * Requests may be in flight concurrently, but a flush is only issued once
@@ -58,50 +73,72 @@ export interface BlockStorage {
 /** @deprecated Renamed to `BlockStorage`. */
 export type BlockDeviceStorage = BlockStorage;
 
-/**
- * Joins a request's data into one array: a view when it is one contiguous
- * run of memory, otherwise a copy.
- */
-function gather(arrays: readonly Uint8Array[], length: number) {
-  const [first] = arrays;
-  assert(first);
-  let end = first.byteOffset + first.byteLength;
-  for (const array of arrays.slice(1)) {
-    if (array.buffer !== first.buffer || array.byteOffset !== end) {
-      const joined = new Uint8Array(length);
-      let offset = 0;
-      for (const part of arrays) {
-        joined.set(part, offset);
-        offset += part.byteLength;
-      }
-      return joined;
+/** Merges segments that are adjacent in memory into single views. */
+function runs(segments: readonly Uint8Array[]) {
+  const merged: Uint8Array[] = [];
+  for (const segment of segments) {
+    if (segment.byteLength === 0) continue;
+    const last = merged.at(-1);
+    if (
+      last &&
+      last.buffer === segment.buffer &&
+      last.byteOffset + last.byteLength === segment.byteOffset
+    ) {
+      merged[merged.length - 1] = new Uint8Array(
+        last.buffer,
+        last.byteOffset,
+        last.byteLength + segment.byteLength,
+      );
+    } else {
+      merged.push(segment);
     }
-    end += array.byteLength;
   }
-  return new Uint8Array(first.buffer, first.byteOffset, length);
+  return merged;
 }
 
-function scatter(source: Uint8Array, targets: readonly Uint8Array[]) {
-  let offset = 0;
-  for (const target of targets) {
-    target.set(source.subarray(offset, offset + target.byteLength));
-    offset += target.byteLength;
+/**
+ * Moves a request's segments with as few storage calls as possible: one call
+ * for one contiguous run or a vectored call, otherwise one call per run.
+ * Returns the bytes moved, stopping at the first short call.
+ */
+async function transfer(
+  offset: number,
+  segments: readonly Uint8Array[],
+  single: (offset: number, array: Uint8Array) => MaybePromise<number>,
+  vectored: ((offset: number, arrays: readonly Uint8Array[]) => MaybePromise<number>) | undefined,
+) {
+  const pieces = runs(segments);
+  if (pieces.length === 1) return single(offset, pieces[0]!);
+  if (vectored) return vectored(offset, pieces);
+  let moved = 0;
+  for (const piece of pieces) {
+    const n = await single(offset + moved, piece);
+    moved += n;
+    if (n !== piece.byteLength) break;
   }
+  return moved;
 }
 
 class BlockDevice extends VirtioDevice {
   readonly #storage: BlockStorage;
   /** Writes in flight, which a flush must wait for. */
   readonly #writes = new Set<Promise<number>>();
+  /** The advertised capacity in bytes: whole sectors only. */
+  readonly #capacity: bigint;
 
   constructor(storage: BlockStorage) {
     const config = new Uint8Array(BlockDeviceConfig.size);
-    new BlockDeviceConfig(config).capacity = BigInt(storage.capacity / 512);
-    let features = 0n;
+    const fields = new BlockDeviceConfig(config);
+    const sectors = BigInt(Math.floor(storage.capacity / 512));
+    fields.capacity = sectors;
+    fields.seg_max = SEG_MAX;
+    let features = BlockDeviceFeatures.SEG_MAX;
     if (storage.flush) features |= BlockDeviceFeatures.FLUSH;
     if (!storage.write) features |= BlockDeviceFeatures.RO;
-    super({ id: 2, queues: 1, features, config });
+    // Storage works on guest memory directly; a guest reset waits for it.
+    super({ id: 2, queues: 1, features, config, views: true });
     this.#storage = storage;
+    this.#capacity = sectors * 512n;
   }
 
   protected kick(_vq: number, queue: Virtqueue) {
@@ -115,7 +152,8 @@ class BlockDevice extends VirtioDevice {
     const descs = [...chain];
     const header = descs[0];
     const status = descs[descs.length - 1];
-    const data = descs.slice(1, -1).map((desc) => desc.array);
+    const data = descs.slice(1, -1);
+    const segments = data.map((desc) => desc.array);
 
     assert(header && !header.writable, "header must be readonly");
     assert(
@@ -125,47 +163,65 @@ class BlockDevice extends VirtioDevice {
     assert(status && status.writable, "status must be writable");
     assert(status.array.byteLength === 1, `status size is ${status.array.byteLength}`);
 
-    const request = new BlockDeviceRequest(header.array);
-    const offset = Number(request.sector) * 512;
-    const length = data.reduce((total, array) => total + array.byteLength, 0);
+    // The header is guest memory: read it before anything can await.
+    const request = new BlockDeviceRequest(header.array.slice());
+    const length = segments.reduce((total, array) => total + array.byteLength, 0);
+    // Storage sees only the advertised sectors, in at most SEG_MAX segments.
+    // Checked in bigint, so the offset below is exact.
+    const start = request.sector * 512n;
+    const valid = data.length <= SEG_MAX && start + BigInt(length) <= this.#capacity;
+    const offset = Number(start);
     let result: number = BlockDeviceStatus.OK;
     let n = 0;
     switch (request.type) {
       case BlockDeviceRequestType.IN: {
         assert(
-          descs.slice(1, -1).every((desc) => desc.writable),
+          data.every((desc) => desc.writable),
           "data must be writable when IN",
         );
-        if (length === 0) break;
-        // One storage call per request, straight into the descriptors when
-        // they are contiguous.
-        const target = gather(data, length);
-        if ((await storage.read(offset, target)) !== length) {
+        if (!valid) {
           result = BlockDeviceStatus.IOERR;
           break;
         }
-        if (target.buffer !== data[0]!.buffer) scatter(target, data);
-        n = length;
+        if (length === 0) break;
+        const read = await transfer(
+          offset,
+          segments,
+          (at, target) => storage.read(at, target),
+          storage.readv && ((at, targets) => storage.readv!(at, targets)),
+        );
+        if (read !== length) result = BlockDeviceStatus.IOERR;
+        else n = length;
         break;
       }
       case BlockDeviceRequestType.OUT: {
         assert(
-          descs.slice(1, -1).every((desc) => !desc.writable),
+          data.every((desc) => !desc.writable),
           "data must be readonly when OUT",
         );
-        if (!storage.write) {
+        const write = storage.write;
+        if (!write) {
           result = BlockDeviceStatus.UNSUPP;
+          break;
+        }
+        if (!valid) {
+          result = BlockDeviceStatus.IOERR;
           break;
         }
         if (length === 0) break;
         // Registered before awaiting, so a flush queued after this request
         // waits for it.
-        const write = Promise.resolve(storage.write(offset, gather(data, length)));
-        this.#writes.add(write);
+        const written = transfer(
+          offset,
+          segments,
+          (at, source) => write.call(storage, at, source),
+          storage.writev && ((at, sources) => storage.writev!(at, sources)),
+        );
+        this.#writes.add(written);
         try {
-          if ((await write) !== length) result = BlockDeviceStatus.IOERR;
+          if ((await written) !== length) result = BlockDeviceStatus.IOERR;
         } finally {
-          this.#writes.delete(write);
+          this.#writes.delete(written);
         }
         break;
       }

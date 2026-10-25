@@ -34,10 +34,9 @@ interface Descriptor {
 /** One descriptor's view into the machine's memory. */
 export interface VirtqueueBuffer {
   /**
-   * The descriptor's bytes. Writable buffers are always private copies,
-   * written back on release. Readable buffers are copies too, unless the
-   * queue was created with views, in which case they alias guest memory and
-   * are only meaningful until the chain is released or the queue is reset.
+   * The descriptor's bytes: a private copy, written back on release if
+   * writable. On a queue created with views it is guest memory itself, which
+   * the device must stop touching once it releases the chain.
    */
   readonly array: Uint8Array;
   /** Whether the guest driver allows the device to write to this buffer. */
@@ -70,21 +69,19 @@ class Chain implements VirtqueueChain {
   ) {
     // Copies share one allocation in chain order, so adjacent descriptors
     // are adjacent views a device can hand to storage in one call.
-    const is_writable = (descriptor: Descriptor) =>
-      (descriptor.flags & DescriptorFlags.WRITE) !== 0;
-    const copied = (descriptor: Descriptor) => is_writable(descriptor) || !views;
     const scratch = new ArrayBuffer(
-      desc.reduce((total, descriptor) => total + (copied(descriptor) ? descriptor.len : 0), 0),
+      views ? 0 : desc.reduce((total, descriptor) => total + descriptor.len, 0),
     );
     let scratch_offset = 0;
     this.#buffers = desc.map((descriptor) => {
       const address = Number(descriptor.addr);
       const target = new Uint8Array(memory.buffer, address, descriptor.len);
-      const writable = is_writable(descriptor);
-      // Device work may outlive the queue generation across an await. Keep
-      // writes isolated from guest memory until release proves the chain is
-      // still valid: after a reset the guest may already have reused it.
-      if (!copied(descriptor)) return { array: target, writable };
+      const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
+      // A view is safe across awaits only because reset waits for the
+      // device to finish with it. Otherwise device work that outlives the
+      // queue generation works on a copy, written back only when release
+      // proves the chain is still valid.
+      if (views) return { array: target, writable };
       const copy = new Uint8Array(scratch, scratch_offset, descriptor.len);
       scratch_offset += descriptor.len;
       copy.set(target);

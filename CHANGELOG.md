@@ -41,8 +41,16 @@
   the frame, so awaiting senders are throttled to the guest's pace. Floods
   never wait for a stalled port.
 - Console input is read from its stream only as the guest consumes it.
-- Block devices process independent requests concurrently and make one
-  storage call per request. A flush waits for every earlier write.
+- Block devices hand storage the guest's memory directly instead of copies,
+  offer `VIRTIO_BLK_F_SEG_MAX` so requests carry up to 128 segments, process
+  independent requests concurrently, and move each request in as few storage
+  calls as possible, using the new optional `BlockStorage.readv()` and
+  `writev()` when present. A flush waits for every earlier write. Storage
+  must not touch the arrays it was given after its call settles.
+- **Breaking (kernel ABI):** the `virtio.reset` import takes the address of a
+  word the host sets once a device has finished with guest memory, and the
+  kernel waits for it before reusing that memory. The kernel and
+  `@lowland/kernel` must be updated together.
 
 ### Fixed
 

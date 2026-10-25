@@ -56,7 +56,19 @@ export class VirtioBus {
         at(dev).enable_queue(vq, size, desc_addr >>> 0, irq),
       disable_vring: (dev, vq) => at(dev).disable_queue(vq),
       notify: (dev, vq) => at(dev).notify(vq),
-      reset: (dev) => at(dev).reset(),
+      reset: (dev, done) => {
+        // The guest sleeps until `done` is set before it reuses the memory
+        // it gave this device.
+        void at(dev)
+          .reset()
+          .catch(on_error)
+          .finally(() => {
+            if (!done) return;
+            const word = new Int32Array(memory.buffer, done >>> 0, 1);
+            Atomics.store(word, 0, 1);
+            Atomics.notify(word, 0);
+          });
+      },
     };
   }
 

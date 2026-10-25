@@ -27,7 +27,8 @@ export interface ConnectedVirtioDevice {
   enable_queue(vq: number, size: number, descriptor_address: number, irq: number): void;
   disable_queue(vq: number): void;
   notify(vq: number): void;
-  reset(): void;
+  /** Settles once the device has finished with the guest memory it was given. */
+  reset(): Promise<void>;
 }
 
 export interface VirtioConnectionContext {
@@ -91,9 +92,9 @@ export interface VirtioDeviceOptions {
   /** The device's configuration space, at most 256 bytes. */
   config?: Uint8Array;
   /**
-   * Present readable descriptors as views of guest memory instead of copies.
-   * Writable descriptors are always copied, so a device can never write to
-   * memory the guest reused after a reset.
+   * Present descriptors as views of guest memory instead of copies. A guest
+   * reset then waits for the device's kicks and spawned work in flight, so
+   * that work must stop touching its views when it settles.
    */
   views?: boolean;
 }
@@ -327,6 +328,10 @@ export abstract class VirtioDevice implements BusDevice {
           state.pending = false;
         }
         if (!this.#stopped) this.reset();
+        // Copies keep stale work away from guest memory. Views do not, so
+        // the guest must wait for the work that holds them.
+        if (!this.#views) return Promise.resolve();
+        return Promise.allSettled(this.#active).then(() => {});
       },
     };
   }
