@@ -16,6 +16,9 @@ export type Signal =
   | "SIGUSR1"
   | "SIGUSR2";
 
+/** Bytes of stdin buffered on the host before writes wait for the guest. */
+const STDIN_BUFFER = 1024 * 1024;
+
 const signal_numbers: Record<Signal, number> = {
   SIGHUP: SIG.HUP,
   SIGINT: SIG.INT,
@@ -74,7 +77,9 @@ export class ChildProcess implements AsyncDisposable {
    * it to send EOF, which is how programs such as `cat` know to finish.
    *
    * Writes are buffered on the host side, so filling stdin before reading
-   * stdout does not deadlock, even once the guest's pipe is full.
+   * stdout does not deadlock, even once the guest's pipe is full. Once more
+   * than 1 MiB is buffered, writes wait for the guest to catch up, so a
+   * fast producer cannot exhaust host memory.
    *
    * @example Feed input to a command
    * ```ts
@@ -130,6 +135,8 @@ export class ChildProcess implements AsyncDisposable {
   #abort_reason: unknown;
   #remove_abort = () => {};
   #stdin_tail: Promise<void> = Promise.resolve();
+  #stdin_buffered = 0;
+  #stdin_progress = Promise.withResolvers<void>();
   #stdin_error: unknown = null;
   #stdin_stopped = false;
 
@@ -150,6 +157,14 @@ export class ChildProcess implements AsyncDisposable {
       }
     };
     this.stdin = new WritableStream({
+      start: (controller) => {
+        // A write waiting on backpressure holds off the abort callback until
+        // it settles, and it only settles once the guest reads. Close as soon
+        // as the stream is aborted so that wait ends.
+        controller.signal.addEventListener("abort", () => void this.close().catch(() => {}), {
+          once: true,
+        });
+      },
       write: (chunk) => {
         // A blocking injected write returns only once the guest pipe accepts
         // the bytes, and the pipe drains through the child and back out via
@@ -160,6 +175,7 @@ export class ChildProcess implements AsyncDisposable {
           return Promise.reject(this.#stdin_error);
         }
         const data = chunk.slice();
+        this.#stdin_buffered += data.byteLength;
         this.#stdin_tail = this.#stdin_tail
           .then(() => {
             if (this.#stdin_error !== null) return;
@@ -167,8 +183,14 @@ export class ChildProcess implements AsyncDisposable {
           })
           .catch((error) => {
             this.#stdin_error = error;
+          })
+          .finally(() => {
+            this.#stdin_buffered -= data.byteLength;
+            const progress = this.#stdin_progress;
+            this.#stdin_progress = Promise.withResolvers();
+            progress.resolve();
           });
-        return Promise.resolve();
+        return this.#stdin_backpressure();
       },
       close: async () => {
         await this.#stdin_tail;
@@ -194,6 +216,14 @@ export class ChildProcess implements AsyncDisposable {
       signal.addEventListener("abort", abort, { once: true });
       this.#remove_abort = () => signal.removeEventListener("abort", abort);
       if (signal.aborted) abort();
+    }
+  }
+
+  // Chunks drain in order, and a failed pump drains the rest without
+  // writing, so this always settles.
+  async #stdin_backpressure() {
+    while (this.#stdin_buffered > STDIN_BUFFER && this.#stdin_error === null) {
+      await this.#stdin_progress.promise;
     }
   }
 
