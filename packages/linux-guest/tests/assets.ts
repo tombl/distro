@@ -41,8 +41,7 @@ export function root_device() {
   });
 }
 
-export function ext4_root_device() {
-  const disk = new Uint8Array(ext4_rootfs);
+export function ext4_root_device(disk = new Uint8Array(ext4_rootfs)) {
   return blockDevice({
     capacity: disk.byteLength,
     read(offset, target) {
