@@ -4,8 +4,12 @@ packages:
   - packages/kernel
   - packages/browser-tests
   - packages/linux-guest
-  - packages/linux-guest/tests
   - packages/runner
+
+catalog:
+  "@playwright/test": 1.64.1
+  "@types/node": ^26
+  typescript: ^7.0.2
 
 linkWorkspacePackages: true
 

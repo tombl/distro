@@ -3,6 +3,7 @@ import { createReadStream, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testAsset } from "../../scripts/test-assets.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(here, "public");
@@ -105,16 +106,13 @@ const mainPage = `<!doctype html>
 </script>
 `;
 
-// The guest.spec.js page: boots a real VM, so it also needs the built packages
-// and the guest images that `pnpm artifacts` materializes into their owning
-// packages (here, @lowland/guest's rootfs.erofs).
+// The guest.spec.js page: boots a real VM, so it also needs the built workspace
+// packages and the guest root image from the test assets.
 const vmPage = readFileSync(join(here, "tests", "vm.html"), "utf8").replaceAll(
   "__HUB_ORIGIN__",
   hubOrigin,
 );
-const guestRootfs = join(here, "node_modules/@lowland/guest/rootfs.erofs");
-
-const main = createServer((request, response) => {
+const main = createServer(async (request, response) => {
   const headers = {
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Embedder-Policy": "require-corp",
@@ -128,13 +126,20 @@ const main = createServer((request, response) => {
     response.writeHead(200, { ...headers, "Content-Type": types[".html"] }).end(vmPage);
     return;
   }
-  const path =
-    pathname === "/rootfs.erofs"
-      ? guestRootfs
-      : pathname.startsWith("/node_modules/")
-        ? join(here, normalize(pathname.slice(1)))
-        : null;
-  if (path !== null) {
+  if (pathname === "/rootfs.erofs") {
+    let path;
+    try {
+      path = await testAsset("rootfs.erofs");
+    } catch (error) {
+      console.error("failed to build rootfs.erofs:", error.stderr ?? error);
+      return void response.writeHead(500).end();
+    }
+    response.writeHead(200, { ...headers, "Content-Type": "application/octet-stream" });
+    createReadStream(path).pipe(response);
+    return;
+  }
+  if (pathname.startsWith("/node_modules/")) {
+    const path = join(here, normalize(pathname.slice(1)));
     if (!path.startsWith(`${here}/`)) return void response.writeHead(403).end();
     try {
       if (!statSync(path).isFile()) throw new Error("not a file");

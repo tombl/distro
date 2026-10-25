@@ -1,23 +1,15 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { testAsset } from "../../../scripts/test-assets.ts";
+import { spawn_runner } from "./runner.ts";
 
-function required_environment(name: string): string {
-  const value = process.env[name];
-  assert(value, `${name} is required`);
-  return value;
-}
-
-const runner = required_environment("LINUX_RUNNER_TEST_RUNNER");
-const root = required_environment("LINUX_RUNNER_TEST_ROOT_DISK");
+const root = await testAsset("runner-rootfs.erofs");
 
 async function run_disk(disk: string, command: string) {
-  const child = spawn(runner, ["--cpus", "1", "--disk", root, "--disk", disk], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child = spawn_runner(["--cpus", "1", "--disk", root, "--disk", disk]);
   let output = "";
   let sent = false;
   const consume = (chunk: Buffer) => {

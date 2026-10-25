@@ -1,29 +1,15 @@
 {
   bytes,
-  busybox,
   pkgs,
   lib,
   kernel,
   linux-guest,
   node-workspace,
   rootfs,
-  vm-test,
+  test-assets,
 }:
 
 let
-  lifecycle-rootfs = vm-test.installedDisk {
-    name = "linux-runner-lifecycle";
-    format = "ext4";
-    init = ../../guest-tests/lifecycle-init.sh;
-    contents = [ busybox ];
-  };
-
-  console-rootfs = vm-test.installedDisk {
-    name = "linux-runner-console";
-    init = ../../runner/console-init.sh;
-    contents = [ busybox ];
-  };
-
   app = pkgs.stdenvNoCC.mkDerivation {
     pname = "runner-app";
     version = "0.0.0";
@@ -31,7 +17,7 @@ let
       "packages/bytes"
       "packages/kernel"
       "packages/linux-guest"
-      "packages/runner"
+      "packages/runner/src"
       "scripts/pack-package.mjs"
       "tsconfig.base.json"
     ];
@@ -51,7 +37,6 @@ let
       cp -r ${bytes}/dist packages/bytes/dist
       rm packages/runner/node_modules/@lowland/guest
       ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
-      pnpm --filter=@lowland/linux-runner check
 
       runHook postBuild
     '';
@@ -91,47 +76,22 @@ let
       "''${disk_args[@]}" "$@"
   '';
 
-  integration = pkgs.stdenvNoCC.mkDerivation {
-    pname = "linux-runner-integration-test";
-    version = "0.0.0";
-    passthru.ci.heavy = true;
-    src = node-workspace.source [
-      "packages/bytes"
-      "packages/kernel"
-      "packages/linux-guest"
-      "packages/runner"
-      "scripts/pack-package.mjs"
-      "tsconfig.base.json"
+  integration = node-workspace.mkTest {
+    name = "linux-runner-integration-test";
+    paths = [ "packages/runner" ];
+    built = {
+      inherit bytes kernel;
+      linux-guest = linux-guest.package;
+    };
+    assets = test-assets.select [
+      "boot.cpio"
+      "runner-console.erofs"
+      "runner-lifecycle.ext4"
+      "runner-rootfs.erofs"
     ];
-    env.CI = "true";
-    pnpmDeps = node-workspace.deps;
-    nativeBuildInputs = [
-      pkgs.nodejs_26
-      pkgs.pnpmConfigHook
-      node-workspace.pnpm
-    ];
-
-    buildPhase = ''
-      runHook preBuild
-
-      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -r ${kernel}/dist packages/kernel/dist
-      cp -r ${bytes}/dist packages/bytes/dist
-      rm packages/runner/node_modules/@lowland/guest
-      ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
+    command = ''
       pnpm --filter=@lowland/linux-runner check
-      LINUX_RUNNER_TEST_RUNNER=${package}/bin/wasm-linux-runner \
-        LINUX_RUNNER_TEST_BOOT_INITRAMFS=${vm-test.bootInitramfs} \
-        LINUX_RUNNER_TEST_CONSOLE_DISK=${console-rootfs} \
-        LINUX_RUNNER_TEST_LIFECYCLE_DISK=${lifecycle-rootfs} \
-        LINUX_RUNNER_TEST_ROOT_DISK=${rootfs} \
-        timeout --kill-after=5 300 pnpm --filter=@lowland/linux-runner test
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      mkdir $out
+      timeout --kill-after=5 300 pnpm --filter=@lowland/linux-runner test
     '';
   };
 in

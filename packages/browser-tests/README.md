@@ -2,31 +2,40 @@
 
 This package boots the packaged `@lowland/guest` runtime in Playwright's
 Chromium, Firefox, and WebKit builds. The server supplies the COOP and COEP
-headers required by shared WebAssembly memory. Browser binaries, fonts, npm
-packages, rootfs, initramfs, and kernel assets all come from Nix store paths;
-the tests do not fetch anything at runtime.
-
-The npm `@playwright/test` version is an exact pin. `package.nix` compares it
-with `playwright-driver.version` at evaluation time and fails with both
-versions in the error if they differ.
+headers required by shared WebAssembly memory. The workspace packages come
+from their `dist/` builds, and the images the scenarios boot come from the
+test assets; the tests do not fetch anything else at runtime.
 
 ## Running
 
-Each engine is an ordinary flake check and runs inside the Nix build sandbox:
+From a checkout:
+
+```console
+pnpm artifacts && pnpm -r build    # once, from the repository root
+pnpm --filter=@lowland/browser-tests test --project=chromium
+```
+
+The server reads images from `$LOWLAND_TEST_ASSETS`, or builds
+`.#test-assets` on first use when it is unset.
+
+`playwright.config.js` has one project per engine, plus two Chromium-only
+projects with their own served roots:
+
+- `service-worker` exercises the site's service worker, served from
+  `apps/site/service-worker.js`.
+- `site-live` runs against the built site (`node server.js --site`), installing
+  from the candidate apk repository rather than production.
+
+Each project is an ordinary flake check that runs the same `pnpm test` in the
+Nix build sandbox, with nixpkgs' browser builds and only the assets it needs:
 
 ```console
 nix build .#checks.x86_64-linux.browser-tests-check-chromium -L
-nix build .#checks.x86_64-linux.browser-tests-check-firefox -L
-nix build .#checks.x86_64-linux.browser-tests-check-webkit -L
 ```
 
-The generic check discovery in `checks.nix` exposes these checks and the
-generic CI build matrix runs them. There is no separate browser-test app or CI
-job.
-
-The suite is a boot smoke test: `guestAgent` + `bootMachine` → `exec uname` → clean
-`machine.closed`, once per engine. It catches SAB/COOP/COEP/worker/
-module-loading regressions that only show up on a real browser engine.
+The browser builds belong to one Playwright release, so the check fails early
+if the `@playwright/test` version in the pnpm catalog differs from nixpkgs'
+`playwright-driver`.
 
 ## Headless graphics
 
