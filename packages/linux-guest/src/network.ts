@@ -176,13 +176,27 @@ export interface UdpConnectOptions {
 
 /** One lazily established, supervised outbound guest TCP session. */
 export interface TcpSession {
-  /** The address selected by the guest connection. */
+  /**
+   * The destination the guest connected to. `hostname` is always an IPv4
+   * address, never a name: guests resolve names through `resolveDns` before
+   * connecting. Connections to the gateway arrive as `127.0.0.1`.
+   */
   readonly target: { readonly hostname: string; readonly port: number };
-  /** Bytes received from the guest. The first read starts the TCP handshake. */
+  /**
+   * Bytes received from the guest. The first read starts the TCP handshake.
+   * Ends when the guest half-closes its side (FIN).
+   */
   readonly readable: ReadableStream<Uint8Array>;
-  /** Bytes sent to the guest. The first write or close starts the TCP handshake. */
+  /**
+   * Bytes sent to the guest. The first write or close starts the TCP
+   * handshake. Closing it sends FIN once all written data is acknowledged.
+   */
   readonly writable: WritableStream<Uint8Array>;
-  /** Aborted when the guest or network tears down the flow. */
+  /**
+   * Aborted when the flow is reset: by a guest RST, by aborting or cancelling
+   * the session's streams, or by the network closing. A connection that ends
+   * with a FIN in each direction does not abort it.
+   */
   readonly signal: AbortSignal;
 }
 
@@ -589,8 +603,10 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *
  * const network = createNetwork({
  *   async connectTcp(session) {
+ *     // Each direction closes independently, so keep the socket half-open
+ *     // after the remote's FIN until the guest finishes sending too.
  *     const socket = createConnection({ host: session.target.hostname,
- *       port: session.target.port, signal: session.signal });
+ *       port: session.target.port, signal: session.signal, allowHalfOpen: true });
  *     await once(socket, "connect");
  *     const streams = Duplex.toWeb(socket);
  *     await Promise.all([
@@ -875,8 +891,10 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     flow.remove_external_abort?.();
     flow.activation_waiter?.reject(error ?? new Error("TCP connection closed"));
     flow.activation_waiter = undefined;
-    flow.abort?.abort(error ?? new Error("TCP connection closed"));
     if (error !== undefined) {
+      // A graceful close leaves the session's signal alone: its streams have
+      // already ended, and aborting would destroy host resources mid-flush.
+      flow.abort?.abort(error);
       try {
         flow.readable?.error(error);
       } catch {
@@ -895,6 +913,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   function abort_tcp_flow(flow: TcpFlow, error?: unknown) {
     if (flow.closed) return;
     void send_tcp(flow, TcpFlag.RST | TcpFlag.ACK).catch(() => {});
+    flow.abort?.abort(error ?? new Error("TCP connection reset"));
     close_tcp_flow(flow, error);
   }
 
