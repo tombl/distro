@@ -84,6 +84,23 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
 };
 
 /**
+ * Copies a completion's outputs into one fresh buffer, which can be transferred.
+ * The outputs may be views of one buffer, which a transfer may not list twice,
+ * or of a filesystem's own storage, which a transfer would detach.
+ */
+const pack_outputs = (outputs: VirtqueueCompletion["outputs"]) => {
+  const buffer = new ArrayBuffer(outputs.reduce((total, { data }) => total + data.byteLength, 0));
+  let offset = 0;
+  const packed = outputs.map(({ address, data }) => {
+    const copy = new Uint8Array(buffer, offset, data.byteLength);
+    copy.set(data);
+    offset += data.byteLength;
+    return { address, data: copy };
+  });
+  return { outputs: packed, buffer };
+};
+
+/**
  * Creates an attachable virtio device whose driver and queue traversal live in
  * `endpoint`, normally a dedicated Worker serving a device with `serveDevice`.
  *
@@ -356,7 +373,7 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
                 Atomics.load(control!, 1 + vq) !== queue_epochs[vq]
               )
                 return;
-              const transfer = completion.outputs.map(({ data }) => data.buffer);
+              const { outputs, buffer } = pack_outputs(completion.outputs);
               post_endpoint(
                 endpoint,
                 {
@@ -365,9 +382,9 @@ export function serveDevice(endpoint: Endpoint, device: VirtioDevice): void {
                   irq,
                   device_epoch,
                   queue_epoch: queue_epochs[vq]!,
-                  completion,
+                  completion: { ...completion, outputs },
                 } satisfies WorkerMessage,
-                transfer,
+                [buffer],
               );
             },
           });

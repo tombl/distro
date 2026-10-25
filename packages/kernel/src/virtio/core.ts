@@ -36,14 +36,23 @@ interface Descriptor {
 /** One descriptor's view into the machine's memory. */
 export interface VirtqueueBuffer {
   readonly array: Uint8Array;
+  /** The buffer's length in bytes. Unlike `array`, reading it allocates nothing. */
+  readonly length: number;
   /** Whether the guest driver allows the device to write to this buffer. */
   readonly writable: boolean;
 }
 
 /** A chain of descriptors making up one request. */
 export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
-  /** Completes the chain, reporting how many bytes the device wrote. */
-  release(written: number): void;
+  /**
+   * Completes the chain, reporting how many bytes the device wrote. Without
+   * `data`, the device's writes to the writable buffers' arrays are
+   * published. With `data`, its parts are written across the writable
+   * buffers in order, straight into guest memory, and the arrays are
+   * ignored. `data` must fit in the writable buffers and must not change
+   * until this returns.
+   */
+  release(written: number, data?: readonly Uint8Array[]): void;
 }
 
 /**
@@ -55,10 +64,10 @@ export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
 export interface Virtqueue extends Iterable<VirtqueueChain> {}
 
 /**
- * A device-writable buffer: its guest bytes are never read (the device only
- * writes them), so it is allocated when the device first touches it, and
- * only touched buffers are written back. Copying every one eagerly cost a
- * console 16 MiB per kick (256 receive buffers of a 64 KiB page).
+ * A device-writable buffer. The device only writes it, so its guest contents
+ * are never read. The array is allocated when the device first touches it,
+ * and only touched buffers are written back. Copying every buffer eagerly
+ * cost the console 16 MiB per kick (256 receive buffers of a 64 KiB page).
  */
 class WritableBuffer implements VirtqueueBuffer {
   readonly writable = true;
@@ -69,6 +78,10 @@ class WritableBuffer implements VirtqueueBuffer {
   constructor(address: number, length: number) {
     this.address = address;
     this.#length = length;
+  }
+
+  get length() {
+    return this.#length;
   }
 
   get array() {
@@ -93,13 +106,18 @@ class Chain implements VirtqueueChain {
         return new WritableBuffer(address, descriptor.len);
       return {
         array: new Uint8Array(memory.buffer, address, descriptor.len).slice(),
+        length: descriptor.len,
         writable: false,
       };
     });
     this.#release = release;
   }
 
-  release(written: number) {
+  release(written: number, data?: readonly Uint8Array[]) {
+    if (data) {
+      this.#release(written, scatter_outputs(this.#buffers, data));
+      return;
+    }
     this.#release(
       written,
       this.#buffers.flatMap((buffer) =>
@@ -113,6 +131,39 @@ class Chain implements VirtqueueChain {
   *[Symbol.iterator]() {
     yield* this.#buffers;
   }
+}
+
+/** Splits `data` across the writable buffers in order, as views of `data`. */
+function scatter_outputs(
+  buffers: readonly (VirtqueueBuffer | WritableBuffer)[],
+  data: readonly Uint8Array[],
+): VirtqueueOutput[] {
+  const outputs: VirtqueueOutput[] = [];
+  let part = 0;
+  let at = 0;
+  for (const buffer of buffers) {
+    if (!(buffer instanceof WritableBuffer)) continue;
+    let room = buffer.length;
+    let address = buffer.address;
+    while (room > 0 && part < data.length) {
+      const source = data[part]!;
+      const n = Math.min(room, source.byteLength - at);
+      if (n > 0) outputs.push({ address, data: source.subarray(at, at + n) });
+      address += n;
+      room -= n;
+      at += n;
+      if (at === source.byteLength) {
+        part++;
+        at = 0;
+      }
+    }
+  }
+  while (part < data.length && data[part]!.byteLength === at) {
+    part++;
+    at = 0;
+  }
+  assert(part === data.length, "virtqueue chain's writable buffers are too small");
+  return outputs;
 }
 
 export interface VirtqueueOutput {

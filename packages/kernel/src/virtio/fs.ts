@@ -548,7 +548,7 @@ function validate_name(name: string) {
 
 function concatenate(buffers: readonly VirtqueueBuffer[], writable: boolean) {
   const selected = buffers.filter((buffer) => buffer.writable === writable);
-  const length = selected.reduce((total, buffer) => total + buffer.array.byteLength, 0);
+  const length = selected.reduce((total, buffer) => total + buffer.length, 0);
   const result = new Uint8Array(length);
   let offset = 0;
   for (const buffer of selected) {
@@ -1058,8 +1058,8 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         if (data.byteLength > request.size || data.byteLength > capacity - FuseOutHeader.size) {
           throw new FSError("EIO", "filesystem returned too much data");
         }
-        payload.append(data);
-        break;
+        // The data is the reply's payload, written straight to the guest.
+        return data;
       }
       case FuseOpcode.WRITE: {
         if (!filesystem.write) throw new UnsupportedOperation();
@@ -1198,7 +1198,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
     if (payload.length > capacity - FuseOutHeader.size) {
       throw new FSError("EIO", "response exceeds the guest's response buffer");
     }
-    return payload;
+    return payload.array;
   }
 
   async function notify(queue: Virtqueue) {
@@ -1207,7 +1207,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       const request = concatenate(buffers, false);
       const capacity = buffers
         .filter((buffer) => buffer.writable)
-        .reduce((total, buffer) => total + buffer.array.byteLength, 0);
+        .reduce((total, buffer) => total + buffer.length, 0);
       let unique = 0n;
       try {
         let saw_writable = false;
@@ -1231,15 +1231,15 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           chain.release(0);
           continue;
         }
-        const response = new Bytes(FuseOutHeader.size + payload.length);
-        response.alloc(FuseOutHeader).value = {
-          len: FuseOutHeader.size + payload.length,
+        const out_header = new Bytes(FuseOutHeader.size);
+        out_header.alloc(FuseOutHeader).value = {
+          len: FuseOutHeader.size + payload.byteLength,
           error: 0,
           unique,
         };
-        response.append(payload.array);
-        scatter(buffers, response.array);
-        chain.release(response.array.byteLength);
+        // Write the header and payload straight into guest memory rather
+        // than assembling a response first.
+        chain.release(FuseOutHeader.size + payload.byteLength, [out_header.array, payload]);
       } catch (error) {
         if (capacity < FuseOutHeader.size) {
           chain.release(0);
