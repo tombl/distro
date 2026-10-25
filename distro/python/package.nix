@@ -25,7 +25,7 @@ let
     inherit src;
     # A general-purpose interpreter: the interpreter check alone peaks at
     # about 120 MiB, half the platform default maximum.
-    wasmMaxMemory = 1024 * 1024 * 1024;
+    maxMemory = 1024 * 1024 * 1024;
     passthru.apk.depends = [
       "ncurses"
       "openssl"

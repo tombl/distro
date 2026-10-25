@@ -36,7 +36,7 @@ rec {
   # reserves a shared memory's full maximum up front from a fixed per-tab
   # budget (64 GiB, 16 GiB on iOS), so this bounds how many processes can be
   # live at once. The maximum cannot be raised after creation: growth past it
-  # fails as ENOMEM. Packages whose programs need more set `wasmMaxMemory`
+  # fails as ENOMEM. Packages whose programs need more set `maxMemory`
   # (a multiple of 64 KiB) on the derivation. RLIMIT_AS still lowers it at
   # exec.
   defaultMaxMemory = 256 * 1024 * 1024;

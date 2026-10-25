@@ -134,11 +134,11 @@ pkgs.stdenv.override (old: {
     # interpreters a payload needs.
     export dontPatchShebangs=1
     export CONFIG_SITE=${configSite}
-    # wasm-ld takes the last --max-memory, so a package's wasmMaxMemory
+    # wasm-ld takes the last --max-memory, so a package's maxMemory
     # overrides the platform default.
     export NIX_CFLAGS_LINK="${
       toString (map (flag: "-Wl,${flag}") platform.linkerFlags)
-    }''${wasmMaxMemory:+ -Wl,--max-memory=$wasmMaxMemory} ''${NIX_CFLAGS_LINK-}"
+    }''${maxMemory:+ -Wl,--max-memory=$maxMemory} ''${NIX_CFLAGS_LINK-}"
     postHooks+=('export NIX_LDFLAGS="$(printf %s "''${NIX_LDFLAGS-}" | sed -E "s/(^| )-rpath [^ ]+//g")"')
   '';
 
