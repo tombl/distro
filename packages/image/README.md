@@ -115,8 +115,55 @@ with apk:
 await guest.run(["apk", "add", "curl"]);
 ```
 
+## Building images
+
+`@lowland/image/build` builds a custom system image in Node. It boots a builder
+machine from an image shipped in this package, so it needs no other tools:
+
+```js
+import { buildImage } from "@lowland/image/build";
+
+await buildImage({
+  packages: ["busybox", "curl"],
+  files: {
+    "/usr/local/bin/app": { source: "./build/app", mode: "0755" },
+  },
+  links: { "/usr/bin/app": "/usr/local/bin/app" },
+  output: "app.erofs",
+});
+```
+
+Package names resolve from the public repository, and the builder downloads
+them through the host network and verifies that the repository signed them.
+Paths to local `.apk` files are trusted because you supplied them, so they are
+installed without signature checks. Local packages install after the named
+ones with no repository and no network, so their dependencies must be named or
+local packages too. A build whose packages are all local files uses no network.
+
+The output is written to a temporary file beside it and renamed into place
+once the build succeeds, so a failed build leaves an existing file untouched.
+
+Files and links are layered over the installed packages, as in the Nix
+`mkImage`. A file mode is an octal string applied exactly, setuid, setgid, and
+sticky bits included; without one an entry keeps its host mode and gains owner
+write. A directory source onto an existing directory, such as `/etc` or
+`/usr`, merges its contents into it; its mode, if given, applies to the
+destination directory alone, and a merge otherwise keeps the existing
+directory's mode. Entries apply in path order, so a file inside a directory
+entry overrides what it copied.
+
+The default format is EROFS, which the guest agent mounts read-only. Pass
+`format: "ext4"` for a writable image, with `size` setting its capacity. The
+label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
+it with `rootImage("app.erofs")`, or with
+`rootImage("app.ext4", { writable: true })` for an ext4 image.
+
+The command-line equivalent is `npx lowland build`, provided by the `lowland`
+package.
+
 ## License
 
 The TypeScript and JavaScript sources are available under the MIT license. The
-published image also contains GPL-2.0-only BusyBox and apk-tools, MIT-licensed
-musl, and the MPL-2.0 Mozilla CA certificate bundle.
+published images also contain GPL-2.0-only BusyBox and apk-tools, MIT-licensed
+musl, and the MPL-2.0 Mozilla CA certificate bundle. The builder image also
+contains GPL-2.0-only e2fsprogs and GPL-2.0-or-later erofs-utils.

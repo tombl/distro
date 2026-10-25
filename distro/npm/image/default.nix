@@ -9,9 +9,10 @@ let
     format = "ext4";
     size = "64M";
   };
+  builderImage = callPackage ./builder.nix { };
 in
 {
-  package = callPackage ./package.nix { inherit ext4Root rootfs; };
-  inherit rootfs;
+  package = callPackage ./package.nix { inherit builderImage ext4Root rootfs; };
+  inherit builderImage rootfs;
   recurseForDerivations = true;
 }
