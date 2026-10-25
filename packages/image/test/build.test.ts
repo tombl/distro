@@ -115,6 +115,37 @@ for (const mode of [undefined, "0750"]) {
   });
 }
 
+// Taking root ownership clears setuid and setgid, which the build restores.
+// Sandboxes such as Nix's refuse to create those modes; the test then skips.
+test("keeps setuid and setgid on copied files", async (t) => {
+  const stage = await mkdtemp(join(tmpdir(), "lowland-image-stage-"));
+  t.after(() => rm(stage, { recursive: true, force: true }));
+  await mkdir(join(stage, "bin"));
+  await writeFile(join(stage, "bin", "setuid"), "setuid\n");
+  await writeFile(join(stage, "bin", "plain"), "plain\n");
+  const setgid = join(stage, "setgid");
+  await writeFile(setgid, "setgid\n");
+  try {
+    await chmod(join(stage, "bin", "setuid"), 0o4755);
+    await chmod(setgid, 0o2755);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    t.skip("the host cannot create setuid or setgid files");
+    return;
+  }
+  const output = await build(t, {
+    packages: [busybox_package],
+    files: { "/opt": join(stage, "bin"), "/usr/bin/setgid": setgid },
+  });
+  const guest = await boot(t, output);
+  const permissions = async (path: string) =>
+    ((await guest.fs.stat(path)).mode & 0o7777).toString(8);
+
+  assert.equal(await permissions("/opt/setuid"), "4755");
+  assert.equal(await permissions("/opt/plain"), "644");
+  assert.equal(await permissions("/usr/bin/setgid"), "2755");
+});
+
 test("rejects unsupported formats", async () => {
   await assert.rejects(
     buildImage({ packages: ["jq"], format: "xfs" as "ext4", output: "unused" }),
