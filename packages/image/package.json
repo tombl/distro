@@ -9,9 +9,6 @@
     "url": "git+https://github.com/tombl/distro.git",
     "directory": "packages/image"
   },
-  "bin": {
-    "lowland-image": "./dist/cli.js"
-  },
   "files": [
     "builder.erofs",
     "dist",
