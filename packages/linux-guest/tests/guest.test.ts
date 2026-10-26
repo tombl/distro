@@ -104,8 +104,49 @@ function boot_failure(message: string) {
 
 const no_root = boot_failure("no supported filesystem is labeled LOWLAND_ROOT");
 
+// The agent waits only for disks the device tree promises, so a missing root
+// is reported about as fast as a successful boot. The bound is loose enough
+// for a loaded CI machine but well below the old ten second poll.
+async function rejects_promptly(boot: () => Promise<unknown>) {
+  const started = performance.now();
+  await assert.rejects(boot, no_root);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 5000, `rejected after ${Math.round(elapsed)}ms`);
+}
+
+function blank_device() {
+  const empty = new Uint8Array(4096);
+  return blockDevice({
+    capacity: empty.byteLength,
+    read(offset, target) {
+      const source = empty.subarray(offset, offset + target.byteLength);
+      target.set(source);
+      return source.byteLength;
+    },
+  });
+}
+
 test("rejects a machine without a system disk", async () => {
-  await assert.rejects(bootMachine({ cpus: 1, plugins: [guestAgent()] }), no_root);
+  await rejects_promptly(() => bootMachine({ cpus: 1, plugins: [guestAgent()] }));
+});
+
+test("rejects several disks without a system disk", async () => {
+  await rejects_promptly(() => boot(wrong_root_device(), [blank_device(), blank_device()]));
+});
+
+test("finds the system disk among several disks", async () => {
+  const { agent: guest, machine } = await boot(blank_device(), [
+    wrong_root_device(),
+    root_device(),
+    blank_device(),
+  ]);
+  try {
+    const result = await guest.run(["uname", "-s"]);
+    assert.equal(new TextDecoder().decode(result.stdout).trim(), "Linux");
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
 });
 
 test("rejects more than one system disk", async () => {
@@ -200,25 +241,11 @@ test("boots an uncleanly closed ext4 system disk read-only", async () => {
 });
 
 test("rejects a system disk with the wrong label", async () => {
-  await assert.rejects(() => boot(wrong_root_device()), no_root);
+  await rejects_promptly(() => boot(wrong_root_device()));
 });
 
 test("rejects a system disk without a label", async () => {
-  const empty = new Uint8Array(4096);
-  await assert.rejects(
-    () =>
-      boot(
-        blockDevice({
-          capacity: empty.byteLength,
-          read(offset, target) {
-            const source = empty.subarray(offset, offset + target.byteLength);
-            target.set(source);
-            return source.byteLength;
-          },
-        }),
-      ),
-    no_root,
-  );
+  await rejects_promptly(() => boot(blank_device()));
 });
 
 // Boots the pristine ext4 root beside a blank disk, copies the root onto that

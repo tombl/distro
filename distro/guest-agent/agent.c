@@ -18,6 +18,7 @@
 
 #define _GNU_SOURCE
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -887,15 +888,80 @@ static enum root_filesystem probe_system_root(const char *device)
 	return root_filesystem_none;
 }
 
+enum {
+	virtio_id_block = 2,
+	disk_poll_interval_us = 100000,
+	disk_poll_attempts = 10,
+};
+
+static ssize_t read_property(int base, const char *node, const char *name,
+			     void *buffer, size_t size)
+{
+	char path[PATH_MAX];
+	ssize_t length;
+	int fd, written;
+
+	written = snprintf(path, sizeof(path), "%s/%s", node, name);
+	if (written < 0 || (size_t)written >= sizeof(path))
+		return -1;
+	fd = openat(base, path, O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return -1;
+	do
+		length = read(fd, buffer, size);
+	while (length == -1 && errno == EINTR);
+	close(fd);
+	return length;
+}
+
+/* Every virtio device is a static device tree node, so the tree says how many
+ * disks the host attached even before their drivers have probed. Returns -1 if
+ * the device tree cannot be read. */
+static int expected_disks(void)
+{
+	static const char compatible[] = "virtio,wasm";
+	struct dirent *entry;
+	int count = 0;
+	DIR *dir;
+
+	dir = opendir("/sys/firmware/devicetree/base");
+	if (!dir)
+		return -1;
+	while ((entry = readdir(dir))) {
+		char value[sizeof(compatible)];
+		uint8_t id[4];
+
+		if (entry->d_name[0] == '.')
+			continue;
+		if (read_property(dirfd(dir), entry->d_name, "compatible", value,
+				  sizeof(value)) != sizeof(value) ||
+		    memcmp(value, compatible, sizeof(value)))
+			continue;
+		if (read_property(dirfd(dir), entry->d_name, "virtio-device-id",
+				  id, sizeof(id)) != sizeof(id))
+			continue;
+		if (((uint32_t)id[0] << 24 | (uint32_t)id[1] << 16 |
+		     (uint32_t)id[2] << 8 | id[3]) == virtio_id_block)
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+/* The kernel normally finishes probing every disk before it starts init, so
+ * the first scan usually sees them all. Rescan briefly only while the device
+ * tree promises disks that have not appeared yet. */
 static int find_system_root(struct system_root *root)
 {
-	int attempt;
+	int expected = expected_disks();
+	struct system_root found;
+	int attempt, roots;
 
-	for (attempt = 0; attempt < 100; attempt++) {
-		struct system_root found = { 0 };
-		int roots = 0;
+	for (attempt = 0;; attempt++) {
+		int present = 0;
 		char suffix;
 
+		roots = 0;
 		for (suffix = 'a'; suffix <= 'z'; suffix++) {
 			char device[sizeof(root->device)];
 			enum root_filesystem filesystem;
@@ -906,6 +972,9 @@ static int find_system_root(struct system_root *root)
 				errno = ENAMETOOLONG;
 				return -1;
 			}
+			if (access(device, F_OK))
+				continue;
+			present++;
 			filesystem = probe_system_root(device);
 			if (filesystem == root_filesystem_none)
 				continue;
@@ -917,14 +986,17 @@ static int find_system_root(struct system_root *root)
 			errno = EEXIST;
 			return -1;
 		}
-		if (roots == 1) {
-			*root = found;
-			return 0;
-		}
-		usleep(100000);
+		if ((expected < 0 ? roots : present >= expected) ||
+		    attempt + 1 == disk_poll_attempts)
+			break;
+		usleep(disk_poll_interval_us);
 	}
-	errno = ENODEV;
-	return -1;
+	if (!roots) {
+		errno = ENODEV;
+		return -1;
+	}
+	*root = found;
+	return 0;
 }
 
 static int make_directory(const char *path, mode_t mode)
