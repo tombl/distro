@@ -41,7 +41,8 @@ machine keeps Node.js running.
 
 ## In a web page
 
-The same code runs in a browser. The page must be
+The same code runs in a browser, except that Safari does not support `await using` yet. There,
+call `machine.close()` in a `finally` block. The page must be
 [cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
 because the machine's workers share memory, and browsers only allow that on isolated pages.
 With Vite, add the headers to the dev server:
