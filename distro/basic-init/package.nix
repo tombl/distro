@@ -158,6 +158,12 @@ in
       clone-multithreaded-no-vm = installedCheck { name = "clone-multithreaded-no-vm"; };
       clone-memory-limit = installedCheck { name = "clone-memory-limit"; };
       clone-nested = installedCheck { name = "clone-nested"; };
+      clone-proc-reader = installedCheck {
+        name = "clone-proc-reader";
+        # The reader's remote copy completes on the other CPU while this
+        # process enters clone().
+        cpus = 2;
+      };
       clone-no-vm = installedCheck { name = "clone-no-vm"; };
       clone-return = installedCheck { name = "clone-return"; };
       clone-signal-handler = installedCheck { name = "clone-signal-handler"; };
