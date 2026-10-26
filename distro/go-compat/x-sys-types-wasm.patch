@@ -1,0 +1,27 @@
+diff --git a/unix/linux/types.go b/unix/linux/types.go
+index 4a49cb1..71e2bd7 100644
+--- a/unix/linux/types.go
++++ b/unix/linux/types.go
+@@ -97 +97,3 @@
+-#include <asm/ptrace.h>
++#if !defined(__wasm__)
++#include <asm/ptrace.h>
++#endif
+@@ -313 +315,8 @@ struct my_sockaddr_nfc_llcp {
+-#ifdef __ARM_EABI__
++#if defined(__wasm__)
++typedef struct {
++	uint32_t unavailable;
++} PtraceRegs;
++typedef unsigned long __cpu_mask;
++#define __CPU_SETSIZE CPU_SETSIZE
++#define __NCPUBITS (8 * sizeof(__cpu_mask))
++#elif defined(__ARM_EABI__)
+@@ -417,2 +426,7 @@ struct perf_event_attr_go {
++#if defined(__wasm__)
++	int32_t f_tfree;
++	ino_t f_tinode;
++#else
+  __daddr_t f_tfree;
+  __ino_t f_tinode;
++#endif
