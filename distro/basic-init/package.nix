@@ -206,6 +206,7 @@ in
       syscall-latency = installedCheck { name = "syscall-latency"; };
       timer = installedCheck { name = "timer"; };
       tls = installedCheck { name = "tls"; };
+      uapi-ptrace = installedCheck { name = "uapi-ptrace"; };
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
       wallclock = installedCheck { name = "wallclock"; };
