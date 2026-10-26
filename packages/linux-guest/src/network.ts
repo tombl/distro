@@ -195,13 +195,12 @@ export interface NetworkOptions {
    * Handles one TCP session whenever a guest connects outside the virtual
    * subnet. The callback starts at SYN receipt and lives for the whole
    * connection. Its first stream read, write, or writable close starts the
-   * handshake; merely acquiring a reader or writer does not. Throwing before
+   * handshake. Merely acquiring a reader or writer does not. Throwing before
    * first I/O rejects the pending connection, while throwing afterwards resets
    * it.
    *
    * In Node, implement it with `net.connect`. A browser has no raw TCP, so
-   * there it bridges to whatever transport you control — a WebSocket proxy,
-   * say.
+   * there it uses a transport you control, such as a WebSocket proxy.
    */
   connectTcp: (session: TcpSession) => void | PromiseLike<void>;
   /** Answers guest DNS A queries with the IPv4 addresses for `hostname`. */
@@ -227,7 +226,7 @@ export interface Network extends Disposable {
   attach(agent: GuestAgent): NetworkAttachment;
   /**
    * Connects from the host to a port on an attached guest. Resolves once
-   * the guest accepts the connection; rejects if nothing is listening there
+   * the guest accepts the connection. It rejects if nothing is listening there
    * or no guest has the address. If the guest may not be listening yet,
    * retry.
    *
@@ -261,7 +260,7 @@ export interface Network extends Disposable {
 export interface NetworkAttachment extends MachinePluginProvider {
   /** The guest's address on the network, e.g. `"192.0.2.2"`. */
   readonly address: string;
-  /** Connects to a port on this guest — `network.connect` with the address filled in. */
+  /** Connects to a port on this guest by calling `network.connect` with its address. */
   connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
   connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
 }
@@ -572,13 +571,13 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
 /**
  * Creates a private IPv4 network: an Ethernet switch in this process plus a
  * userspace TCP/IP endpoint at `192.0.2.1`. Attach every guest agent that
- * should be on the network; guests on the same network reach each other over
+ * should be on the network. Guests on the same network reach each other over
  * real TCP and UDP.
  *
  * Guest traffic beyond the subnet goes through the adapters: outbound TCP
  * is proxied with `connectTcp`, DNS is answered with `resolveDns`, and UDP
- * is delivered to the gateway only. The network is disposable — closing it
- * (or ending an `await using` scope) tears down every connection.
+ * is delivered to the gateway only. Closing the network, or ending an
+ * `await using` scope, tears down every connection.
  *
  * @example Give guests internet access from Node
  * ```ts

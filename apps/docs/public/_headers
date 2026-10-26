@@ -1,0 +1,12 @@
+/*.md
+  Content-Type: text/markdown; charset=utf-8
+
+# Runnable examples boot machines, which need shared memory, so every page is
+# cross-origin isolated.
+/*
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+
+# The runtime directory is named by a hash of its contents.
+/_runtime/*
+  Cache-Control: public, max-age=31556952, immutable

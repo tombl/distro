@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "WebWorker", "WebWorker.Iterable", "WebWorker.AsyncIterable"],
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["src/scripts/opfs-disk-worker.ts"]
+}

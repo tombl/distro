@@ -1,0 +1,43 @@
+---
+import Base from "../layouts/Base.astro";
+
+const heading = "The Linux kernel, compiled to WebAssembly, running in your browser.";
+---
+
+<Base
+  title="lowland"
+  heading={heading}
+  description="Linux ported to WebAssembly, not emulated. Open a shell in your browser, or embed the same sandbox in your own JavaScript app."
+>
+  <h1 slot="middle" class="intro">{heading}</h1>
+
+  <main class="root-stage">
+    <section class="machine" id="terminal" aria-label="Interactive Linux terminal">
+      <pre class="terminal-placeholder" data-terminal-placeholder aria-live="polite">Loading Lowland Linux...
+Fetching the kernel and root filesystem.
+
+</pre>
+      <script is:inline>
+        // Put the placeholder on the grid xterm will draw, before the first paint, so
+        // the text does not move when xterm takes over. xterm measures "W" on a canvas,
+        // then rounds the advance down and the height up to whole device pixels.
+        {
+          const placeholder = document.querySelector("[data-terminal-placeholder]");
+          const style = getComputedStyle(placeholder);
+          const context = document.createElement("canvas").getContext("2d");
+          context.font = `${style.fontSize} ${style.fontFamily}`;
+          const metrics = context.measureText("W");
+          const ratio = devicePixelRatio;
+          const width = Math.floor(metrics.width * ratio) / ratio;
+          const height =
+            Math.ceil((metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent) * ratio) /
+            ratio;
+          placeholder.style.letterSpacing = `${width - metrics.width}px`;
+          placeholder.style.lineHeight = `${height}px`;
+        }
+      </script>
+      <div class="terminal" data-terminal aria-busy="true"></div>
+    </section>
+  </main>
+  <script src="../scripts/site.ts"></script>
+</Base>

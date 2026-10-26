@@ -163,7 +163,7 @@ async function exchange(
 /**
  * Creates networking that translates one plaintext guest HTTP/1 exchange per
  * TCP connection into an HTTPS `Request`. The required callback controls the
- * Fetch implementation and its platform policy; ambient `fetch` is never used.
+ * Fetch implementation and its platform policy. Ambient `fetch` is never used.
  */
 export function hostFetchNetwork(options: {
   fetch(request: Request): Response | PromiseLike<Response>;

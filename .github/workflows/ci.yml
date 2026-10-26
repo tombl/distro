@@ -272,16 +272,21 @@ jobs:
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
       github.event.pull_request.head.repo.full_name == 'tombl/distro')
     # Production publishes prune the apk repository against its live index, so
-    # they must not interleave. Previews stay independent. The group gives
-    # mutual exclusion, not ordering, so production steps also check that this
-    # run is still main's head. The default queue keeps one pending job, so an
-    # older run arriving late would cancel main's pending deploy and then skip
-    # itself; queue: max keeps every waiting job.
+    # they must not interleave; a newer push to a pull request replaces its
+    # preview instead. The group gives mutual exclusion, not ordering, so the
+    # deploy steps also check that this run is still its branch's or pull
+    # request's head. The default queue keeps one pending job, so an older run
+    # arriving late would cancel main's pending deploy and then skip itself;
+    # queue: max keeps every waiting job.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.run_id) }}
-      cancel-in-progress: false
+      group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.event.pull_request.number) }}
+      cancel-in-progress: ${{ github.event_name != 'push' }}
       queue: max
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
@@ -289,21 +294,16 @@ jobs:
         with:
           name: linuxwasm
           authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
-      # A slower run for an older commit, or a rerun of one, must not replace
-      # what a newer commit published. If main has moved on, its own run
-      # deploys instead.
-      - name: Check production is current
-        id: production
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+      - name: Check the commit is still current
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          head=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
-          if [ "$head" = "$GITHUB_SHA" ]; then
-            echo current=true >>"$GITHUB_OUTPUT"
-          else
-            echo "::notice::main is now at $head; skipping the deploy of $GITHUB_SHA"
-          fi
+          .github/scripts/is-current.sh \
+            "${{ github.event.pull_request.head.sha || github.sha }}" \
+            "${{ github.event.pull_request.number }}"
       - name: Publish apk repository
-        if: steps.production.outputs.current == 'true'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           APK_SIGNING_KEY: ${{secrets.APK_SIGNING_KEY}}
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
@@ -316,23 +316,98 @@ jobs:
         run: |
           distro/site/scripts/publish-apk-repo.sh
       - name: Deploy production
-        if: steps.production.outputs.current == 'true'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          GH_TOKEN: ${{ github.token }}
         run: |
           nix run .#wrangler-deploy
+          .github/scripts/record-deployment.sh site "https://low.land" "Site" production
       - name: Deploy preview
-        if: github.event_name == 'pull_request'
+        if: steps.current.outputs.current == 'true' && github.event_name == 'pull_request'
         env:
           CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          GH_TOKEN: ${{ github.token }}
         run: |
           output=$(nix run .#wrangler-preview -- \
             --preview-alias "pr-${{ github.event.pull_request.number }}" \
             --message "PR #${{ github.event.pull_request.number }} at ${GITHUB_SHA}" 2>&1 | tee /dev/stderr)
+          preview_url=$(printf '%s\n' "$output" | grep -Eo \
+            'https://pr-${{ github.event.pull_request.number }}-linux\.[[:alnum:]-]+\.workers\.dev' | tail -1)
+          if [ -z "$preview_url" ]; then
+            echo "Wrangler did not return the expected site preview URL" >&2
+            exit 1
+          fi
           {
             echo "### Site preview"
-            printf '%s\n' "$output" | grep -Eo 'https://[^[:space:]]+' | tail -1
+            printf '[Open the site preview](%s)\n' "$preview_url"
           } >> "$GITHUB_STEP_SUMMARY"
+          .github/scripts/record-deployment.sh \
+            "preview-site-pr-${{ github.event.pull_request.number }}" "$preview_url" \
+            "Site preview" preview \
+            "${{ github.event.pull_request.head.sha }}"
+
+  deploy-docs:
+    name: Deploy docs
+    needs:
+      - build
+      - heavy-check
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      deployments: write
+      pull-requests: read
+    concurrency:
+      group: deploy-docs-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: nixbuild/nix-quick-install-action@v35
+      - uses: cachix/cachix-action@v17
+        with:
+          name: linuxwasm
+          authToken: "${{secrets.CACHIX_AUTH_TOKEN}}"
+      - name: Check the commit is still current
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/is-current.sh \
+            "${{ github.event.pull_request.head.sha || github.sha }}" \
+            "${{ github.event.pull_request.number }}"
+      - name: Deploy production
+        if: steps.current.outputs.current == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          nix run .#docs-wrangler-deploy
+          .github/scripts/record-deployment.sh \
+            docs "https://docs.low.land" "Docs" production
+      - name: Deploy preview
+        if: steps.current.outputs.current == 'true' && github.event_name == 'pull_request'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          output=$(nix run .#docs-wrangler-preview -- \
+            --preview-alias "docs-pr-${{ github.event.pull_request.number }}" \
+            --message "Docs for PR #${{ github.event.pull_request.number }} at ${GITHUB_SHA}" 2>&1 | tee /dev/stderr)
+          preview_url=$(printf '%s\n' "$output" | grep -Eo \
+            'https://docs-pr-${{ github.event.pull_request.number }}-lowland-docs\.[[:alnum:]-]+\.workers\.dev' | tail -1)
+          if [ -z "$preview_url" ]; then
+            echo "Wrangler did not return the expected docs preview URL" >&2
+            exit 1
+          fi
+          {
+            echo "### Docs preview"
+            printf '[Open the docs preview](%s)\n' "$preview_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+          .github/scripts/record-deployment.sh \
+            "preview-docs-pr-${{ github.event.pull_request.number }}" "$preview_url" \
+            "Docs preview" preview \
+            "${{ github.event.pull_request.head.sha }}"
 
   publish-release:
     name: Publish npm packages and GitHub release

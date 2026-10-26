@@ -16,8 +16,8 @@ import type { Network, NetworkAttachment, TcpConnection } from "./network.ts";
 /**
  * Turns a listener inside a guest into a fetch-like handler: each call opens
  * one connection, streams the request in, and resolves to a streaming
- * `Response`. One connect per call with a single attempt — a listener that is
- * not up yet rejects, and retrying is the caller's concern.
+ * `Response`. Each call makes one connection attempt. If the listener is not
+ * ready, the call rejects and the caller can retry.
  */
 export function guestFetchHandler(
   network: NetworkAttachment,

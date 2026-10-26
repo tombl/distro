@@ -1,0 +1,139 @@
+---
+import type { ComponentProps } from "astro/types";
+import { Code } from "astro:components";
+import type { Document } from "@deno/doc";
+
+import DocProse from "./DocProse.astro";
+import { linkResolver, renderedAnchors, type Group } from "../lib/reference-model";
+import { renderDoc, renderInlineDoc } from "../lib/render-doc";
+
+interface Props {
+  document: Document;
+  groups: Group[];
+}
+
+const { document, groups } = Astro.props;
+const resolveLink = linkResolver(document, renderedAnchors(groups));
+const symbolNames = new Set(document.symbols.map(({ name }) => name));
+
+type Transformers = NonNullable<ComponentProps<typeof Code>["transformers"]>;
+
+// Links each type name in a signature to its entry, except the entry's own name.
+function linkTypes(self: string): Transformers {
+  return [
+    {
+      span(node, _line, _col, _lineElement, token) {
+        const [, before, name, after] = token.content.match(/^(\s*)(.*?)(\s*)$/)!;
+        if (name === self || !symbolNames.has(name)) return;
+        const href = resolveLink(name);
+        if (!href) return;
+        node.children = [
+          { type: "text", value: before },
+          {
+            type: "element",
+            tagName: "a",
+            properties: { href },
+            children: [{ type: "text", value: name }],
+          },
+          { type: "text", value: after },
+        ];
+      },
+    },
+  ];
+}
+
+const prose = (doc: string | undefined) => (doc ? renderDoc(doc, resolveLink) : []);
+const inline = (doc: string) => renderInlineDoc(doc, resolveLink);
+---
+
+{groups.map((group) => (
+  <section>
+    <h2 id={group.id}>{group.title}</h2>
+    <p>{group.description}</p>
+    {group.entries.map((entry) => (
+      <section class="entry">
+        <h3 id={entry.id}><code>{entry.name}</code></h3>
+        {entry.summary && <p set:html={inline(entry.summary)} />}
+        <Code
+          code={entry.signature}
+          lang="ts"
+          themes={{ light: "github-light-default", dark: "github-dark-default" }}
+          transformers={linkTypes(entry.name)}
+        />
+        {entry.parameters.length > 0 && (
+          <dl>
+            {entry.parameters.map((parameter) => (
+              <>
+                <dt><code>{parameter.name}</code></dt>
+                <dd>
+                  {parameter.doc && <p set:html={inline(parameter.doc)} />}
+                  {parameter.fields && (
+                    <dl id={parameter.fields.id}>
+                      {parameter.fields.members.map((member) => (
+                        <Fragment>
+                          <dt id={member.id}><code>{member.signature}</code></dt>
+                          <dd><DocProse blocks={prose(member.doc)} /></dd>
+                        </Fragment>
+                      ))}
+                    </dl>
+                  )}
+                </dd>
+              </>
+            ))}
+          </dl>
+        )}
+        {entry.returns && <p>Returns <span set:html={inline(entry.returns)} /></p>}
+        <DocProse blocks={prose(entry.doc)} examples={entry.examples} />
+        {entry.members.length > 0 && (
+          <dl>
+            {entry.members.map((member) => (
+              <>
+                <dt id={member.id}><code>{member.name}</code></dt>
+                <dd>
+                  <DocProse blocks={prose(member.doc)} examples={member.examples} />
+                </dd>
+              </>
+            ))}
+          </dl>
+        )}
+      </section>
+    ))}
+  </section>
+))}
+
+<style>
+  .entry {
+    margin-block-start: 2rem;
+  }
+
+  h3 code {
+    font-size: inherit;
+  }
+
+  dl {
+    margin-block-end: 1rem;
+    color: var(--prose);
+  }
+
+  dt {
+    margin-block-start: 0.75rem;
+    color: var(--code-foreground);
+  }
+
+  dd {
+    margin-inline-start: 1.5rem;
+
+    > :global(p) {
+      margin-block: 0.25rem 0;
+    }
+
+    > dl {
+      margin-block: 0.25rem 0;
+    }
+  }
+
+  dt code {
+    white-space: pre-wrap;
+  }
+
+</style>
