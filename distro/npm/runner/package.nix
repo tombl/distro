@@ -38,7 +38,7 @@ let
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
-      pkgs.nodejs
+      pkgs.nodejs_26
       pkgs.pnpmConfigHook
       node-workspace.pnpm
     ];
@@ -87,7 +87,7 @@ let
       disk_args=(--disk ${rootfs})
     fi
 
-    exec ${lib.getExe pkgs.nodejs} ${app}/run.ts \
+    exec ${lib.getExe pkgs.nodejs_26} ${app}/run.ts \
       "''${disk_args[@]}" "$@"
   '';
 
@@ -106,7 +106,7 @@ let
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
-      pkgs.nodejs
+      pkgs.nodejs_26
       pkgs.pnpmConfigHook
       node-workspace.pnpm
     ];
