@@ -41,9 +41,14 @@ let initialMemoryBytes;
 let observingMemoryGrowth = false;
 let memoryGrowthStage = 0;
 let previousMemoryBytes;
+let stepMemoryBytes;
+let stepsWithGrowth = 0;
 
 const KERNEL_MEMORY_MAXIMUM_BYTES = 0xffff * 0x10000;
 const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
+// The guest writes 64 MiB in 1 MiB steps. Growing to exactly the pages in use
+// grows in nearly every step; growing geometrically, in a few.
+const MAXIMUM_STEPS_WITH_GROWTH = 8;
 
 function finish(value) {
   if (settled) return;
@@ -65,7 +70,26 @@ function consumeLine(line) {
     observeMemoryGrowth(0);
     return;
   }
+  if (line === "::kernel-memory::step") {
+    if (memoryGrowthStage !== 1) {
+      finish({ passed: false, reason: "guest reported a step outside the sequential stage" });
+      return;
+    }
+    const current = machine.memory.buffer.byteLength;
+    if (current > (stepMemoryBytes ?? previousMemoryBytes)) stepsWithGrowth++;
+    stepMemoryBytes = current;
+    void inputWriter.write(new Uint8Array([0x0a]));
+    return;
+  }
   if (line === "::kernel-memory::sequential") {
+    console.log(`kernel memory grew in ${stepsWithGrowth} sequential steps`);
+    if (stepsWithGrowth > MAXIMUM_STEPS_WITH_GROWTH) {
+      finish({
+        passed: false,
+        reason: `kernel memory grew in ${stepsWithGrowth} of 64 steps instead of a few large ones`,
+      });
+      return;
+    }
     observeMemoryGrowth(1);
     return;
   }
