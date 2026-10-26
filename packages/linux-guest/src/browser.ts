@@ -140,9 +140,10 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * When this adapter observes removal, existing descriptors become stale and
  * fail rather than targeting a new entry created at the same path. An external
  * remove-and-recreate with no observed missing state cannot be distinguished.
- * Writes and truncations through one adapter are serialized per node, and its
- * namespace operations are serialized across the whole adapter, but other
- * adapters or applications can still race its portable API operations.
+ * Writes and truncations through one adapter are serialized per node and wait
+ * for a rename of their file to finish, and its namespace operations are
+ * serialized across the whole adapter, but other adapters or applications can
+ * still race its portable API operations.
  */
 export class BrowserFS implements FS<Node, Handle> {
   readonly root: Node;
@@ -208,15 +209,20 @@ export class BrowserFS implements FS<Node, Handle> {
     return current;
   }
 
-  async #mutate<T>(node: Node, operation: () => Promise<T>): Promise<T> {
+  async #acquire(node: Node) {
     const previous = node.mutation;
     const completion = Promise.withResolvers<void>();
     node.mutation = completion.promise;
     await previous;
+    return completion.resolve;
+  }
+
+  async #mutate<T>(node: Node, operation: () => Promise<T>): Promise<T> {
+    const release = await this.#acquire(node);
     try {
       return await operation();
     } finally {
-      completion.resolve();
+      release();
     }
   }
 
@@ -540,6 +546,36 @@ export class BrowserFS implements FS<Node, Handle> {
       throw new FSError("EINVAL", "cannot move a directory into itself");
     }
 
+    // Rename copies the source and then removes it, so a write landing on the
+    // source after its data was copied would be lost. Every file the copy
+    // reads that a guest can write has a node here: guests reach files only
+    // through lookup, create and readdir, which cannot run until this rename
+    // finishes. Hold each moving node's mutation lock, which waits for writes
+    // and truncations in flight and queues new ones until the nodes point at
+    // the copy.
+    const old_key = old_parts.join("/");
+    const moved = [...this.#nodes].filter(
+      ([key]) => key === old_key || key.startsWith(`${old_key}/`),
+    );
+    const releases: (() => void)[] = [];
+    try {
+      for (const [, node] of moved) releases.push(await this.#acquire(node));
+      await this.#move(old_parent, oldName, new_parent, newName, source_node, moved);
+    } finally {
+      for (const release of releases) release();
+    }
+  }
+
+  async #move(
+    old_parent: Node,
+    oldName: string,
+    new_parent: Node,
+    newName: string,
+    source_node: Node,
+    moved: [string, Node][],
+  ) {
+    const old_parts = [...old_parent.parts, oldName];
+    const new_parts = [...new_parent.parts, newName];
     const existing = await this.#lookup(new_parent, newName);
     if (existing) {
       const existing_node = this.#as_node(existing);
@@ -587,9 +623,6 @@ export class BrowserFS implements FS<Node, Handle> {
       throw error;
     }
 
-    const moved = [...this.#nodes].filter(
-      ([key]) => key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`),
-    );
     moved.sort(([, left], [, right]) => left.parts.length - right.parts.length);
     for (const [key, node] of moved) {
       const relative = node.parts.slice(old_parts.length);
@@ -601,11 +634,9 @@ export class BrowserFS implements FS<Node, Handle> {
         handle = child;
       }
       node.handle = handle;
-      if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
-        this.#nodes.delete(key);
-        node.parts = [...new_parts, ...node.parts.slice(old_parts.length)];
-        this.#nodes.set(node.parts.join("/"), node);
-      }
+      this.#nodes.delete(key);
+      node.parts = [...new_parts, ...relative];
+      this.#nodes.set(node.parts.join("/"), node);
     }
   }
 }
