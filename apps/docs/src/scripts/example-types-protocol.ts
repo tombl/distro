@@ -10,7 +10,8 @@ export type TypesRequest =
   | ({ type: "diagnostics" } & Document)
   | ({ type: "completions"; offset: number } & Document)
   | ({ type: "details"; offset: number; name: string } & Document)
-  | ({ type: "quickInfo"; offset: number } & Document);
+  | ({ type: "quickInfo"; offset: number } & Document)
+  | ({ type: "transpile" } & Document);
 
 export interface Diagnostic {
   start: number;
@@ -37,6 +38,6 @@ export interface QuickInfo extends Details {
 
 export interface TypesResponse {
   id: number;
-  result: null | Diagnostic[] | Completions | Details | QuickInfo;
+  result: null | Diagnostic[] | Completions | Details | QuickInfo | string;
   error?: string;
 }

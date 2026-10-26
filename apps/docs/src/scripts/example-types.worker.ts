@@ -99,8 +99,9 @@ const flatten = (text: string | ts.DiagnosticMessageChain) =>
   ts.flattenDiagnosticMessageText(text, "\n");
 const display = (parts: ts.SymbolDisplayPart[] | undefined) => ts.displayPartsToString(parts);
 
-function handle(request: TypesRequest, service: ts.LanguageService): TypesResponse["result"] {
-  if (request.type === "init") return null;
+type ServiceRequest = Exclude<TypesRequest, { type: "init" | "transpile" }>;
+
+function handle(request: ServiceRequest, service: ts.LanguageService): TypesResponse["result"] {
   if (files.get(request.file)?.text !== request.text) addFile(request.file, request.text);
   examples.add(request.file);
   switch (request.type) {
@@ -193,6 +194,14 @@ addEventListener("message", async (event: MessageEvent<TypesRequest & { id: numb
     if (request.type === "init") {
       await languageService(request);
       response = { id: request.id, result: null };
+    } else if (request.type === "transpile") {
+      // Lowers `using` declarations for browsers without them. The frame
+      // defines the disposal symbols the emitted helpers look up.
+      const { outputText } = ts.transpileModule(request.text, {
+        fileName: request.file,
+        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
+      });
+      response = { id: request.id, result: outputText };
     } else {
       response = { id: request.id, result: handle(request, await languageService()) };
     }

@@ -64,6 +64,12 @@ function request<T>(message: TypesRequest): Promise<T | null> {
   });
 }
 
+/** Compiles an example for a browser that lacks `using` declarations, or
+ *  returns null if the type checker could not start. */
+export function transpile(text: string, lang: string): Promise<string | null> {
+  return request<string>({ type: "transpile", file: `transpile.${lang}`, text });
+}
+
 function positionAt(text: string, offset: number): Position {
   const before = text.slice(0, offset);
   const line = before.split("\n").length - 1;
