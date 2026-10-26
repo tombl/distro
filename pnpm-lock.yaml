@@ -107,6 +107,25 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/lowland:
+    dependencies:
+      '@lowland/guest':
+        specifier: workspace:^
+        version: link:../linux-guest
+      '@lowland/image':
+        specifier: workspace:^
+        version: link:../image
+      '@lowland/kernel':
+        specifier: workspace:^
+        version: link:../kernel
+    devDependencies:
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/runner:
     dependencies:
       '@lowland/bytes':
