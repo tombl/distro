@@ -108,6 +108,9 @@ pkgs.stdenv.override (old: {
     # filename or a permissive parser would risk treating opaque data such as a
     # filesystem image as an object file.
     stripWasmObjects() {
+      if [[ -n ''${dontStrip-} || -n ''${dontStripWasm-} ]]; then
+        return
+      fi
       while IFS= read -r -d "" file; do
         signature=$(od -An -tx1 -N8 "$file" | tr -d ' \n')
         case "$signature" in
