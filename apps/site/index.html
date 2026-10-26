@@ -125,6 +125,8 @@
         convertEol: true,
         fontFamily: "monospace",
       });
+      // The browser tests read the whole buffer, scrollback included.
+      window.terminal = term;
       const termFit = new FitAddon();
       term.loadAddon(termFit);
       term.open(document.body);
