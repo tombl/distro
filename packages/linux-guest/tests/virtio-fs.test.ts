@@ -42,6 +42,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
   readonly root = new MemoryNode("directory", 0o755);
   handleGetattrs = 0;
   releases = 0;
+  readdirs = 0;
   directoryReleases = 0;
   destroys = 0;
   destroyGate: Promise<void> | undefined;
@@ -129,9 +130,13 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
   }
 
   readdir(node: MemoryNode): FSDirectoryEntry<MemoryNode>[] {
+    this.readdirs += 1;
+    // Report files' modes but not directories', so that READDIR both takes
+    // types from the listing and falls back to getattr.
     return [...this.#directory(node).children].map(([name, node]) => ({
       name,
       node,
+      ...(node.kind === "file" ? { mode: node.mode } : {}),
     }));
   }
 
@@ -239,20 +244,36 @@ guest_test("virtio-fs", async (_t, fixture) => {
 
   // More entries than fit in one guest page exercises the no-MMU virtio-fs
   // readdir pagination path rather than only the first FUSE response.
+  // Every third entry is a directory, so dirent types are checked on both
+  // sides of every page boundary.
   const pagedDirectory = new MemoryNode("directory", 0o755);
   for (let index = 0; index < 192; index += 1) {
     pagedDirectory.children.set(
       `entry-${index.toString().padStart(3, "0")}`,
-      new MemoryNode("file", 0o644),
+      new MemoryNode(index % 3 === 0 ? "directory" : "file", 0o755),
     );
   }
   backend.root.children.set("paged", pagedDirectory);
-  const pagedEntries = [];
-  for await (const entry of guest.fs.readDir("/tmp/shared/paged")) {
-    pagedEntries.push(entry.name);
+  const read_paged = async () => {
+    const result = new Map<string, boolean>();
+    const readdirs = backend.readdirs;
+    for await (const entry of guest.fs.readDir("/tmp/shared/paged")) {
+      assert.equal(entry.isFile, !entry.isDirectory, entry.name);
+      assert.ok(!result.has(entry.name), `${entry.name} listed twice`);
+      result.set(entry.name, entry.isDirectory);
+    }
+    // The handle keeps its first listing, so later READDIRs don't re-read it.
+    assert.equal(backend.readdirs, readdirs + 1);
+    return result;
+  };
+  const pagedEntries = await read_paged();
+  assert.equal(pagedEntries.size, 192);
+  for (const [name, isDirectory] of pagedEntries) {
+    assert.equal(isDirectory, pagedDirectory.children.get(name)!.kind === "directory", name);
   }
-  assert.equal(pagedEntries.length, 192);
-  assert.equal(new Set(pagedEntries).size, 192);
+  // A new handle lists the directory afresh rather than reusing a listing.
+  pagedDirectory.children.set("entry-192", new MemoryNode("file", 0o644));
+  assert.equal((await read_paged()).size, 193);
   backend.root.children.delete("paged");
 
   await guest.fs.rename(`${directory}/hello`, `${directory}/renamed`);
