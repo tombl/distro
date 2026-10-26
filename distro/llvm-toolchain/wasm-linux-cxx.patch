@@ -1,0 +1,27 @@
+--- a/clang/lib/Basic/Targets/WebAssembly.h
++++ b/clang/lib/Basic/Targets/WebAssembly.h
+@@ -80,6 +80,12 @@
+ public:
+   explicit WebAssemblyTargetInfo(const llvm::Triple &T, const TargetOptions &)
+       : TargetInfo(T) {
++    // The OS wrappers for wasi, emscripten, WALI and bare wasm all select the
++    // WebAssembly C++ ABI, and libc++abi assumes it whenever __wasm__ is
++    // defined. LinuxTargetInfo chooses no ABI, which left wasm32-linux on
++    // generic Itanium: constructors don't return `this`, and catch bodies get
++    // no catchret, so leaving one traps. Set it here for every wasm target.
++    TheCXXABI.set(TargetCXXABI::WebAssembly);
+     AddrSpaceMap = &WebAssemblyAddrSpaceMap;
+     NoAsmVariants = true;
+     SuitableAlign = 128;
+--- a/clang/lib/Driver/ToolChains/WebAssembly.cpp
++++ b/clang/lib/Driver/ToolChains/WebAssembly.cpp
+@@ -493,8 +493,7 @@
+       getDriver().Diag(diag::err_drv_invalid_stdlib_name)
+           << A->getAsString(Args);
+   }
+-  if (getTriple().isOSLinux())
+-    return ToolChain::CST_Libstdcxx;
++  // libc++ is the only C++ library built for wasm, Linux included.
+   return ToolChain::CST_Libcxx;
+ }
+ 
