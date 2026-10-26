@@ -1,4 +1,4 @@
-# Guest agent protocol, version 3
+# Guest agent protocol, version 4
 
 The guest agent is a dumb syscall executor. It knows nothing about paths,
 stat layouts, directories, or flags — every operation-specific decision
@@ -13,7 +13,7 @@ integers are little-endian; there is no alignment padding.
 ## Transport
 
 Two vsock ports, both handshaking with 8 bytes
-`{ magic u32 = 0x584e4c54, version u16 = 3, failure u16 = 0 }` sent by the
+`{ magic u32 = 0x584e4c54, version u16 = 4, failure u16 = 0 }` sent by the
 host and echoed by the agent (the echo doubles as the readiness signal).
 
 If the agent could not enter the system root (no or several filesystems
@@ -29,10 +29,10 @@ agent that is not ready yet.
   needs a death signal that cannot be stuck behind a blocked syscall. The
   agent parks the session process reading it; EOF — or any payload byte,
   which means the two sides disagree — exits that process, atomically closing
-  every lane and session-owned fd. PID 1 then SIGKILLs and reaps every
-  remaining descendant before returning to `accept()`, so a fresh host can
-  attach during development without inheriting resources from the abandoned
-  session.
+  every lane and session-owned fd. Its parent, the session's keeper, then
+  SIGKILLs and reaps every remaining descendant before PID 1 returns to
+  `accept()`, so a fresh host can attach during development without
+  inheriting resources from the abandoned session.
 - **Lanes, port 1025.** Up to 64 connections. The host opens them on demand
   and pools them; the agent creates one worker thread as each lane connects.
   A lane carries strictly serial request/reply exchanges: the host writes one
@@ -73,7 +73,17 @@ in a fixed table (16 entries; `EAGAIN` when full — the host's process cap
 makes this unreachable). Success reply body:
 `{ pid u32, stdin_fd u32, stdout_fd u32, stderr_fd u32 }`. From here stdio
 is plain injected `read`/`write`/`close` on those fds and signals are plain
-injected `kill`.
+injected `kill`. Every spawned command starts with the default `SIGPIPE`
+disposition, which the agent itself ignores.
+
+**Terminal spawn (kind 4):** as spawn, but the payload starts with
+`{ rows u16, columns u16 }`. Instead of pipes, the agent opens a
+pseudoterminal master (`O_CLOEXEC`), sets its window size, and spawns the
+child with `POSIX_SPAWN_SETSID` and the subsidiary opened by name on fd 0
+and duplicated onto 1 and 2, so it leads a new session with the terminal as
+its controlling terminal. Success reply body: `{ pid u32, terminal_fd u32 }`.
+The host resizes with injected `ioctl(TIOCSWINSZ)` on the master, and once
+the master reads `EIO` every holder of the subsidiary has closed it.
 
 **Reap (kind 3):** `{ pid u32 }`. Blocking `waitpid`; frees the table
 entry; success reply body `{ status u32 }` (raw wait status — the host owns
@@ -110,6 +120,8 @@ session port. Each accepted session runs in a child subreaper which owns the
 lane listener, lane threads, spawned children, and every injected fd. While a
 session is connected, that process polls the silent session connection and lane
 listener, creating a detached worker for each accepted lane. Session death
-exits the entire process, so blocked lane threads cannot delay teardown. PID 1
-kills and reaps any descendants that escaped the session process before
-accepting the next session.
+exits the entire process, so blocked lane threads cannot delay teardown. That
+process's parent is a per-session keeper, itself a subreaper, which inherits
+every surviving descendant whatever process group or session it moved to. The
+keeper SIGKILLs its adopted children, found through `/proc`, until none
+remain, and PID 1 accepts the next session once the keeper exits.
