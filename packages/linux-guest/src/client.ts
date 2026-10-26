@@ -46,7 +46,8 @@ export interface ExecOptions {
   cwd?: string;
   /**
    * Environment for the process, merged over the defaults of
-   * `PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/root`, and
+   * `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+   * `HOME=/root`, and
    * `TMPDIR=/tmp`. Only the variables being changed need to be set.
    */
   env?: Readonly<Record<string, string>>;
@@ -561,7 +562,7 @@ class GuestClient {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
     const environment = {
-      PATH: "/bin:/usr/bin:/sbin:/usr/sbin",
+      PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       HOME: "/root",
       TMPDIR: "/tmp",
       ...options.env,
