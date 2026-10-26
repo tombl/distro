@@ -4,7 +4,7 @@ import { bootMachine, vsockDevice } from "@lowland/kernel";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { guestAgent, SystemError } from "../src/index.ts";
-import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
+import { getpid, kill, openat, read, reap, spawn, spawn_terminal } from "../src/syscalls.ts";
 import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, pattern_bytes } from "./helpers.ts";
@@ -236,6 +236,26 @@ guest_test("session teardown", async (t) => {
       await reap(first, child.pid);
       await Promise.all([child.stdout.close(), child.stderr.close()]);
 
+      // Processes outside the session's process group: one that started its
+      // own session, and a terminal process, which always leads one.
+      const escaping = await spawn(
+        first,
+        ["sh", "-c", "setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $!"],
+        "/tmp",
+        ["PATH=/bin:/usr/bin:/sbin:/usr/sbin"],
+      );
+      await escaping.stdin.close();
+      const escapedPid = Number(new TextDecoder().decode(await read(escaping.stdout, 64)).trim());
+      await reap(first, escaping.pid);
+      await Promise.all([escaping.stdout.close(), escaping.stderr.close()]);
+      const terminal = await spawn_terminal(
+        first,
+        ["sleep", "30"],
+        "/tmp",
+        ["PATH=/bin:/usr/bin:/sbin:/usr/sbin"],
+        { rows: 24, columns: 80 },
+      );
+
       const blocked = openat(first, fifoPath, O.RDONLY, 0);
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.ok((await getpid(first)) > 1);
@@ -250,9 +270,11 @@ guest_test("session teardown", async (t) => {
         // abandoned session-owned file was closed.
         assert.ok(replacement.fd <= abandoned.fd);
         await replacement.close();
-        await assert.rejects(kill(second, orphanPid, 0), (error) => {
-          return error instanceof SystemError && error.code === "ESRCH";
-        });
+        for (const pid of [orphanPid, escapedPid, terminal.pid]) {
+          await assert.rejects(kill(second, pid, 0), (error) => {
+            return error instanceof SystemError && error.code === "ESRCH";
+          });
+        }
       } finally {
         second.close();
       }

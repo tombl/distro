@@ -5,6 +5,8 @@ on:
     tags:
       - 'v*'
   pull_request:
+  # Manual runs only publish the trusted-publishing stubs (npm-trust-stub).
+  workflow_dispatch:
 
 # A new push to a pull request supersedes its older runs, which would otherwise
 # keep building (and rebuilding uncached toolchains) for hours. Runs on main and
@@ -16,6 +18,9 @@ concurrency:
 jobs:
   plan:
     name: Plan checks
+    # Every other job depends on this one or on build, so manual runs build,
+    # check and deploy nothing.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -96,6 +101,7 @@ jobs:
   build:
     name: Build packages and checks
     needs: plan
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -372,3 +378,65 @@ jobs:
               --title "$GITHUB_REF_NAME" \
               --notes-file release-notes.md
           fi
+
+  # npm drops a trusted-publisher configuration that has not published within
+  # 48 hours of being created. Dispatching this workflow on main publishes a
+  # placeholder of each package under the trust dist-tag, leaving latest alone.
+  npm-trust-stub:
+    name: Publish trusted-publishing stubs
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.16.0
+      - name: Publish stubs
+        env:
+          VERSION: 0.0.0-trust.${{ github.run_number }}
+        run: |
+          set -uo pipefail
+          summary=()
+          failed=0
+
+          for package in @lowland/kernel @lowland/guest @lowland/image lowland; do
+            if npm view "${package}@${VERSION}" version >/dev/null 2>&1; then
+              summary+=("${package}@${VERSION}: already published")
+              continue
+            fi
+
+            dir="$RUNNER_TEMP/stubs/${package//\//-}"
+            mkdir -p "$dir"
+            jq --null-input --arg name "$package" --arg version "$VERSION" '{
+              name: $name,
+              version: $version,
+              description: "Trusted-publishing placeholder; not a release.",
+              license: "MIT",
+              repository: {type: "git", url: "git+https://github.com/tombl/distro.git"}
+            }' > "$dir/package.json"
+            echo "Placeholder for npm trusted publishing; not a release." > "$dir/README.md"
+
+            if output=$(npm publish "$dir" --provenance --access public --tag trust 2>&1); then
+              printf '%s\n' "$output"
+              summary+=("${package}@${VERSION}: published")
+            else
+              printf '%s\n' "$output"
+              failed=1
+              if grep -Eq 'E40[34]|\b40[34]\b' <<< "$output"; then
+                summary+=("${package}: FAILED with 403/404, likely no trusted publisher for tombl/distro ci.yml")
+              else
+                summary+=("${package}: FAILED, see the log above")
+              fi
+            fi
+          done
+
+          {
+            echo "### npm trusted-publishing stubs"
+            printf -- '- %s\n' "${summary[@]}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$failed"
