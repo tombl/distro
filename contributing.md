@@ -70,8 +70,6 @@ WebAssembly binaries.
   without seeing the file you just added.
 - `nix run` builds and starts the system in your terminal. Run
   `nix run . -- --help` for debug flags and host integration options.
-- `nix run .#serve` hosts the same site published at https://low.land so
-  you can poke it locally with browser devtools.
 - `nix build .#<pkg>` builds one package; `nix flake check` builds every VM and
   formatting check.
 - `nix develop .#sdk` is a shell for porting outside Nix: `$CC`, `$CXX`,
