@@ -219,8 +219,9 @@ describe("lowland run", () => {
     // Like `| head -n 1`: read the first chunk, then close the pipe.
     child.stdout.once("data", () => child.stdout.destroy());
     const status = await new Promise((resolve) => child.on("close", resolve));
-    // The command's own status passes through: BusyBox yes exits 1 on EPIPE.
-    assert.equal(status, 1, stderr);
+    // The command's own status passes through: SIGPIPE kills yes, as it
+    // would on the host.
+    assert.equal(status, 141, stderr);
     assert.doesNotMatch(stderr, /lowland|Uncaught/);
     const read = await lowland(["run", "--disk", `${data_disk}:/data:ro`, "cat", "/data/epipe"]);
     assert.equal(read.stdout, "early\n");
