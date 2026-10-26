@@ -450,6 +450,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         switch_entry: unavailable,
         call_signal_handler: unavailable,
         unwind: unavailable,
+        rethrow: unavailable,
         call_siginfo_handler: unavailable,
         read: unavailable,
         write: unavailable,
