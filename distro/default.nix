@@ -110,6 +110,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     readline = callPackage ./readline/package.nix { };
     rust-smoke = callPackage ./rust-smoke/package.nix { };
     sed = callPackage ./sed/package.nix { };
+    socat = callPackage ./socat/package.nix { };
     sqlite3 = callPackage ./sqlite3/package.nix { };
     tar = callPackage ./tar/package.nix { };
     util-linux = callPackage ./util-linux/package.nix { };
