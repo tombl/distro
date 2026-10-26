@@ -45,7 +45,22 @@ function finish(example: HTMLElement) {
   delete example.dataset.running;
 }
 
+// Safari has no `using` declarations yet, and every example closes its machine
+// with one.
+const usingSupported = (() => {
+  try {
+    new Function("{ using resource = null; }");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 async function strip(code: string, lang: string): Promise<string> {
+  if (!usingSupported) {
+    const { transpile } = await import("./example-editor");
+    return (await transpile(code, lang)) ?? code;
+  }
   if (lang !== "ts") return code;
   const { transform } = await import("sucrase");
   return transform(code, { transforms: ["typescript"], disableESTransforms: true }).code;

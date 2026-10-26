@@ -43,6 +43,13 @@ addEventListener("unhandledrejection", (event) => {
   post({ type: "output", level: "error", text: `Uncaught ${format(event.reason)}` });
 });
 
+// Where `using` declarations are compiled away, the emitted helpers and the
+// packages must agree on the disposal symbols. The packages load with the
+// example, after this runs.
+const symbols = Symbol as unknown as Record<"dispose" | "asyncDispose", symbol | undefined>;
+symbols.dispose ??= Symbol.for("Symbol.dispose");
+symbols.asyncDispose ??= Symbol.for("Symbol.asyncDispose");
+
 addEventListener("message", async (event: MessageEvent<RunMessage>) => {
   if (event.origin !== location.origin || event.source !== parent) return;
   if (event.data?.type !== "run") return;
