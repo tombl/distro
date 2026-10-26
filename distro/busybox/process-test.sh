@@ -37,6 +37,16 @@ timeout_elapsed=$((timeout_end - timeout_start))
 [ "$timeout_elapsed" -ge 1 ] || fail "timeout fired too early (${timeout_elapsed}s)"
 [ "$timeout_elapsed" -le 5 ] || fail "timeout fired too late (${timeout_elapsed}s)"
 
+# The watcher must not hold the caller's stdout: a substitution ends when the
+# program does, not when the timeout would have fired.
+timeout_start=$(date +%s) || fail "reading timeout start time failed"
+timeout_output=$(/bin/busybox timeout 30 /bin/busybox echo finished) ||
+  fail "timeout in a command substitution failed"
+timeout_elapsed=$(($(date +%s) - timeout_start))
+[ "$timeout_output" = finished ] || fail "timeout substitution printed [$timeout_output]"
+[ "$timeout_elapsed" -le 5 ] ||
+  fail "timeout substitution waited for its watcher (${timeout_elapsed}s)"
+
 printf '%s\n' 'root:x:0:0:root:/root:/bin/sh' >/etc/passwd || fail "creating passwd failed"
 printf '%s\n' 'root:x:0:' >/etc/group || fail "creating group failed"
 
