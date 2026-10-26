@@ -14,7 +14,7 @@ pkgs.stdenvNoCC.mkDerivation {
   env.CI = "true";
   pnpmDeps = node-workspace.deps;
   nativeBuildInputs = [
-    pkgs.nodejs
+    pkgs.nodejs_26
     pkgs.pnpmConfigHook
     node-workspace.pnpm
   ];
@@ -28,6 +28,7 @@ pkgs.stdenvNoCC.mkDerivation {
     # Runnable examples serve the packages and their artifacts from the site.
     cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
     cp ${lowland-image.rootfs} packages/image/rootfs.erofs
+    cp ${lowland-image.builderImage} packages/image/builder.erofs
     pnpm --filter=@lowland/guest build
     pnpm --filter=@lowland/image build
     pnpm --filter=@lowland/docs check
