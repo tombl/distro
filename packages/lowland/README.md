@@ -15,6 +15,12 @@ npx lowland run --image app.erofs --disk data.ext4:/data --network host my-app
 command's status. With no command, it starts a shell. Standard input, output,
 and error are connected directly.
 
+When stdin is a terminal, the shell runs on a guest terminal of the same size,
+with job control: Ctrl-C and Ctrl-Z reach its foreground job, and resizing the
+window resizes the guest terminal. `-t`, `--tty` runs a given command on a
+terminal too, such as `npx lowland run -t vi`. Otherwise commands run over
+pipes, with stdout and stderr kept separate.
+
 - `--image <path>` boots another root image, such as one from `lowland build`.
   The root is always read-only beneath a temporary overlay, so running an
   image never changes it.
@@ -28,6 +34,7 @@ and error are connected directly.
 - `--network host` connects the machine to the host's network: guest TCP
   connections and DNS lookups go out through the host, and `192.0.2.1`
   reaches the host's loopback. The default, `--network none`, has no network.
+- `-t`, `--tty` runs the command on a terminal. stdin must be a terminal.
 
 ## Exit status
 
@@ -71,6 +78,20 @@ code runs in a browser:
 `run()` collects a command's output, and `spawn()` streams it. Like
 `lowland run`, both run commands in `/` unless their `cwd` option says
 otherwise.
+
+With the `terminal` option, a command runs on a guest terminal, as a shell
+does in `lowland run`. In a page, connect it to a terminal emulator such as
+xterm.js:
+
+```js
+const shell = await linux.spawn(["sh"], {
+  terminal: { rows: term.rows, columns: term.cols },
+});
+void shell.stdout.pipeTo(new WritableStream({ write: (bytes) => term.write(bytes) }));
+const keys = shell.stdin.getWriter();
+term.onData((data) => void keys.write(new TextEncoder().encode(data)));
+term.onResize(({ rows, cols }) => void shell.resize({ rows, columns: cols }));
+```
 
 ## Building images
 

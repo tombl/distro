@@ -100,7 +100,8 @@ let
   };
 
   # Boots machines through lowland run and the Linux API: commands, exit
-  # statuses, standard I/O, host directories, disks, and the ephemeral root.
+  # statuses, standard I/O, terminals, host directories, disks, and the
+  # ephemeral root. Python drives lowland run on a host pseudoterminal.
   integration = pkgs.stdenvNoCC.mkDerivation {
     pname = "lowland-integration-test";
     version = "0.0.0";
@@ -111,6 +112,7 @@ let
     nativeBuildInputs = [
       pkgs.nodejs
       pkgs.pnpmConfigHook
+      pkgs.python3
       node-workspace.pnpm
     ];
 
