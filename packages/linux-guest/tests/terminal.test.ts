@@ -201,9 +201,11 @@ guest_test("terminal processes", async (t, fixture) => {
       const { value } = await reader.read();
       seen += new TextDecoder().decode(value);
     }
-    // Far more than the terminal buffers while nothing reads it.
+    // More than the terminal buffers while nothing reads it, which blocks
+    // the guest write, but within what stdin buffers on the host, so this
+    // write itself does not wait for the guest.
     const input = child.stdin.getWriter();
-    await input.write(new Uint8Array(2 * 1024 * 1024).fill(0x61));
+    await input.write(new Uint8Array(1024 * 1024).fill(0x61));
     await Promise.all([input.close(), reader.cancel()]);
     await child.close();
     await child.status;
