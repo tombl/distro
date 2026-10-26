@@ -15,13 +15,26 @@ import {
   type Unmount,
 } from "./client.ts";
 import { GuestBootError } from "./abi.ts";
+import { check_agent_image } from "./agent-image.ts";
 import { platform } from "./platform.ts";
 import type { ChildProcess, CommandStatus } from "./process.ts";
 
 let agent_image: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
+async function read_agent_image() {
+  const url = new URL("../agent.img", import.meta.url);
+  const asset = await platform.load_asset(url);
+  check_agent_image(url, asset);
+  return asset.bytes;
+}
+
 function load_agent_image() {
-  return (agent_image ??= platform.load_asset(new URL("../agent.img", import.meta.url)));
+  if (!agent_image) {
+    agent_image = read_agent_image();
+    // A failed load must not poison later machines.
+    agent_image.catch(() => (agent_image = undefined));
+  }
+  return agent_image;
 }
 
 async function agent_device() {
