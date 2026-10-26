@@ -50,6 +50,11 @@ const MAXIMUM_EXPECTED_INITIAL_MEMORY_BYTES = 16 * 0x100000;
 // grows in nearly every step; growing geometrically, in a few.
 const MAXIMUM_STEPS_WITH_GROWTH = 8;
 
+const VSOCK_ECHO_PORT = 7;
+const VSOCK_CONNECT_MARKER = "::vsock::connect ";
+const VSOCK_DIAL_TIMEOUT_MS = 30_000;
+const VSOCK_DIAL_RETRY_MS = 10;
+
 function finish(value) {
   if (settled) return;
   settled = true;
@@ -91,6 +96,17 @@ function consumeLine(line) {
       return;
     }
     observeMemoryGrowth(1);
+    return;
+  }
+  if (line.startsWith(VSOCK_CONNECT_MARKER)) {
+    const port = Number(line.slice(VSOCK_CONNECT_MARKER.length));
+    if (!Number.isSafeInteger(port) || port <= 0) {
+      finish({ passed: false, reason: `guest asked for a bad vsock port: ${line}` });
+      return;
+    }
+    void serveGuestListener(port).catch((error) => {
+      finish({ passed: false, reason: `serving guest vsock port ${port} failed: ${error}` });
+    });
     return;
   }
 
@@ -189,7 +205,34 @@ async function echo(connection) {
 }
 
 const vsock = vsockDevice();
-vsock.listen(7, echo);
+vsock.listen(VSOCK_ECHO_PORT, echo);
+
+// The other direction: a guest that wants to be connected to prints
+// "::vsock::connect <port>" and the runner dials that guest port and echoes
+// there instead. AF_VSOCK has no /proc listing, so neither side can watch for
+// the listener to appear; the guest is free to print the marker before it
+// binds, and an unbound guest port resets rather than hangs, so this simply
+// redials until the listener answers.
+async function dialGuest(port) {
+  const deadline = Date.now() + VSOCK_DIAL_TIMEOUT_MS;
+  for (;;) {
+    try {
+      return await vsock.connect(port, { timeoutMs: VSOCK_DIAL_TIMEOUT_MS });
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, VSOCK_DIAL_RETRY_MS));
+    }
+  }
+}
+
+async function serveGuestListener(port) {
+  const connection = await dialGuest(port);
+  try {
+    await echo(connection);
+  } finally {
+    connection.close();
+  }
+}
 
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();

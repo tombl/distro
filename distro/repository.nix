@@ -29,6 +29,7 @@
   quickjs,
   readline,
   sed,
+  socat,
   sqlite3,
   tar,
   util-linux,
@@ -79,6 +80,7 @@ apk.mkRepository {
       quickjs
       readline
       sed
+      socat
       sqlite3
       tar
       util-linux
