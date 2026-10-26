@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { bootMachine, vsockDevice } from "@lowland/kernel";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
-import { SystemError } from "../src/index.ts";
+import { guestAgent, SystemError } from "../src/index.ts";
 import { getpid, kill, openat, read, reap, spawn } from "../src/syscalls.ts";
 import { agent_device, root_device } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
@@ -260,4 +261,28 @@ guest_test("session teardown", async (t) => {
       await machine.closed;
     }
   });
+});
+
+// Without a console device the agent starts with no standard descriptors.
+// Pipes must not take their numbers, or spawn errors are misreported.
+test("reports failed spawns in a machine without a console", async () => {
+  const agent = guestAgent();
+  const machine = await bootMachine({ cpus: 1, plugins: [root_device(), agent] });
+  try {
+    for (const [argv, code] of [
+      [["/no/such"], "ENOENT"],
+      [["no-such-command"], "ENOENT"],
+      [["/etc"], "EACCES"],
+    ] as const) {
+      await assert.rejects(
+        agent.exec(argv),
+        (error) => error instanceof SystemError && error.code === code,
+      );
+      const result = await agent.run(["true"]);
+      assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+    }
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
 });

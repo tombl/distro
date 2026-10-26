@@ -969,6 +969,26 @@ static void check_system_init(pid_t pid)
 	abort();
 }
 
+/* Without a console device the kernel cannot open /dev/console, so PID 1
+ * starts with descriptors 0 to 2 closed. Fill them with /dev/null before any
+ * pipe can take their numbers: a command's pipes would otherwise be clobbered
+ * by posix_spawn's dup2 onto 0 to 2, misreporting its spawn errors. */
+static int open_standard_descriptors(void)
+{
+	int fd;
+
+	for (fd = 0; fd <= 2; fd++) {
+		if (fcntl(fd, F_GETFD) != -1)
+			continue;
+		if (errno != EBADF)
+			return -1;
+		/* The lower descriptors are open, so open() returns fd. */
+		if (open("/dev/null", O_RDWR) == -1)
+			return -1;
+	}
+	return 0;
+}
+
 static int start_system_init(pid_t *pid)
 {
 	char *const argv[] = { "/init", NULL };
@@ -1005,6 +1025,10 @@ int main(void)
 	 * realPath and FsFile.stat go through /proc/self/fd/N. */
 	if (prepare_system_root()) {
 		perror("linux-guest-agent: preparing system root");
+		return 1;
+	}
+	if (open_standard_descriptors()) {
+		perror("linux-guest-agent: opening standard descriptors");
 		return 1;
 	}
 	/* A supervisor pthread would share PID 1's address space. The wasm kernel
