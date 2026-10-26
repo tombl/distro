@@ -218,6 +218,8 @@ function dirent_mode(entry: Dirent): number | undefined {
 class Node {
   parts: string[];
   attached = true;
+  /** Known nodes directly below this one, so removal and rename visit only them. */
+  readonly children = new Map<string, Node>();
 
   constructor(parts: string[]) {
     this.parts = parts;
@@ -278,12 +280,15 @@ export class NodeFS implements FS<Node, Handle> {
     if (this.readOnly) throw new FSError("EROFS", "filesystem is read-only");
   }
 
-  #node(parts: string[]) {
+  #node(parts: string[]): Node {
     const key = parts.join("/");
     let node = this.#nodes.get(key);
     if (!node) {
       node = new Node(parts);
       this.#nodes.set(key, node);
+      // Register with the parent so #forget and rename can walk the subtree
+      // instead of scanning every node.
+      this.#node(parts.slice(0, -1)).children.set(parts[parts.length - 1]!, node);
     }
     return node;
   }
@@ -329,13 +334,16 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   #forget(parts: readonly string[]) {
-    const key = parts.join("/");
-    for (const [candidate, node] of this.#nodes) {
-      if (candidate === key || candidate.startsWith(`${key}/`)) {
-        this.#nodes.delete(candidate);
-        node.attached = false;
-      }
-    }
+    const node = this.#nodes.get(parts.join("/"));
+    if (!node || node === this.root) return;
+    this.#nodes.get(parts.slice(0, -1).join("/"))?.children.delete(parts[parts.length - 1]!);
+    const detach = (n: Node) => {
+      this.#nodes.delete(n.parts.join("/"));
+      n.attached = false;
+      for (const child of n.children.values()) detach(child);
+      n.children.clear();
+    };
+    detach(node);
   }
 
   async lookup(parent: Node, name: string) {
@@ -480,11 +488,13 @@ export class NodeFS implements FS<Node, Handle> {
     return bytesWritten;
   }
 
+  // FLUSH comes with every close() of a descriptor (each dup's too), which
+  // doesn't make data durable on Linux either: fsync() does (FSYNC, below).
+  // virtiofsd's flush syncs nothing as well.
   async flush(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
       throw new FSError("EBADF");
     }
-    await node_call(handle.file.datasync());
   }
 
   async fsync(_node: Node, handle: Handle, dataOnly: boolean) {
@@ -570,12 +580,19 @@ export class NodeFS implements FS<Node, Handle> {
       await node_call(rename(source, destination));
 
       this.#forget(new_parts);
-      for (const [key, node] of [...this.#nodes]) {
-        if (key === old_parts.join("/") || key.startsWith(`${old_parts.join("/")}/`)) {
-          this.#nodes.delete(key);
-          node.parts = [...new_parts, ...node.parts.slice(old_parts.length)];
-          this.#nodes.set(node.parts.join("/"), node);
-        }
+      const moved = this.#nodes.get(old_parts.join("/"));
+      if (moved) {
+        this.#nodes
+          .get(old_parts.slice(0, -1).join("/"))
+          ?.children.delete(old_parts[old_parts.length - 1]!);
+        const move = (n: Node, parts: string[]) => {
+          this.#nodes.delete(n.parts.join("/"));
+          n.parts = parts;
+          this.#nodes.set(parts.join("/"), n);
+          for (const [name, child] of n.children) move(child, [...parts, name]);
+        };
+        move(moved, new_parts);
+        this.#node(new_parts.slice(0, -1)).children.set(new_parts[new_parts.length - 1]!, moved);
       }
     });
   }
