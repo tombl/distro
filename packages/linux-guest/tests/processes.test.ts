@@ -235,6 +235,19 @@ guest_test("session teardown", async (t) => {
       await reap(first, child.pid);
       await Promise.all([child.stdout.close(), child.stderr.close()]);
 
+      // A process outside the session's process group, because it started
+      // its own session.
+      const escaping = await spawn(
+        first,
+        ["sh", "-c", "setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $!"],
+        "/tmp",
+        ["PATH=/bin:/usr/bin:/sbin:/usr/sbin"],
+      );
+      await escaping.stdin.close();
+      const escapedPid = Number(new TextDecoder().decode(await read(escaping.stdout, 64)).trim());
+      await reap(first, escaping.pid);
+      await Promise.all([escaping.stdout.close(), escaping.stderr.close()]);
+
       const blocked = openat(first, fifoPath, O.RDONLY, 0);
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.ok((await getpid(first)) > 1);
@@ -249,9 +262,11 @@ guest_test("session teardown", async (t) => {
         // abandoned session-owned file was closed.
         assert.ok(replacement.fd <= abandoned.fd);
         await replacement.close();
-        await assert.rejects(kill(second, orphanPid, 0), (error) => {
-          return error instanceof SystemError && error.code === "ESRCH";
-        });
+        for (const pid of [orphanPid, escapedPid]) {
+          await assert.rejects(kill(second, pid, 0), (error) => {
+            return error instanceof SystemError && error.code === "ESRCH";
+          });
+        }
       } finally {
         second.close();
       }
