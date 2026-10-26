@@ -173,7 +173,7 @@ export interface Allocated<T> {
   value: T;
 }
 
-/** A sequential little-endian reader over a byte buffer. */
+/** A sequential reader over a byte buffer. */
 export class Reader {
   #array: Uint8Array;
   #dv: DataView;
@@ -192,25 +192,6 @@ export class Reader {
     const offset = this.offset;
     this.offset += length;
     return offset;
-  }
-
-  u8() {
-    return this.#dv.getUint8(this.#take(1));
-  }
-  u16() {
-    return this.#dv.getUint16(this.#take(2), true);
-  }
-  u32() {
-    return this.#dv.getUint32(this.#take(4), true);
-  }
-  i32() {
-    return this.#dv.getInt32(this.#take(4), true);
-  }
-  u64() {
-    return this.#dv.getBigUint64(this.#take(8), true);
-  }
-  i64() {
-    return this.#dv.getBigInt64(this.#take(8), true);
   }
 
   skip(length: number) {
