@@ -1,0 +1,13 @@
+# wasm musl does not provide fork/vfork. The *_works forms are gnulib's
+# runtime-probe cache names; both spellings are platform-wide facts.
+ac_cv_func_fork=no
+ac_cv_func_vfork=no
+ac_cv_func_fork_works=no
+ac_cv_func_vfork_works=no
+ac_cv_func_mmap_fixed_mapped=no
+ac_cv_func_dlopen=no
+ac_cv_search_dlopen=no
+ac_cv_lib_dl_dlopen=no
+# wasm reports sigaltstack as ENOSYS: alternate signal stacks remain
+# unsupported, so configure probes must keep the function disabled.
+ac_cv_func_sigaltstack=no
