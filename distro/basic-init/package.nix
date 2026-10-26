@@ -190,6 +190,7 @@ in
       signal-syscall-return = signalSyscallReturnCheck "plain" "";
       signal-syscall-return-sjlj = signalSyscallReturnCheck "sjlj" "-DUSE_SJLJ";
       signal-correctness = installedCheck { name = "signal-correctness"; };
+      signal-temporary-mask = installedCheck { name = "signal-temporary-mask"; };
       sigsetjmp = sigsetjmpCheck;
       sigsetjmp-handler = sigsetjmpHandlerCheck;
       stdint-limits = installedCheck { name = "stdint-limits"; };
