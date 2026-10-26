@@ -15,7 +15,10 @@ import { serveDevice, serveDeviceError, workerDevice } from "../src/virtio/remot
 import { attach_devices, close_device, TestDevice } from "./virtio-fixture.ts";
 import {
   allocate_shared_memory,
+  create_halt_error,
+  HALT_KERNEL,
   memory_bytes,
+  uncatchable,
   user_module_imports_supported,
   type UserWidth,
 } from "../src/wasm.ts";
@@ -37,6 +40,42 @@ const memory = new WebAssembly.Memory({
   initial: 1,
   maximum: 1,
   shared: true,
+});
+
+test("guest exception handlers cannot catch exit or exec halts", () => {
+  // (module (import "host" "stop" (func $stop))
+  //   (func (export "caught") (result i32)
+  //     (try (result i32) (do (call $stop) (i32.const 0))
+  //       (catch_all (i32.const 1)))))
+  // Built with wat2wasm --enable-exceptions; catch_all models C++ catch (...).
+  const hex =
+    "0061736d010000000108026000006000017f020d0104686f73740473746f700000" +
+    "03020101070a010663617567687400010a0e010c00067f100041001941010b0b";
+  const guest = new WebAssembly.Module(
+    Uint8Array.from(hex.match(/../g)!, (byte) => Number.parseInt(byte, 16)),
+  );
+  const run = (value: unknown) =>
+    (
+      new WebAssembly.Instance(guest, {
+        host: {
+          stop: () => {
+            throw value;
+          },
+        },
+      }).exports.caught as () => number
+    )();
+
+  assert.equal(run(Symbol("old halt")), 1);
+  for (const halt of [
+    HALT_KERNEL,
+    create_halt_error("halt user"),
+    uncatchable(new RangeError("bad function pointer")),
+  ]) {
+    assert.throws(
+      () => run(halt),
+      (error) => error === halt,
+    );
+  }
 });
 
 function allocator_succeeding_at(successful_maximum: number, attempts: number[]) {

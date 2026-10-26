@@ -6,9 +6,11 @@ import { assert } from "./util.ts";
 import { read_wasm_memories } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
+  create_halt_error,
   HALT_KERNEL,
   type Imports,
   type Instance,
+  uncatchable,
   kernel_imports,
   type MachineTerminationReason,
   memory_bytes,
@@ -65,7 +67,7 @@ function user_imports({
   prepare(): void;
   imports: Imports["user"];
 } {
-  const HALT_USER = Symbol("halt user");
+  const HALT_USER = create_halt_error("halt user");
   // Values of enum wasm_handler_result in asm/wasm_imports.h.
   const WASM_HANDLER_ESCAPED = 1;
 
@@ -183,6 +185,31 @@ function user_imports({
     instance = create_instance(context);
   }
 
+  // For host work done on top of guest frames. Halts and guest exceptions
+  // (C++ throws, longjmp out of a signal handler) keep going; anything else
+  // becomes a trap, so the guest cannot catch it and run on.
+  function guest_safe(error: unknown): unknown {
+    if (error === HALT_USER || error === HALT_KERNEL) return error;
+    if (error instanceof WebAssembly.Exception) return error;
+    return uncatchable(error);
+  }
+
+  // Looks up a guest function pointer the kernel is about to call.
+  function user_function(
+    fn: UserWord,
+    length: number,
+    message = "Invalid function signature",
+  ): Function {
+    assert(instance);
+
+    const { __indirect_function_table } = instance.exports;
+    assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
+
+    const f = __indirect_function_table.get(user_word_number(fn));
+    assert(typeof f === "function" && f.length === length, message);
+    return f;
+  }
+
   return {
     get context() {
       return context;
@@ -271,7 +298,17 @@ function user_imports({
         pending = null;
       },
       instantiate(fresh_memory) {
-        instantiate(Boolean(fresh_memory));
+        // An exec has already committed to the new image, and the old
+        // image's frames are beneath this call: it must not catch a failure
+        // (a data segment out of bounds, say, or an exception from the new
+        // image's start function) and run on in replaced memory. A halt from
+        // that start function keeps its identity for call().
+        try {
+          instantiate(Boolean(fresh_memory));
+        } catch (error) {
+          if (error === HALT_USER || error === HALT_KERNEL) throw error;
+          throw uncatchable(error);
+        }
       },
       call() {
         for (;;) {
@@ -294,15 +331,7 @@ function user_imports({
         assert(parent);
 
         call_entry = () => {
-          assert(instance);
-
-          const { __indirect_function_table } = instance.exports;
-          assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
-
-          const f = __indirect_function_table.get(user_word_number(fn));
-          assert(typeof f === "function" && f.length === 1, "Invalid function signature");
-
-          f(arg);
+          user_function(fn, 1)(arg);
 
           // throw new Error("thread entrypoint reached the end without exiting");
           console.warn("thread entrypoint reached the end without exiting");
@@ -327,29 +356,25 @@ function user_imports({
       },
 
       // signal handling:
+      // Signal handlers run on top of the interrupted guest's frames, so a
+      // bad handler must not surface there as a catchable error.
       call_signal_handler(fn, sig) {
-        assert(instance);
-
-        const { __indirect_function_table } = instance.exports;
-        assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
-
-        const f = __indirect_function_table.get(user_word_number(fn));
-        assert(typeof f === "function" && f.length === 1, "Invalid function signature");
-
-        return run_handler(() => f(sig)) ? 0 : WASM_HANDLER_ESCAPED;
+        try {
+          const f = user_function(fn, 1);
+          return run_handler(() => f(sig)) ? 0 : WASM_HANDLER_ESCAPED;
+        } catch (error) {
+          throw guest_safe(error);
+        }
       },
       call_siginfo_handler(trampoline, fn, sig) {
-        assert(instance);
-
-        const { __indirect_function_table } = instance.exports;
-        assert(__indirect_function_table instanceof WebAssembly.Table, "Invalid function table");
-
-        const f = __indirect_function_table.get(user_word_number(trampoline));
-        assert(typeof f === "function" && f.length === 2, "Invalid siginfo trampoline");
-
         siginfo_copy_results.push(null);
         try {
-          if (!run_handler(() => f(fn, sig))) return WASM_HANDLER_ESCAPED;
+          try {
+            const f = user_function(trampoline, 2, "Invalid siginfo trampoline");
+            if (!run_handler(() => f(fn, sig))) return WASM_HANDLER_ESCAPED;
+          } catch (error) {
+            throw guest_safe(error);
+          }
           return siginfo_copy_results.at(-1) ?? -22;
         } finally {
           // Non-local exits can unwind the kernel callback before its C cleanup.
