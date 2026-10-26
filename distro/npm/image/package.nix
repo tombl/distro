@@ -1,14 +1,58 @@
 {
+  apk-tools-host,
+  builderImage,
   bytes,
+  busybox,
   ext4Root,
+  jq,
   kernel,
+  lib,
   linux-guest,
+  mkImage,
   node-workspace,
   pkgs,
   rootfs,
 }:
 
 let
+  # mkImage's passthru carries the APKs it would install; reading them does
+  # not build the image itself.
+  testPackages = lib.listToAttrs (
+    map (package: lib.nameValuePair package.name package)
+      (mkImage {
+        name = "lowland-image-test-packages";
+        packages = [
+          busybox
+          jq
+        ];
+      }).packages
+  );
+  busyboxPackage = testPackages.busybox;
+  jqPackage = testPackages.jq;
+
+  # A repository index that nothing signs, which the build helper must refuse
+  # even when local packages are installed without signature checks.
+  unsignedRepository =
+    pkgs.runCommand "lowland-image-unsigned-repository"
+      {
+        nativeBuildInputs = [ apk-tools-host ];
+      }
+      ''
+        mkdir -p $out/wasm32
+        cp ${jqPackage}/${jqPackage.filename} $out/wasm32/${jqPackage.filename}
+        apk --allow-untrusted mkndx --output $out/wasm32/Packages.adb $out/wasm32/*.apk
+      '';
+
+  # The directory layout test/assets.ts consumes, via LOWLAND_IMAGE_TEST_ASSETS
+  # or by building this attribute itself. A local package keeps the build
+  # helper test hermetic in the network-less Nix sandbox.
+  test-assets = pkgs.linkFarm "lowland-image-test-assets" {
+    "busybox.apk" = "${busyboxPackage}/${busyboxPackage.filename}";
+    "jq.apk" = "${jqPackage}/${jqPackage.filename}";
+    "rootfs.ext4" = ext4Root;
+    "unsigned-repository" = unsignedRepository;
+  };
+
   # The workspace with every native artifact @lowland/image and its tests load
   # package-relative.
   materialize = ''
@@ -18,6 +62,7 @@ let
     cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
     cp -rT ${linux-guest.package}/dist packages/linux-guest/dist
     cp ${rootfs} packages/image/rootfs.erofs
+    cp ${builderImage} packages/image/builder.erofs
   '';
 
   package = pkgs.stdenvNoCC.mkDerivation {
@@ -70,8 +115,8 @@ let
       runHook preBuild
 
       ${materialize}
-      LOWLAND_IMAGE_TEST_EXT4=${ext4Root} \
-        timeout --kill-after=5 300 pnpm --filter=@lowland/image test
+      LOWLAND_IMAGE_TEST_ASSETS=${test-assets} \
+        timeout --kill-after=5 600 pnpm --filter=@lowland/image test
 
       runHook postBuild
     '';
@@ -84,7 +129,7 @@ in
 package
 // {
   checks.tests = {
-    ext4-root = ext4Root;
+    assets = test-assets;
     inherit integration;
   };
 }
