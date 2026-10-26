@@ -295,6 +295,18 @@ export class ProtocolError extends Error {
   }
 }
 
+/**
+ * The guest agent started but could not enter the system root, for example
+ * because no attached filesystem is labeled `LOWLAND_ROOT`. `bootMachine()`
+ * rejects with this error; the message is the agent's own diagnostic.
+ */
+export class GuestBootError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GuestBootError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // struct stat64 — the layout fstatat64 (__NR_fstatat64 = 79) fills on this
 // ILP32 arch. Confirmed via fs/stat.c: SYSCALL_DEFINE4(

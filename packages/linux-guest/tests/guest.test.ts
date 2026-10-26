@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { blockDevice, bootMachine } from "@lowland/kernel";
-import { guestAgent, SystemError } from "../src/index.ts";
+import { blockDevice, bootMachine, type VsockDevice, vsockDevice } from "@lowland/kernel";
+import { GuestSession } from "../src/conn.ts";
+import { GuestBootError, guestAgent, ProtocolError, SystemError } from "../src/index.ts";
 import {
+  agent_device,
   ext4_root_device,
   ext4_rootfs,
   readonly_ext4_root_device,
@@ -96,8 +98,21 @@ guest_test("root discovery", async (_t, fixture) => {
   assert.deepEqual(status, { success: true, code: 0, signal: null });
 });
 
+function boot_failure(message: string) {
+  return (error: unknown) => error instanceof GuestBootError && error.message === message;
+}
+
+const no_root = boot_failure("no supported filesystem is labeled LOWLAND_ROOT");
+
+test("rejects a machine without a system disk", async () => {
+  await assert.rejects(bootMachine({ cpus: 1, plugins: [guestAgent()] }), no_root);
+});
+
 test("rejects more than one system disk", async () => {
-  await assert.rejects(() => boot(root_device(), [root_device()]));
+  await assert.rejects(
+    () => boot(root_device(), [root_device()]),
+    boot_failure("multiple filesystems are labeled LOWLAND_ROOT"),
+  );
 });
 
 test("rejects more than one guest agent", async () => {
@@ -185,21 +200,145 @@ test("boots an uncleanly closed ext4 system disk read-only", async () => {
 });
 
 test("rejects a system disk with the wrong label", async () => {
-  await assert.rejects(() => boot(wrong_root_device()));
+  await assert.rejects(() => boot(wrong_root_device()), no_root);
 });
 
 test("rejects a system disk without a label", async () => {
   const empty = new Uint8Array(4096);
-  await assert.rejects(() =>
-    boot(
-      blockDevice({
-        capacity: empty.byteLength,
-        read(offset, target) {
-          const source = empty.subarray(offset, offset + target.byteLength);
-          target.set(source);
-          return source.byteLength;
-        },
-      }),
-    ),
+  await assert.rejects(
+    () =>
+      boot(
+        blockDevice({
+          capacity: empty.byteLength,
+          read(offset, target) {
+            const source = empty.subarray(offset, offset + target.byteLength);
+            target.set(source);
+            return source.byteLength;
+          },
+        }),
+      ),
+    no_root,
   );
+});
+
+// Boots the pristine ext4 root beside a blank disk, copies the root onto that
+// disk, and runs `script` in the copy. The copy is mounted only once, so even
+// directories that are mountpoints in the running system can be removed.
+async function broken_root(script: string) {
+  const copy = new Uint8Array(ext4_rootfs.byteLength);
+  const { agent, machine } = await boot(ext4_root_device(), [ext4_root_device(copy)]);
+  try {
+    const result = await agent.run([
+      "sh",
+      "-ec",
+      `root=$(awk '$2 == "/" { print $1 }' /proc/mounts)
+      for disk in /dev/vd[a-z]; do
+        [ "$disk" = "$root" ] || [ -e "\${disk}1" ] || target=$disk
+      done
+      sync
+      dd if="$root" of="$target" bs=1M 2>/dev/null
+      mkdir /tmp/copy
+      mount -t ext4 "$target" /tmp/copy
+      cd /tmp/copy
+      ${script}
+      cd /
+      umount /tmp/copy
+      sync`,
+    ]);
+    assert.deepEqual(
+      result.status,
+      { success: true, code: 0, signal: null },
+      new TextDecoder().decode(result.stderr),
+    );
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+  return ext4_root_device(copy);
+}
+
+test("reports a system root that fails to mount", async () => {
+  await assert.rejects(
+    () => boot(ext4_root_device(new Uint8Array(ext4_rootfs.subarray(0, 64 * 1024)))),
+    (error) =>
+      error instanceof GuestBootError &&
+      /^mounting system root \/dev\/vd[a-z]: /.test(error.message),
+  );
+});
+
+test("reports a system root without a mountpoint for /run", async () => {
+  const root = await broken_root("rm -rf run");
+  await assert.rejects(
+    () => boot(root),
+    boot_failure("mounting system root tmpfs: No such file or directory"),
+  );
+});
+
+test("reports a system root that cannot be entered", async () => {
+  const root = await broken_root("rmdir dev");
+  await assert.rejects(
+    () => boot(root),
+    boot_failure("entering system root: No such file or directory"),
+  );
+});
+
+test("reports a system init that cannot start", async () => {
+  const root = await broken_root("printf '#!/missing-interpreter\\n' >init; chmod 755 init");
+  await assert.rejects(
+    () => boot(root),
+    boot_failure("starting system init: No such file or directory"),
+  );
+});
+
+test("a stalled client does not hide the boot failure from the next", async () => {
+  const vsock = vsockDevice();
+  const machine = await bootMachine({
+    cpus: 1,
+    args: ["root=PARTLABEL=LOWLAND_AGENT", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
+    plugins: [agent_device(), vsock],
+  });
+  try {
+    let stalled: Awaited<ReturnType<VsockDevice["connect"]>> | undefined;
+    const deadline = Date.now() + 30_000;
+    while (!stalled) {
+      try {
+        stalled = await vsock.connect(1024, { timeoutMs: 1000 });
+      } catch (error) {
+        if (Date.now() >= deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    try {
+      // One byte of a handshake, then silence, with the connection held open.
+      await stalled.write(new Uint8Array([0x54]));
+      const started = performance.now();
+      await assert.rejects(GuestSession.connect(vsock, { timeoutMs: 5000 }), no_root);
+      assert.ok(performance.now() - started < 5000);
+      assert.equal((await stalled.read()).byteLength, 0);
+    } finally {
+      stalled.close();
+    }
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+});
+
+test("rejects a truncated boot failure diagnostic", async () => {
+  const replies = [new Uint8Array([0x54, 0x4c, 0x4e, 0x58, 3, 0, 10, 0]), new Uint8Array(3)];
+  let closed = false;
+  const connection = {
+    async write() {},
+    async readExactly() {
+      return replies.shift()!;
+    },
+    close() {
+      closed = true;
+    },
+  };
+  const device = { connect: async () => connection } as unknown as VsockDevice;
+  await assert.rejects(GuestSession.connect(device), (error) => {
+    return error instanceof ProtocolError && /closed during handshake/.test(error.message);
+  });
+  assert.ok(closed);
 });
