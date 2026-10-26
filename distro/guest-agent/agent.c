@@ -10,8 +10,8 @@
  * The session connection carries no requests. Its only job is to be a death
  * signal that cannot be stuck behind a blocked syscall. Each session runs in
  * its own process, so EOF tears down its threads and descriptors atomically;
- * PID 1 then kills and reaps the remaining descendants before accepting the
- * next session.
+ * that process's parent, a per-session keeper, then kills and reaps the
+ * remaining descendants before PID 1 accepts the next session.
  *
  * See distro/guest-agent/protocol.md for the frozen contract.
  */
@@ -40,6 +40,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <dirent.h>
 #include <linux/vm_sockets.h>
 #include <unistd.h>
 
@@ -708,6 +709,7 @@ static int listener(unsigned port, int backlog)
 }
 
 enum { session_stack_size = 64 * 1024 };
+static _Alignas(16) char keeper_stack[session_stack_size];
 static _Alignas(16) char session_stack[session_stack_size];
 
 struct session_worker_args {
@@ -722,11 +724,6 @@ static int session_worker(void *opaque)
 	pthread_t reaper;
 	int lane_listener, rc;
 
-	/* Keep commands and their descendants in a session-owned process group.
-	 * PID 1 can then tear down only that session without touching /init. */
-	if (setpgid(0, 0) == -1)
-		_exit(1);
-	close(args->session_listener);
 	/* Adopt descendants orphaned by commands so the session's reaper can
 	 * collect them while the session is still alive. */
 	if (prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
@@ -746,6 +743,89 @@ static int session_worker(void *opaque)
 		_exit(0);
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
 	_exit(rc ? 1 : 0);
+}
+
+static pid_t parent_pid(const char *pid)
+{
+	char path[32], stat[512], *end;
+	ssize_t length;
+	long ppid;
+	int fd;
+
+	if (snprintf(path, sizeof(path), "/proc/%s/stat", pid) >= (int)sizeof(path))
+		return -1;
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return -1;
+	length = read(fd, stat, sizeof(stat) - 1);
+	close(fd);
+	if (length <= 0)
+		return -1;
+	stat[length] = 0;
+	/* "pid (comm) state ppid ...", where comm may itself contain ')'. */
+	end = strrchr(stat, ')');
+	if (!end || sscanf(end + 1, " %*c %ld", &ppid) != 1)
+		return -1;
+	return (pid_t)ppid;
+}
+
+/* SIGKILLs every process this subreaper has adopted until none remain. A
+ * killed process's own children are adopted here in turn, so the loop covers
+ * the whole subtree whatever sessions and process groups commands created. */
+static int kill_descendants(void)
+{
+	pid_t self = getpid();
+
+	for (;;) {
+		DIR *proc = opendir("/proc");
+		struct dirent *entry;
+		pid_t waited;
+
+		if (!proc)
+			return -1;
+		while ((entry = readdir(proc)))
+			if (entry->d_name[0] >= '1' && entry->d_name[0] <= '9' &&
+			    parent_pid(entry->d_name) == self)
+				kill((pid_t)atoi(entry->d_name), SIGKILL);
+		closedir(proc);
+		do
+			waited = waitpid(-1, NULL, 0);
+		while (waited == -1 && errno == EINTR);
+		if (waited == -1)
+			return errno == ECHILD ? 0 : -1;
+		while (waitpid(-1, NULL, WNOHANG) > 0)
+			;
+	}
+}
+
+/* Each session runs under a keeper: a subreaper parent that outlives the
+ * session worker. Commands may leave the session's process group, and a
+ * terminal command leads its own session, so neither can identify them once
+ * the worker is gone; instead its exit hands every surviving descendant to
+ * the keeper, which kills them before PID 1 accepts another session. */
+static int session_keeper(void *opaque)
+{
+	struct session_worker_args *args = opaque;
+	pid_t worker, waited;
+	int status;
+
+	/* Keep the session out of PID 1's process group, so no signal aimed at
+	 * /init's group reaches it. */
+	if (setpgid(0, 0) == -1 || prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
+		_exit(1);
+	close(args->session_listener);
+	args->session_listener = -1;
+	worker = clone(session_worker, session_stack + session_stack_size,
+		       SIGCHLD, args);
+	if (worker == -1)
+		_exit(1);
+	close(args->fd);
+	do
+		waited = waitpid(worker, &status, 0);
+	while (waited == -1 && errno == EINTR);
+	if (waited == -1 || kill_descendants())
+		_exit(1);
+	_exit(WIFEXITED(status) ? WEXITSTATUS(status) : 1);
 }
 
 static int mount_if_needed(const char *source, const char *target,
@@ -1044,7 +1124,7 @@ int main(void)
 	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
 	for (;;) {
 		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
-		pid_t worker, waited;
+		pid_t keeper, waited;
 		int status;
 		struct session_worker_args args;
 
@@ -1059,38 +1139,23 @@ int main(void)
 			.fd = fd,
 			.session_listener = session_listener,
 		};
-		worker = clone(session_worker, session_stack + session_stack_size,
+		/* The keeper's exit means the session's worker and every one of
+		 * its descendants are gone, so the next session starts clean. */
+		keeper = clone(session_keeper, keeper_stack + session_stack_size,
 			       SIGCHLD, &args);
-		if (worker == -1) {
+		if (keeper == -1) {
 			perror("clone session");
 			close(fd);
 			return 1;
 		}
 		close(fd);
 		do {
-			waited = waitpid(worker, &status, 0);
+			waited = waitpid(keeper, &status, 0);
 			if (waited == -1 && errno == EINTR)
 				check_system_init(system_init);
 		} while (waited == -1 && errno == EINTR);
 		if (waited == -1) {
 			perror("wait session");
-			return 1;
-		}
-
-		/* The worker's exit closes every session-owned descriptor and lane.
-		 * Its descendants are now owned by PID 1; kill and reap its process
-		 * group before allowing another session to start. */
-		if (kill(-worker, SIGKILL) == -1 && errno != ESRCH) {
-			perror("kill session descendants");
-			return 1;
-		}
-		for (;;) {
-			waited = waitpid(-worker, NULL, 0);
-			if (waited > 0 || (waited == -1 && errno == EINTR))
-				continue;
-			if (waited == -1 && errno == ECHILD)
-				break;
-			perror("reap session descendants");
 			return 1;
 		}
 		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
