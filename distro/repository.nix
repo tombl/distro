@@ -47,6 +47,7 @@
 # machines upgrade it with `apk upgrade`.
 apk.mkRepository {
   name = "repository";
+  description = "tombl site demo repository";
   packages = {
     inherit
       apk-tools
