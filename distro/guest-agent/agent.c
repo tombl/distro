@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/reboot.h>
@@ -851,16 +852,47 @@ static int make_directory(const char *path, mode_t mode)
 	return 0;
 }
 
-/* An ext4 root is persistent and mounts read-write directly. An EROFS root is
- * immutable, so it always sits beneath a temporary OverlayFS upper layer: the
- * system then behaves like a normal writable root for the lifetime of a boot. */
+static int root_read_only(const struct system_root *root, bool *read_only)
+{
+	int fd, error, value = 0;
+
+	if (root->filesystem == root_filesystem_erofs) {
+		*read_only = true;
+		return 0;
+	}
+	fd = open(root->device, O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return -1;
+	error = ioctl(fd, BLKROGET, &value);
+	close(fd);
+	*read_only = value;
+	return error == -1 ? -1 : 0;
+}
+
+/* A writable ext4 root is persistent and mounts read-write directly. A
+ * read-only root, either EROFS or a filesystem on a read-only block device,
+ * always sits beneath a temporary OverlayFS upper layer: the system then
+ * behaves like a normal writable root for the lifetime of a boot.
+ *
+ * An ext4 image that was last mounted read-write and never unmounted still
+ * needs journal recovery, and ext4 refuses to replay a journal on a read-only
+ * device. The lower layer is never written, so mount it with norecovery: the
+ * root is then the filesystem as of its last journal checkpoint, and changes
+ * that were only committed to the journal are not visible. */
 static int mount_system_root(const struct system_root *root)
 {
-	if (root->filesystem == root_filesystem_ext4)
-		return mount(root->device, "/mnt", "ext4", 0, NULL);
+	bool ext4 = root->filesystem == root_filesystem_ext4;
+	const char *type = ext4 ? "ext4" : "erofs";
+	bool read_only;
+
+	if (root_read_only(root, &read_only))
+		return -1;
+	if (!read_only)
+		return mount(root->device, "/mnt", type, 0, NULL);
 	if (make_directory("/lower", 0755) ||
 	    make_directory("/overlay", 0755) ||
-	    mount(root->device, "/lower", "erofs", MS_RDONLY, NULL) == -1 ||
+	    mount(root->device, "/lower", type, MS_RDONLY,
+		  ext4 ? "norecovery" : NULL) == -1 ||
 	    mount("tmpfs", "/overlay", "tmpfs", 0, NULL) == -1 ||
 	    make_directory("/overlay/upper", 0755) ||
 	    make_directory("/overlay/work", 0755) ||
