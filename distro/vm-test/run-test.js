@@ -27,9 +27,8 @@ if (!linuxPath || !initramfsPath || !Number.isSafeInteger(cpus) || cpus < 1) {
   throw new Error("usage: run-test.js [--cpus <count>] <linux-module> <initramfs> [disk ...]");
 }
 
-const { blockDevice, bootConsole, bootMachine, consoleDevice, entropyDevice } = await import(
-  pathToFileURL(linuxPath).href
-);
+const { blockDevice, bootConsole, bootMachine, consoleDevice, entropyDevice, vsockDevice } =
+  await import(pathToFileURL(linuxPath).href);
 
 let resolveResult;
 const result = new Promise((resolve) => {
@@ -131,12 +130,27 @@ function consoleOutput({ failWhenClosed }) {
   });
 }
 
+// An echo service guests can reach at (VMADDR_CID_HOST, port 7), covering
+// guest-initiated vsock connections end to end. Reading zero bytes means the
+// guest half-closed, so the echo is drained before the connection goes away.
+async function echo(connection) {
+  for (;;) {
+    const chunk = await connection.read();
+    if (chunk.byteLength === 0) return;
+    await connection.write(chunk);
+  }
+}
+
+const vsock = vsockDevice();
+vsock.listen(7, echo);
+
 const input = new TransformStream();
 const inputWriter = input.writable.getWriter();
 const devices = [
   bootConsole(consoleOutput({ failWhenClosed: false })),
   consoleDevice(input.readable, consoleOutput({ failWhenClosed: true })),
   entropyDevice(),
+  vsock,
 ];
 
 const disks = [];

@@ -201,6 +201,7 @@ in
       tls = installedCheck { name = "tls"; };
       user-memory-growth = installedCheck { name = "user-memory-growth"; };
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
+      vsock = installedCheck { name = "vsock"; };
       wallclock = installedCheck { name = "wallclock"; };
     };
   };
