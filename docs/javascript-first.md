@@ -304,7 +304,10 @@ export interface LinuxOptions {
 and output. `spawn()` returns a live process with streaming standard I/O. Both
 take a complete argv array; neither combines an `argv[0]` parameter with a
 second arguments array. Both reuse the guest agent's `ExecOptions`, `RunResult`,
-and `ChildProcess` rather than defining parallel types.
+and `ChildProcess` rather than defining parallel types. Their `terminal`
+option runs a command on a guest pseudoterminal, as `lowland run` does for a
+terminal, so a page can attach a shell to a terminal emulator such as xterm.js
+and forward its resizes with `ChildProcess.resize()`.
 
 The options are the `lowland run` flags in object form, but they take objects
 rather than host paths, so `Linux` runs unchanged in Node and in browsers. Only
@@ -349,6 +352,7 @@ Options:
   -e, --env <name[=value]>       Set or pass through an environment variable (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
       --network <none|host>      Connect the machine to the host's network (default: none)
+  -t, --tty                      Run the command on a terminal; stdin must be one
 ```
 
 The short flags follow `docker run`. `--network host` gives the guest a
@@ -380,10 +384,17 @@ machine that cannot run. `lowland run` reports 126 and 127 when the command
 cannot be executed or is not found, 128 plus the signal number when a signal
 kills it, and otherwise the command's own status.
 Command mode uses ordinary pipes and preserves separate stdout and stderr.
-With no command, `lowland run` starts `sh -i` when stdin is a terminal and
-`sh` otherwise. The guest agent has no PTY yet, so this shell runs over pipes,
-without job control or resize events. Ctrl-C reaches the shell as SIGINT.
-Interactive mode moves to a guest PTY once the agent provides one.
+With no command, `lowland run` starts `sh`. When stdin is a terminal, the
+shell runs on a guest pseudoterminal of the host terminal's size, so it is
+interactive and has job control. `-t` does the same for a given command, like
+`docker run -it`, and fails when stdin is not a terminal. There is no `-i`:
+standard input is always connected. On a terminal, lowland puts the host
+terminal in raw mode until the command exits, restoring it even when lowland
+fails or is signalled, so Ctrl-C, Ctrl-Z, and Ctrl-D go to the guest's line
+discipline rather than to lowland. Host window size changes resize the guest
+terminal, `TERM` defaults to `xterm`, and SIGINT, SIGTERM, and SIGHUP sent to
+lowland go to the command. Standard error shares the terminal with standard
+output, as it does on any terminal. When stdin is not a terminal, the shell runs over pipes.
 
 `@lowland/image` remains a library without a command of its own. `lowland`
 depends on it and owns every command-line entry point.
