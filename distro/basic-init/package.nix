@@ -257,6 +257,7 @@ in
       user-memory-rlimit = installedCheck { name = "user-memory-rlimit"; };
       vfork-exec = vforkExecCheck "vfork-exec" 1;
       vfork-exec-smp = vforkExecCheck "vfork-exec-smp" 2;
+      vsock = installedCheck { name = "vsock"; };
       wallclock = installedCheck { name = "wallclock"; };
     };
   };
