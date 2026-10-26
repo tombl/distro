@@ -167,5 +167,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     lowland = callPackage ./npm/lowland.nix { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
+    test-assets = callPackage ./npm/test-assets.nix { };
   }
 )

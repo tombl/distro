@@ -1,34 +1,15 @@
-// The only nix-aware part of the test suite. The contract is a single
-// directory containing the guest and lifecycle assets:
-// the nix check points LINUX_GUEST_TEST_ASSETS at it, and outside nix we
-// build it ourselves.
-import { dirname, join, resolve } from "node:path";
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { blockDevice } from "@lowland/kernel";
+import { testAsset } from "../../../scripts/test-assets.ts";
 
-const ATTRIBUTE = "linux-guest.checks.tests.assets";
-const exec_file = promisify(execFile);
-
-async function build() {
-  const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const { stdout } = await exec_file("nix", [
-    "build",
-    `${repository_root}#${ATTRIBUTE}`,
-    "--no-link",
-    "--print-out-paths",
-  ]);
-  return stdout.trim();
+async function asset(name: string) {
+  return readFile(await testAsset(name));
 }
 
-const directory = process.env.LINUX_GUEST_TEST_ASSETS ?? (await build());
-
-export const agent_disk = await readFile(join(directory, "agent.img"));
-export const rootfs = await readFile(join(directory, "rootfs.erofs"));
-export const ext4_rootfs = await readFile(join(directory, "rootfs.ext4"));
-export const wrong_rootfs = await readFile(join(directory, "wrong-root.erofs"));
+export const agent_disk = await asset("agent.img");
+export const rootfs = await asset("rootfs.erofs");
+export const ext4_rootfs = await asset("rootfs.ext4");
+export const wrong_rootfs = await asset("wrong-root.erofs");
 
 export function root_device() {
   return blockDevice({
@@ -92,18 +73,18 @@ export function wrong_root_device() {
 }
 
 /** A static guest executable that exercises the guest-side network stack. */
-export const network_test = await readFile(join(directory, "network-test"));
+export const network_test = await asset("network-test");
 
 /** A static guest executable whose entrypoint executes Wasm `unreachable`. */
-export const user_trap = await readFile(join(directory, "user-trap"));
+export const user_trap = await asset("user-trap");
 
 /** A static guest executable that compares raw getdents64 and held-directory inode numbers. */
-export const getdents_inode = await readFile(join(directory, "getdents-inode"));
+export const getdents_inode = await asset("getdents-inode");
 
-const lifecycle_rootfs = await readFile(join(directory, "lifecycle-rootfs.erofs"));
+const lifecycle_rootfs = await asset("lifecycle.erofs");
 
 export const lifecycle_assets = {
-  initramfs: await readFile(join(directory, "boot-initramfs.cpio")),
+  initramfs: await asset("boot.cpio"),
   root: () =>
     blockDevice({
       capacity: lifecycle_rootfs.byteLength,

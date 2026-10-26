@@ -1,75 +1,65 @@
-{ lib, pkgs }:
+{
+  lib,
+  node-workspace,
+  pkgs,
+}:
 
 let
   driverVersion = pkgs.playwright-driver.version;
   fontconfig = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
 
-  runtime = pkgs.runCommand "playwright-test-runtime" { } ''
-    mkdir -p $out/node_modules/@playwright
-    cp -r ${pkgs.playwright-test}/lib/node_modules/@playwright/test $out/node_modules/@playwright/test
-    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright $out/node_modules/playwright
-    cp -r ${pkgs.playwright-test}/lib/node_modules/playwright-core $out/node_modules/playwright-core
-  '';
-
   browsersFor =
-    project:
+    browser:
     pkgs.playwright-driver.selectBrowsers {
-      withChromium = project == "chromium";
-      withChromiumHeadlessShell = project == "chromium";
-      withFirefox = project == "firefox";
-      withWebkit = project == "webkit";
+      withChromium = browser == "chromium";
+      withChromiumHeadlessShell = browser == "chromium";
+      withFirefox = browser == "firefox";
+      withWebkit = browser == "webkit";
       withFfmpeg = false;
       fontconfig_file = fontconfig;
     };
 in
 {
-  assertCompatible =
-    packageJsonPath:
-    let
-      package = builtins.fromJSON (builtins.readFile packageJsonPath);
-      playwrightVersion = package.devDependencies."@playwright/test";
-    in
-    lib.assertMsg (playwrightVersion == driverVersion) ''
-      ${package.name} pins @playwright/test ${playwrightVersion}, but nixpkgs playwright-driver is ${driverVersion}
-    '';
-
-  linkRuntime = destination: ''
-    mkdir -p ${destination}/node_modules
-    ln -s ${runtime}/node_modules/@playwright ${destination}/node_modules/@playwright
-    ln -s ${runtime}/node_modules/playwright ${destination}/node_modules/playwright
-    ln -s ${runtime}/node_modules/playwright-core ${destination}/node_modules/playwright-core
-  '';
-
+  # Runs one project of a package's Playwright suite with `pnpm test`, using
+  # the workspace's @playwright/test and nixpkgs' matching browser builds.
   mkCheck =
     {
       name,
+      package,
+      directory,
       project,
-      suite,
+      browser ? project,
+      built,
+      assets,
+      paths ? [ ],
     }:
-    pkgs.runCommand name
-      {
-        nativeBuildInputs = [ pkgs.nodejs_26 ];
-        passthru.ci.heavy = true;
-      }
-      ''
-        export TMPDIR="$NIX_BUILD_TOP/tmp"
-        export HOME="$TMPDIR/home"
-        export XDG_CACHE_HOME="$TMPDIR/cache"
-        export XDG_CONFIG_HOME="$TMPDIR/config"
+    node-workspace.mkTest {
+      inherit name built assets;
+      paths = [ directory ] ++ paths;
+      env = {
+        __EGL_VENDOR_LIBRARY_FILENAMES = "${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json";
+        FONTCONFIG_FILE = fontconfig;
+        LIBGL_ALWAYS_SOFTWARE = "1";
+        LIBGL_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
+        PLAYWRIGHT_BROWSERS_PATH = browsersFor browser;
+        PLAYWRIGHT_HOST_PLATFORM_OVERRIDE = "ubuntu-24.04";
+        PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
+        WEBKIT_DISABLE_DMABUF_RENDERER = "1";
+      };
+      command = ''
+        export HOME="$TMPDIR/home" XDG_CACHE_HOME="$TMPDIR/cache" XDG_CONFIG_HOME="$TMPDIR/config"
+        export PLAYWRIGHT_OUTPUT_DIR="$TMPDIR/test-results"
         mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
 
-        export __EGL_VENDOR_LIBRARY_FILENAMES=${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
-        export FONTCONFIG_FILE=${fontconfig}
-        export LIBGL_ALWAYS_SOFTWARE=1
-        export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
-        export PLAYWRIGHT_BROWSERS_PATH=${browsersFor project}
-        export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu-24.04
-        export PLAYWRIGHT_OUTPUT_DIR="$TMPDIR/test-results"
-        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
-        export WEBKIT_DISABLE_DMABUF_RENDERER=1
+        # The browser builds are tied to one Playwright release.
+        version=$(node -p 'require("./${directory}/node_modules/@playwright/test/package.json").version')
+        if [ "$version" != ${lib.escapeShellArg driverVersion} ]; then
+          echo "the pnpm catalog pins @playwright/test $version, but nixpkgs playwright-driver is ${driverVersion}" >&2
+          exit 1
+        fi
 
-        cd ${suite}
-        node node_modules/@playwright/test/cli.js test --project=${project} --reporter=line
-        touch $out
+        pnpm --filter=${package} check
+        pnpm --filter=${package} test --project=${project} --reporter=line
       '';
+    };
 }

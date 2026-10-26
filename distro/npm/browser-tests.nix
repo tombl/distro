@@ -1,5 +1,4 @@
 {
-  basic-init,
   bytes,
   lib,
   kernel,
@@ -8,123 +7,74 @@
   lowland-image,
   pkgs,
   playwright,
-  repository,
-  site,
-  vm-test,
+  test-assets,
 }:
 
 let
-  source = ../../packages/browser-tests;
-
-  baseSuite = pkgs.runCommand "browser-tests" { } ''
-    mkdir -p \
-      $out/node_modules/@lowland/bytes \
-      $out/node_modules/@lowland/kernel \
-      $out/node_modules/@lowland/guest \
-      $out/node_modules/@lowland/image \
-      $out/node_modules/lowland
-    ${playwright.linkRuntime "$out"}
-    cp ${source}/app.js $out/app.js
-    cp ${source}/index.html $out/index.html
-    cp ${source}/playwright.config.js $out/playwright.config.js
-    cp ${site.package}/_astro/opfs-disk-worker-*.js $out/opfs-disk-worker.js
-    cp ${vm-test.bootInitramfs} $out/boot.cpio
-    cp ${basic-init.schedulerHandoffDisk} $out/scheduler-handoff.erofs
-    cp ${basic-init.remoteMemoryDisk} $out/remote-vm.erofs
-    cp ${basic-init.posixSpawnStressDisk} $out/posix-spawn-stress.erofs
-    cp ${source}/server.js $out/server.js
-    cp ${linux-guest.package.checks.tests.assets}/rootfs.erofs $out/rootfs.erofs
-    mkdir $out/tests
-    cp ${source}/tests/boot.spec.js $out/tests/
-    cp ${source}/tests/lowland.spec.js $out/tests/
-    cp ${source}/tests/opfs.js $out/tests/
-    cp ${source}/tests/opfs-disk.spec.js $out/tests/
-    cp ${source}/tests/posix-spawn-stress.spec.js $out/tests/
-    cp ${source}/tests/remote-memory.spec.js $out/tests/
-    cp ${source}/tests/spawn-stress.spec.js $out/tests/
-    cp ${source}/tests/virtio-fs.spec.js $out/tests/
-    cp -r ${bytes}/. $out/node_modules/@lowland/bytes/
-    cp -r ${kernel}/. $out/node_modules/@lowland/kernel/
-    tar -xzf ${linux-guest.package}/package.tgz --strip-components=1 -C $out/node_modules/@lowland/guest
-    # The facade's own code only: the specs pass their root image explicitly.
-    cp ${lowland-image.package}/package.json $out/node_modules/@lowland/image/
-    cp -r ${lowland-image.package}/dist $out/node_modules/@lowland/image/
-    cp ${lowland}/package.json $out/node_modules/lowland/
-    cp -r ${lowland}/dist $out/node_modules/lowland/
-  '';
-
-  suite = baseSuite // {
-    checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
-      (lib.genAttrs projects check)
-      // {
-        site-live = siteCheck "chromium";
-        site-live-firefox = siteCheck "firefox";
-        service-worker = serviceWorkerCheck;
-      }
-    );
-  };
-
-  projects = [
-    "chromium"
-    "firefox"
-    "webkit"
-  ];
-
   check =
-    project:
+    {
+      project,
+      browser ? project,
+      built ? { },
+      assets ? [ ],
+    }:
     playwright.mkCheck {
       name = "browser-tests-${project}";
-      suite = baseSuite;
-      inherit project;
+      package = "@lowland/browser-tests";
+      directory = "packages/browser-tests";
+      assets = test-assets.select assets;
+      inherit project browser built;
     };
 
-  siteSuite = pkgs.runCommand "site-browser-tests" { } ''
-      mkdir -p $out/tests
-      ${playwright.linkRuntime "$out"}
-      cp ${source}/playwright.config.js $out/playwright.config.js
-      cp ${source}/server.js $out/server.js
-      cp ${source}/tests/site-live.spec.js $out/tests/site-live.spec.js
-      cp -rL ${site.package}/. $out/
-      # Production and previews fetch the independently published repository.
-      # The integration test vendors the exact candidate repository so it can
-      # validate an install before those packages have reached production.
-      cp -rL ${repository} $out/apk
-      # After installation the service worker controls the page, so Playwright's
-      # page-level route cannot intercept guest fetches. Route only this test
-      # artifact's package requests to the vendored candidate repository; the
-      # production worker continues to fetch assets.low.land directly.
-      substituteInPlace $out/service-worker.js \
-        --replace-fail '  const { request } = event;' '  let { request } = event;' \
-        --replace-fail '  const url = new URL(request.url);' '  let url = new URL(request.url);
-    if (url.hostname === "assets.low.land" && url.pathname.startsWith("/apk/")) {
-      request = new Request(new URL(url.pathname + url.search, location.origin), request);
-      url = new URL(request.url);
-    }'
-  '';
-
-  serviceWorkerSuite = pkgs.runCommand "service-worker-browser-tests" { } ''
-    mkdir -p $out/tests
-    ${playwright.linkRuntime "$out"}
-    cp ${source}/playwright.config.js $out/playwright.config.js
-    cp ${source}/server.js $out/server.js
-    cp ${source}/app.js $out/app.js
-    cp ${source}/tests/service-worker.spec.js $out/tests/service-worker.spec.js
-    cp ${source}/index.html $out/index.html
-    cp ${site.package}/service-worker.js $out/service-worker.js
-  '';
-
-  siteCheck =
+  engine =
     project:
-    playwright.mkCheck {
-      name = "browser-tests-site-live-${project}";
+    check {
       inherit project;
-      suite = siteSuite;
+      built = {
+        inherit bytes kernel lowland;
+        linux-guest = linux-guest.package;
+        # lowland.spec.js imports the facade; it boots /rootfs.erofs itself.
+        lowland-image = lowland-image.package;
+      };
+      assets = [
+        "boot.cpio"
+        "opfs-disk-worker.js"
+        "posix-spawn-stress.erofs"
+        "remote-vm.erofs"
+        "rootfs.erofs"
+        "scheduler-handoff.erofs"
+      ];
     };
-  serviceWorkerCheck = playwright.mkCheck {
-    name = "browser-tests-service-worker";
-    project = "chromium";
-    suite = serviceWorkerSuite;
-  };
 in
-assert playwright.assertCompatible (source + "/package.json");
-suite
+# The suite runs from the source tree, so the package itself is only the
+# owner of its checks, one per project in playwright.config.js.
+pkgs.runCommand "browser-tests" { } "mkdir $out"
+// {
+  checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+    lib.genAttrs [ "chromium" "firefox" "webkit" ] engine
+    // {
+      # The site's service worker is built with the site, not kept as a source file.
+      service-worker = check {
+        project = "service-worker";
+        browser = "chromium";
+        assets = [ "site" ];
+      };
+      site-live = check {
+        project = "site-live";
+        browser = "chromium";
+        assets = [
+          "apk"
+          "site"
+        ];
+      };
+      site-live-firefox = check {
+        project = "site-live-firefox";
+        browser = "firefox";
+        assets = [
+          "apk"
+          "site"
+        ];
+      };
+    }
+  );
+}

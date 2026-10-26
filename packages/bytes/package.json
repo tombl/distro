@@ -24,6 +24,6 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
-    "typescript": "^7"
+    "typescript": "catalog:"
   }
 }

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check": "tsc --noEmit && tsc -p tests",
     "test": "node --test --test-concurrency=1"
   },
   "dependencies": {
@@ -13,7 +13,7 @@
     "@lowland/kernel": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.9.5",
-    "typescript": "^5.9.3"
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
   }
 }

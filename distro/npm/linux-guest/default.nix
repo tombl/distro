@@ -14,13 +14,13 @@ let
   };
 in
 {
-  package = callPackage ./package.nix {
-    inherit
-      agentDisk
-      ext4Root
-      rootfs
-      wrongRoot
-      ;
-  };
+  package = callPackage ./package.nix { inherit agentDisk; };
+  # The images also serve as test assets; see ../test-assets.nix.
+  inherit
+    agentDisk
+    ext4Root
+    rootfs
+    wrongRoot
+    ;
   recurseForDerivations = true;
 }
