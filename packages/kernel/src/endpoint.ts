@@ -34,9 +34,18 @@ export interface EndpointHandlers {
 const as_error = (value: unknown, fallback: string) =>
   value instanceof Error ? value : new Error(fallback);
 
+// Node's MessagePort implements both interfaces. Its EventTarget side wraps
+// every message in a MessageEvent, which loads undici on first use: ~30 ms of
+// CPU in each worker. Its emitter side delivers the data directly. Any other
+// endpoint keeps the interface it already used.
+const is_node_port = (endpoint: Endpoint): endpoint is EmitterEndpoint =>
+  typeof MessagePort === "function" &&
+  endpoint instanceof MessagePort &&
+  typeof (endpoint as { on?: unknown }).on === "function";
+
 /** @internal */
 export function listen_endpoint(endpoint: Endpoint, handlers: EndpointHandlers) {
-  if ("addEventListener" in endpoint) {
+  if (!is_node_port(endpoint) && "addEventListener" in endpoint) {
     const on_message = (event: MessageEvent) => handlers.message(event.data);
     const on_message_error = (_event: MessageEvent) =>
       handlers.error?.(new Error("could not deserialize endpoint message"));
