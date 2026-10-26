@@ -204,6 +204,7 @@ in
         source = "tests/cxx-exceptions.cpp";
       };
       eventfd-unix = installedCheck { name = "eventfd-unix"; };
+      epoll = installedCheck { name = "epoll"; };
       exec-args = installedCheck { name = "exec-args"; };
       futex = installedCheck { name = "futex"; };
       futex-mm = installedCheck { name = "futex-mm"; };
