@@ -1,4 +1,4 @@
-/* Guest agent (protocol v3): a dumb syscall executor.
+/* Guest agent (protocol v4): a dumb syscall executor.
  *
  * The host opens one connection to the session port plus up to `max_lanes`
  * lanes on the lane port. A lane carries strictly serial request/reply
@@ -48,7 +48,7 @@ enum {
 	session_port = 1024,
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
-	protocol_version = 3,
+	protocol_version = 4,
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
@@ -62,6 +62,7 @@ enum request_kind {
 	req_syscall = 1,
 	req_spawn = 2,
 	req_reap = 3,
+	req_spawn_terminal = 4,
 };
 
 enum arg_kind {
@@ -172,6 +173,15 @@ struct cursor {
 	size_t length;
 	size_t offset;
 };
+
+static bool cursor_u16(struct cursor *cursor, uint16_t *out)
+{
+	if (cursor->length - cursor->offset < 2)
+		return false;
+	*out = load_u16(cursor->data + cursor->offset);
+	cursor->offset += 2;
+	return true;
+}
 
 static bool cursor_u32(struct cursor *cursor, uint32_t *out)
 {
@@ -349,6 +359,7 @@ static const char *environment_path(char *const envp[])
  * Try each supplied PATH entry with posix_spawn instead: file actions run
  * before exec, so relative entries are correctly resolved after chdir. */
 static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions,
+			   const posix_spawnattr_t *attributes,
 			   char *const argv[], char *const envp[])
 {
 	const char *file = argv[0];
@@ -359,7 +370,7 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 	if (!*file)
 		return ENOENT;
 	if (strchr(file, '/'))
-		return posix_spawn(pid, file, actions, NULL, argv, envp);
+		return posix_spawn(pid, file, actions, attributes, argv, envp);
 	file_length = strnlen(file, NAME_MAX + 1);
 	if (file_length > NAME_MAX)
 		return ENAMETOOLONG;
@@ -379,7 +390,8 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 			candidate[directory_length++] = '/';
 		memcpy(candidate + directory_length, file, file_length + 1);
 
-		error = posix_spawn(pid, candidate, actions, NULL, argv, envp);
+		error = posix_spawn(pid, candidate, actions, attributes, argv,
+				    envp);
 		if (!error)
 			return 0;
 		if (error == EACCES)
@@ -392,11 +404,29 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 	}
 }
 
+/* Allocates a pseudoterminal for a terminal spawn and sizes it before the
+ * child can ask. The agent keeps only the master; the child opens the
+ * subsidiary by name after setsid, which makes it the controlling terminal.
+ * Returns an errno value. */
+static int open_terminal(int *master, char *name, size_t name_size,
+			 uint16_t rows, uint16_t columns)
+{
+	struct winsize size = { .ws_row = rows, .ws_col = columns };
+
+	*master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+	if (*master == -1 || grantpt(*master) == -1 || unlockpt(*master) == -1)
+		return errno;
+	if (ioctl(*master, TIOCSWINSZ, &size) == -1)
+		return errno;
+	return ptsname_r(*master, name, name_size);
+}
+
 /* Spawn request body: { len u32 } then { argc u32 } argc x string,
- * string cwd, { envc u32 } envc x string. The length prefix exists so a
- * payload that fails to parse is already consumed and can get an EINVAL
- * reply without desyncing the lane. */
-static int serve_spawn(int fd)
+ * string cwd, { envc u32 } envc x string. A terminal spawn's payload starts
+ * with { rows u16, columns u16 }. The length prefix exists so a payload that
+ * fails to parse is already consumed and can get an EINVAL reply without
+ * desyncing the lane. */
+static int serve_spawn(int fd, bool terminal)
 {
 	uint8_t len_bytes[4];
 	uint8_t *payload = NULL;
@@ -408,8 +438,13 @@ static int serve_spawn(int fd)
 	int in[2] = { -1, -1 };
 	int out[2] = { -1, -1 };
 	int err[2] = { -1, -1 };
+	int master = -1;
+	char terminal_name[32];
+	uint16_t rows = 0, columns = 0;
 	posix_spawn_file_actions_t actions;
-	bool have_actions = false;
+	posix_spawnattr_t attributes;
+	sigset_t default_signals;
+	bool have_actions = false, have_attributes = false;
 	int slot = -1;
 	int spawn_errno;
 	pid_t pid;
@@ -428,6 +463,8 @@ static int serve_spawn(int fd)
 		goto out;
 	cur = (struct cursor){ payload, len, 0 };
 
+	if (terminal && (!cursor_u16(&cur, &rows) || !cursor_u16(&cur, &columns)))
+		goto invalid;
 	if (!cursor_u32(&cur, &argc) || argc < 1 || argc > max_arguments)
 		goto invalid;
 	argv = calloc((size_t)argc + 1, sizeof(char *));
@@ -468,26 +505,54 @@ static int serve_spawn(int fd)
 		goto out;
 	}
 
-	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
-	    pipe2(err, O_CLOEXEC) == -1) {
-		spawn_errno = errno;
-		goto spawn_failed;
-	}
 	spawn_errno = posix_spawn_file_actions_init(&actions);
 	if (spawn_errno)
 		goto spawn_failed;
 	have_actions = true;
-	if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
-	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
-	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])) ||
-	    (spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
+	spawn_errno = posix_spawnattr_init(&attributes);
+	if (spawn_errno)
+		goto spawn_failed;
+	have_attributes = true;
+	/* The agent ignores SIGPIPE so a vanished host cannot kill it; commands
+	 * get the default, or every pipeline in a shell would report EPIPE. A
+	 * terminal command leads its own session, and opening the terminal
+	 * without O_NOCTTY there makes it the controlling terminal. */
+	sigemptyset(&default_signals);
+	sigaddset(&default_signals, SIGPIPE);
+	if ((spawn_errno = posix_spawnattr_setsigdefault(&attributes,
+							 &default_signals)) ||
+	    (spawn_errno = posix_spawnattr_setflags(
+		     &attributes, POSIX_SPAWN_SETSIGDEF |
+					  (terminal ? POSIX_SPAWN_SETSID : 0))))
+		goto spawn_failed;
+	if (terminal) {
+		if ((spawn_errno = open_terminal(&master, terminal_name,
+						 sizeof(terminal_name), rows,
+						 columns)) ||
+		    (spawn_errno = posix_spawn_file_actions_addopen(
+			     &actions, 0, terminal_name, O_RDWR, 0)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 1)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 2)))
+			goto spawn_failed;
+	} else {
+		if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
+		    pipe2(err, O_CLOEXEC) == -1) {
+			spawn_errno = errno;
+			goto spawn_failed;
+		}
+		if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])))
+			goto spawn_failed;
+	}
+	if ((spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
 		goto spawn_failed;
 	/* Publish the pid before the sole reaper can classify a fast exit. */
 	pthread_mutex_lock(&children_mutex);
-	spawn_errno = spawn_with_path(&pid, &actions, argv, envp);
+	spawn_errno = spawn_with_path(&pid, &actions, &attributes, argv, envp);
 	if (!spawn_errno) {
 		children[slot].pid = pid;
 		pthread_cond_broadcast(&children_changed);
@@ -496,10 +561,18 @@ static int serve_spawn(int fd)
 	if (spawn_errno)
 		goto spawn_failed;
 	posix_spawn_file_actions_destroy(&actions);
+	posix_spawnattr_destroy(&attributes);
+	store_u32(body, (uint32_t)pid);
+	if (terminal) {
+		store_u32(body + 4, (uint32_t)master);
+		if (write_reply(fd, 0, 0) || write_all(fd, body, 8))
+			goto out;
+		rc = 0;
+		goto out;
+	}
 	close_fd(&in[0]);
 	close_fd(&out[1]);
 	close_fd(&err[1]);
-	store_u32(body, (uint32_t)pid);
 	store_u32(body + 4, (uint32_t)in[1]);
 	store_u32(body + 8, (uint32_t)out[0]);
 	store_u32(body + 12, (uint32_t)err[0]);
@@ -517,6 +590,9 @@ spawn_failed:
 		strerror(spawn_errno));
 	if (have_actions)
 		posix_spawn_file_actions_destroy(&actions);
+	if (have_attributes)
+		posix_spawnattr_destroy(&attributes);
+	close_fd(&master);
 	close_fd(&in[0]);
 	close_fd(&in[1]);
 	close_fd(&out[0]);
@@ -605,7 +681,8 @@ static void serve_lane(int fd)
 				return;
 			break;
 		case req_spawn:
-			if (serve_spawn(fd))
+		case req_spawn_terminal:
+			if (serve_spawn(fd, kind == req_spawn_terminal))
 				return;
 			break;
 		case req_reap:

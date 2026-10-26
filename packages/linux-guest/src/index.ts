@@ -32,4 +32,4 @@ export {
   type UdpConnection,
   type UdpConnectOptions,
 } from "./network.ts";
-export { ChildProcess, type CommandStatus, type Signal } from "./process.ts";
+export { ChildProcess, type CommandStatus, type Signal, type TerminalSize } from "./process.ts";
