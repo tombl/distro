@@ -1154,6 +1154,8 @@ static void check_system_init(pid_t pid)
 		abort();
 	}
 	fprintf(stderr, "linux-guest-agent: system init exited; powering off\n");
+	/* The kernel's power-off path does not write back the page cache. */
+	sync();
 	if (reboot(RB_POWER_OFF) == -1) {
 		perror("linux-guest-agent: powering off");
 		abort();
