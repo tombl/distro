@@ -147,55 +147,56 @@ the guest's connection closed mid-request. The service can catch that and report
 
 ## Terminals
 
-The guest agent does not need a terminal, but people like one. `consoleDevice(input, output)`
-adds a console that the guest sees as `/dev/hvc0`. `input` is a `ReadableStream` of the bytes a
-keyboard sends, and `output` a `WritableStream` of the bytes to display. The guest's line
-discipline handles echo, line editing and Ctrl+C, so your page only moves bytes.
+The guest agent does not need a terminal, but people like one. The `terminal` option runs a
+program on a pseudoterminal in the guest instead of on pipes. The program leads its own session
+with that terminal as its controlling terminal, so a shell gets job control, and the guest's line
+discipline handles echo, line editing, Ctrl+C and Ctrl+Z. Your page only moves bytes. Standard
+error arrives in `stdout`, as on any terminal.
 
-With [xterm.js](https://xtermjs.org/):
+With [xterm.js](https://xtermjs.org/), starting a new shell whenever the last one exits:
 
 ```ts
 import { Terminal } from "@xterm/xterm";
-import { consoleDevice } from "@lowland/kernel";
 
-const terminal = new Terminal({ convertEol: true });
+const terminal = new Terminal();
 terminal.open(document.querySelector("#terminal")!);
+const encoder = new TextEncoder();
 
-const input = new ReadableStream<string>({
-  start(controller) {
-    terminal.onData((data) => controller.enqueue(data));
-  },
-}).pipeThrough(new TextEncoderStream());
-
-const output = new WritableStream<Uint8Array>({
-  write(data) {
-    return new Promise<void>((resolve) => terminal.write(data, resolve));
-  },
-});
-
-const tty = consoleDevice(input, output);
-terminal.onResize(() => tty.resize(terminal.cols, terminal.rows));
-tty.resize(terminal.cols, terminal.rows);
+for (;;) {
+  const shell = await guest.exec(["sh"], {
+    terminal: { rows: terminal.rows, columns: terminal.cols },
+    env: { TERM: "xterm-256color" },
+  });
+  const input = shell.stdin.getWriter();
+  const typing = terminal.onData((data) => void input.write(encoder.encode(data)));
+  const resizing = terminal.onResize(({ rows, cols }) => {
+    void shell.resize({ rows, columns: cols });
+  });
+  const output = shell.stdout.pipeTo(
+    new WritableStream({
+      write: (data) => new Promise<void>((resolve) => terminal.write(data, resolve)),
+    }),
+  );
+  await shell.status;
+  typing.dispose();
+  resizing.dispose();
+  await Promise.race([output, new Promise((resolve) => setTimeout(resolve, 1000))]);
+  await shell.close();
+}
 ```
 
 Resolving each write only after xterm.js has drawn it applies backpressure. A guest that
 prints faster than the page can draw slows down, so output does not pile up in memory.
 `resize()` sends `SIGWINCH` to the foreground program.
 
-Nothing runs on the console until you start it. Start a shell on it, and start another
-whenever it exits:
+`stdout` only ends once every program has closed the terminal, and a job the shell left in the
+background can keep it open. That is why the loop waits for `status`, then gives the output a
+second to finish. `close()` hangs up the terminal, which ends `stdout` and discards anything the
+guest has not yet delivered.
 
-```ts
-for (;;) {
-  const shell = await guest.exec(
-    ["sh", "-c", "exec setsid cttyhack sh </dev/hvc0 >/dev/hvc0 2>&1"],
-    { env: { TERM: "xterm-256color" } },
-  );
-  await shell.status;
-}
-```
-
-`setsid cttyhack` makes `/dev/hvc0` the shell's controlling terminal, so Ctrl+C works.
+`consoleDevice(input, output)` from `@lowland/kernel` is the other way to get a terminal. It
+adds a console that the guest sees as `/dev/hvc0`, which shows kernel messages and suits an
+image whose `/init` starts a shell with `exec setsid cttyhack sh`.
 
 Kernel messages from early boot go nowhere unless you add `bootConsole(output)`. Add it when a
 machine fails before the guest agent is ready, which usually means the image is wrong.
