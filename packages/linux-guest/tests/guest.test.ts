@@ -455,7 +455,7 @@ test("a stalled client does not hide the boot failure from the next", async () =
 });
 
 test("rejects a truncated boot failure diagnostic", async () => {
-  const replies = [new Uint8Array([0x54, 0x4c, 0x4e, 0x58, 3, 0, 10, 0]), new Uint8Array(3)];
+  const replies = [new Uint8Array([0x54, 0x4c, 0x4e, 0x58, 4, 0, 10, 0]), new Uint8Array(3)];
   let closed = false;
   const connection = {
     async write() {},
