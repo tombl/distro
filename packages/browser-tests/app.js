@@ -515,3 +515,40 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
     persistedLast: persisted.at(-1),
   };
 };
+
+// Boots the lowland Linux facade, which takes objects rather than host paths,
+// with an OPFS directory mounted. It is imported here rather than at the top
+// so a failure to load it fails only this scenario.
+globalThis.lowlandLinux = async () => {
+  const { Linux } = await import("lowland");
+  const storage = await navigator.storage.getDirectory();
+  await storage.removeEntry("lowland-linux-test", { recursive: true }).catch(() => {});
+  const directory = await storage.getDirectoryHandle("lowland-linux-test", { create: true });
+  const input = await directory.getFileHandle("input.txt", { create: true });
+  const writable = await input.createWritable();
+  await writable.write("from the page\n");
+  await writable.close();
+
+  const linux = await Linux.create({
+    image: "/rootfs.erofs",
+    mounts: [{ source: new BrowserFS(directory), path: "/work" }],
+  });
+  let result;
+  try {
+    result = await linux.run([
+      "sh",
+      "-c",
+      "uname -s; pwd; cat /work/input.txt; echo from the guest > /work/output.txt",
+    ]);
+  } finally {
+    await linux[Symbol.asyncDispose]();
+  }
+  const output = await (await directory.getFileHandle("output.txt")).getFile();
+  const decoder = new TextDecoder();
+  return {
+    status: result.status,
+    stdout: decoder.decode(result.stdout),
+    stderr: decoder.decode(result.stderr),
+    persisted: await output.text(),
+  };
+};

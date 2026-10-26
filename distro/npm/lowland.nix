@@ -22,6 +22,7 @@ let
     cp -rT ${linux-guest.package}/dist packages/linux-guest/dist
     cp -rT ${lowland-image.package}/dist packages/image/dist
     cp ${lowland-image.builderImage} packages/image/builder.erofs
+    cp ${lowland-image.rootfs} packages/image/rootfs.erofs
   '';
 
   package = pkgs.stdenvNoCC.mkDerivation {
@@ -41,7 +42,7 @@ let
 
       ${materialize}
       pnpm --filter=lowland check
-      pnpm --filter=lowland test
+      pnpm --filter=lowland test:unit
       pnpm --filter=lowland build
 
       runHook postBuild
@@ -97,8 +98,38 @@ let
       mkdir $out
     '';
   };
+
+  # Boots machines through lowland run and the Linux API: commands, exit
+  # statuses, standard I/O, host directories, disks, and the ephemeral root.
+  integration = pkgs.stdenvNoCC.mkDerivation {
+    pname = "lowland-integration-test";
+    version = "0.0.0";
+    passthru.ci.heavy = true;
+    src = ../..;
+    env.CI = "true";
+    pnpmDeps = node-workspace.deps;
+    nativeBuildInputs = [
+      pkgs.nodejs
+      pkgs.pnpmConfigHook
+      node-workspace.pnpm
+    ];
+
+    buildPhase = ''
+      runHook preBuild
+
+      ${materialize}
+      LOWLAND_TEST_ASSETS=${assets} \
+        timeout --kill-after=5 900 pnpm --filter=lowland test
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      mkdir $out
+    '';
+  };
 in
 package
 // {
-  checks.tests = { inherit smoke; };
+  checks.tests = { inherit integration smoke; };
 }
