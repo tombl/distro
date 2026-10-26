@@ -1,11 +1,10 @@
 # rustc built from source against the fork LLVM, with in-tree
 # wasm32-unknown-linux-musl and wasm64-unknown-linux-musl targets. The source
 # is the nightly dist tarball for the commit the fenix pin ships, plus the
-# compiler patch series exported from github:tombl/rust wasm-linux:
-#   git format-patch --no-signature --zero-commit 0e29c21d9..wasm-linux -o distro/rustc/patches
+# compiler patches in patches/, which apply to that tarball.
 #
-# wasm64 Linux's 8-byte va_arg slots wait on tombl/rust wasm64-linux-varargs,
-# which only matches a caller once the LLVM pin includes the same layout
+# wasm64-linux-va-arg.patch gives wasm64 Linux 8-byte va_arg slots. It is not
+# applied: it only matches a caller once the LLVM pin includes the same layout
 # (tombl/llvm-project#1).
 #
 # Only the host compiler and host std are built here. Target standard
