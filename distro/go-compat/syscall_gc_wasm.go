@@ -6,30 +6,37 @@
 
 package unix
 
-import "syscall"
+import (
+	"syscall"
+	_ "unsafe" // for go:linkname
+)
 
-func Syscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno) {
-	return syscall.Syscall(trap, a1, a2, a3)
-}
+// wasm has no assembly jump into the syscall package. Bind the raw calls to
+// the standard library's implementations directly instead of forwarding
+// through Go functions: as bodyless declarations, calls to them keep their
+// unsafe.Pointer-derived arguments alive, and no intervening frame can grow
+// the stack after an address has been converted to a uintptr.
 
-func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno) {
-	return syscall.Syscall6(trap, a1, a2, a3, a4, a5, a6)
-}
+//go:linkname Syscall syscall.Syscall
+func Syscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
-func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno) {
-	return syscall.RawSyscall(trap, a1, a2, a3)
-}
+//go:linkname Syscall6 syscall.Syscall6
+func Syscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
-func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno) {
-	return syscall.RawSyscall6(trap, a1, a2, a3, a4, a5, a6)
-}
+//go:linkname RawSyscall syscall.RawSyscall
+func RawSyscall(trap, a1, a2, a3 uintptr) (r1, r2 uintptr, err syscall.Errno)
 
+//go:linkname RawSyscall6 syscall.RawSyscall6
+func RawSyscall6(trap, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2 uintptr, err syscall.Errno)
+
+//go:nosplit
 func SyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr) {
-	r1, r2, _ = syscall.Syscall(trap, a1, a2, a3)
+	r1, r2, _ = Syscall(trap, a1, a2, a3)
 	return
 }
 
+//go:nosplit
 func RawSyscallNoError(trap, a1, a2, a3 uintptr) (r1, r2 uintptr) {
-	r1, r2, _ = syscall.RawSyscall(trap, a1, a2, a3)
+	r1, r2, _ = RawSyscall(trap, a1, a2, a3)
 	return
 }
