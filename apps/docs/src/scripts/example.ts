@@ -48,8 +48,9 @@ function finish(example: HTMLElement) {
 // Safari has no `using` declarations yet, and every example closes its machine
 // with one.
 const usingSupported = (() => {
+  const AsyncFunction = async function () {}.constructor as FunctionConstructor;
   try {
-    new Function("{ using resource = null; }");
+    new AsyncFunction("{ await using resource = null; }");
     return true;
   } catch {
     return false;
@@ -59,7 +60,9 @@ const usingSupported = (() => {
 async function strip(code: string, lang: string): Promise<string> {
   if (!usingSupported) {
     const { transpile } = await import("./example-editor");
-    return (await transpile(code, lang)) ?? code;
+    const compiled = await transpile(code, lang);
+    if (compiled === null) throw new Error("The example compiler failed to load. Run it again.");
+    return compiled;
   }
   if (lang !== "ts") return code;
   const { transform } = await import("sucrase");
