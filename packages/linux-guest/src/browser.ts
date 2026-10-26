@@ -140,12 +140,20 @@ function default_metadata(kind: FileSystemHandle["kind"]): Metadata {
  * When this adapter observes removal, existing descriptors become stale and
  * fail rather than targeting a new entry created at the same path. An external
  * remove-and-recreate with no observed missing state cannot be distinguished.
- * Writes and truncations through one adapter are serialized per node, but
- * other adapters or applications can still race its portable API operations.
+ * Writes and truncations through one adapter are serialized per node, and its
+ * namespace operations are serialized across the whole adapter, but other
+ * adapters or applications can still race its portable API operations.
  */
 export class BrowserFS implements FS<Node, Handle> {
   readonly root: Node;
   readonly #nodes = new Map<string, Node>();
+  // Namespace operations await the browser between observing a path and
+  // recording the result in #nodes, so overlapping ones could apply a stale
+  // observation over a newer one: a lookup that saw no entry would detach a
+  // node another call had just created there. Running them one at a time
+  // keeps #nodes consistent with this adapter's own changes. The virtio-fs
+  // device already issues requests one at a time, so this costs it nothing.
+  #namespace = Promise.resolve();
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = new Node([], root, default_metadata("directory"));
@@ -212,6 +220,18 @@ export class BrowserFS implements FS<Node, Handle> {
     }
   }
 
+  async #exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.#namespace;
+    const completion = Promise.withResolvers<void>();
+    this.#namespace = completion.promise;
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      completion.resolve();
+    }
+  }
+
   async #child(
     parent: FileSystemDirectoryHandle,
     name: string,
@@ -239,7 +259,11 @@ export class BrowserFS implements FS<Node, Handle> {
     }
   }
 
-  async lookup(parent: Node, name: string) {
+  lookup(parent: Node, name: string) {
+    return this.#exclusive(() => this.#lookup(parent, name));
+  }
+
+  async #lookup(parent: Node, name: string) {
     const parent_node = this.#as_node(parent);
     const parts = [...parent_node.parts, valid_name(name)];
     const handle = await this.#child(this.#directory(parent), name);
@@ -327,7 +351,11 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Handle(current);
   }
 
-  async create(parent: Node, name: string, flags: number, context: FSCreateContext) {
+  create(parent: Node, name: string, flags: number, context: FSCreateContext) {
+    return this.#exclusive(() => this.#create(parent, name, flags, context));
+  }
+
+  async #create(parent: Node, name: string, flags: number, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     const directory = this.#directory(parent);
@@ -403,7 +431,11 @@ export class BrowserFS implements FS<Node, Handle> {
     return new Handle(this.#as_node(node));
   }
 
-  async readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
+  readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
+    return this.#exclusive(() => this.#readdir(node, handle));
+  }
+
+  async #readdir(node: Node, handle: Handle): Promise<FSDirectoryEntry<Node>[]> {
     const current = this.#open_handle(node, handle);
     const result: FSDirectoryEntry<Node>[] = [];
     for await (const [name, handle] of this.#directory(node).entries()) {
@@ -415,7 +447,11 @@ export class BrowserFS implements FS<Node, Handle> {
     return result;
   }
 
-  async mkdir(parent: Node, name: string, context: FSCreateContext) {
+  mkdir(parent: Node, name: string, context: FSCreateContext) {
+    return this.#exclusive(() => this.#mkdir(parent, name, context));
+  }
+
+  async #mkdir(parent: Node, name: string, context: FSCreateContext) {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     if (await this.#child(this.#directory(parent), name)) {
@@ -431,9 +467,13 @@ export class BrowserFS implements FS<Node, Handle> {
     return node;
   }
 
-  async unlink(parent: Node, name: string) {
+  unlink(parent: Node, name: string) {
+    return this.#exclusive(() => this.#unlink(parent, name));
+  }
+
+  async #unlink(parent: Node, name: string) {
     name = valid_name(name);
-    const child = await this.lookup(parent, name);
+    const child = await this.#lookup(parent, name);
     if (!child) throw new FSError("ENOENT");
     if (this.#as_node(child).handle.kind !== "file") {
       throw new FSError("EISDIR");
@@ -442,9 +482,13 @@ export class BrowserFS implements FS<Node, Handle> {
     this.#forget([...this.#as_node(parent).parts, name]);
   }
 
-  async rmdir(parent: Node, name: string) {
+  rmdir(parent: Node, name: string) {
+    return this.#exclusive(() => this.#rmdir(parent, name));
+  }
+
+  async #rmdir(parent: Node, name: string) {
     name = valid_name(name);
-    const child = await this.lookup(parent, name);
+    const child = await this.#lookup(parent, name);
     if (!child) throw new FSError("ENOENT");
     if (this.#as_node(child).handle.kind !== "directory") {
       throw new FSError("ENOTDIR");
@@ -474,13 +518,17 @@ export class BrowserFS implements FS<Node, Handle> {
     return output;
   }
 
-  async rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
+  rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
+    return this.#exclusive(() => this.#rename(oldParent, oldName, newParent, newName));
+  }
+
+  async #rename(oldParent: Node, oldName: string, newParent: Node, newName: string) {
     oldName = valid_name(oldName);
     newName = valid_name(newName);
     const old_parent = this.#as_node(oldParent);
     const new_parent = this.#as_node(newParent);
     if (old_parent === new_parent && oldName === newName) return;
-    const source = await this.lookup(old_parent, oldName);
+    const source = await this.#lookup(old_parent, oldName);
     if (!source) throw new FSError("ENOENT");
     const source_node = this.#as_node(source);
     const old_parts = [...old_parent.parts, oldName];
@@ -492,7 +540,7 @@ export class BrowserFS implements FS<Node, Handle> {
       throw new FSError("EINVAL", "cannot move a directory into itself");
     }
 
-    const existing = await this.lookup(new_parent, newName);
+    const existing = await this.#lookup(new_parent, newName);
     if (existing) {
       const existing_node = this.#as_node(existing);
       if (source_node.handle.kind === "directory" && existing_node.handle.kind !== "directory") {
