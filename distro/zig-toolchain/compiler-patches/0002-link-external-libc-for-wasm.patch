@@ -1,0 +1,96 @@
+diff --git a/src/link/Lld.zig b/src/link/Lld.zig
+index 6a5257c..7868bb8 100644
+--- a/src/link/Lld.zig
++++ b/src/link/Lld.zig
+@@ -218,7 +218,11 @@ pub fn createEmpty(
+         .wasm => output_mode != .Obj,
+         else => unreachable,
+     };
++    const distro_wasm_linux = target.cpu.arch == .wasm32 and
++        target.os.tag == .linux and target.abi == .musl;
+     const stack_size: u64 = options.stack_size orelse default: {
++        if (distro_wasm_linux)
++            break :default 8 * 1024 * 1024;
+         if (target.ofmt == .wasm and target.os.tag == .freestanding)
+             break :default 1 * 1024 * 1024; // 1 MiB
+         break :default 16 * 1024 * 1024; // 16 MiB
+@@ -1356,9 +1360,11 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
+     const comp = lld.base.comp;
+     const diags = &comp.link_diags;
+-    const shared_memory = comp.config.shared_memory;
++    const target = &comp.root_mod.resolved_target.result;
++    const distro_wasm_linux = target.cpu.arch == .wasm32 and
++        target.os.tag == .linux and target.abi == .musl;
++    const shared_memory = comp.config.shared_memory or distro_wasm_linux;
+     const export_memory = comp.config.export_memory;
+-    const import_memory = comp.config.import_memory;
+-    const target = &comp.root_mod.resolved_target.result;
++    const import_memory = comp.config.import_memory or distro_wasm_linux;
+     const base = &lld.base;
+     const wasm = &lld.ofmt.wasm;
+ 
+@@ -1444,7 +1450,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
+             try argv.append("--import-table");
+         }
+ 
+-        if (wasm.export_table) {
++        if (wasm.export_table or distro_wasm_linux) {
+             assert(!wasm.import_table);
+             try argv.append("--export-table");
+         }
+@@ -1464,7 +1470,9 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
+             try argv.append(arg);
+         }
+ 
+-        if (wasm.max_memory) |max_memory| {
++        const max_memory: ?u64 = wasm.max_memory orelse
++            if (distro_wasm_linux) 4 * 1024 * 1024 * 1024 else null;
++        if (max_memory) |value| {
+-            const arg = try std.fmt.allocPrint(arena, "--max-memory={d}", .{max_memory});
++            const arg = try std.fmt.allocPrint(arena, "--max-memory={d}", .{value});
+             try argv.append(arg);
+         }
+@@ -1534,6 +1542,21 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
+         const is_exe_or_dyn_lib = comp.config.output_mode == .Exe or
+             (comp.config.output_mode == .Lib and comp.config.link_mode == .dynamic);
+ 
++        const external_libc = comp.config.link_libc and is_exe_or_dyn_lib and
++            comp.libc_installation != null and target.os.tag != .wasi;
++        const csu: LibCInstallation.CrtPaths = if (external_libc)
++            try comp.getCrtPaths(arena)
++        else
++            .{};
++        if (csu.crt0) |path| try argv.append(try path.toString(arena));
++        if (csu.crti) |path| try argv.append(try path.toString(arena));
++        if (csu.crtbegin) |path| try argv.append(try path.toString(arena));
++
++        if (external_libc) {
++            try argv.append("-L");
++            try argv.append(comp.libc_installation.?.crt_dir.?);
++        }
++
+         if (comp.config.link_libc and is_exe_or_dyn_lib) {
+             if (target.os.tag == .wasi) {
+                 try argv.append(try comp.crtFileAsString(
+@@ -1591,6 +1615,13 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
+             try argv.append(try p.toStringZ(arena));
+         }
+ 
++        if (external_libc) {
++            try argv.appendSlice(target_util.libcFullLinkFlags(target));
++        }
++
++        if (csu.crtend) |path| try argv.append(try path.toString(arena));
++        if (csu.crtn) |path| try argv.append(try path.toString(arena));
++
+         try spawnLld(comp, arena, argv.items);
+ 
+         // Give +x to the .wasm file if it is an executable and the OS is WASI.
+@@ -1750,6 +1782,7 @@ const assert = std.debug.assert;
+ const fs = std.fs;
+ const log = std.log.scoped(.link);
+ const mem = std.mem;
++const LibCInstallation = std.zig.LibCInstallation;
+ 
+ const Compilation = @import("../Compilation.zig");
+ const Zcu = @import("../Zcu.zig");

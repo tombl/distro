@@ -1,0 +1,158 @@
+diff --git a/std/Io/Threaded.zig b/std/Io/Threaded.zig
+index c8dbb80..0799314 100644
+--- a/std/Io/Threaded.zig
++++ b/std/Io/Threaded.zig
+@@ -14870,11 +14870,99 @@
+     stderr: ?File,
+ };
+
+-fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Spawned {
+-    // wasm cannot implement fork's return-twice contract. This is replaced by
+-    // a callback clone in the next runtime tier.
+-    if (is_wasm_linux) return error.OperationUnsupported;
++const WasmCloneContext = struct {
++    options: process.SpawnOptions,
++    stdin_pipe: [2]posix.fd_t,
++    stdout_pipe: [2]posix.fd_t,
++    stderr_pipe: [2]posix.fd_t,
++    dev_null_fd: posix.fd_t,
++    prog_pipe: [2]posix.fd_t,
++    err_pipe: [2]posix.fd_t,
++    argv_buf: [:null]?[*:0]const u8,
++    env_block: process.Environ.PosixBlock,
++    path: []const u8,
++
++    fn callback(raw_context: ?*anyopaque) callconv(.c) c_int {
++        const context: *WasmCloneContext = @ptrCast(@alignCast(raw_context.?));
++        context.run();
++    }
++
++    fn run(context: *WasmCloneContext) noreturn {
++        const options = context.options;
++        if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
++        const ep1 = context.err_pipe[1];
++
++        setUpChildIo(options.stdin, context.stdin_pipe[0], posix.STDIN_FILENO, context.dev_null_fd) catch |err| forkBail(ep1, err);
++        setUpChildIo(options.stdout, context.stdout_pipe[1], posix.STDOUT_FILENO, context.dev_null_fd) catch |err| forkBail(ep1, err);
++        setUpChildIo(options.stderr, context.stderr_pipe[1], posix.STDERR_FILENO, context.dev_null_fd) catch |err| forkBail(ep1, err);
++
++        switch (options.cwd) {
++            .inherit => {},
++            .dir => |cwd| {
++                fchdir(cwd.handle) catch |err| forkBail(ep1, err);
++            },
++            .path => |cwd| {
++                chdir(cwd) catch |err| forkBail(ep1, err);
++            },
++        }
++
++        // Must happen after fchdir above, the cwd file descriptor might be
++        // equal to prog_fileno and be clobbered by this dup2 call.
++        const prog_fileno = 3;
++        if (context.prog_pipe[1] != -1) dup2(context.prog_pipe[1], prog_fileno) catch |err| forkBail(ep1, err);
++
++        if (options.gid) |gid| {
++            switch (posix.errno(posix.system.setregid(gid, gid))) {
++                .SUCCESS => {},
++                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
++                .INVAL => forkBail(ep1, error.InvalidUserId),
++                .PERM => forkBail(ep1, error.PermissionDenied),
++                else => forkBail(ep1, error.Unexpected),
++            }
++        }
++
++        if (options.uid) |uid| {
++            switch (posix.errno(posix.system.setreuid(uid, uid))) {
++                .SUCCESS => {},
++                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
++                .INVAL => forkBail(ep1, error.InvalidUserId),
++                .PERM => forkBail(ep1, error.PermissionDenied),
++                else => forkBail(ep1, error.Unexpected),
++            }
++        }
++
++        if (options.pgid) |pid| {
++            switch (posix.errno(posix.system.setpgid(0, pid))) {
++                .SUCCESS => {},
++                .ACCES => forkBail(ep1, error.ProcessAlreadyExec),
++                .INVAL => forkBail(ep1, error.InvalidProcessGroupId),
++                .PERM => forkBail(ep1, error.PermissionDenied),
++                else => forkBail(ep1, error.Unexpected),
++            }
++        }
++
++        if (options.start_suspended) {
++            switch (posix.errno(posix.system.kill(0, .STOP))) {
++                .SUCCESS => {},
++                .PERM => forkBail(ep1, error.PermissionDenied),
++                else => forkBail(ep1, error.Unexpected),
++            }
++        }
+
++        const err = posixExecv(options.expand_arg0, context.argv_buf.ptr[0].?, context.argv_buf.ptr, context.env_block, context.path);
++        forkBail(ep1, err);
++    }
++};
++
++extern "c" fn clone(
++    callback: *const fn (?*anyopaque) callconv(.c) c_int,
++    child_stack: *anyopaque,
++    flags: c_int,
++    context: ?*anyopaque,
++    ...,
++) c_int;
++
++fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Spawned {
+     // The child process does need to access (one end of) these pipes. However,
+     // we must initially set CLOEXEC to avoid a race condition. If another thread
+     // is racing to spawn a different child process, we don't want it to inherit
+@@ -14953,7 +15041,39 @@
+     t.scanEnviron(); // for PATH
+     const PATH = t.environ.string.PATH orelse default_PATH;
+
+-    const pid_result: posix.pid_t = fork: {
++    var clone_context: WasmCloneContext = .{
++        .options = options,
++        .stdin_pipe = stdin_pipe,
++        .stdout_pipe = stdout_pipe,
++        .stderr_pipe = stderr_pipe,
++        .dev_null_fd = dev_null_fd,
++        .prog_pipe = prog_pipe,
++        .err_pipe = err_pipe,
++        .argv_buf = argv_buf,
++        .env_block = env_block,
++        .path = PATH,
++    };
++
++    const pid_result: posix.pid_t = if (is_wasm_linux) clone: {
++        // The process gets a private copy of linear memory, including this
++        // stack and context. clone's callback form therefore expresses the
++        // fork-child path without returning twice through structured wasm.
++        const child_stack = try arena.alloc(u8, 256 * 1024);
++        const child_stack_top: *anyopaque = @ptrCast(child_stack.ptr + child_stack.len);
++        const rc = clone(
++            WasmCloneContext.callback,
++            child_stack_top,
++            @intCast(@intFromEnum(posix.SIG.CHLD)),
++            &clone_context,
++        );
++        switch (posix.errno(rc)) {
++            .SUCCESS => break :clone @intCast(rc),
++            .AGAIN => return error.SystemResources,
++            .NOMEM => return error.SystemResources,
++            .NOSYS => return error.OperationUnsupported,
++            else => |err| return posix.unexpectedErrno(err),
++        }
++    } else fork: {
+         const rc = posix.system.fork();
+         switch (posix.errno(rc)) {
+             .SUCCESS => break :fork @intCast(rc),
+@@ -14964,7 +15084,7 @@
+         }
+     };
+
+-    if (pid_result == 0) {
++    if (!is_wasm_linux and pid_result == 0) {
+         defer comptime unreachable; // We are the child.
+         if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
+         const ep1 = err_pipe[1];

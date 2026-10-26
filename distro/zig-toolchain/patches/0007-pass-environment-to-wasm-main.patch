@@ -1,0 +1,17 @@
+diff --git a/std/start.zig b/std/start.zig
+index 75f96d1..76829d8 100644
+--- a/std/start.zig
++++ b/std/start.zig
+@@ -25,7 +25,11 @@ comptime {
+     } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
+         if (builtin.link_libc and @hasDecl(root, "main")) {
+             if (is_wasm) {
+-                @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
++                if (native_os == .linux and builtin.target.isMuslLibC()) {
++                    @export(&main, .{ .name = "__main_argc_argv_envp" });
++                } else {
++                    @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
++                }
+             } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
+                 @export(&main, .{ .name = "main" });
+             }

@@ -1,0 +1,15 @@
+diff --git a/std/debug.zig b/std/debug.zig
+index 0e39031..24cfb11 100644
+--- a/std/debug.zig
++++ b/std/debug.zig
+@@ -1458,7 +1458,9 @@ pub fn getDebugInfoAllocator() Allocator {
+ }
+
+ /// Whether or not the current target can print useful debug information when a segfault occurs.
+-pub const have_segfault_handling_support = switch (native_os) {
++pub const have_segfault_handling_support = if (native_os == .linux and native_arch.isWasm() and builtin.target.isMuslLibC())
++    false
++else switch (native_os) {
+     .haiku,
+     .linux,
+     .serenity,
