@@ -262,7 +262,8 @@ export class Linux implements AsyncDisposable {
 
   /**
    * Runs a command and collects its status, stdout, and stderr. It runs in
-   * `/` unless `options.cwd` says otherwise.
+   * `/` unless `options.cwd` says otherwise. With `options.terminal`, it
+   * runs on a guest terminal and its standard error is part of `stdout`.
    */
   run(argv: readonly string[], options?: ExecOptions): Promise<RunResult> {
     return this.#guest.run(argv, { ...options, cwd: options?.cwd ?? "/" });
@@ -271,6 +272,24 @@ export class Linux implements AsyncDisposable {
   /**
    * Starts a command with streaming standard I/O. It runs in `/` unless
    * `options.cwd` says otherwise.
+   *
+   * With `options.terminal`, the command runs on a guest terminal instead of
+   * pipes, leading its own session, so a shell gets job control. Its
+   * `stdin` takes keys, such as `\x03` for Ctrl-C, `stdout` shows the
+   * terminal's output, standard error included, and `resize()` changes the
+   * terminal's size.
+   *
+   * @example Connect a shell to a terminal emulator in a page
+   * ```ts
+   * const shell = await linux.spawn(["sh"], {
+   *   terminal: { rows: term.rows, columns: term.cols },
+   * });
+   * void shell.stdout.pipeTo(new WritableStream({ write: (bytes) => term.write(bytes) }));
+   * const keys = shell.stdin.getWriter();
+   * term.onData((data) => void keys.write(new TextEncoder().encode(data)));
+   * term.onResize(({ rows, cols }) => void shell.resize({ rows, columns: cols }));
+   * await shell.status;
+   * ```
    */
   async spawn(argv: readonly string[], options?: ExecOptions): Promise<ChildProcess> {
     const child = await this.#guest.exec(argv, { ...options, cwd: options?.cwd ?? "/" });

@@ -534,12 +534,16 @@ globalThis.lowlandLinux = async () => {
     mounts: [{ source: new BrowserFS(directory), path: "/work" }],
   });
   let result;
+  let terminal;
   try {
     result = await linux.run([
       "sh",
       "-c",
       "uname -s; pwd; cat /work/input.txt; echo from the guest > /work/output.txt",
     ]);
+    terminal = await linux.run(["sh", "-c", "test -t 0 && stty size"], {
+      terminal: { rows: 30, columns: 100 },
+    });
   } finally {
     await linux[Symbol.asyncDispose]();
   }
@@ -550,5 +554,6 @@ globalThis.lowlandLinux = async () => {
     stdout: decoder.decode(result.stdout),
     stderr: decoder.decode(result.stderr),
     persisted: await output.text(),
+    terminal: { status: terminal.status, stdout: decoder.decode(terminal.stdout) },
   };
 };

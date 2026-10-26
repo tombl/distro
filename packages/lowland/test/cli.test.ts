@@ -10,7 +10,10 @@ import { SystemError } from "@lowland/guest";
 import type { Linux } from "../src/linux.ts";
 import { createServer, connect } from "node:net";
 import { once } from "node:events";
-import { execute, exitCode, parseRunArgs, socket_readable } from "../src/run.ts";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { ExecOptions, TerminalSize } from "@lowland/guest";
+import { execute, exitCode, parseRunArgs, socket_readable, type HostTerminal } from "../src/run.ts";
 import { UsageError } from "../src/usage.ts";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -48,6 +51,12 @@ describe("lowland", () => {
       result.stderr,
       /^lowland run: --disk expects path:guest\[:ro\], got x\n\nUsage: lowland run/,
     );
+  });
+
+  it("refuses --tty when stdin is not a terminal", () => {
+    const result = lowland("run", "-t", "true");
+    assert.equal(result.status, 125);
+    assert.equal(result.stderr, "lowland run: --tty needs stdin to be a terminal\n");
   });
 
   it("rejects unknown commands", () => {
@@ -186,6 +195,7 @@ describe("lowland run arguments", () => {
         command: ["ls", "-l", "--env"],
         cwd: "/work",
         env: { A: "1", HOME: "/home/me" },
+        tty: false,
       },
     );
   });
@@ -200,8 +210,14 @@ describe("lowland run arguments", () => {
       command: ["true"],
       cwd: "/",
       env: {},
+      tty: false,
     });
     assert.equal(parseRunArgs(["-w", "/srv", "pwd"], {})?.cwd, "/srv");
+  });
+
+  it("takes -t for --tty", () => {
+    assert.equal(parseRunArgs(["-t", "top"], {})?.tty, true);
+    assert.equal(parseRunArgs(["--tty", "-w", "/srv"], {})?.tty, true);
   });
 
   it("ends options at --", () => {
@@ -251,11 +267,9 @@ describe("lowland run failures", () => {
 
   it("exits 125 when disposal fails, even after the command ran", async (t) => {
     const stderr = t.mock.method(process.stderr, "write", () => true);
-    const code = await execute(
-      parseRunArgs(["missing"], {})!,
-      ["missing"],
-      failing_machine(() => Promise.reject(new Error("could not flush the disks"))),
-    );
+    const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], {
+      create: failing_machine(() => Promise.reject(new Error("could not flush the disks"))),
+    });
     assert.equal(code, 125);
     assert.deepEqual(
       stderr.mock.calls.map((call) => call.arguments[0]),
@@ -265,12 +279,88 @@ describe("lowland run failures", () => {
 
   it("keeps the command's status when disposal succeeds", async (t) => {
     t.mock.method(process.stderr, "write", () => true);
-    const code = await execute(
-      parseRunArgs(["missing"], {})!,
-      ["missing"],
-      failing_machine(() => Promise.resolve()),
-    );
+    const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], {
+      create: failing_machine(() => Promise.resolve()),
+    });
     assert.equal(code, 127);
+  });
+});
+
+describe("lowland run terminals", () => {
+  // A stand-in host terminal and a machine whose command, on a guest
+  // terminal, fails once the test lets it.
+  function setup() {
+    const input = Object.assign(new PassThrough(), {
+      modes: [] as boolean[],
+      setRawMode(mode: boolean) {
+        this.modes.push(mode);
+        return this;
+      },
+    });
+    const output = Object.assign(new EventEmitter(), { rows: 30, columns: 100 });
+    const terminal = { input, output } as unknown as HostTerminal;
+    const failure = Promise.withResolvers<never>();
+    const resizes: TerminalSize[] = [];
+    let spawned: ExecOptions | undefined;
+    const create = async () =>
+      ({
+        async spawn(_: string[], options: ExecOptions) {
+          spawned = options;
+          // The window changes size while the guest terminal is created.
+          output.rows = 35;
+          return {
+            stdin: new WritableStream(),
+            stdout: new ReadableStream(),
+            stderr: new ReadableStream(),
+            status: failure.promise,
+            kill: async () => {},
+            resize: async (size: TerminalSize) => void resizes.push(size),
+          };
+        },
+        [Symbol.asyncDispose]: async () => {},
+      }) as unknown as Linux;
+    return { input, output, terminal, failure, resizes, create, spawned: () => spawned };
+  }
+
+  it("follows the host terminal and restores it when the machine fails", async (t) => {
+    const stderr = t.mock.method(process.stderr, "write", () => true);
+    const { input, output, terminal, failure, resizes, create, spawned } = setup();
+    const code = execute(parseRunArgs([], { TERM: "xterm-ghostty" })!, ["sh"], {
+      terminal,
+      create,
+    });
+    while (!input.modes.length) await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(spawned(), {
+      cwd: "/",
+      env: { TERM: "xterm" },
+      terminal: { rows: 30, columns: 100 },
+    });
+    assert.deepEqual(input.modes, [true]);
+    assert.deepEqual(resizes, [{ rows: 35, columns: 100 }]);
+    Object.assign(output, { rows: 40, columns: 120 }).emit("resize");
+    assert.deepEqual(resizes, [
+      { rows: 35, columns: 100 },
+      { rows: 40, columns: 120 },
+    ]);
+
+    failure.reject(new Error("the machine failed"));
+    assert.equal(await code, 125);
+    assert.deepEqual(input.modes, [true, false]);
+    assert.deepEqual(
+      stderr.mock.calls.map((call) => call.arguments[0]),
+      ["lowland run: the machine failed\n"],
+    );
+    assert.equal(output.listenerCount("resize"), 0);
+  });
+
+  it("keeps a TERM given with --env", async (t) => {
+    t.mock.method(process.stderr, "write", () => true);
+    const { input, terminal, failure, create, spawned } = setup();
+    const code = execute(parseRunArgs(["-e", "TERM=vt100"], {})!, ["sh"], { terminal, create });
+    while (!input.modes.length) await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(spawned()?.env, { TERM: "vt100" });
+    failure.reject(new Error("done"));
+    await code;
   });
 });
 
