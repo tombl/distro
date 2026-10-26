@@ -167,6 +167,7 @@ in
       credentials = installedCheck { name = "credentials"; };
       cwd = installedCheck { name = "cwd"; };
       eventfd-unix = installedCheck { name = "eventfd-unix"; };
+      epoll = installedCheck { name = "epoll"; };
       exec-args = installedCheck { name = "exec-args"; };
       futex = installedCheck { name = "futex"; };
       initcpio = initcpioCheck;
