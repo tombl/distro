@@ -34,6 +34,8 @@ let
         cp -r ${xSysUpstream} $out
         chmod -R u+w $out
         patch --ignore-whitespace -p1 -d $out < ${./x-sys-types-wasm.patch}
+        substituteInPlace $out/unix/linux/types.go \
+          --replace-fail 'defined(__aarch64__) || (defined(__mips__)' 'defined(__aarch64__) || defined(__wasm__) || (defined(__mips__)'
         substituteInPlace $out/cpu/cpu_linux.go \
           --replace-fail '!arm64' '!arm64 && !wasm'
         cd $out/unix
@@ -47,12 +49,54 @@ let
         # wasm uses asm-generic syscall numbers and the ILP32 Linux constant
         # encodings. The descriptions and generated wrappers are architecture
         # neutral; the type file below comes from the actual distro headers.
+        #
+        # Timespec and Timeval follow musl's time64 layout, so the socket
+        # timeout and timestamp options are musl's time64 values, which select
+        # the kernel's 64-bit timeval variants. This source tree is only
+        # compiled for linux/wasm, so the shared SO_TIMESTAMP can change too.
         cp zerrors_linux_386.go zerrors_linux_wasm.go
         substituteInPlace zerrors_linux_wasm.go \
-          --replace-fail '386 && linux' 'wasm && linux'
+          --replace-fail '386 && linux' 'wasm && linux' \
+          --replace-fail 'SO_RCVTIMEO                      = 0x14' 'SO_RCVTIMEO                      = 0x42' \
+          --replace-fail 'SO_SNDTIMEO                      = 0x15' 'SO_SNDTIMEO                      = 0x43' \
+          --replace-fail 'SO_TIMESTAMPNS                   = 0x23' 'SO_TIMESTAMPNS                   = 0x40' \
+          --replace-fail 'SO_TIMESTAMPING                  = 0x25' 'SO_TIMESTAMPING                  = 0x41' \
+          --replace-fail 'SCM_TIMESTAMPNS                  = 0x23' 'SCM_TIMESTAMPNS                  = 0x40' \
+          --replace-fail 'SCM_TIMESTAMPING                 = 0x25' 'SCM_TIMESTAMPING                 = 0x41'
+        substituteInPlace zerrors_linux.go \
+          --replace-fail 'SO_TIMESTAMP                                = 0x1d' 'SO_TIMESTAMP                                = 0x3f' \
+          --replace-fail 'SCM_TIMESTAMP                               = 0x1d' 'SCM_TIMESTAMP                               = 0x3f'
+        # The asm-generic numbers are shared with arm64. Add the entries only
+        # 32-bit targets have.
         cp zsysnum_linux_arm64.go zsysnum_linux_wasm.go
         substituteInPlace zsysnum_linux_wasm.go \
           --replace-fail 'arm64 && linux' 'wasm && linux'
+        cat >>zsysnum_linux_wasm.go <<'SYSNUM'
+
+        const (
+        	SYS_SYNC_FILE_RANGE2             = 84
+        	SYS_CLOCK_GETTIME64              = 403
+        	SYS_CLOCK_SETTIME64              = 404
+        	SYS_CLOCK_ADJTIME64              = 405
+        	SYS_CLOCK_GETRES_TIME64          = 406
+        	SYS_CLOCK_NANOSLEEP_TIME64       = 407
+        	SYS_TIMER_GETTIME64              = 408
+        	SYS_TIMER_SETTIME64              = 409
+        	SYS_TIMERFD_GETTIME64            = 410
+        	SYS_TIMERFD_SETTIME64            = 411
+        	SYS_UTIMENSAT_TIME64             = 412
+        	SYS_PSELECT6_TIME64              = 413
+        	SYS_PPOLL_TIME64                 = 414
+        	SYS_IO_PGETEVENTS_TIME64         = 416
+        	SYS_RECVMMSG_TIME64              = 417
+        	SYS_MQ_TIMEDSEND_TIME64          = 418
+        	SYS_MQ_TIMEDRECEIVE_TIME64       = 419
+        	SYS_SEMTIMEDOP_TIME64            = 420
+        	SYS_RT_SIGTIMEDWAIT_TIME64       = 421
+        	SYS_FUTEX_TIME64                 = 422
+        	SYS_SCHED_RR_GET_INTERVAL_TIME64 = 423
+        )
+        SYSNUM
 
           # cgo cannot decode a wasm object even in -godefs mode. Generate an ELF
           # object with the equivalent little-endian ILP32 data model and 8-byte
@@ -73,7 +117,14 @@ let
         # synthetic target has had its ARM identity removed. Its layout is
         # nevertheless a stable part of the wasm-linux ABI and is shared with
         # the standard library port.
+        #
+        # BlkpgIoctlArg is the one exported kernel structure with a pointer
+        # that no wrapper marshals. Go cannot place a 64-bit pointer at the
+        # kernel's ILP32 offset, so expose the 32-bit address instead: code
+        # that stores a Go pointer there fails to compile rather than passing
+        # the kernel padding.
         substituteInPlace ztypes_linux_wasm.go \
+          --replace-fail '	Data    *byte' '	Data    uint32 // ILP32 address of the payload' \
           --replace-fail 'type Stat_t _cgopackage.Incomplete' 'type Stat_t struct {
               Dev       uint64
               Ino       uint64
@@ -96,27 +147,7 @@ let
         substituteInPlace endian_little.go \
           --replace-fail '386 || amd64' '386 || wasm || amd64'
 
-        cp syscall_linux_arm64.go syscall_linux_wasm.go
-        substituteInPlace syscall_linux_wasm.go \
-          --replace-fail 'arm64 && linux' 'wasm && linux' \
-          --replace-fail 'Nsec: timeout.Usec * 1000' 'Nsec: int32(timeout.Usec * 1000)' \
-          --replace-fail 'Nsec: nsec}' 'Nsec: int32(nsec)}' \
-          --replace-fail 'func (r *PtraceRegs) PC() uint64 { return r.Pc }' "" \
-          --replace-fail 'func (r *PtraceRegs) SetPC(pc uint64) { r.Pc = pc }' "" \
-          --replace-fail 'iov.Len = uint64(length)' 'iov.Len = uint32(length)' \
-          --replace-fail 'msghdr.Controllen = uint64(length)' 'msghdr.Controllen = uint32(length)' \
-          --replace-fail 'msghdr.Iovlen = uint64(length)' 'msghdr.Iovlen = int32(length)' \
-          --replace-fail 'cmsg.Len = uint64(length)' 'cmsg.Len = uint32(length)' \
-          --replace-fail 'rsa.Service_name_len = uint64(length)' 'rsa.Service_name_len = uint32(length)'
-
-        # fanotifyMark's uint64 mask makes its generated calling sequence
-        # architecture-specific, so it is absent from the merged Linux file.
-        printf '\n//sys\tfanotifyMark(fd int, flags uint, mask uint64, dirFd int, pathname *byte) (err error)\n' \
-          >> syscall_linux_wasm.go
-        printf '//sys\tFallocate(fd int, mode uint32, off int64, len int64) (err error)\n' \
-          >> syscall_linux_wasm.go
-        printf '//sys\tTee(rfd int, wfd int, len int, flags int) (n int64, err error)\n' \
-          >> syscall_linux_wasm.go
+        install -m644 ${./x-sys-syscall-linux-wasm.go} syscall_linux_wasm.go
 
         # wasm forwards raw calls through the forked standard syscall package;
         # the architecture assembly shims used elsewhere cannot express the
@@ -127,12 +158,54 @@ let
           --replace-fail 'linux && gc' 'linux && gc && !wasm'
         install -m644 ${./syscall_gc_wasm.go} syscall_gc_wasm.go
 
+        # The kernel takes i386-style 32-bit slots: split 64-bit arguments.
         env -u GOOS -u GOARCH GOOS_TARGET=linux GOLANG_SYS_BUILD=docker \
-          go run mksyscall.go -tags linux,wasm syscall_linux_wasm.go \
+          go run mksyscall.go -l32 -tags linux,wasm syscall_linux_wasm.go \
           > zsyscall_linux_wasm.go
 
+        # The merged Linux wrappers pass Go-native structs straight to the
+        # kernel. Calls whose structures contain time64 values switch to the
+        # *_time64 entries. Calls with pointer-carrying structures, or with
+        # structures the kernel only offers in a time32 layout, are renamed
+        # out of the way; syscall_linux_wasm.go and x_sys_vector_wasm.go
+        # provide marshalling replacements.
+        substituteInPlace zsyscall_linux.go \
+          --replace-fail 'Syscall(SYS_CLOCK_GETRES,' 'Syscall(SYS_CLOCK_GETRES_TIME64,' \
+          --replace-fail 'Syscall(SYS_CLOCK_GETTIME,' 'Syscall(SYS_CLOCK_GETTIME64,' \
+          --replace-fail 'Syscall(SYS_CLOCK_SETTIME,' 'Syscall(SYS_CLOCK_SETTIME64,' \
+          --replace-fail 'Syscall6(SYS_CLOCK_NANOSLEEP,' 'Syscall6(SYS_CLOCK_NANOSLEEP_TIME64,' \
+          --replace-fail 'Syscall6(SYS_UTIMENSAT,' 'Syscall6(SYS_UTIMENSAT_TIME64,' \
+          --replace-fail 'Syscall(SYS_TIMERFD_GETTIME,' 'Syscall(SYS_TIMERFD_GETTIME64,' \
+          --replace-fail 'Syscall6(SYS_TIMERFD_SETTIME,' 'Syscall6(SYS_TIMERFD_SETTIME64,' \
+          --replace-fail 'func readv(' 'func readvUnmarshaled(' \
+          --replace-fail 'func writev(' 'func writevUnmarshaled(' \
+          --replace-fail 'func preadvSyscall(' 'func preadvSyscallUnmarshaled(' \
+          --replace-fail 'func pwritevSyscall(' 'func pwritevSyscallUnmarshaled(' \
+          --replace-fail 'func preadv2Syscall(' 'func preadv2SyscallUnmarshaled(' \
+          --replace-fail 'func pwritev2Syscall(' 'func pwritev2SyscallUnmarshaled(' \
+          --replace-fail 'func keyctlIOV(' 'func keyctlIOVUnmarshaled(' \
+          --replace-fail 'func ProcessVMReadv(' 'func processVMReadvUnmarshaled(' \
+          --replace-fail 'func ProcessVMWritev(' 'func processVMWritevUnmarshaled(' \
+          --replace-fail 'func ppoll(' 'func ppollUnmarshaled(' \
+          --replace-fail 'func pselect6(' 'func pselect6Unmarshaled(' \
+          --replace-fail 'func Nanosleep(' 'func nanosleepTime32(' \
+          --replace-fail 'func Settimeofday(' 'func settimeofdayTime32(' \
+          --replace-fail 'func Adjtimex(' 'func adjtimexTime32(' \
+          --replace-fail 'func ClockAdjtime(' 'func clockAdjtimeTime32(' \
+          --replace-fail 'func Getrusage(' 'func getrusageUnmarshaled(' \
+          --replace-fail 'func wait4(' 'func wait4Unmarshaled(' \
+          --replace-fail 'func Waitid(' 'func waitidUnmarshaled(' \
+          --replace-fail 'func getitimer(' 'func getitimerTime32(' \
+          --replace-fail 'func setitimer(' 'func setitimerTime32('
+        substituteInPlace syscall_linux.go \
+          --replace-fail 'func Vmsplice(' 'func vmspliceUnmarshaled(' \
+          --replace-fail 'func SetsockoptSockFprog(' 'func setsockoptSockFprogUnmarshaled('
+        install -m644 ${./x-sys-vector-wasm.go} x_sys_vector_wasm.go
+        install -m644 ${./x-sys-abi-wasm_test.go} wasm_abi_linux_test.go
+
         gofmt -w syscall_linux_wasm.go syscall_gc_wasm.go \
-          ztypes_linux_wasm.go zsyscall_linux_wasm.go
+          ztypes_linux_wasm.go zsyscall_linux_wasm.go x_sys_vector_wasm.go \
+          zsysnum_linux_wasm.go
       '';
 
   xTerm = pkgs.fetchFromGitHub {

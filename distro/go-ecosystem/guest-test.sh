@@ -18,6 +18,7 @@ mkdir -p "$HOME" || fail "creating HOME failed"
 for test_binary in /bin/*.test; do
   printf 'running %s\n' "$test_binary"
   test_skip='$^'
+  test_verbose=
   case "$test_binary" in
   */age-age.test)
     # The examples open source-tree-relative fixtures which are intentionally
@@ -51,10 +52,12 @@ for test_binary in /bin/*.test; do
     test_run='^(TestSecWebSocketAccept|TestHybi.*|TestParseAuthority)$'
     ;;
   */x-sys-unix.test)
-    # Exercise the supported file, descriptor, identity, and path syscall ABI.
-    # mmap, vectored I/O, epoll, and several time syscalls are not implemented
-    # or ABI-compatible yet and are deliberately outside this positive matrix.
-    test_run='^Test(Env|Uname|StatFieldNames|Devices|Auxv|ErrnoSignalName|SignalNum|FcntlInt|FcntlFlock|Rlimit|SeekFailure|Dup|Getwd|Fstatat|Fchmodat|Mkdev|Pipe|Renameat|Faccessat|Openat2)$'
+    # Exercise the supported file, descriptor, identity, path, vectored-I/O,
+    # message, epoll, and timer ABI. TestWasmABI* (go-compat's
+    # x-sys-abi-wasm_test.go) checks the values crossing the wasm32 kernel
+    # boundary. mmap remains deliberately unsupported.
+    test_run='^Test(Env|Uname|StatFieldNames|Devices|Auxv|ErrnoSignalName|SignalNum|FcntlInt|FcntlFlock|Rlimit|SeekFailure|Dup|Getwd|Fstatat|Fchmodat|Mkdev|Pipe|Renameat|Faccessat|Openat2|WritevReadv|PwritevPreadv|PwritevOffset|PwritevOffsets|ReadvAllocate|ClockNanosleep|Epoll|Timerfd|SendmsgBuffers|WasmABI.*)$'
+    test_verbose=-test.v
     ;;
   */x-term-x-term.test)
     # devpts is not mounted in this minimal initramfs.
@@ -68,7 +71,7 @@ for test_binary in /bin/*.test; do
     ;;
   *) test_run='.' ;;
   esac
-  "$test_binary" -test.run="$test_run" -test.skip="$test_skip" -test.timeout=120s ||
+  "$test_binary" $test_verbose -test.run="$test_run" -test.skip="$test_skip" -test.timeout=120s ||
     fail "$test_binary exited with $?"
 done
 
