@@ -1,4 +1,4 @@
-// The guest syscall table (protocol v3): what the bytes on a lane mean.
+// The guest syscall table (protocol v4): what the bytes on a lane mean.
 //
 // Each exported function is one syscall the veneer composes, defined once:
 // wire encoding, reply decoding, 64-bit argument splitting, and errno
@@ -13,12 +13,14 @@
 //   spawn request:   { kind u8 = 2, len u32 } then { argc u32 } argc x string,
 //                    string cwd, { envc u32 } envc x string  (string = u32 len + bytes)
 //   reap request:    { kind u8 = 3, pid u32 }
+//   terminal spawn:  { kind u8 = 4, len u32 } then { rows u16, columns u16 }
+//                    and the spawn payload
 //   reply:           { ret i64, errno u32 } then, when ret != -1: each
 //                    out-blob (full: capacity bytes; ret-sized: min(capacity,
 //                    ret) bytes), or the spawn/reap reply body.
 
-import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError } from "./abi.ts";
+import { Bytes, FixedArray, I64LE, Struct, U16LE, U32LE, U64LE, U8 } from "@lowland/bytes";
+import { AT, NR, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 
 /** Host convention for bulk I/O: syscall data payloads are at most 32 KiB. */
@@ -32,6 +34,7 @@ const MAX_BLOB = 128 * 1024;
 const REQ_SYSCALL = 1;
 const REQ_SPAWN = 2;
 const REQ_REAP = 3;
+const REQ_SPAWN_TERMINAL = 4;
 
 const ARG_SCALAR = 0;
 const ARG_IN = 1;
@@ -55,6 +58,11 @@ class SpawnReply extends Struct({
   stdin: U32LE,
   stdout: U32LE,
   stderr: U32LE,
+}) {}
+
+class TerminalSpawnReply extends Struct({
+  pid: U32LE,
+  terminal: U32LE,
 }) {}
 
 /** An fd owned by the host in the guest's fd table. Closes exactly once no
@@ -310,6 +318,19 @@ export async function kill(session: GuestSession, pid: number, signal: number): 
   await syscall(session, NR.kill, pid, signal);
 }
 
+/** Resizes a terminal; the kernel sends SIGWINCH to its foreground group. */
+export async function set_window_size(fd: GuestFd, rows: number, columns: number): Promise<void> {
+  const size = new Bytes(Winsize.size);
+  size.alloc(Winsize).value = { ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0 };
+  await syscall(fd.session, NR.ioctl, fd, TIOC.SWINSZ, { in: size.array });
+}
+
+/** Hangs up a terminal: blocked reads of it return end of file, and every
+ *  later read or write of it fails. */
+export async function hang_up(fd: GuestFd): Promise<void> {
+  await syscall(fd.session, NR.ioctl, fd, TIOC.VHANGUP);
+}
+
 export async function getpid(session: GuestSession): Promise<number> {
   const { ret } = await syscall(session, NR.getpid);
   return Number(ret);
@@ -324,13 +345,19 @@ export interface Spawned {
   stderr: GuestFd;
 }
 
-export async function spawn(
-  session: GuestSession,
+export interface SpawnedTerminal {
+  pid: number;
+  /** The terminal's controlling side; the process has the other side as
+   *  its standard input, output, and error. */
+  terminal: GuestFd;
+}
+
+function spawn_payload(
+  payload: Bytes,
   argv: readonly string[],
   cwd: string,
   env: readonly string[],
-): Promise<Spawned> {
-  const payload = new Bytes();
+) {
   const write_string = (value: string) => {
     const bytes = new TextEncoder().encode(value);
     payload.alloc(U32LE).value = bytes.byteLength;
@@ -341,6 +368,16 @@ export async function spawn(
   write_string(cwd);
   payload.alloc(U32LE).value = env.length;
   for (const entry of env) write_string(entry);
+}
+
+export async function spawn(
+  session: GuestSession,
+  argv: readonly string[],
+  cwd: string,
+  env: readonly string[],
+): Promise<Spawned> {
+  const payload = new Bytes();
+  spawn_payload(payload, argv, cwd, env);
 
   const request = new Bytes();
   request.alloc(U8).value = REQ_SPAWN;
@@ -362,6 +399,39 @@ export async function spawn(
     stdin: new GuestFd(session, result.body.stdin, `${argv[0]}:stdin`),
     stdout: new GuestFd(session, result.body.stdout, `${argv[0]}:stdout`),
     stderr: new GuestFd(session, result.body.stderr, `${argv[0]}:stderr`),
+  };
+}
+
+/** Spawns a process on a new pseudoterminal of the given size, as the
+ *  leader of a new session with that terminal as its controlling terminal. */
+export async function spawn_terminal(
+  session: GuestSession,
+  argv: readonly string[],
+  cwd: string,
+  env: readonly string[],
+  size: { rows: number; columns: number },
+): Promise<SpawnedTerminal> {
+  const payload = new Bytes();
+  payload.alloc(U16LE).value = size.rows;
+  payload.alloc(U16LE).value = size.columns;
+  spawn_payload(payload, argv, cwd, env);
+
+  const request = new Bytes();
+  request.alloc(U8).value = REQ_SPAWN_TERMINAL;
+  request.alloc(U32LE).value = payload.length;
+  request.append(payload.array);
+
+  const result = await session.exchange(async (lane) => {
+    await lane.write(request.array);
+    const reply = new ReplyHead(await lane.read(ReplyHead.size));
+    if (reply.ret === -1n) return { errno: reply.errno };
+    const body = new TerminalSpawnReply(await lane.read(TerminalSpawnReply.size));
+    return { body: { pid: body.pid, terminal: body.terminal } };
+  });
+  if (!result.body) throw new SystemError(result.errno);
+  return {
+    pid: result.body.pid,
+    terminal: new GuestFd(session, result.body.terminal, `${argv[0]}:terminal`),
   };
 }
 

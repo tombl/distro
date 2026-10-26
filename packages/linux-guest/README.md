@@ -42,6 +42,21 @@ console.log(new TextDecoder().decode(result.stdout));
 collects its status, stdout, and stderr and is convenient for bounded commands.
 Both methods accept an argv array without shell parsing.
 
+With the `terminal` option, `exec()` runs the process on a guest
+pseudoterminal instead of pipes. The process leads its own session with that
+terminal as its controlling terminal, so an interactive shell gets job
+control, and Ctrl-C (`\x03`) or Ctrl-Z (`\x1a`) written to `stdin` signals
+its foreground job. Standard error shares `stdout`, as it does on a real
+terminal. `resize()` changes the window size and delivers `SIGWINCH`:
+
+```js
+const shell = await guest.exec(["sh"], { terminal: { rows: 24, columns: 80 } });
+void shell.stdout.pipeTo(display);
+void keyboard.pipeTo(shell.stdin);
+await shell.resize({ rows: 40, columns: 120 });
+console.log(await shell.status);
+```
+
 The plugin boots its private EROFS using the GPT partition label
 `LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
 agent then requires exactly one attached EROFS or ext4 filesystem labeled

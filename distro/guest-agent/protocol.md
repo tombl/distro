@@ -1,4 +1,4 @@
-# Guest agent protocol, version 3
+# Guest agent protocol, version 4
 
 The guest agent is a dumb syscall executor. It knows nothing about paths,
 stat layouts, directories, or flags — every operation-specific decision
@@ -13,7 +13,7 @@ integers are little-endian; there is no alignment padding.
 ## Transport
 
 Two vsock ports, both handshaking with 8 bytes
-`{ magic u32 = 0x584e4c54, version u16 = 3, reserved u16 = 0 }` sent by the
+`{ magic u32 = 0x584e4c54, version u16 = 4, reserved u16 = 0 }` sent by the
 host and echoed verbatim by the agent (the echo doubles as the readiness
 signal).
 
@@ -66,7 +66,17 @@ in a fixed table (16 entries; `EAGAIN` when full — the host's process cap
 makes this unreachable). Success reply body:
 `{ pid u32, stdin_fd u32, stdout_fd u32, stderr_fd u32 }`. From here stdio
 is plain injected `read`/`write`/`close` on those fds and signals are plain
-injected `kill`.
+injected `kill`. Every spawned command starts with the default `SIGPIPE`
+disposition, which the agent itself ignores.
+
+**Terminal spawn (kind 4):** as spawn, but the payload starts with
+`{ rows u16, columns u16 }`. Instead of pipes, the agent opens a
+pseudoterminal master (`O_CLOEXEC`), sets its window size, and spawns the
+child with `POSIX_SPAWN_SETSID` and the subsidiary opened by name on fd 0
+and duplicated onto 1 and 2, so it leads a new session with the terminal as
+its controlling terminal. Success reply body: `{ pid u32, terminal_fd u32 }`.
+The host resizes with injected `ioctl(TIOCSWINSZ)` on the master, and once
+the master reads `EIO` every holder of the subsidiary has closed it.
 
 **Reap (kind 3):** `{ pid u32 }`. Blocking `waitpid`; frees the table
 entry; success reply body `{ status u32 }` (raw wait status — the host owns

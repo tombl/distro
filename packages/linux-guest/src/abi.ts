@@ -1,4 +1,4 @@
-// Guest ABI schema (protocol v3).
+// Guest ABI schema (protocol v4).
 //
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
@@ -104,6 +104,7 @@ const nr = scalar_group("__NR_", {
   readlinkat: 78,
   fchmodat: 53,
   fchownat: 54,
+  ioctl: 29,
   kill: 129,
   getpid: 172,
 });
@@ -252,6 +253,26 @@ const sig = scalar_group("SIG", {
 
 /** Signal numbers, e.g. `SIG.TERM === 15`. */
 export const SIG = sig.values;
+
+// ---------------------------------------------------------------------------
+// Terminal ioctls and struct winsize.
+// include/uapi/asm-generic/ioctls.h, include/uapi/asm-generic/termios.h.
+// ---------------------------------------------------------------------------
+
+const tioc = scalar_group("TIOC", {
+  SWINSZ: 0x5414,
+  VHANGUP: 0x5437,
+});
+
+/** Terminal ioctl requests, e.g. `TIOC.SWINSZ === 0x5414`. */
+export const TIOC = tioc.values;
+
+const winsize = define_struct(
+  "struct winsize",
+  { ws_row: U16LE, ws_col: U16LE, ws_xpixel: U16LE, ws_ypixel: U16LE },
+  { assert_sizeof: true },
+);
+export const Winsize = winsize.Schema;
 
 // ---------------------------------------------------------------------------
 // Errors. These live beside the errno table so the code shown to humans is
@@ -474,6 +495,7 @@ export const abi_checks: {
     "#include <errno.h>", // E*
     "#include <signal.h>", // SIG*
     "#include <sys/wait.h>", // WIF*/W* macros
+    "#include <sys/ioctl.h>", // TIOC*, struct winsize
   ],
   scalars: [
     ...nr.checks,
@@ -485,7 +507,8 @@ export const abi_checks: {
     ...dt.checks,
     ...e.checks,
     ...sig.checks,
+    ...tioc.checks,
   ],
-  structs: [stat.check, dirent.check],
+  structs: [stat.check, dirent.check, winsize.check],
   exprs: wait_checks,
 };

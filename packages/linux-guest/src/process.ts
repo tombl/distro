@@ -1,10 +1,19 @@
 // ChildProcess: a spawned guest process as a JS object. The agent only
 // spawns and reaps; stdio and signals are plain injected syscalls on the
-// pipe fds spawn returned.
+// pipe or terminal fds spawn returned.
 
 import { E, SIG, SystemError, WEXITSTATUS, WIFEXITED, WIFSIGNALED, WTERMSIG } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
-import { CHUNK, type GuestFd, kill, read, reap, write } from "./syscalls.ts";
+import {
+  CHUNK,
+  type GuestFd,
+  hang_up,
+  kill,
+  read,
+  reap,
+  set_window_size,
+  write,
+} from "./syscalls.ts";
 
 /** A signal that can be sent to a guest process with `ChildProcess.kill`. */
 export type Signal =
@@ -45,18 +54,21 @@ export interface CommandStatus {
   readonly signal: Signal | number | null;
 }
 
-export interface ChildProcessInit {
+/** The size of a terminal, in character cells. */
+export interface TerminalSize {
+  readonly rows: number;
+  readonly columns: number;
+}
+
+export type ChildProcessInit = {
   session: GuestSession;
   pid: number;
-  stdin: GuestFd;
-  stdout: GuestFd;
-  stderr: GuestFd;
   signal?: AbortSignal;
   /** Returns the process slot client.ts acquired; called exactly once, when
    *  the reap settles, because until then this process may hold blocked
    *  lanes. */
   release: () => void;
-}
+} & ({ stdin: GuestFd; stdout: GuestFd; stderr: GuestFd } | { terminal: GuestFd });
 
 /**
  * A guest process spawned by `guest.exec`.
@@ -65,13 +77,20 @@ export interface ChildProcessInit {
  * `ReadableStream`s, and `status` resolves when the process exits. The
  * process is an async disposable, so `await using` kills it and waits for
  * it to be reaped when the block ends.
+ *
+ * A process spawned with the `terminal` exec option runs on a guest
+ * pseudoterminal instead of pipes. `stdin` is then what the user types and
+ * `stdout` is what the terminal displays, with the process's standard error
+ * mixed in, so `stderr` is always empty.
  */
 export class ChildProcess implements AsyncDisposable {
   /** Process ID in the guest. */
   readonly pid: number;
   /**
    * A `WritableStream<Uint8Array>` connected to the process's stdin. Close
-   * it to send EOF, which is how programs such as `cat` know to finish.
+   * it to send EOF, which is how programs such as `cat` know to finish. A
+   * terminal has no end of input, so closing a terminal process's stdin only
+   * stops writes. Write `\x04`, the Ctrl-D a user would type, instead.
    *
    * Writes are buffered on the host side, so filling stdin before reading
    * stdout does not deadlock, even once the guest's pipe is full.
@@ -104,8 +123,13 @@ export class ChildProcess implements AsyncDisposable {
    * ```
    */
   readonly stdout: ReadableStream<Uint8Array>;
-  /** The process's standard error, as a `ReadableStream<Uint8Array>`. */
+  /**
+   * The process's standard error, as a `ReadableStream<Uint8Array>`. Empty
+   * for a terminal process, whose standard error goes to `stdout`.
+   */
   readonly stderr: ReadableStream<Uint8Array>;
+  /** The process runs on a terminal: it was spawned with `terminal`. */
+  readonly terminal: boolean;
   /**
    * Resolves to the process's `CommandStatus` when it exits. If the process
    * was aborted through the `signal` exec option, rejects with the abort
@@ -121,9 +145,15 @@ export class ChildProcess implements AsyncDisposable {
   readonly status: Promise<CommandStatus>;
 
   readonly #session: GuestSession;
-  readonly #stdin: GuestFd;
-  readonly #stdout: GuestFd;
-  readonly #stderr: GuestFd;
+  readonly #fds: GuestFd[];
+  readonly #terminal: GuestFd | null;
+  // The terminal fd backs both stdin and stdout, so it shuts down once
+  // neither needs it, or when the process is closed. Shutdown is the only
+  // path to the fd's close, and no call starts after it begins.
+  #terminal_users = 2;
+  #terminal_shutdown?: Promise<void>;
+  #terminal_pending = 0;
+  #terminal_idle?: PromiseWithResolvers<void>;
 
   #close?: Promise<void>;
   #aborted = false;
@@ -134,17 +164,21 @@ export class ChildProcess implements AsyncDisposable {
   #stdin_stopped = false;
 
   constructor(init: ChildProcessInit) {
-    const { session, pid, stdin, stdout, stderr, signal, release } = init;
+    const { session, pid, signal, release } = init;
     this.pid = pid;
     this.#session = session;
-    this.#stdin = stdin;
-    this.#stdout = stdout;
-    this.#stderr = stderr;
+    this.terminal = "terminal" in init;
+    this.#terminal = "terminal" in init ? init.terminal : null;
+    this.#fds = "terminal" in init ? [init.terminal] : [init.stdin, init.stdout, init.stderr];
+    const stdin = "terminal" in init ? init.terminal : init.stdin;
 
     const pump = async (data: Uint8Array) => {
       let offset = 0;
       while (!this.#stdin_stopped && offset < data.byteLength) {
-        const written = await write(stdin, data.subarray(offset, offset + CHUNK));
+        const piece = data.subarray(offset, offset + CHUNK);
+        const written = await (this.#terminal
+          ? this.#terminal_call(() => write(stdin, piece))
+          : write(stdin, piece));
         if (written === 0) throw new SystemError(E.IO);
         offset += written;
       }
@@ -170,7 +204,19 @@ export class ChildProcess implements AsyncDisposable {
           });
         return Promise.resolve();
       },
+      // A terminal has no end of input to signal, and closing it would hang
+      // up the process. Ending the stream only gives up its use of the fd.
+      // Release the terminal before waiting for the pump: if stdout is gone
+      // too, shutdown must hang up a write the guest has stopped reading.
+      // Input left undelivered then has nowhere to go, so that is no error.
       close: async () => {
+        if (this.#terminal) {
+          const released = this.#release_terminal();
+          await this.#stdin_tail;
+          await released;
+          if (this.#stdin_error !== null && !this.#terminal_shutdown) throw this.#stdin_error;
+          return;
+        }
         await this.#stdin_tail;
         await stdin.close();
         if (this.#stdin_error !== null) throw this.#stdin_error;
@@ -180,8 +226,13 @@ export class ChildProcess implements AsyncDisposable {
       // and can be reused.
       abort: () => this.close(),
     });
-    this.stdout = this.#output_stream(stdout);
-    this.stderr = this.#output_stream(stderr);
+    if ("terminal" in init) {
+      this.stdout = this.#terminal_stream(init.terminal);
+      this.stderr = new ReadableStream({ start: (controller) => controller.close() });
+    } else {
+      this.stdout = this.#output_stream(init.stdout);
+      this.stderr = this.#output_stream(init.stderr);
+    }
     this.status = this.#reap(release);
     void this.status.catch(() => {});
 
@@ -215,6 +266,86 @@ export class ChildProcess implements AsyncDisposable {
       },
       cancel: () => fd.close(),
     });
+  }
+
+  // Reading a terminal fails with EIO once every process has closed its
+  // side: that is the terminal's end of file. So does a read after shutdown.
+  #terminal_stream(fd: GuestFd): ReadableStream<Uint8Array> {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      return this.#release_terminal();
+    };
+    return new ReadableStream<Uint8Array>({
+      pull: async (controller) => {
+        try {
+          const data = await this.#terminal_call(() => read(fd, CHUNK));
+          if (data.byteLength === 0) {
+            await finish();
+            controller.close();
+          } else {
+            controller.enqueue(data);
+          }
+        } catch (error) {
+          await finish();
+          if (error instanceof SystemError && error.code === "EIO") controller.close();
+          else controller.error(error);
+        }
+      },
+      cancel: () => finish(),
+    });
+  }
+
+  // Counts the calls in flight on the terminal fd, so shutdown can wait them
+  // out before closing it and none can reach a file that reused its number.
+  #terminal_call<T>(call: () => Promise<T>): Promise<T> {
+    if (this.#terminal_shutdown) return Promise.reject(new SystemError(E.IO));
+    this.#terminal_pending++;
+    return call().finally(() => {
+      if (--this.#terminal_pending === 0) this.#terminal_idle?.resolve();
+    });
+  }
+
+  async #release_terminal() {
+    if (--this.#terminal_users === 0) await this.#shutdown_terminal();
+  }
+
+  // A read or write blocked on the terminal only returns once it hangs up,
+  // so hang up before waiting for them. Closing the fd would hang up the
+  // terminal anyway.
+  #shutdown_terminal(): Promise<void> {
+    return (this.#terminal_shutdown ??= (async () => {
+      const terminal = this.#terminal!;
+      if (this.#terminal_pending > 0) await hang_up(terminal).catch(() => {});
+      while (this.#terminal_pending > 0) {
+        this.#terminal_idle = Promise.withResolvers();
+        await this.#terminal_idle.promise;
+      }
+      await terminal.close();
+    })());
+  }
+
+  /**
+   * Resizes the process's terminal. The guest kernel sends `SIGWINCH` to
+   * the terminal's foreground process group, so full-screen programs
+   * redraw. Does nothing once the process is closed.
+   *
+   * @example Follow the host terminal's size
+   * ```ts
+   * const shell = await guest.exec(["sh"], {
+   *   terminal: { rows: process.stdout.rows, columns: process.stdout.columns },
+   * });
+   * process.stdout.on("resize", () => {
+   *   void shell.resize({ rows: process.stdout.rows, columns: process.stdout.columns });
+   * });
+   * ```
+   */
+  async resize(size: TerminalSize): Promise<void> {
+    const terminal = this.#terminal;
+    if (!terminal) throw new TypeError("resize needs a process spawned with `terminal`");
+    if (this.#terminal_shutdown) return;
+    await this.#terminal_call(() => set_window_size(terminal, size.rows, size.columns));
   }
 
   async #reap(release: () => void): Promise<CommandStatus> {
@@ -267,12 +398,16 @@ export class ChildProcess implements AsyncDisposable {
     // reap is intentionally NOT cancelled: it must complete to free the
     // agent's process-table slot.
     await kill(this.#session, this.pid, SIG.KILL).catch(() => {});
+    if (this.#terminal) {
+      // Other processes on the terminal can keep it open after the leader
+      // dies. Shutdown hangs it up, which ends their reads and writes,
+      // including the ones this process has in flight.
+      await this.#shutdown_terminal();
+      await this.#stdin_tail;
+      return;
+    }
     await this.#stdin_tail;
-    const closes = await Promise.allSettled([
-      this.#stdin.close(),
-      this.#stdout.close(),
-      this.#stderr.close(),
-    ]);
+    const closes = await Promise.allSettled(this.#fds.map((fd) => fd.close()));
     const failed = closes.find((result) => result.status === "rejected");
     if (failed) throw failed.reason;
   }
