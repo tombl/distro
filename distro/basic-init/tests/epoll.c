@@ -122,6 +122,7 @@ static void *write_later(void *arg)
 static void test_wake_from_thread(void)
 {
 	struct epoll_event event;
+	struct timespec start;
 	pthread_t thread;
 	int epoll_fd, pipe_fds[2];
 
@@ -135,8 +136,11 @@ static void test_wake_from_thread(void)
 	if (pthread_create(&thread, NULL, write_later, &pipe_fds[1]) != 0)
 		test_fail("pthread_create");
 	/* Blocks until the other thread, in another worker, writes. */
+	clock_gettime(CLOCK_MONOTONIC, &start);
 	if (wait_one(epoll_fd, 5000, &event) != 1 || event.data.fd != pipe_fds[0])
 		test_fail("blocking epoll_wait was not woken by another thread");
+	if (elapsed_ms(&start) > 2000)
+		test_fail("epoll_wait woke long after the other thread wrote");
 	pthread_join(thread, NULL);
 
 	close(pipe_fds[0]);
