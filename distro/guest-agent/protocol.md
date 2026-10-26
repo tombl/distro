@@ -22,10 +22,10 @@ signal).
   needs a death signal that cannot be stuck behind a blocked syscall. The
   agent parks the session process reading it; EOF — or any payload byte,
   which means the two sides disagree — exits that process, atomically closing
-  every lane and session-owned fd. PID 1 then SIGKILLs and reaps every
-  remaining descendant before returning to `accept()`, so a fresh host can
-  attach during development without inheriting resources from the abandoned
-  session.
+  every lane and session-owned fd. Its parent, the session's keeper, then
+  SIGKILLs and reaps every remaining descendant before PID 1 returns to
+  `accept()`, so a fresh host can attach during development without
+  inheriting resources from the abandoned session.
 - **Lanes, port 1025.** Up to 64 connections. The host opens them on demand
   and pools them; the agent creates one worker thread as each lane connects.
   A lane carries strictly serial request/reply exchanges: the host writes one
@@ -103,6 +103,8 @@ session port. Each accepted session runs in a child subreaper which owns the
 lane listener, lane threads, spawned children, and every injected fd. While a
 session is connected, that process polls the silent session connection and lane
 listener, creating a detached worker for each accepted lane. Session death
-exits the entire process, so blocked lane threads cannot delay teardown. PID 1
-kills and reaps any descendants that escaped the session process before
-accepting the next session.
+exits the entire process, so blocked lane threads cannot delay teardown. That
+process's parent is a per-session keeper, itself a subreaper, which inherits
+every surviving descendant whatever process group or session it moved to. The
+keeper SIGKILLs its adopted children, found through `/proc`, until none
+remain, and PID 1 accepts the next session once the keeper exits.
