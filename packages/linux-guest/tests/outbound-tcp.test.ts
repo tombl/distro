@@ -117,7 +117,7 @@ guest_test("outbound TCP", async (t, fixture) => {
     const server = createServer({ allowHalfOpen: true }, (socket) => {
       const chunks: Buffer[] = [];
       socket.on("data", (chunk) => {
-        chunks.push(chunk);
+        chunks.push(Buffer.from(chunk));
         socket.write(chunk);
       });
       socket.on("error", (error) => received.resolve({ data: "", error }));

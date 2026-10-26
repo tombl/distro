@@ -145,4 +145,3 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
   await expectOutput(page, /^live-only-ready$/m);
   expect(dialogs).toEqual([]);
 });
-

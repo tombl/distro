@@ -18,13 +18,14 @@ pnpm --filter=@lowland/browser-tests test --project=chromium
 The server reads images from `$LOWLAND_TEST_ASSETS`, or builds
 `.#test-assets` on first use when it is unset.
 
-`playwright.config.js` has one project per engine, plus two Chromium-only
-projects with their own served roots:
+`playwright.config.js` has one project per engine, plus projects with their
+own served roots:
 
-- `service-worker` exercises the site's service worker, served from
-  `apps/site/service-worker.js`.
+- `service-worker` exercises the site's service worker, as the site build
+  emits it.
 - `site-live` runs against the built site (`node server.js --site`), installing
-  from the candidate apk repository rather than production.
+  from the candidate apk repository rather than production. `site-live-firefox`
+  runs the same spec in Firefox.
 
 Each project is an ordinary flake check that runs the same `pnpm test` in the
 Nix build sandbox, with nixpkgs' browser builds and only the assets it needs:

@@ -67,7 +67,10 @@ let
     "scheduler-handoff.erofs" = basic-init.schedulerHandoffDisk;
     "remote-vm.erofs" = basic-init.remoteMemoryDisk;
     "posix-spawn-stress.erofs" = basic-init.posixSpawnStressDisk;
-    "opfs-disk-worker.js" = "${site.opfsDiskWorker}/opfs-disk-worker.js";
+    # Astro names the bundled worker by content hash.
+    "opfs-disk-worker.js" = pkgs.runCommand "opfs-disk-worker.js" { } ''
+      cp ${site.package}/_astro/opfs-disk-worker-*.js $out
+    '';
 
     # The deployed site, and the candidate repository it installs from.
     site = site.package;

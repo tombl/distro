@@ -21,7 +21,6 @@ let
     version = "0.0.0";
     inherit src;
 
-
     dontFixup = true;
 
     nativeBuildInputs = [
@@ -51,7 +50,7 @@ let
     // {
       outputHashMode = "recursive";
       outputHashAlgo = "sha256";
-      outputHash = "sha256-pBKb2mM3XTh9QYXqZHg0bxrC4XqCRrMxWkXl9eGkbyY=";
+      outputHash = "sha256-3N4tqkvk2stD5MOAOeMCBId0MPSr0jqwbKbn8+Marh0=";
     }
   );
 

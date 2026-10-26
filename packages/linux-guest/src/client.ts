@@ -559,10 +559,6 @@ class GuestClient {
     await fchownat(await this.#connect(), path, uid, gid);
   }
 
-  async sync() {
-    await sync(await this.#connect());
-  }
-
   async truncate(path: string, length = 0) {
     const session = await this.#connect();
     await using fd = await openat(session, path, O.WRONLY, 0);
