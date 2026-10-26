@@ -180,6 +180,7 @@ in
       named-semaphore = namedSemaphoreCheck;
       proc-self-mem = installedCheck { name = "proc-self-mem"; };
       posix-spawn-stress = posixSpawnStressCheck;
+      ptrace = installedCheck { name = "ptrace"; };
       pty = installedCheck { name = "pty"; };
       ramfs-fallocate = installedCheck { name = "ramfs-fallocate"; };
       ramfs-truncate = installedCheck { name = "ramfs-truncate"; };
