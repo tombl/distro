@@ -527,7 +527,10 @@ jobs:
           summary=()
           failed=0
 
-          mapfile -t packages < <(node scripts/packages.mjs | jq --raw-output '.[].name')
+          # mapfile can't see a failure in a process substitution.
+          names=$(node scripts/packages.mjs | jq --raw-output '.[].name') || exit 1
+          [ -n "$names" ] || { echo "scripts/packages.mjs lists no published packages"; exit 1; }
+          mapfile -t packages <<< "$names"
           for package in "${packages[@]}"; do
             if npm view "${package}@${VERSION}" version >/dev/null 2>&1; then
               summary+=("${package}@${VERSION}: already published")

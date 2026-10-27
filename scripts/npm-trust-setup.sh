@@ -129,20 +129,34 @@ REPO="tombl/distro"
 WORKFLOW="ci.yml"
 NPM_USER="tombl"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-mapfile -t PACKAGES < <(node scripts/packages.mjs | jq --raw-output '.[].name')
-((${#PACKAGES[@]})) || {
+packages=$(node scripts/packages.mjs | jq --raw-output '.[].name')
+[[ -n $packages ]] || {
   echo "scripts/packages.mjs lists no published packages" >&2
   exit 1
 }
+mapfile -t PACKAGES <<<"$packages"
 
 # exists PKG succeeds when PKG has any version on the registry.
 exists() { npm view "$1" version >/dev/null 2>&1; }
 
-# trusted PKG prints PKG's trust configuration as JSON, empty when none.
-trusted() {
+# trust PKG prints "ok" when one of PKG's trusted publishers is exactly the
+# release job (GitHub Actions, $REPO, $WORKFLOW, no environment, allowed to
+# publish), "other" when PKG has only different ones, and "none" otherwise.
+# `npm trust list --json` prints one JSON object per configuration.
+trust() {
   local out
-  out=$(npm trust list "$1" --json 2>/dev/null) || return 0
-  if [[ $out == *'"id"'* ]]; then printf '%s' "$out"; fi
+  out=$(npm trust list "$1" --json 2>/dev/null) || {
+    echo none
+    return
+  }
+  jq --slurp --raw-output --arg repo "$REPO" --arg file "$WORKFLOW" '
+    map(select(type == "object" and has("id"))) as $configs
+    | if any($configs[]; .type == "github" and .repository == $repo and .file == $file
+        and (.environment // "") == "" and ((.permissions // []) | index("createPackage")))
+      then "ok"
+      elif ($configs | length) > 0 then "other"
+      else "none" end
+  ' <<<"$out" 2>/dev/null || echo none
 }
 
 run_wizard() {
@@ -238,16 +252,17 @@ run_wizard() {
       warn "$pkg is not on npm; skipped"
       continue
     fi
-    config=$(trusted "$pkg")
-    if [[ -n $config ]]; then
-      if [[ $config == *"$REPO"* && $config == *"$WORKFLOW"* ]]; then
-        printf '  %s✓ already trusted%s %s\n' "$GREEN" "$RESET" "$pkg"
-      else
-        SKIPPED+=("$pkg trusts something else: npm trust list $pkg, then npm trust revoke --id <id> $pkg, and re-run")
-        warn "$pkg already has a different trusted publisher; left alone"
-      fi
+    case $(trust "$pkg") in
+    ok)
+      printf '  %s✓ already trusted%s %s\n' "$GREEN" "$RESET" "$pkg"
       continue
-    fi
+      ;;
+    other)
+      SKIPPED+=("$pkg trusts something else (another repository, workflow or environment, or staged publishing only): npm trust list $pkg, then npm trust revoke --id <id> $pkg, and re-run")
+      warn "$pkg has a trusted publisher the release job can't use; left alone"
+      continue
+      ;;
+    esac
     if npm trust github "$pkg" --file "$WORKFLOW" --repo "$REPO" --allow-publish --yes; then
       printf '  %s✓ trusted%s %s\n' "$GREEN" "$RESET" "$pkg"
     else
@@ -287,8 +302,11 @@ run_wizard() {
   # ── 6 ─────────────────────────────────────────────────────────────────────
   stage "Verify"
   for pkg in "${PACKAGES[@]}"; do
-    if [[ -n "$(trusted "$pkg")" ]]; then
+    state=$(trust "$pkg")
+    if [[ $state == ok ]]; then
       printf '  %s✓%s %s: on npm, trusted publisher set\n' "$GREEN" "$RESET" "$pkg"
+    elif [[ $state == other ]]; then
+      warn "$pkg: its trusted publisher is not $REPO's $WORKFLOW without an environment"
     elif exists "$pkg"; then
       warn "$pkg: on npm, but no trusted publisher"
     else
