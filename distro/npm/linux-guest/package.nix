@@ -21,6 +21,7 @@ let
       "packages/linux-guest/README.md"
       "packages/linux-guest/LICENSE"
       "scripts/pack-package.mjs"
+      "scripts/packages.mjs"
       "tsconfig.base.json"
     ];
     env.CI = "true";

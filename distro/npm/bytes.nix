@@ -10,6 +10,7 @@ pkgs.stdenvNoCC.mkDerivation {
     "tsconfig.base.json"
     "packages/bytes"
     "scripts/pack-package.mjs"
+    "scripts/packages.mjs"
   ];
   env.CI = "true";
   pnpmDeps = node-workspace.deps;

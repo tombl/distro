@@ -45,5 +45,8 @@
   },
   "bundledDependencies": [
     "@lowland/bytes"
-  ]
+  ],
+  "engines": {
+    "node": ">=24.20"
+  }
 }
