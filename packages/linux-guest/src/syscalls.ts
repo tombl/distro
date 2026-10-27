@@ -468,3 +468,77 @@ function c_string(value: string): { in: Uint8Array } {
 function nullable_c_string(value: string | null): number | { in: Uint8Array } {
   return value === null ? 0 : c_string(value);
 }
+
+// --- PROTOTYPE (redesign phase 0 spike) ------------------------------------
+// Requests the spike in ../spike needs before phase 2 designs them properly.
+
+/** Every syscall, for the spike's host-driven boot. */
+export { syscall as raw_syscall };
+
+const REQ_SWITCH_ROOT = 5;
+const REQ_SPAWN_ACTIONS = 6;
+
+/** Validated by the session; PID 1 enters /sysroot once the session ends. */
+export async function switch_root(session: GuestSession): Promise<void> {
+  const request = new Uint8Array([REQ_SWITCH_ROOT]);
+  const errno = await session.exchange(async (lane) => {
+    await lane.write(request);
+    const reply = new ReplyHead(await lane.read(ReplyHead.size));
+    return reply.ret === -1n ? reply.errno : 0;
+  });
+  if (errno) throw new SystemError(errno);
+}
+
+export type SpawnAction =
+  | { op: "open"; fd: number; path: string; flags: number; mode?: number }
+  | { op: "dup2"; from: number | GuestFd; fd: number }
+  | { op: "close"; fd: number | GuestFd };
+
+/** posix_spawn with host-chosen file actions; descriptors are the host's. */
+export async function spawn_actions(
+  session: GuestSession,
+  options: {
+    argv: readonly string[];
+    cwd: string;
+    env: readonly string[];
+    setsid?: boolean;
+    actions: readonly SpawnAction[];
+  },
+): Promise<number> {
+  const fd_of = (fd: number | GuestFd) => (fd instanceof GuestFd ? fd.fd : fd);
+  const payload = new Bytes();
+  const write_string = (value: string) => {
+    const bytes = new TextEncoder().encode(value);
+    payload.alloc(U32LE).value = bytes.byteLength;
+    payload.append(bytes);
+  };
+  payload.alloc(U32LE).value = options.setsid ? 1 : 0;
+  spawn_payload(payload, options.argv, options.cwd, options.env);
+  payload.alloc(U32LE).value = options.actions.length;
+  for (const action of options.actions) {
+    const [op, fd, arg, mode, path] =
+      action.op === "open"
+        ? [1, action.fd, action.flags, action.mode ?? 0, action.path]
+        : action.op === "dup2"
+          ? [2, action.fd, fd_of(action.from), 0, ""]
+          : [3, fd_of(action.fd), 0, 0, ""];
+    payload.alloc(U32LE).value = op;
+    payload.alloc(U32LE).value = fd;
+    payload.alloc(U32LE).value = arg;
+    payload.alloc(U32LE).value = mode;
+    write_string(path);
+  }
+  const request = new Bytes();
+  request.alloc(U8).value = REQ_SPAWN_ACTIONS;
+  request.alloc(U32LE).value = payload.length;
+  request.append(payload.array);
+  const result = await session.exchange(async (lane) => {
+    await lane.write(request.array);
+    const reply = new ReplyHead(await lane.read(ReplyHead.size));
+    if (reply.ret === -1n) return { errno: reply.errno };
+    const body = await lane.read(4);
+    return { pid: U32LE.get(new DataView(body.buffer, body.byteOffset), 0) };
+  });
+  if (result.pid === undefined) throw new SystemError(result.errno);
+  return result.pid;
+}
