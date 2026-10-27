@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-27
+
 ### Added
 
 - `@lowland/kernel` runs an SMP Linux kernel compiled to WebAssembly and
@@ -10,9 +12,48 @@
 - `@lowland/guest` provides a bootable guest SDK with process execution and
   streaming I/O, filesystem and mount operations, labeled EROFS or ext4 root
   disks, and optional temporary writable overlays.
-- The `lowland` command line builds system images from apk packages and host
-  files with `npx lowland build`, which takes the same options as
-  `buildImage()` from `@lowland/image/build`.
+- `@lowland/image` attaches the canonical system image with `rootImage()`: a
+  read-only EROFS root with BusyBox, apk-tools and CA certificates, set up for
+  the published apk repository. `rootImage(source)` attaches a custom EROFS or
+  ext4 image from a path, URL, `FileHandle`, bytes, `Blob` or `Response`.
+- `buildImage()` from `@lowland/image/build` builds custom images in Node from
+  apk packages, host files and symlinks, in a builder machine shipped with the
+  package. Images are compressed with deflate by default; `compression`
+  selects `lzma` or `none`.
+- The `lowland` package exports `Linux`, one API that boots a machine and runs
+  commands in Node and in browsers. Its command line runs a command in a fresh
+  machine with `npx lowland run`, sharing host directories (`-v`), setting the
+  working directory (`-w`), CPUs and host networking, and giving interactive
+  commands a guest terminal (`-t`). `npx lowland build` takes the same options
+  as `buildImage()`.
+- `guest.exec(argv, { terminal })` runs a process on a guest pseudoterminal as
+  a session leader with job control, and `resize()` changes the terminal's
+  size.
+- A guest that cannot mount its system root makes `bootMachine()` reject with
+  a `GuestBootError` that carries the agent's diagnostic, such as `no
+  supported filesystem is labeled LOWLAND_ROOT`, instead of panicking the
+  kernel.
+- `machine.close()` runs the new optional `MachinePlugin.closing()` hooks, in
+  reverse plugin order, before teardown. The guest agent uses it to sync
+  guest filesystems, so writes to a writable disk survive the close.
+  `guest.sync()` syncs on demand.
+- The vsock device accepts guest-initiated connections: `listen(port,
+  handler)` serves a host port for as long as the handler runs.
+- Read-only ext4 roots, such as a block device without a `write` callback,
+  are mounted beneath a temporary writable overlay, as EROFS roots are.
+- The kernel mounts EROFS images compressed with deflate, LZMA or LZ4, and
+  `mkImage` compresses EROFS images with deflate by default.
+- The toolchain supports C++ exceptions, so btop builds. `buildGoModule`
+  builds Go programs for `linux/wasm`, and `buildGoModuleCgo` adds static
+  cgo. The apk repository adds socat.
+- `nix develop github:tombl/distro#sdk` gives a shell whose compilers, CMake
+  and Meson target the guest, and `nix flake init -t github:tombl/distro#port`
+  starts a downstream project with a package, an image and a boot script.
+- `ptrace()` requests after `PTRACE_TRACEME` or `PTRACE_ATTACH` work instead
+  of killing the tracer, and `<linux/ptrace.h>` builds in userspace.
+- musl defines syscall numbers 451–471 and provides `swapon()`, `swapoff()`,
+  and `pthread_getattr_np()` on the main thread.
+- Documentation and runnable examples are published at https://docs.low.land.
 - Node and browser virtio-fs adapters share host directories with guests,
   including backend-enforced read-only mounts and support for OPFS and the
   browser File System Access API.
@@ -56,6 +97,24 @@
   kernel waits for it before reusing that memory. The kernel and
   `@lowland/kernel` must be updated together.
 
+- **Breaking:** `/bin/sh` in images is BusyBox ash instead of hush, as on
+  Alpine, so scripts get `set -u` and `set -e` behaves as POSIX requires.
+- Published packages require Node 24.20 or later on 24.x, or 26.7 or later.
+  Earlier releases' `Duplex.toWeb()` never ends a half-closed peer's stream,
+  or throws when the converted stream closes, which breaks guest TCP and
+  image builds.
+- Virtio-fs reads each directory once per handle, writes replies straight
+  into guest memory, and forgets or renames only the affected subtree.
+  `NodeFS` no longer syncs on every `close()`; `fsync()` still syncs.
+- Device-writable virtio buffers are allocated on first touch instead of
+  copied out of guest memory, which makes boot faster.
+- Node kernel threads no longer load undici to receive their first message.
+- A missing system disk fails the boot at once instead of after 11 seconds of
+  polling.
+- `@lowland/guest` rejects an `agent.img` that is not a GPT disk, such as a
+  dev server's HTML fallback page, with an error naming the URL, and retries
+  a failed load.
+
 ### Fixed
 
 - Made machine shutdown, virtio reset, in-flight queue handling, and device
@@ -64,3 +123,33 @@
   process and virtio handoffs.
 - Preserved console input supplied during early boot and made console ownership
   transfers and resets reliable.
+- Fixed `ADB integrity error`s when an apk package was rebuilt: the
+  repository publishes content-addressed package files.
+- Fixed processes without a console receiving each other's standard
+  descriptors, which made `exec()` of a missing program resolve instead of
+  rejecting with `ENOENT`.
+- Fixed outbound TCP sessions aborting on every close: each direction now
+  half-closes, and the session signal aborts only on reset.
+- Fixed BrowserFS losing nodes when namespace operations overlap, and losing
+  writes to a file that a rename was moving.
+- Fixed `copy_from_user()` and `copy_to_user()` copying nothing when a range
+  ran off the end of process memory, which hung writes and failed reads that
+  should have been short.
+- Fixed `sigsuspend()`, `ppoll()` and `pselect()` leaving their temporary
+  signal mask installed after a handler ran.
+- Fixed signal handlers that leave through `siglongjmp()` or a C++ `throw`
+  overrunning the kernel stack, and kept guest exception handlers from
+  catching `exit()` and `exec()`.
+- Fixed `clone()` without `CLONE_VM` failing with `EOPNOTSUPP` while another
+  process read the caller's `/proc` entries.
+- Fixed futexes in separate address spaces waking each other's waiters when
+  they shared an address.
+- Fixed HTTPS `wget` exiting with status 139 after a successful download.
+- Fixed writes through unbuffered `FILE` streams failing with `EINVAL` on
+  files such as `/proc/<pid>/oom_score_adj`.
+- Fixed `SIZE_MAX` and the other pointer-sized limits having `int`'s type
+  instead of `long`'s.
+- Fixed image files losing their requested modes: `files` with 0600 came out
+  0644, and setuid modes failed the build.
+- Fixed a tmpfs file truncated up from empty allocating all of its pages at
+  once: it grows sparsely, and tmpfs supports `fallocate()`.

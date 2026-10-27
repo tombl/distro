@@ -1,6 +1,6 @@
 {
   "name": "@lowland/kernel",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Low-level Linux virtual machine and virtio device primitives for JavaScript.",
   "homepage": "https://docs.low.land/reference/kernel/",
   "license": "MIT AND (GPL-2.0-only WITH Linux-syscall-note)",

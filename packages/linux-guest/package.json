@@ -1,6 +1,6 @@
 {
   "name": "@lowland/guest",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A composable Linux guest-agent integration with processes, files, and networking.",
   "homepage": "https://docs.low.land/reference/guest/",
   "license": "MIT AND GPL-2.0-only AND (GPL-2.0-only WITH Linux-syscall-note)",
