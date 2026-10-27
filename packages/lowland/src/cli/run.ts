@@ -29,12 +29,16 @@ Options:
   -w, --cwd <path>               Set the command working directory (default: /)
   -e, --env <name[=value]>       Set an environment variable, or pass one through (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
-      --network <none|host>      Connect the machine to the host's network (default: none)
+      --network <none|nat>       Give the machine a network (default: none)
   -t, --tty                      Run the command on a terminal; stdin must be one
   -h, --help                     Show help
 
 The root image is never modified: changes to it last only as long as the
 machine. Writes persist only to ext4 disks and shared directories.
+
+With --network nat, the guest has egress through the host's sockets: its TCP
+connections and DNS lookups go out as lowland's own, and 192.0.2.1 reaches
+the host's loopback. With none, the machine has no network card.
 
 When stdin is a terminal and no command is given, or with --tty, the command
 runs on a guest terminal the size of the host's, with job control, and keys
@@ -61,7 +65,7 @@ const VALUE_OPTIONS = new Set([
   "--network",
 ]);
 
-const NETWORKS = ["none", "host"] as const;
+const NETWORKS = ["none", "nat"] as const;
 
 const SIGNALS: Record<string, number> = {
   SIGHUP: 1,
@@ -451,7 +455,7 @@ export async function execute(
   argv: string[],
   { terminal, create = Linux.create }: ExecuteOptions = {},
 ): Promise<number> {
-  const network = parsed.network === "host" ? createNetwork(nodeNetwork()) : undefined;
+  const network = parsed.network === "nat" ? createNetwork(nodeNetwork()) : undefined;
   try {
     let linux: Linux;
     try {

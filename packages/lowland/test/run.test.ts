@@ -127,10 +127,10 @@ describe("lowland run", () => {
     assert.deepEqual(result, { status: 0, stdout: "2\n", stderr: "" });
   });
 
-  it("reaches the host's network with --network host", async () => {
+  it("reaches the host's network with --network nat", async () => {
     await using server = await http_server("from the host\n");
     const url = `http://192.0.2.1:${server.port}/`;
-    const result = await lowland(["run", "--network", "host", "wget", "-qO-", url]);
+    const result = await lowland(["run", "--network", "nat", "wget", "-qO-", url]);
     assert.deepEqual(result, { status: 0, stdout: "from the host\n", stderr: "" });
     const isolated = await lowland(["run", "wget", "-qO-", url]);
     assert.notEqual(isolated.status, 0);
@@ -155,7 +155,7 @@ describe("lowland run", () => {
       const result = await lowland([
         "run",
         "--network",
-        "host",
+        "nat",
         "nc",
         "192.0.2.1",
         String(port),
