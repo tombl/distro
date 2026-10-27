@@ -182,6 +182,29 @@ test("initramfs archives concatenate in plugin order on 4-byte boundaries", asyn
   );
 });
 
+test("initramfs archives larger than the limit fail before allocating", async () => {
+  // Only the length is read before the limit check, so nothing is allocated.
+  const huge = {
+    buffer: new ArrayBuffer(0),
+    byteOffset: 0,
+    byteLength: 2 ** 30,
+  } as ArrayBufferView;
+  await assert.rejects(
+    configure_machine(
+      [],
+      [
+        {
+          configure(setup) {
+            setup.initramfs.add(huge);
+            setup.initramfs.add(new Uint8Array(1));
+          },
+        },
+      ],
+    ),
+    RangeError,
+  );
+});
+
 test("a machine without archives has an empty initramfs", async () => {
   const configured = await configure_machine([], []);
 

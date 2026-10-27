@@ -195,6 +195,8 @@ class BlockDevice extends VirtioDevice {
     const valid = data.length <= SEG_MAX && start + BigInt(length) <= this.#capacity;
     const offset = Number(start);
     let result: number = BlockDeviceStatus.OK;
+    // Bytes of the writable payload initialized from its start.
+    let filled = 0;
     switch (request.type) {
       case BlockDeviceRequestType.IN: {
         assert(
@@ -212,6 +214,7 @@ class BlockDevice extends VirtioDevice {
           (at, target) => storage.read(at, target),
           storage.readv && ((at, targets) => storage.readv!(at, targets)),
         );
+        filled = Math.min(read, length);
         if (read !== length) result = BlockDeviceStatus.IOERR;
         break;
       }
@@ -267,6 +270,7 @@ class BlockDevice extends VirtioDevice {
           segment.set(piece);
           n += piece.byteLength;
         }
+        filled = n;
         break;
       }
       default:
@@ -274,11 +278,23 @@ class BlockDevice extends VirtioDevice {
         result = BlockDeviceStatus.UNSUPP;
     }
 
+    // The used length covers every writable buffer through the status byte
+    // that ends them, so a driver can rely on the status. Each byte it
+    // covers must be initialized, so the payload past what the request
+    // filled is zeroed: a short or rejected read, padding past the ID, or an
+    // unsupported request's writable buffers.
+    let offset_in_payload = 0;
+    let written = 1;
+    for (const desc of data) {
+      if (!desc.writable) continue;
+      const segment = desc.array;
+      const start = Math.max(0, filled - offset_in_payload);
+      if (start < segment.byteLength) segment.fill(0, start);
+      offset_in_payload += segment.byteLength;
+      written += segment.byteLength;
+    }
     status.array[0] = result;
-    // The used length counts every byte the device may have written, from
-    // the start of the writable buffers through the status byte that ends
-    // them, so a driver can rely on the status.
-    chain.release((data.length > 0 && data[0]!.writable ? length : 0) + 1);
+    chain.release(written);
   }
 
   protected close() {

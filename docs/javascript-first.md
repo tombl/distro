@@ -263,9 +263,10 @@ layered.
 
 Linux retains its initramfs support and the host/kernel handoff ABI for custom
 embeddings. The canonical packages do not materialize or bundle an initramfs.
-The device-tree handoff already uses a size-query/copy protocol. The remaining
-fixed-capacity initramfs handoff should eventually use the same protocol; that
-kernel improvement is independent of the package migration.
+Both handoffs, the device tree and the initramfs, use one size-query/copy
+protocol: the kernel calls the import with no buffer to learn the size,
+allocates the buffer itself, and calls it again to have the host copy into it.
+The host never chooses an address in guest memory.
 
 ## High-level JavaScript API
 

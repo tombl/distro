@@ -18,12 +18,22 @@ export interface ConfiguredMachine {
   readonly plugins: readonly MachinePlugin[];
 }
 
+/** The largest initramfs a machine accepts: 1 GiB, a quarter of wasm32 memory. */
+const MAX_INITRAMFS = 2 ** 30;
+
 // newc archives may be separated by NUL padding in 4-byte units, which the
 // kernel skips between members. Each archive starts on such a boundary.
 function concatenate_archives(archives: readonly ArrayBufferView[]): Uint8Array {
   // Plain arithmetic: bitwise operators would wrap past 2 GiB.
   const align = (size: number) => Math.ceil(size / 4) * 4;
   const total = archives.reduce((size, archive) => align(size) + archive.byteLength, 0);
+  // The kernel's size query returns an i32, and the initrd must fit in the
+  // wasm32 machine's memory beside the kernel.
+  if (total > MAX_INITRAMFS) {
+    throw new RangeError(
+      `initramfs archives total ${total} bytes, more than the ${MAX_INITRAMFS}-byte limit`,
+    );
+  }
   const initramfs = new Uint8Array(total);
   let offset = 0;
   for (const archive of archives) {
