@@ -182,6 +182,7 @@ export interface Imports {
   boot: {
     get_devicetree(buf: number, size: number): number;
     get_initramfs(buf: number, size: number): number;
+    get_initrd(buf: number, size: number): number;
   };
   kernel: {
     breakpoint(): void;

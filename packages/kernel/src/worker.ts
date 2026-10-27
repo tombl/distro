@@ -678,6 +678,7 @@ function worker_imports({ vmlinux, memory }: InitMessage, user: ReturnType<typeo
     boot: {
       get_devicetree: unavailable,
       get_initramfs: unavailable,
+      get_initrd: unavailable,
     },
     user: user.imports,
     kernel: kernel_imports({

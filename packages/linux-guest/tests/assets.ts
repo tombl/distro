@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { blockDevice } from "@lowland/kernel";
+import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { testAsset } from "../../../scripts/test-assets.ts";
 
 async function asset(name: string) {
@@ -82,9 +83,13 @@ export const user_trap = await asset("user-trap");
 export const getdents_inode = await asset("getdents-inode");
 
 const lifecycle_rootfs = await asset("lifecycle.erofs");
+const boot_initramfs = await asset("boot.cpio");
 
 export const lifecycle_assets = {
-  initramfs: await asset("boot.cpio"),
+  /** The busybox initramfs that mounts /dev/vda and switches into it. */
+  boot: (): MachinePlugin => ({
+    configure: (setup) => setup.initramfs.add(boot_initramfs),
+  }),
   root: () =>
     blockDevice({
       capacity: lifecycle_rootfs.byteLength,

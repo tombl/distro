@@ -30,6 +30,7 @@ async function read_only(image: MachinePlugin) {
   await image.configure({
     args: { add() {} },
     devices: { add: (...added) => devices.push(...added) },
+    initramfs: { add() {} },
     bootConsole: new ReadableStream(),
   });
   assert.equal(devices.length, 1);
@@ -200,6 +201,7 @@ test("closes a file whose device the machine refuses", async () => {
               throw new Error("refused");
             },
           },
+          initramfs: { add() {} },
           bootConsole: new ReadableStream(),
         }),
       new Error("refused"),
