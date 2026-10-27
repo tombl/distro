@@ -83,6 +83,27 @@ program that fills its output pipe stops reading its input, and `close()` never 
 Up to eight programs started by `run()` and `exec()` can be running at a time. Further calls
 wait for a slot instead of failing.
 
+## Redirect standard streams
+
+The `stdio` option connects a program's standard input, output, and error to something other
+than a pipe, as a shell's redirections would. Each entry is `"pipe"`, the default; `"null"` for
+`/dev/null`; `"stdout"`, for standard error only, like `2>&1`; or a guest file opened with
+`guest.fs.open()`, which the program reads or writes directly without the data passing through
+your process:
+
+```js
+await using log = await guest.fs.open("/tmp/build.log", {
+  write: true,
+  create: true,
+  truncate: true,
+});
+const result = await guest.run(["make"], { stdio: ["null", log, "stdout"] });
+```
+
+The program shares the file's offset with you, and keeps its own reference to the file, so
+closing the `FsFile` afterwards is fine. A stream that is not a pipe has nothing behind it:
+`stdout` and `stderr` are empty, and writes to `stdin` reject.
+
 ## Time limits, and what they cannot stop
 
 Pass an `AbortSignal` to give a program a deadline. When it aborts, the program is killed and
