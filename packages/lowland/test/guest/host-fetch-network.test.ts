@@ -3,17 +3,18 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { type AddressInfo } from "node:net";
 import { test } from "node:test";
-import { bootMachine, consoleDevice, entropyDevice } from "../../src/machine/index.ts";
 import {
+  bootMachine,
+  consoleDevice,
   createNetwork,
-  guestAgent,
-  type GuestAgent,
+  entropyDevice,
   type NetworkOptions,
   type NetworkAttachment,
   type TcpSession,
-} from "../../src/guest/index.ts";
-import { hostFetchNetwork } from "../../src/guest/host-fetch-network.ts";
-import { ByteReader } from "../../src/guest/http.ts";
+} from "../../src/machine/index.ts";
+import { guestAgent, type GuestAgent } from "../../src/guest/index.ts";
+import { hostFetchNetwork } from "../../src/machine/network/host-fetch-network.ts";
+import { ByteReader } from "../../src/machine/network/http.ts";
 import { root_mount } from "./assets.ts";
 import { closed_input, collect, console_output, pattern_bytes } from "./helpers.ts";
 
@@ -42,7 +43,7 @@ type NetworkedAgent = GuestAgent & { readonly network: NetworkAttachment };
 async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) => Promise<void>) {
   const network = createNetwork(options);
   const agent = guestAgent({ mounts: [root_mount()] });
-  const attachment = network.attach(agent);
+  const attachment = network.attach();
   const machine = await bootMachine({
     cpus: 1,
     plugins: [agent, consoleDevice(closed_input(), console_output()), entropyDevice(), attachment],

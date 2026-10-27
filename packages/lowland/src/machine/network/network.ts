@@ -1,21 +1,24 @@
+// SPDX-License-Identifier: MIT
+
 import {
   ethernetDevice,
   ethernetNetwork,
-  type EthernetDevice,
   type EthernetPort,
   type MacAddress,
-} from "../machine/virtio/net.ts";
+} from "../virtio/net.ts";
 import {
   machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
-} from "../machine/plugin.ts";
-import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "../bytes/index.ts";
-import { wait_for_agent, type GuestAgent } from "./agent.ts";
+  type MachineSetup,
+} from "../plugin.ts";
+import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "../../bytes/index.ts";
 
 const GATEWAY_ADDRESS = "192.0.2.1";
 const GATEWAY_IP = ipv4_number(GATEWAY_ADDRESS);
 const GATEWAY_MAC: MacAddress = [0x02, 0, 0, 0, 0, 1];
+const NETMASK = "255.255.255.0";
+const HOSTNAME = "lowland";
 const TCP_MSS = 1200;
 const TCP_RECEIVE_WINDOW = 0xffff;
 const TCP_TIMEOUT_MS = 30_000;
@@ -25,7 +28,6 @@ const ETHERNET_MTU = 1500;
 const IP_REASSEMBLY_TIMEOUT_MS = 60_000;
 const MAX_IP_REASSEMBLIES = 64;
 const MAX_IP_FRAGMENTS = 64;
-const networked_agents = new WeakSet<GuestAgent>();
 
 const EthernetType = { IPv4: 0x0800, ARP: 0x0806 } as const;
 const IpProtocol = { ICMP: 1, TCP: 6, UDP: 17 } as const;
@@ -206,7 +208,9 @@ export interface TcpSession {
 
 /**
  * The outward-facing half of a `Network`: how to reach the world beyond the
- * virtual subnet on a guest's behalf.
+ * virtual subnet on a guest's behalf. Each handler is optional, and the
+ * network refuses what has no handler, so `createNetwork()` alone is a
+ * network that guests and the host reach only from the inside.
  */
 export interface NetworkOptions {
   /**
@@ -217,17 +221,29 @@ export interface NetworkOptions {
    * first I/O rejects the pending connection, while throwing afterwards resets
    * it.
    *
-   * In Node, implement it with `net.connect`. A browser has no raw TCP, so
-   * there it uses a transport you control, such as a WebSocket proxy.
+   * Without it, every such connection is refused: the guest sees
+   * `ECONNREFUSED`.
+   *
+   * In Node, `nodeNetwork()` from `lowland/node` implements it with the
+   * host's sockets. A browser has no raw TCP, so there it uses a transport you
+   * control, such as `hostFetchNetwork()` or a WebSocket proxy.
    */
-  connectTcp: (session: TcpSession) => void | PromiseLike<void>;
-  /** Answers guest DNS A queries with the IPv4 addresses for `hostname`. */
-  resolveDns: (hostname: string) => Promise<string[]>;
+  connectTcp?: (session: TcpSession) => void | PromiseLike<void>;
+  /**
+   * Answers guest DNS A queries with the IPv4 addresses for `hostname`.
+   *
+   * Without it, the gateway answers every query REFUSED: there is a
+   * resolver, and it resolves nothing. musl ignores a refusal and waits for
+   * another answer, so a guest lookup fails with "Try again" after the
+   * resolver's timeout, about five seconds.
+   */
+  resolveDns?: (hostname: string) => Promise<string[]>;
 }
 
 /**
- * A private IPv4 network, created by `createNetwork`. Agents attached to the
- * same network can reach each other, and the host can connect to any of them.
+ * A private IPv4 network, created by `createNetwork`. Machines attached to
+ * the same network can reach each other, and the host can connect to any of
+ * them.
  */
 export interface Network extends Disposable {
   /**
@@ -237,11 +253,22 @@ export interface Network extends Disposable {
    */
   readonly gateway: string;
   /**
-   * Attaches a guest agent to this network. The returned plugin contributes
-   * the NIC and configures it after the guest agent becomes ready. An agent
-   * supports one network attachment.
+   * Puts a machine on this network. The attachment is a machine plugin: when
+   * a machine configures it, it takes the lowest free address and adds a
+   * virtio-net NIC, which the guest sees as `eth0`, and the kernel argument
+   * `ip=`, with which the kernel itself configures `lo`, `eth0`, the default
+   * route through the gateway, the hostname `lowland` and the nameserver in
+   * `/proc/net/pnp`, before `/init` runs. So the network needs nothing from
+   * the guest's userspace.
+   *
+   * If the machine fails before it has booted, its address is free again.
+   * An address that a machine has booted with is never handed out again.
+   *
+   * An attachment belongs to one machine, and a machine takes one network
+   * attachment, because `ip=` configures one interface: configuring a second
+   * throws.
    */
-  attach(agent: GuestAgent): NetworkAttachment;
+  attach(): NetworkAttachment;
   /**
    * Connects from the host to a port on an attached guest. Resolves once
    * the guest accepts the connection. It rejects if nothing is listening there
@@ -274,60 +301,40 @@ export interface Network extends Disposable {
   close(): void;
 }
 
-/** A guest-specific network attachment and machine plugin. */
+/**
+ * One machine's place on a network, and the machine plugin that puts it
+ * there. Pass it to `bootMachine()` with the machine's other plugins.
+ */
 export interface NetworkAttachment extends MachinePluginProvider {
-  /** The guest's address on the network, e.g. `"192.0.2.2"`. */
+  /**
+   * The guest's address on the network, e.g. `"192.0.2.2"`. A machine
+   * assigns it when it configures the attachment, so reading it before then
+   * throws.
+   */
   readonly address: string;
   /** Connects to a port on this guest by calling `network.connect` with its address. */
   connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
   connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
 }
 
-async function configure_guest_network(agent: GuestAgent, address: string, gateway: string) {
-  const deadline = performance.now() + 10_000;
-  let failure: unknown;
-  while (performance.now() < deadline) {
-    try {
-      await agent.fs.stat("/sys/class/net/eth0");
-      failure = undefined;
-      break;
-    } catch (error) {
-      failure = error;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  if (failure) throw new Error("guest network device did not appear", { cause: failure });
-
-  const result = await agent.run([
-    "/bin/sh",
-    "-c",
-    [
-      "/sbin/ifconfig lo up",
-      `/sbin/ifconfig eth0 ${address} netmask 255.255.255.0 up`,
-      `/sbin/route add default gw ${gateway} eth0`,
-    ].join(" && "),
-  ]);
-  if (!result.status.success) {
-    const decoder = new TextDecoder();
-    const output = `${decoder.decode(result.stdout)}${decoder.decode(result.stderr)}`.trim();
-    throw new Error(
-      `guest network configuration failed (${result.status.code})${output ? `: ${output}` : ""}`,
-    );
-  }
-}
-
 interface Attachment {
   readonly address: string;
   readonly ip: number;
   readonly macAddress: MacAddress;
-  readonly device: EthernetDevice;
   close(): void;
 }
 
-const do_attach_guest = Symbol("attach guest to network");
+/** Machines, by their setup, that already have a network attachment. */
+const networked_machines = new WeakSet<MachineSetup>();
 
-interface InternalNetwork extends Network {
-  [do_attach_guest](): Attachment;
+/**
+ * The kernel's static IP configuration for `eth0`:
+ * `ip=<client>:<server>:<gateway>:<netmask>:<hostname>:<device>:<autoconf>:<dns0>`.
+ * The gateway is also the nameserver, which the kernel lists in
+ * `/proc/net/pnp`.
+ */
+function kernel_ip_argument(address: string) {
+  return `ip=${address}::${GATEWAY_ADDRESS}:${NETMASK}:${HOSTNAME}:eth0:off:${GATEWAY_ADDRESS}`;
 }
 
 function ipv4_number(address: string) {
@@ -552,7 +559,15 @@ function decode_dns_name(packet: Uint8Array, offset: number) {
   return { hostname: labels.join("."), end: offset };
 }
 
-function dns_response(query: Uint8Array, addresses: readonly string[]) {
+function refuse_tcp(): never {
+  throw new Error("this network has no outbound TCP");
+}
+
+/**
+ * Answers a query with `addresses`, or with REFUSED when there is no
+ * resolver to ask.
+ */
+function dns_response(query: Uint8Array, addresses: readonly string[] | undefined) {
   if (query.byteLength < DnsHeader.size) throw new Error("short DNS query");
   const input = new DnsHeader(query);
   if (input.question_count !== 1) throw new Error("DNS query must have one question");
@@ -562,13 +577,16 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
   }
   const question_end = name.end + DnsQuestionFooter.size;
   const question = new DnsQuestionFooter(query.subarray(name.end));
-  const answer_addresses = question.type === 1 && question.klass === 1 ? addresses : [];
+  const answer_addresses =
+    addresses && question.type === 1 && question.klass === 1 ? addresses : [];
   const result = new Bytes(question_end + answer_addresses.length * DnsIpv4Answer.size);
   const header = result.alloc(DnsHeader);
   result.append(query.subarray(DnsHeader.size, question_end));
   header.value = {
     id: input.id,
-    flags: 0x8180,
+    // A response, recursion desired and available; or a response with
+    // rcode 5, REFUSED.
+    flags: addresses ? 0x8180 : 0x8105,
     question_count: 1,
     answer_count: answer_addresses.length,
     authority_count: 0,
@@ -589,51 +607,35 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
 
 /**
  * Creates a private IPv4 network: an Ethernet switch in this process plus a
- * userspace TCP/IP endpoint at `192.0.2.1`. Attach every guest agent that
- * should be on the network. Guests on the same network reach each other over
- * real TCP and UDP.
+ * userspace TCP/IP endpoint at `192.0.2.1`. Attach every machine that should
+ * be on the network. Guests on the same network reach each other over real
+ * TCP and UDP.
  *
  * Guest traffic beyond the subnet goes through the adapters: outbound TCP
  * is proxied with `connectTcp`, DNS is answered with `resolveDns`, and UDP
- * is delivered to the gateway only. Closing the network, or ending an
- * `await using` scope, tears down every connection.
+ * is delivered to the gateway only. Without adapters, the network refuses
+ * both, and only connections inside it work. Closing the network, or ending
+ * a `using` scope, tears down every connection.
  *
- * @example Give guests internet access from Node
+ * @example Give a machine the host's network, from Node
  * ```ts
- * import { createConnection } from "node:net";
- * import { resolve4 } from "node:dns/promises";
- * import { once } from "node:events";
- * import { Duplex } from "node:stream";
+ * import { bootMachine, createNetwork } from "lowland/machine";
+ * import { nodeNetwork } from "lowland/node";
  *
- * const network = createNetwork({
- *   async connectTcp(session) {
- *     // Each direction closes independently, so keep the socket half-open
- *     // after the remote's FIN until the guest finishes sending too. Needs
- *     // Node 24.20 or 26.7: before them, a half-open Duplex.toWeb readable
- *     // never ends at the remote's FIN.
- *     const socket = createConnection({ host: session.target.hostname,
- *       port: session.target.port, signal: session.signal, allowHalfOpen: true });
- *     await once(socket, "connect");
- *     const streams = Duplex.toWeb(socket);
- *     await Promise.all([
- *       session.readable.pipeTo(streams.writable as WritableStream<Uint8Array>),
- *       (streams.readable as ReadableStream<Uint8Array>).pipeTo(session.writable),
- *     ]);
- *   },
- *   resolveDns: resolve4,
- * });
- *
- * const agent = guestAgent({ mounts: [root] });
- * const attachment = network.attach(agent);
- * const machine = await bootMachine({
+ * using network = createNetwork(nodeNetwork());
+ * const attachment = network.attach();
+ * await using machine = await bootMachine({
  *   cpus: 1,
- *   plugins: [agent, attachment],
+ *   plugins: [...plugins, attachment],
  * });
- * // Guests can now reach whatever the host process can:
- * const process = await agent.exec(["wget", "-qO-", "http://example.com"]);
+ * // The guest's eth0 is attachment.address from boot, and the guest reaches
+ * // whatever the host process can.
  * ```
  */
-export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Network {
+export function createNetwork({
+  connectTcp = refuse_tcp,
+  resolveDns,
+}: NetworkOptions = {}): Network {
   const ethernet = ethernetNetwork();
   const attachments = new Map<number, Attachment>();
   const tcp_flows = new Map<string, TcpFlow>();
@@ -643,7 +645,9 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   const tcp_sessions = new Set<TcpFlow>();
   const udp_flows = new Map<string, UdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
-  let next_address = 2;
+  // Host parts of addresses that an attachment holds, or that a machine
+  // booted with and so are never handed out again.
+  const taken_addresses = new Set<number>();
   let next_port = 49152;
   let ip_identifier = 0;
   let closed = false;
@@ -1177,7 +1181,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
   async function receive_dns(guest: Attachment, datagram: ParsedUdpDatagram) {
     try {
       const { hostname } = decode_dns_name(datagram.payload, 12);
-      const response = dns_response(datagram.payload, await resolveDns(hostname));
+      const response = dns_response(datagram.payload, await resolveDns?.(hostname));
       const udp = udp_datagram(53, datagram.source_port, response);
       await send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.UDP, udp);
     } catch {
@@ -1476,47 +1480,111 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     });
   }
 
-  const network: InternalNetwork = {
+  function take_address() {
+    for (let suffix = 2; suffix <= 254; suffix++) {
+      if (taken_addresses.has(suffix)) continue;
+      taken_addresses.add(suffix);
+      return suffix;
+    }
+    throw new Error("network has no guest addresses left");
+  }
+
+  function attach(): NetworkAttachment {
+    if (closed) throw new Error("network is closed");
+    // The address is taken when a machine configures the attachment, and
+    // given back if that machine fails before it has booted, so failed boots
+    // do not use the network's addresses up.
+    let attachment: Attachment | undefined;
+    let attached = false;
+    let booted = false;
+    const plugin: MachinePlugin = {
+      configure(setup) {
+        if (attachment) {
+          throw new Error(
+            `network attachment ${attachment.address} is already attached to a machine`,
+          );
+        }
+        if (networked_machines.has(setup)) {
+          throw new Error(
+            "a machine takes one network attachment, because the kernel's ip= configures one interface",
+          );
+        }
+        if (closed) throw new Error("network is closed");
+        const suffix = take_address();
+        networked_machines.add(setup);
+        const address = `192.0.2.${suffix}`;
+        const ip = ipv4_number(address);
+        const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
+        const configured: Attachment = {
+          address,
+          ip,
+          macAddress,
+          close() {
+            if (!attached) return;
+            attached = false;
+            attachments.delete(ip);
+            if (!booted) taken_addresses.delete(suffix);
+            abort_tcp_flows(new Error("guest detached from network"), configured);
+            for (const flow of udp_flows.values()) {
+              if (flow.guest === configured) {
+                flow.closed = true;
+                udp_flows.delete(flow.key);
+                flow.controller.close();
+              }
+            }
+            for (const [key, reassembly] of ip_reassemblies) {
+              if (reassembly.source === ip) discard_ip_reassembly(key);
+            }
+          },
+        };
+        attachment = configured;
+        attached = true;
+        attachments.set(ip, configured);
+        const device = ethernetDevice(ethernet, { macAddress });
+        void device.closed.finally(() => configured.close()).catch(() => {});
+        setup.devices.add(device);
+        setup.args.add(kernel_ip_argument(address));
+      },
+      booted() {
+        booted = true;
+      },
+    };
+
+    function connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
+    function connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
+    function connect(
+      options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">,
+    ) {
+      // Once detached, the address may belong to another machine.
+      if (!attached) {
+        return Promise.reject(
+          new Error(`${attachment?.address ?? "the attachment"} is not attached to this network`),
+        );
+      }
+      const hostname = attachment!.address;
+      if (options.transport === "udp") return connect_udp({ ...options, hostname });
+      return connect_tcp({ ...options, hostname });
+    }
+
+    return {
+      get address() {
+        if (!attachment) {
+          throw new Error("a network attachment has no address until a machine configures it");
+        }
+        return attachment.address;
+      },
+      connect,
+      [machinePlugin]() {
+        return plugin;
+      },
+    };
+  }
+
+  const network: Network = {
     gateway: GATEWAY_ADDRESS,
-    attach(agent) {
-      return attach_guest(network, agent);
-    },
+    attach,
     connect(options: TcpConnectOptions | UdpConnectOptions) {
       return options.transport === "udp" ? connect_udp(options) : connect_tcp(options);
-    },
-    [do_attach_guest]() {
-      if (closed) throw new Error("network is closed");
-      if (next_address > 254) throw new Error("network has no guest addresses left");
-      const suffix = next_address++;
-      const address = `192.0.2.${suffix}`;
-      const ip = ipv4_number(address);
-      const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
-      const device = ethernetDevice(ethernet, { macAddress });
-      let attached = true;
-      const attachment: Attachment = {
-        address,
-        ip,
-        macAddress,
-        device,
-        close() {
-          if (!attached) return;
-          attached = false;
-          attachments.delete(ip);
-          abort_tcp_flows(new Error("guest detached from network"), attachment);
-          for (const flow of udp_flows.values()) {
-            if (flow.guest === attachment) {
-              flow.closed = true;
-              udp_flows.delete(flow.key);
-              flow.controller.close();
-            }
-          }
-          for (const [key, reassembly] of ip_reassemblies) {
-            if (reassembly.source === ip) discard_ip_reassembly(key);
-          }
-        },
-      };
-      attachments.set(ip, attachment);
-      return attachment;
     },
     close() {
       if (closed) return;
@@ -1538,43 +1606,4 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     },
   };
   return network;
-}
-
-function attach_guest(network: Network, agent: GuestAgent): NetworkAttachment {
-  if (networked_agents.has(agent)) throw new Error("guest agent already has a network attachment");
-  const attachment = (network as InternalNetwork)[do_attach_guest]();
-  networked_agents.add(agent);
-  let configured = false;
-  const plugin: MachinePlugin = {
-    configure(setup) {
-      if (configured) throw new Error("guest network is already attached to a machine");
-      configured = true;
-      setup.devices.add(attachment.device);
-    },
-    async booted(machine) {
-      await wait_for_agent(agent, machine);
-      await configure_guest_network(agent, attachment.address, network.gateway);
-    },
-  };
-  void attachment.device.closed.finally(() => attachment.close()).catch(() => {});
-
-  function connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
-  function connect(options: Omit<UdpConnectOptions, "hostname">): Promise<UdpConnection>;
-  function connect(
-    options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">,
-  ) {
-    if (options.transport === "udp") {
-      return network.connect({ ...options, hostname: attachment.address });
-    }
-    return network.connect({ ...options, hostname: attachment.address });
-  }
-
-  const guest_network: NetworkAttachment = {
-    address: attachment.address,
-    connect,
-    [machinePlugin]() {
-      return plugin;
-    },
-  };
-  return guest_network;
 }

@@ -102,7 +102,7 @@ The VM page must remain same-site with the bridge family. Copy or bundle
 guest network attachment is ready:
 
 ```js
-import { guestFetchHandler } from "lowland/guest";
+import { guestFetchHandler } from "lowland/machine";
 import { serveGuest } from "./bridge-client.js";
 
 serveGuest({

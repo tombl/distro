@@ -6,5 +6,5 @@
     "rootDir": "../../..",
     "types": ["node"]
   },
-  "include": ["*.ts", "machine/*.ts", "guest/*.ts", "image/*.ts", "image/online/*.ts"]
+  "include": ["*.ts", "machine/*.ts", "guest/*.ts", "image/*.ts", "image/online/*.ts", "node/*.ts"]
 }

@@ -20,7 +20,7 @@ export const referenceSections = [
     name: "lowland/machine",
     entrypoints: ["lowland/machine"],
     readme: false,
-    description: "Linux virtual machines and their virtio devices.",
+    description: "Linux virtual machines, their virtio devices, and networks.",
     groups: [
       {
         title: "Boot a machine",
@@ -71,6 +71,25 @@ export const referenceSections = [
         ],
       },
       {
+        title: "Connect networks",
+        description:
+          "Put machines on a network that reaches each other, the host, or an HTTP fetch adapter. The kernel configures it from ip=, with no guest agent.",
+        symbols: [
+          "createNetwork",
+          "Network",
+          "NetworkAddress",
+          "NetworkAttachment",
+          "NetworkOptions",
+          "TcpConnection",
+          "TcpConnectOptions",
+          "TcpSession",
+          "UdpConnection",
+          "UdpConnectOptions",
+          "hostFetchNetwork",
+          "guestFetchHandler",
+        ],
+      },
+      {
         title: "Run devices in workers",
         description: "Serve a device from a worker so its storage I/O stays off the main thread.",
         symbols: ["Endpoint", "serveDevice", "workerDevice"],
@@ -95,7 +114,7 @@ export const referenceSections = [
     name: "lowland/guest",
     entrypoints: ["lowland/guest", "lowland/node", "lowland/browser"],
     readme: false,
-    description: "A bootable Linux guest with processes, files, and networking.",
+    description: "A bootable Linux guest with processes and files, and its host adapters.",
     groups: [
       {
         title: "Start a guest",
@@ -138,22 +157,10 @@ export const referenceSections = [
         symbols: ["MountOptions", "Unmount", "MountFlags", "UnmountFlags"],
       },
       {
-        title: "Connect networks",
-        description: "Connect guests to each other, the host, or an HTTP fetch adapter.",
-        symbols: [
-          "createNetwork",
-          "Network",
-          "NetworkAddress",
-          "NetworkAttachment",
-          "NetworkOptions",
-          "TcpConnection",
-          "TcpConnectOptions",
-          "TcpSession",
-          "UdpConnection",
-          "UdpConnectOptions",
-          "hostFetchNetwork",
-          "guestFetchHandler",
-        ],
+        title: "Reach the host's network",
+        description:
+          "Give a network from lowland/machine the host's sockets and resolver. Import nodeNetwork from lowland/node.",
+        symbols: ["nodeNetwork"],
       },
       {
         title: "Share host directories",

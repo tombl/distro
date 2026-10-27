@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildImage } from "../src/image/build.ts";
-import { createNetwork, GuestBootError } from "../src/guest/index.ts";
+import { GuestBootError } from "../src/guest/index.ts";
+import { createNetwork } from "../src/machine/index.ts";
 import { NodeFS } from "../src/node/index.ts";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -126,10 +127,10 @@ describe("lowland run", () => {
     assert.deepEqual(result, { status: 0, stdout: "2\n", stderr: "" });
   });
 
-  it("reaches the host's network with --network host", async () => {
+  it("reaches the host's network with --network nat", async () => {
     await using server = await http_server("from the host\n");
     const url = `http://192.0.2.1:${server.port}/`;
-    const result = await lowland(["run", "--network", "host", "wget", "-qO-", url]);
+    const result = await lowland(["run", "--network", "nat", "wget", "-qO-", url]);
     assert.deepEqual(result, { status: 0, stdout: "from the host\n", stderr: "" });
     const isolated = await lowland(["run", "wget", "-qO-", url]);
     assert.notEqual(isolated.status, 0);
@@ -154,7 +155,7 @@ describe("lowland run", () => {
       const result = await lowland([
         "run",
         "--network",
-        "host",
+        "nat",
         "nc",
         "192.0.2.1",
         String(port),
@@ -447,19 +448,50 @@ describe("Linux", () => {
     assert.equal(await reader.fs.readTextFile("/data/object"), "disk\n");
   });
 
+  it("connects into a guest listener through linux.network", async () => {
+    // A network without adapters: nothing leaves it, but the host gets in.
+    using network = createNetwork();
+    await using linux = await Linux.create({ image: rootImage(), network });
+    assert.equal(linux.network?.address, "192.0.2.2");
+    // With its stdin at EOF, nc exits once the host closes.
+    const server = await linux.spawn(["sh", "-c", "nc -l -p 8080 </dev/null"]);
+    const received = new Response(server.stdout).text();
+    let connection;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        connection = await linux.network!.connect({ port: 8080 });
+        break;
+      } catch (error) {
+        if (attempt === 100) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    const writer = connection.writable.getWriter();
+    await writer.write(new TextEncoder().encode("from the host\n"));
+    await writer.close();
+    assert.equal(await received, "from the host\n");
+  });
+
   it("leaves the caller's network untouched when the machine cannot boot", async () => {
-    using network = createNetwork({
-      connectTcp: () => Promise.reject(new Error("unused")),
-      resolveDns: () => Promise.resolve([]),
-    });
-    await assert.rejects(
-      Linux.create({ image: join(scratch.path, "missing.erofs"), network }),
-      /ENOENT/,
-    );
+    using network = createNetwork();
+    // Failing before the network's plugin configures, and after it.
+    const failing = { configure: () => Promise.reject(new Error("a later plugin failed")) };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await assert.rejects(
+        Linux.create({ image: join(scratch.path, "missing.erofs"), network }),
+        /ENOENT/,
+      );
+      await assert.rejects(
+        Linux.create({ image: rootImage(), network, plugins: [failing] }),
+        /a later plugin failed/,
+      );
+    }
     await assert.rejects(
       network.connect({ hostname: "192.0.2.2", port: 1, transport: "udp" }),
       /not attached/,
     );
+    await using linux = await Linux.create({ image: rootImage(), network });
+    assert.equal(linux.network?.address, "192.0.2.2");
   });
 
   it("mounts a disk without telling it apart from a root image", async () => {

@@ -24,20 +24,27 @@ C++ exceptions and `setjmp`/`longjmp` both use WebAssembly exception handling in
 The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 
-`lowland/guest` builds an opinionated IPv4 network on that primitive.
-`network.attach(agent)` returns a plugin which attaches a NIC, assigns a static
-address in `192.0.2.0/24`, and configures the kernel's address and default route
-after the agent becomes ready. Its JavaScript endpoint
-implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses outside
-the virtual subnet are proxied through the caller's `connectTcp` adapter, which
-can be implemented with Node's `net.connect`. The gateway address maps to the
-host's loopback address. UDP proxying to arbitrary hosts is intentionally not
-part of the first cut.
+`createNetwork()`, also in `lowland/machine`, builds an opinionated IPv4
+network on that primitive. `network.attach()` returns a plugin which attaches a
+NIC with a static address in `192.0.2.0/24` and adds the kernel argument
+`ip=<address>::<gateway>:<netmask>:lowland:eth0:off:<gateway>`. The kernel
+(`CONFIG_IP_PNP`) configures `lo`, `eth0`, the default route, the hostname and
+`/proc/net/pnp` before it runs `/init`, so networking needs neither the guest
+agent nor anything from the image. `ip=` configures one interface, so a
+machine takes one attachment. The images link `/etc/resolv.conf` to
+`../proc/net/pnp`, where the kernel writes the nameserver. The JavaScript
+endpoint implements ARP, IPv4, TCP, UDP, and DNS. TCP connections to addresses
+outside the virtual subnet are proxied through the caller's `connectTcp`
+adapter, such as `nodeNetwork()` from `lowland/node`, which uses Node's
+sockets; without one they are refused, and without `resolveDns` the gateway
+answers DNS queries `REFUSED`. The gateway address maps to the host's loopback
+address. UDP proxying to arbitrary hosts is intentionally not part of the first
+cut.
 
 Each attachment exposes its assigned address and host connection API. Calling
-`attach()` on the same `createNetwork()` result for multiple agents joins their
-NICs to one switch. Omitting a network attachment starts the machine without a
-NIC; network creation and ownership remain with the caller.
+`attach()` on the same `createNetwork()` result for multiple machines joins
+their NICs to one switch. Omitting a network attachment starts the machine
+without a NIC; network creation and ownership remain with the caller.
 
 ## Testing
 

@@ -8,18 +8,10 @@ import { fileURLToPath } from "node:url";
 import { parseBuildArgs } from "../src/cli/build.ts";
 import { SystemError } from "../src/guest/index.ts";
 import type { Linux } from "../src/linux.ts";
-import { createServer, connect } from "node:net";
-import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ExecOptions, TerminalSize } from "../src/guest/index.ts";
-import {
-  execute,
-  exitCode,
-  parseRunArgs,
-  socket_readable,
-  type HostTerminal,
-} from "../src/cli/run.ts";
+import { execute, exitCode, parseRunArgs, type HostTerminal } from "../src/cli/run.ts";
 import { UsageError } from "../src/cli/usage.ts";
 
 const cli = fileURLToPath(new URL("../src/cli/cli.ts", import.meta.url));
@@ -176,7 +168,7 @@ describe("lowland run arguments", () => {
           "--cpus",
           "2",
           "--network",
-          "host",
+          "nat",
           "-e",
           "A=1",
           "--env",
@@ -197,7 +189,7 @@ describe("lowland run arguments", () => {
           { source: "/tmp", path: "/scratch", readOnly: true },
         ],
         cpus: 2,
-        network: "host",
+        network: "nat",
         command: ["ls", "-l", "--env"],
         cwd: "/work",
         env: { A: "1", HOME: "/home/me" },
@@ -241,7 +233,7 @@ describe("lowland run arguments", () => {
     [["--env", "1A=b"], /^--env expects name\[=value\], got 1A=b$/],
     [["--cpus", "0"], /^--cpus expects a positive whole number, got 0$/],
     [["--cpus", "1.5"], /^--cpus expects a positive whole number, got 1\.5$/],
-    [["--network", "bridge"], /^--network expects none or host, got bridge$/],
+    [["--network", "host"], /^--network expects none or nat, got host$/],
     [["--image"], /argument missing/],
     [["--bogus"], /Unknown option '--bogus'/],
   ] as const) {
@@ -367,26 +359,5 @@ describe("lowland run terminals", () => {
     assert.deepEqual(spawned()?.env, { TERM: "vt100" });
     failure.reject(new Error("done"));
     await code;
-  });
-});
-
-describe("lowland run host network", () => {
-  it("ignores a socket's events once its stream is cancelled", async () => {
-    const server = createServer((socket) => socket.on("error", () => {}).end("data"));
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    try {
-      const socket = connect((server.address() as { port: number }).port, "127.0.0.1");
-      await once(socket, "connect");
-      // A failed destination cancels the stream and destroys the socket;
-      // its close event must not close the cancelled stream.
-      const closed = once(socket, "close");
-      await socket_readable(socket).cancel();
-      await closed;
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(socket.destroyed, true);
-    } finally {
-      server.close();
-    }
   });
 });

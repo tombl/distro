@@ -310,7 +310,7 @@ mount them at guest paths, persisting ext4 writes unless `readOnly` is set. The
 guest reads each disk's filesystem type from its superblock. `mounts` take any
 virtio-fs backend, such as `NodeFS` for a host directory or `BrowserFS` for
 the origin private file system. `network` takes a network from
-`createNetwork()`, which `Linux` attaches its guest agent to. Further plugins
+`createNetwork()`, which `Linux` attaches the machine to. Further plugins
 follow the facade's own devices. Commands run in `/` unless their `cwd` says
 otherwise. Disposing a `Linux` flushes and unmounts its disks before closing
 the machine, so their writes reach their sources; `close()` stops it
@@ -342,14 +342,14 @@ Options:
   -w, --cwd <path>               Set the command working directory (default: /)
   -e, --env <name[=value]>       Set or pass through an environment variable (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
-      --network <none|host>      Connect the machine to the host's network (default: none)
+      --network <none|nat>       Give the machine a network (default: none)
   -t, --tty                      Run the command on a terminal; stdin must be one
 ```
 
-The short flags follow `docker run`. `--network host` gives the guest a
-network whose TCP connections and DNS lookups go out through the host, with
-the gateway address reaching the host's loopback. There is no network by
-default.
+The short flags follow `docker run`. `--network nat` gives the guest egress
+through the host's sockets: its TCP connections and DNS lookups go out as
+lowland's own, with the gateway address reaching the host's loopback. There is
+no network by default.
 
 `build` produces an image file that `run --image`, `rootImage(source)`, or any
 block device can use. Its flags mirror `buildImage()` from `@lowland/image/build`

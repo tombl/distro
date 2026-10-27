@@ -21,11 +21,11 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Duplex } from "node:stream";
 import test, { type TestContext } from "node:test";
-import { bootMachine } from "../../src/machine/index.ts";
-import { createNetwork, guestAgent } from "../../src/guest/index.ts";
+import { bootMachine, createNetwork } from "../../src/machine/index.ts";
+import { guestAgent } from "../../src/guest/index.ts";
 import { build_image, buildImage, type BuildImageOptions } from "../../src/image/build.ts";
 import { rootImage } from "../../src/image/index.ts";
-import { busybox_package, jq_package, unsigned_repository } from "./assets.ts";
+import { busybox_package, jq_package, resolver_package, unsigned_repository } from "./assets.ts";
 
 // These tests never use the network. test/online covers the public
 // repository with `pnpm test:online`.
@@ -78,6 +78,30 @@ for (const format of ["erofs", "ext4"] as const) {
       await guest.fs.readTextFile("/etc/apk/repositories"),
       "http://assets.low.land/apk/wasm32/Packages.adb\n",
     );
+  });
+}
+
+// The kernel writes the nameserver from ip= to /proc/net/pnp, so the default
+// resolv.conf links there, even over one that a package installed.
+for (const override of [false, true]) {
+  test(`replaces a package's /etc/resolv.conf ${override ? "with a user file" : "with the link"}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "lowland-image-resolver-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const resolver = join(directory, "resolv.conf");
+    await writeFile(resolver, "nameserver 198.51.100.53\n");
+    const output = await build(t, {
+      packages: [resolver_package],
+      files: override ? { "/etc/resolv.conf": resolver } : {},
+    });
+    const guest = await boot(t, output);
+    const info = await guest.fs.lstat("/etc/resolv.conf");
+    if (override) {
+      assert.ok(info.isFile);
+      assert.equal(await guest.fs.readTextFile("/etc/resolv.conf"), "nameserver 198.51.100.53\n");
+    } else {
+      assert.ok(info.isSymlink);
+      assert.equal(await guest.fs.readLink("/etc/resolv.conf"), "../proc/net/pnp");
+    }
   });
 }
 

@@ -68,6 +68,20 @@ export {
   vsockDevice,
   type VsockListener,
 } from "./virtio/vsock.ts";
+export {
+  createNetwork,
+  type Network,
+  type NetworkAddress,
+  type NetworkAttachment,
+  type NetworkOptions,
+  type TcpConnection,
+  type TcpConnectOptions,
+  type TcpSession,
+  type UdpConnection,
+  type UdpConnectOptions,
+} from "./network/network.ts";
+export { guestFetchHandler } from "./network/guest-fetch-handler.ts";
+export { hostFetchNetwork } from "./network/host-fetch-network.ts";
 
 /** The resources and boot configuration of a Linux machine. */
 export interface BootMachineOptions {

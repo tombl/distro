@@ -90,6 +90,18 @@
   entry point loads only its own assets, so an application bundles the
   canonical image only if it imports `lowland/image`, and `Linux.create()`
   needs an `image`: `rootImage()` for the canonical one, or your own.
+- **Breaking:** networks are virtual hardware in `lowland/machine`.
+  `createNetwork()`, `hostFetchNetwork()`, `guestFetchHandler()` and their
+  types move there from `lowland/guest`. `network.attach()` takes no guest
+  agent: its attachment adds the NIC and the kernel argument `ip=`, and the
+  kernel configures `lo`, `eth0`, the default route, the hostname and the
+  nameserver before `/init` runs, so a network needs neither the agent nor
+  `ifconfig` and `route` in the image. A machine takes one network
+  attachment. `connectTcp` and `resolveDns` are optional: without them the
+  network refuses outbound connections and answers DNS queries `REFUSED`.
+  `nodeNetwork()` from `lowland/node` reaches the host's network, and the
+  canonical images' `/etc/resolv.conf` links to `/proc/net/pnp`.
+  `lowland run --network host` is `--network nat`.
 - **Breaking:** `lowland/machine` no longer exposes its virtio layer. Custom
   devices built on `VirtioController`, `VirtioDriver`, `VirtioDeviceOptions`,
   `VirtqueueHandler`, and the `Virtqueue*` types are no longer supported, and

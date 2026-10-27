@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-import { bootMachine, entropyDevice, type FS, type Machine } from "./machine/index.ts";
-import { machinePlugin, type MachinePlugin, type MachinePluginInput } from "./machine/plugin.ts";
+import {
+  bootMachine,
+  entropyDevice,
+  type FS,
+  type Machine,
+  type Network,
+  type NetworkAttachment,
+} from "./machine/index.ts";
+import type { MachinePlugin, MachinePluginInput } from "./machine/plugin.ts";
 import {
   guestAgent,
   type ChildProcess,
@@ -9,8 +16,6 @@ import {
   type FileSystem,
   type GuestAgent,
   type Mount,
-  type Network,
-  type NetworkAttachment,
   type RunResult,
 } from "./guest/index.ts";
 import { image_mount, type ImageSource } from "./image/source.ts";
@@ -69,8 +74,8 @@ export interface LinuxOptions {
   /** Filesystems to share and mount, in order. */
   mounts?: readonly MountOptions[];
   /**
-   * A network from `createNetwork()` to attach the machine to. The caller
-   * owns the network and closes it.
+   * A network from `createNetwork()` in `lowland/machine` to attach the
+   * machine to. The caller owns the network and closes it.
    */
   network?: Network;
   /** Virtual CPUs to boot. Defaults to 1. */
@@ -182,29 +187,10 @@ export class Linux implements AsyncDisposable {
         })),
       ],
     });
-    // Attaching allocates the guest's address and NIC, which only a machine
-    // that configures the NIC releases. Attach while configuring, so a boot
-    // that fails before then leaves the caller's network untouched.
-    let network: NetworkAttachment | undefined;
-    let network_plugin: MachinePlugin | undefined;
-    const attach_network: MachinePlugin = {
-      async configure(setup) {
-        network = options.network!.attach(guest);
-        network_plugin = network[machinePlugin]();
-        await network_plugin.configure(setup);
-      },
-      async booted(machine) {
-        await network_plugin?.booted?.(machine);
-      },
-    };
+    const network = options.network?.attach();
     const machine = await bootMachine({
       cpus: options.cpus ?? 1,
-      plugins: [
-        guest,
-        entropyDevice(),
-        ...(options.network ? [attach_network] : []),
-        ...(options.plugins ?? []),
-      ],
+      plugins: [guest, entropyDevice(), ...(network ? [network] : []), ...(options.plugins ?? [])],
     });
     return new Linux(
       machine,

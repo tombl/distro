@@ -5,20 +5,16 @@ import {
   bootMachine,
   type BlockStorage,
   consoleDevice,
+  createNetwork,
   entropyDevice,
   fileSystemDevice,
   type Device,
+  guestFetchHandler,
+  hostFetchNetwork,
   workerDevice,
   type MachinePluginInput,
 } from "lowland/machine";
-import {
-  createNetwork,
-  guestAgent,
-  guestFetchHandler,
-  hostFetchNetwork,
-  MountFlags,
-  type GuestBoot,
-} from "lowland/guest";
+import { guestAgent, MountFlags, type GuestBoot } from "lowland/guest";
 import { BrowserFS } from "lowland/browser";
 import { serveGuest } from "@lowland/bridge-site/client";
 
@@ -357,7 +353,7 @@ const guest = installedRoot
       ],
       init: ["/init"],
     });
-const networkAttachment = network.attach(guest);
+const networkAttachment = network.attach();
 
 const args: string[] = [];
 if (installDisk) args.push("lowland.install=1");

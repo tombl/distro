@@ -31,6 +31,9 @@ export const busybox_package = join(directory, "busybox.apk");
 /** A local jq package with no dependencies. */
 export const jq_package = join(directory, "jq.apk");
 
+/** A local package that installs its own `/etc/resolv.conf`. */
+export const resolver_package = join(directory, "resolver.apk");
+
 /** A repository directory whose `wasm32/Packages.adb` index of jq is unsigned. */
 export const unsigned_repository = join(directory, "unsigned-repository");
 
