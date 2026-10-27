@@ -1,11 +1,199 @@
 ---
 title: Build an image
-description: Build a root filesystem image with your own programs, with npm or with Nix.
-draft: true
+description: Build a root filesystem image with your own programs, with Node.js or with Nix.
 section: howtos
 order: 11
 ---
 
 # Build an image
 
-This page has not been written yet. It will cover building an image from apk packages and files with `buildImage()` from `@lowland/image/build`, building one with the `mkImage` Nix function, and booting a guest from it.
+A guest runs the programs in its root filesystem image. The image from `rootImage()` contains
+only BusyBox and apk. To boot with your own programs already installed, build an image of your
+own and pass it to `rootImage()`.
+
+There are two ways to build one:
+
+- `buildImage()` from `@lowland/image/build` runs in Node.js and needs no other tools. It installs
+  packages from the public repository and copies files from the host.
+- `mkImage` is a Nix function. Use it when you build the programs from source with Nix, as
+  described in [Port software](/port-software/).
+
+Both produce the same kind of image. [Images](/images/) describes what an image must contain
+and compares the two in detail.
+
+## Build an image with Node.js
+
+`buildImage()` is part of `@lowland/image`, which also needs `@lowland/kernel` and
+`@lowland/guest`:
+
+```sh
+npm install @lowland/kernel @lowland/guest @lowland/image
+```
+
+This script builds an image with BusyBox, jq, and a shell script from the host:
+
+```js title="build.mjs"
+import { buildImage } from "@lowland/image/build";
+
+await buildImage({
+  packages: ["busybox", "jq"],
+  files: {
+    "/usr/bin/hello": { source: "./hello.sh", mode: "0755" },
+  },
+  output: "app.erofs",
+});
+```
+
+`buildImage()` boots a machine and builds the image inside it. It installs the named
+packages and their dependencies from the public repository, copies `./hello.sh` to
+`/usr/bin/hello`, and writes the image to `app.erofs`.
+
+The image contains only what you list. Include `busybox` for a shell and the standard commands,
+and `apk-tools` if programs in the guest should install more packages.
+
+A few details about the options:
+
+- `packages` also accepts paths to local `.apk` files. These are installed without a signature
+  check. A build that uses only local files does not use the network.
+- A `files` value can be a path, or an object with a `source` path and an octal `mode`. Without
+  a mode, a file keeps its mode from the host. A directory can also be copied, to a guest path
+  that does not exist in the image yet.
+- `links` creates symbolic links, for example `links: { "/usr/bin/hi": "/usr/bin/hello" }`.
+
+The [Images reference](/images/#buildimage) lists every option.
+
+### From the command line
+
+The same build is available as the `lowland build` command, from the `lowland` package:
+
+```sh
+npx lowland build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
+```
+
+`-p` adds a package, `-f` copies a file as `host:guest[:mode]`, and `-l` creates a link as
+`guest=target`. Run `npx lowland build --help` for the other options.
+
+## Build an image with Nix
+
+You need Nix with flakes enabled. [Port software](/port-software/) covers installing it on
+Linux and macOS.
+
+Start from the porting template:
+
+```sh
+mkdir hello
+cd hello
+nix flake init -t github:tombl/distro#port
+nix build .#image
+```
+
+`result` now links to an EROFS image that contains BusyBox and a small C program called `hello`.
+The image is defined in `flake.nix`:
+
+```nix
+image = wasmpkgs.mkImage {
+  name = "hello";
+  packages = [
+    wasmpkgs.busybox
+    hello
+  ];
+};
+```
+
+`packages` lists guest packages: the packages from Lowland's package set, such as
+`wasmpkgs.busybox` and `wasmpkgs.jq`, and packages you build yourself, such as `hello`.
+`mkImage` adds the packages they depend on. `files` and `links` add files and symbolic links,
+in the same way as `buildImage()`:
+
+```nix
+image = wasmpkgs.mkImage {
+  name = "hello";
+  packages = [
+    wasmpkgs.busybox
+    wasmpkgs.jq
+    hello
+  ];
+  files = {
+    "/etc/motd" = ./motd;
+    "/usr/bin/greet" = {
+      source = ./greet.sh;
+      mode = "0755";
+    };
+  };
+  links = {
+    "/usr/bin/hi" = "/bin/hello";
+  };
+};
+```
+
+[Port software](/port-software/) explains how to package your own program, and the
+[Images reference](/images/#mkimage) lists every argument.
+
+## Boot the image
+
+Pass the path of the image file to `rootImage()`:
+
+```js title="boot.mjs"
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("app.erofs"), guest],
+});
+
+const result = await guest.run(["hello"]);
+console.log(new TextDecoder().decode(result.stdout));
+```
+
+For an image built with Nix, pass `"result"` instead of `"app.erofs"`. The template's own
+`boot.mjs` does the same.
+
+In Node.js, a string is a file path, and the image is read from disk as the guest needs it.
+In a browser, a string is a URL relative to the page. [Images](/images/#rootimage) lists the
+other kinds of source.
+
+The image is read-only. The guest can still change any file in its root filesystem, but those
+changes are kept in memory and discarded when the machine closes. The image file never
+changes.
+
+A machine boots from exactly one image. Do not attach `rootImage()` twice.
+
+## Keep changes between boots
+
+To keep the changes that programs make to the root filesystem, build an ext4 image instead:
+
+```sh
+npx lowland build -p busybox --format ext4 --size 64M -o data.ext4
+```
+
+With Nix, pass `format = "ext4";` and `size = "64M";` to `mkImage`. Files in the Nix store are
+read-only, so copy the result to a file you can change:
+
+```sh
+install -m 644 result data.ext4
+```
+
+Then attach it with `writable: true`. The file is opened for reading and writing, and the
+guest writes its changes back to it:
+
+```js
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+const guest = guestAgent();
+await using machine = await bootMachine({
+  cpus: 1,
+  plugins: [rootImage("data.ext4", { writable: true }), guest],
+});
+
+await guest.fs.writeTextFile("/root/note.txt", "kept\n");
+await guest.run(["sync"]);
+```
+
+Run `sync` before the machine closes. Linux keeps recent writes in memory, and closing the
+machine does not write them to the image. Attach a writable image to only one running machine
+at a time.

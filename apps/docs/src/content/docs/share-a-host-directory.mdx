@@ -22,21 +22,21 @@ copying them in and out. It takes two steps:
 import { bootMachine, fileSystemDevice } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { NodeFS } from "@lowland/guest/node";
+import { rootImage } from "@lowland/image";
 
 const shared = fileSystemDevice(new NodeFS("./shared"), { tag: "host" });
 const guest = guestAgent();
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [root, guest, shared],
+  plugins: [rootImage(), guest, shared],
 });
 
 await guest.fs.mkdir("/tmp/host");
 await guest.mount("host", "/tmp/host", { type: "virtiofs" });
 ```
 
-`root` is the root filesystem device from the
-[`@lowland/guest` usage example](/reference/guest/#usage). Files under `./shared` are now
-visible at `/tmp/host`, and files the guest writes there appear in `./shared`.
+Files under `./shared` are now visible at `/tmp/host`, and files the guest writes there appear
+in `./shared`. The mount point can be any directory in the guest.
 
 ## In a browser
 

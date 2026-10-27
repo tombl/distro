@@ -6,39 +6,31 @@
 ## Installation
 
 ```sh
-npm install @lowland/kernel @lowland/guest
+npm install @lowland/kernel @lowland/guest @lowland/image
 ```
 
 ## Usage
 
 ```js
-import { readFile } from "node:fs/promises";
-import { blockDevice, bootMachine } from "@lowland/kernel";
+import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
-
-const image = await readFile("rootfs.erofs");
-const root = blockDevice({
-  capacity: image.byteLength,
-  read(offset, target) {
-    const source = image.subarray(offset, offset + target.byteLength);
-    target.set(source);
-    return source.byteLength;
-  },
-});
+import { rootImage } from "@lowland/image";
 
 const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
 The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
-The Build an image guide explains how to make one.
+`rootImage()` from `@lowland/image` attaches a small one with BusyBox and apk.
+[Build an image](https://docs.low.land/build-an-image/) explains how to make your own, which
+`rootImage("app.erofs")` attaches in the same way. A missing or duplicate root makes
+`bootMachine()` reject with a `GuestBootError`.
 
-The same code runs in a browser, with the image fetched instead of read from disk. The page must
-be served with the cross-origin isolation headers described in the
-[tutorial](https://docs.low.land/getting-started/).
+The same code runs in a browser. The page must be served with the cross-origin isolation
+headers described in [Set up a browser page](https://docs.low.land/set-up-a-browser-page/).
 
 ## Processes
 
@@ -51,8 +43,9 @@ and do not go through a shell.
 `guest.fs` reads and writes files inside the machine. Files written from JavaScript are
 immediately visible to programs in the guest, and the reverse is also true.
 
-An EROFS root filesystem gets a writable layer in memory on top of it, so programs can change
-any file until the machine closes. An ext4 root filesystem is mounted read-write.
+The root filesystem is writable. Changes to a read-only image, such as the one from
+`rootImage()`, are kept in memory and lost when the machine closes. Changes to an ext4 image
+attached with `rootImage("app.ext4", { writable: true })` are written back to it.
 
 ## Networking
 
@@ -66,7 +59,7 @@ const network = createNetwork({ connectTcp, resolveDns });
 const guest = guestAgent();
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [root, guest, network.attach(guest)],
+  plugins: [rootImage(), guest, network.attach(guest)],
 });
 ```
 

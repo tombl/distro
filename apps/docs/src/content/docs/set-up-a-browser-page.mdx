@@ -43,8 +43,9 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 The machine's virtual CPUs are workers that share one WebAssembly memory, and browsers allow
-shared memory only on cross-origin isolated pages. The tutorial explains this in
-[Why those headers?](/getting-started/#why-those-headers).
+shared memory only on
+[cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated)
+pages.
 
 To check a page, evaluate `crossOriginIsolated` in the browser console. It must be `true`. If
 it is `false`, inspect the document's response headers in the network panel.
@@ -141,42 +142,25 @@ other servers, add the headers in the server configuration.
 
 ## Boot your own image
 
-To boot an image you built yourself, as described in Build an image, serve
-the image file from the page's origin and attach it with `blockDevice()` in place of
-`rootImage()`. The simplest way is to fetch the whole file:
+To boot an image you built yourself, as described in [Build an image](/build-an-image/), serve
+the image file from the page's origin and pass its URL to `rootImage()`:
 
 ```ts
-import { blockDevice } from "@lowland/kernel";
+import { rootImage } from "@lowland/image";
 
-const response = await fetch("/my-image.erofs");
-const image = new Uint8Array(await response.arrayBuffer());
-const root = blockDevice({
-  capacity: image.byteLength,
-  read(offset, target) {
-    const source = image.subarray(offset, offset + target.byteLength);
-    target.set(source);
-    return source.byteLength;
-  },
-});
+const root = rootImage("/my-image.erofs");
 ```
 
-For a large image, `read` can instead fetch only the bytes the kernel asks for, with HTTP range
-requests. `read` may return a promise:
+A string is a URL relative to the page. The image is fetched once, when the first machine
+boots, and shared by every machine that the plugin is passed to. Changes that the guest makes
+to its root filesystem are kept in memory and discarded when the machine closes.
 
-```ts
-const url = "/my-image.erofs";
-const head = await fetch(url, { method: "HEAD" });
-const root = blockDevice({
-  capacity: Number(head.headers.get("Content-Length")),
-  async read(offset, target) {
-    const range = `bytes=${offset}-${offset + target.byteLength - 1}`;
-    const response = await fetch(url, { headers: { Range: range } });
-    if (response.status !== 206) throw new Error(`range request failed: ${response.status}`);
-    target.set(new Uint8Array(await response.arrayBuffer()));
-    return target.byteLength;
-  },
-});
+If the URL does not serve the image, `bootMachine()` rejects. A development server that answers
+a mistyped URL with its HTML page produces an error such as:
+
+```text
+http://localhost:5173/my-image.erofs did not return a filesystem image: got text/html, 116 bytes
 ```
 
-This makes one request for every read. In practice, fetch larger aligned chunks and keep them
-in memory, so that nearby reads share a request.
+With Vite 7, `optimizeDeps.exclude` must list `@lowland/image` along with the other two
+packages, as shown in [Use Vite](#use-vite).

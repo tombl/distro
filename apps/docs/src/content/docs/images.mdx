@@ -1,11 +1,231 @@
 ---
 title: Images
 description: What a root filesystem image must contain, and the three ways to get one.
-draft: true
 section: reference
 order: 1
 ---
 
 # Images
 
-This page has not been written yet. It will cover the image contract and distinguish `rootImage()` from `@lowland/image`, `buildImage()` from `@lowland/image/build`, and the `mkImage` Nix function.
+A guest's root filesystem comes from an image attached to the machine as a block device. This
+page describes what an image must contain, and the three ways to get one:
+
+- `rootImage()` from `@lowland/image` attaches the ready-made image that ships with the package.
+  It is a JavaScript plugin for `bootMachine()`, and it also attaches images you build.
+- `buildImage()` from `@lowland/image/build` builds an image file in Node.js. It is also
+  available as the `lowland build` command.
+- `mkImage` is a Nix function that builds an image file from Nix packages.
+
+## Which to use
+
+Use `rootImage()` to start, and to try packages. In a running guest with a network attached,
+`apk add` installs packages from the public repository. Those packages are lost when the
+machine closes.
+
+Use `buildImage()` when the image should already contain packages from the public repository,
+or programs and files from the host. It needs only Node.js.
+
+Use `mkImage` when you build programs from source with Nix, as described in
+[Port software](/port-software/). It installs Nix packages, not packages from the public
+repository.
+
+`buildImage()` and `mkImage` both write an image file. Attach it with `rootImage("app.erofs")`,
+as shown in [Build an image](/build-an-image/#boot-the-image).
+
+## The image contract
+
+The guest agent from `@lowland/guest` boots any image that meets these requirements:
+
+- The image is an EROFS or ext4 filesystem with the label `LOWLAND_ROOT`.
+- Exactly one such filesystem is attached to the machine.
+- The image contains the directories `/dev`, `/proc`, `/run`, `/sys`, and `/tmp`. The guest
+  mounts its own filesystems there. `buildImage()` and `mkImage` create them.
+- Programs are WebAssembly binaries for 32-bit Linux, linked statically. Scripts with a `#!`
+  line also run.
+
+When no filesystem is labelled `LOWLAND_ROOT`, or more than one is, `bootMachine()` rejects with
+a `GuestBootError` from `@lowland/guest`. Its message says what is wrong, for example
+`no supported filesystem is labeled LOWLAND_ROOT`.
+
+### EROFS and ext4
+
+An image attached read-only, which is the default, never changes. The guest puts a writable
+layer in memory on top of it, so programs can change any file, but the changes are discarded
+when the machine closes. One read-only image can be attached to any number of machines.
+
+An ext4 image attached with `rootImage(source, { writable: true })` is mounted read-write, and
+changes are written back to it, as shown in
+[Build an image](/build-an-image/#keep-changes-between-boots). Run `sync` in the guest before
+closing the machine, or recent changes may be lost. Attach a writable image to only one machine
+at a time.
+
+### `/init`
+
+If the image contains an executable `/init`, the guest starts it once the root filesystem is
+mounted. Use it to start services that should run for the life of the machine. When `/init`
+exits, the machine shuts down.
+
+`/init` is optional. Without it, the guest runs only the programs you start from JavaScript.
+
+## `rootImage()`
+
+```js
+import { rootImage } from "@lowland/image";
+
+const guest = guestAgent();
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+```
+
+`rootImage(source, options)` returns a plugin that attaches an image as a block device. One
+plugin can be passed to any number of machines.
+
+### The bundled image
+
+Without a source, `rootImage()` attaches the image shipped inside `@lowland/image`. The image is
+EROFS and contains:
+
+- BusyBox, which provides `/bin/sh` and the standard commands.
+- apk-tools, configured to install signed packages from the public repository,
+  `http://assets.low.land/apk/wasm32/Packages.adb`.
+- CA certificates.
+- An `/etc/resolv.conf` that sends DNS queries to the network created by `createNetwork()`.
+
+To install packages, attach a network as described in
+[Access the internet](/access-the-internet/), then run apk:
+
+```js
+await guest.run(["apk", "add", "jq"]);
+```
+
+In Node.js, the image is read from disk as the guest needs it. In a browser, it is fetched once
+and shared by every machine on the page.
+
+### Sources
+
+Pass a source to attach an image of your own:
+
+```js
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage("app.erofs"), guest] });
+```
+
+| Source                                | Behavior                                                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| A string                              | In Node.js, a file path. In a browser, a URL relative to the page.                                                               |
+| A `URL`                               | A `file:` URL is a file path. Any other URL is fetched.                                                                          |
+| A `FileHandle` from `node:fs/promises` | Read in place. It stays open after the machine closes.                                                                           |
+| A `Uint8Array` or `ArrayBuffer`       | The whole image, in memory.                                                                                                      |
+| A `Blob` or `Response`                | The whole image. It is read into memory once.                                                                                    |
+
+Files are read from disk as the guest needs them. A URL is fetched once and shared by every
+machine that the plugin is passed to.
+
+Every source must contain an EROFS or ext4 filesystem. Otherwise `bootMachine()` rejects with an
+error that names the source. A common cause is a development server that answers a mistyped
+image URL with its HTML page:
+
+```text
+http://localhost:5173/app.erofs did not return a filesystem image: got text/html, 116 bytes
+```
+
+### Options
+
+| Option     | Default | Description                                                                                                                                                                                           |
+| ---------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `writable` | `false` | Lets the guest write its changes back to an ext4 image. A path is opened for reading and writing, a `FileHandle` must already be open for writing, and a `Uint8Array` or `ArrayBuffer` is changed in place. |
+
+Without `writable`, the guest boots the image beneath a writable layer in memory, and its
+changes are discarded when the machine closes. `rootImage()` throws if `writable` is set for
+the bundled image, a URL other than a `file:` URL, a `Blob`, or a `Response`.
+
+## `buildImage()`
+
+```js
+import { buildImage } from "@lowland/image/build";
+
+await buildImage({
+  packages: ["busybox", "jq"],
+  files: { "/usr/bin/hello": { source: "./hello.sh", mode: "0755" } },
+  output: "app.erofs",
+});
+```
+
+`buildImage()` boots a machine from a builder image inside `@lowland/image`, builds
+the image in it, and writes it to `output`. It runs only in Node.js. Its options are:
+
+| Option     | Default          | Description                                                                                                                                                                                    |
+| ---------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages` | required         | Packages to install. A name such as `"jq"` is installed from the public repository, with its dependencies and a signature check. A value that ends in `.apk` or contains `/` is a local file, installed without a signature check. At least one package is required. |
+| `files`    | `{}`             | Host files to copy, keyed by absolute guest path. A value is a host path, or `{ source, mode }` with an octal mode string such as `"0755"`. Without a mode, a file keeps its host mode. A directory is copied whole, and its guest path must not already exist in the image. |
+| `links`    | `{}`             | Symbolic links to create, keyed by absolute guest path, with the link target as the value.                                                                                                    |
+| `format`   | `"erofs"`        | `"erofs"` or `"ext4"`.                                                                                                                                                                         |
+| `compression` | `"deflate"`   | How an EROFS image is compressed: `"deflate"`, `"lzma"`, or `"none"`. `"deflate"` typically makes an image 2 to 3 times smaller at a small cost on reads. `"lzma"` is about 14% smaller again but reads about half as fast. An ext4 image is never compressed. |
+| `label`    | `"LOWLAND_ROOT"` | The filesystem label, 1 to 15 letters, digits, dots, underscores, or hyphens. The guest boots only from `LOWLAND_ROOT`.                                                                         |
+| `size`     | `"256M"`         | The image size, in bytes or with a `K`, `M`, or `G` suffix. An EROFS image is only as large as its contents, so for EROFS this is the largest size allowed.                                    |
+| `output`   | required         | The path to write the image to.                                                                                                                                                                |
+
+The machine that runs the build uses the host's network only when a package is given by name.
+Files and links are applied after the packages are installed. Like `mkImage`, `buildImage()`
+creates the directories that the image contract requires.
+
+### `lowland build`
+
+```sh
+npx lowland build -p busybox -p jq -f ./hello.sh:/usr/bin/hello:0755 -o app.erofs
+```
+
+The `lowland build` command comes from the `lowland` package. It takes the same options as
+`buildImage()`:
+
+| Flag                           | Option                                                           |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `-p`, `--package <name\|path>` | Adds an entry to `packages`. Repeat it for each package.         |
+| `-f`, `--file <host:guest[:mode]>` | Adds an entry to `files`. Repeat it for each file.           |
+| `-l`, `--link <guest=target>`  | Adds an entry to `links`. Repeat it for each link.               |
+| `--format <format>`            | Sets `format`.                                                   |
+| `--compression <compression>`  | Sets `compression`.                                              |
+| `--label <label>`              | Sets `label`.                                                    |
+| `--size <size>`                | Sets `size`.                                                     |
+| `-o`, `--output <file>`        | Sets `output`.                                                   |
+
+## `mkImage`
+
+```nix
+wasmpkgs.mkImage {
+  name = "hello";
+  packages = [
+    wasmpkgs.busybox
+    hello
+  ];
+}
+```
+
+`mkImage` is a function in the Nix package set of `github:tombl/distro`, which the porting
+template calls `wasmpkgs`. Its result is the image file, named `${name}.${format}`. Its
+arguments are:
+
+| Argument   | Default          | Description                                                                                                                                                                                  |
+| ---------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`     | required         | The name of the result.                                                                                                                                                                      |
+| `packages` | required         | Guest packages to install: packages from the package set, such as `wasmpkgs.busybox`, and packages you build with its `stdenv`. At least one package is required.                           |
+| `files`    | `{ }`            | Files to add, keyed by absolute guest path. A value is a path, or `{ source; mode; }` with an octal mode string such as `"0755"`. Without a mode, a file is `0755` if it is executable and `0644` otherwise. |
+| `links`    | `{ }`            | Symbolic links to create, keyed by absolute guest path, with the link target as the value.                                                                                                   |
+| `format`   | `"erofs"`        | `"erofs"` or `"ext4"`.                                                                                                                                                                       |
+| `label`    | `"LOWLAND_ROOT"` | The filesystem label, at most 15 characters. The guest boots only from `LOWLAND_ROOT`.                                                                                                       |
+| `size`     | `"256M"`         | The size of an ext4 image. An EROFS image is always exactly as large as its contents.                                                                                                        |
+
+A package declares the packages it needs at runtime with `passthru.apk.depends`, a list of
+names from the package set:
+
+```nix
+stdenv.mkDerivation {
+  pname = "hello";
+  # ...
+  passthru.apk.depends = [ "jq" ];
+}
+```
+
+`mkImage` installs those dependencies too, so `packages` lists only what the image is for. A
+name is looked up first in `packages` and then in the package set.
+
+Files and links are added after the packages are installed. Every file in the image is owned by
+root.
