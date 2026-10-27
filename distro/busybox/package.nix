@@ -8,8 +8,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "busybox";
-    rev = "0ef30c97d547be7fd9c9d66af33486e02366df36";
-    hash = "sha256-3W7iSQK2I3yYOMsXIgDO1JVYMdOAy2oUBN7SzbtRlcU=";
+    rev = "7a7adb6ed098b58e52256902d2de54c03d9fa962";
+    hash = "sha256-HVSPS36NuiBbfGIYoZSvRNJIMftxnK6B7DrmvSI00Ek=";
   },
   vm-test,
 }:
@@ -45,9 +45,10 @@ stdenv.mkDerivation (finalAttrs: {
     config MOUNT y
     config SWITCH_ROOT y
     config CHROOT y
-    config HUSH y
-    config SH_IS_ASH n
-    config SH_IS_HUSH y
+    config ASH y
+    config HUSH n
+    config SH_IS_ASH y
+    config SH_IS_HUSH n
     config SH_IS_NONE n
     config BASH_IS_ASH n
     config BASH_IS_HUSH n
@@ -95,8 +96,6 @@ stdenv.mkDerivation (finalAttrs: {
     config RUNSVDIR n
     config SVLOGD n
 
-    config HUSH_TICK y
-
     config HWCLOCK n
     config RTCWAKE n
 
@@ -137,5 +136,7 @@ stdenv.mkDerivation (finalAttrs: {
       smoke = check "smoke" ./smoke-test.sh;
       processes = check "processes" ./process-test.sh;
       networking = check "networking" ./network-test.sh;
+      shell = check "shell" ./shell-test.sh;
+      interactive = check "interactive" ./interactive-test.sh;
     };
 })
