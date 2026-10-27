@@ -196,7 +196,10 @@ export interface GuestAgentOptions {
    * the tag `m<i>`, where `i` is its index here. The boot mounts the entry at
    * `/` first and then the others in order, beneath `/sysroot`, then makes
    * `/sysroot` the root. At most one entry can be at `/`. Without one, the
-   * agent stays on its initramfs and mounts the others there.
+   * agent stays on its initramfs and mounts the others there. Each path is
+   * resolved with the root as `/`, so symlinks in an image never lead out of
+   * it, and missing directories are created. If a step fails, the boot
+   * unmounts what it mounted, or remounts it read-only, before rejecting.
    */
   mounts?: readonly Mount[];
   /**
@@ -387,6 +390,7 @@ async function make_directory(guest: GuestAgent, path: string) {
   }
 }
 
+/** Every block device that has a serial, by serial. */
 /**
  * Every block device that has a serial, by serial. A serial is compared
  * exactly: virtio-blk's sysfs attribute is the ID up to its first NUL, with
@@ -429,11 +433,63 @@ async function block_filesystems(guest: GuestAgent): Promise<string[]> {
     .map((line) => line.trim());
 }
 
+/**
+ * Mounts `device` on the directory `path` names beneath `root`, resolved with
+ * `root` as `/`, so a symlink in an image never sends a mount outside it.
+ * Records where the mount went, as a path, for {@link unwind_mounts}.
+ */
+async function mount_in(
+  guest: GuestAgent,
+  client: GuestClientCapabilities,
+  mounted: string[],
+  root: string,
+  path: string,
+  mount: (target: string) => Promise<void>,
+) {
+  const directory = await client.open_directory_in(root, path);
+  try {
+    const target = `/proc/self/fd/${directory.fd}`;
+    const where = await guest.fs.readLink(target);
+    await mount(target);
+    mounted.push(where);
+  } finally {
+    await directory.close();
+  }
+}
+
+/**
+ * Leaves storage the failed boot mounted clean: unmounts it in reverse, or
+ * remounts it read-only if it stays busy, then syncs. A writable ext4 left
+ * mounted would need journal recovery before it could be mounted read-only.
+ * Bounded, because it only tidies up after an error that is reported anyway.
+ */
+async function unwind_mounts(guest: GuestAgent, mounted: readonly string[]) {
+  const unwind = async () => {
+    for (const path of mounted.toReversed()) {
+      try {
+        await guest.unmount(path);
+      } catch {
+        await guest
+          .mount(null, path, { flags: MountFlags.REMOUNT | MountFlags.RDONLY })
+          .catch(() => {});
+      }
+    }
+    await guest.fs.sync().catch(() => {});
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    unwind().catch(() => {}),
+    new Promise((resolve) => (timer = setTimeout(resolve, 5000))),
+  ]);
+  clearTimeout(timer);
+}
+
 /** The default boot: realize the mount table, then switch root if it has one. */
 async function boot_mount_table(
   guest: GuestBoot,
   client: GuestClientCapabilities,
   mounts: readonly Mount[],
+  mounted: string[],
 ) {
   await step(client, "mounting /proc, /sys and /dev/pts", async () => {
     await make_directory(guest, "/proc");
@@ -471,7 +527,6 @@ async function boot_mount_table(
       } else {
         device = disk_with_serial(disks, `m${index}`);
       }
-      const target = `${prefix}${mount.path === "/" ? "" : mount.path}` || "/";
       const mode = mount.mode ?? "rw";
       const options = mount.options;
 
@@ -491,32 +546,46 @@ async function boot_mount_table(
         throw new TypeProbeError(attempts);
       };
 
+      // The root mounts on /sysroot itself. Everything else is a path in
+      // the root, or in the initramfs without one.
+      const place = (mount_at: (target: string) => Promise<void>) =>
+        mount.path === "/"
+          ? make_directory(guest, "/sysroot")
+              .then(() => mount_at("/sysroot"))
+              .then(() => void mounted.push("/sysroot"))
+          : mount_in(guest, client, mounted, prefix || "/", mount.path, mount_at);
+
       if (mode !== "overlay") {
-        await make_directory(guest, target);
-        await attempt(target, mode === "ro" ? MountFlags.RDONLY : 0);
+        await place((target) => attempt(target, mode === "ro" ? MountFlags.RDONLY : 0));
         return;
       }
       // The layers live in the initramfs, beneath the root to be.
       const layers = `/run/lowland/m${index}`;
       await make_directory(guest, `${layers}/lower`);
       await attempt(`${layers}/lower`, MountFlags.RDONLY);
+      mounted.push(`${layers}/lower`);
       await make_directory(guest, `${layers}/rw`);
       await guest.mount("tmpfs", `${layers}/rw`, { type: "tmpfs", data: "mode=0755" });
+      mounted.push(`${layers}/rw`);
       await make_directory(guest, `${layers}/rw/upper`);
       await make_directory(guest, `${layers}/rw/work`);
-      await make_directory(guest, target);
-      await guest.mount("overlay", target, {
-        type: "overlay",
-        data: `lowerdir=${layers}/lower,upperdir=${layers}/rw/upper,workdir=${layers}/rw/work`,
-      });
+      await place((target) =>
+        guest.mount("overlay", target, {
+          type: "overlay",
+          data: `lowerdir=${layers}/lower,upperdir=${layers}/rw/upper,workdir=${layers}/rw/work`,
+        }),
+      );
     });
   }
   if (!root) return;
 
   await step(client, "moving /dev, /proc and /sys into /sysroot", async () => {
-    for (const name of ["dev", "proc", "sys"]) {
-      await make_directory(guest, `/sysroot/${name}`);
-      await guest.mount(`/${name}`, `/sysroot/${name}`, { flags: MountFlags.MOVE });
+    // /proc goes last: the others name their targets through it. Moved
+    // mounts are not recorded, because only the root's own unwinding matters.
+    for (const name of ["dev", "sys", "proc"]) {
+      await mount_in(guest, client, [], "/sysroot", name, (target) =>
+        guest.mount(`/${name}`, target, { flags: MountFlags.MOVE }),
+      );
     }
   });
   await guest.switchRoot();
@@ -628,8 +697,16 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
         }
       },
     };
-    if (options.boot) await options.boot(guest);
-    else await boot_mount_table(guest, client, mounts);
+    // What the default boot mounted, so a failure can leave it clean.
+    const mounted: string[] = [];
+    try {
+      if (options.boot) await options.boot(guest);
+      else await boot_mount_table(guest, client, mounts, mounted);
+    } catch (error) {
+      // Once PID 1 has switched root, its shutdown owns the mounts.
+      if (!switched) await unwind_mounts(agent, mounted);
+      throw error;
+    }
     if (init && !switched) {
       throw new GuestBootError("starting init", {
         cause: new Error("the boot did not call switchRoot()"),

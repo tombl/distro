@@ -340,6 +340,64 @@ test("fails to mount a dirty ext4 journal on read-only storage", async () => {
   }
 });
 
+test("resolves mount points inside the root, whatever symlinks it holds", async () => {
+  const disk = new Uint8Array(ext4_rootfs);
+  {
+    const { agent: guest, machine } = await boot({ mounts: [ext4_root_mount(disk)] });
+    try {
+      // Absolute symlinks, at the top and beneath a directory, and a relative
+      // one that climbs past the root. Resolved from the initramfs, each
+      // would name the initramfs's /run, which the switch leaves behind.
+      await guest.fs.symlink("/run", "/alias");
+      await guest.fs.mkdir("/var", { recursive: true });
+      await guest.fs.remove("/var/run", { recursive: true }).catch(() => {});
+      await guest.fs.symlink("/run", "/var/run");
+      await guest.fs.symlink("../../../../run", "/up");
+      await guest.fs.sync();
+    } finally {
+      await close(machine);
+    }
+  }
+  const { agent: guest, machine } = await boot({
+    mounts: [
+      ext4_root_mount(disk),
+      { path: "/alias", type: "tmpfs" },
+      { path: "/var/run/made", type: "tmpfs" },
+      { path: "/up/climbed", type: "tmpfs" },
+    ],
+  });
+  try {
+    // Each mount is in the new root, at the path its symlink names there.
+    const mounts = await guest.fs.readTextFile("/proc/mounts");
+    const tmpfs = mounts.split("\n").filter((line) => line.startsWith("tmpfs "));
+    assert.deepEqual(
+      tmpfs.map((line) => line.split(" ")[1]),
+      ["/run", "/run/made", "/run/climbed"],
+    );
+    assert.equal((await guest.fs.lstat("/alias")).isSymlink, true);
+  } finally {
+    await close(machine);
+  }
+});
+
+test("a failed boot leaves the storage it mounted clean", async () => {
+  const disk = new Uint8Array(ext4_rootfs);
+  assert.equal(needs_recovery(disk), false);
+  // The writable root mounts, then the next entry fails.
+  await assert.rejects(
+    boot({ mounts: [ext4_root_mount(disk), { path: "/data", source: blank_disk() }] }),
+    (error) =>
+      error instanceof GuestBootError && error.step === "mounting m1 (1048576 bytes) at /data",
+  );
+  assert.equal(needs_recovery(disk), false);
+  const { agent: guest, machine } = await boot({ mounts: [ext4_root_mount(disk, "ro")] });
+  try {
+    assert.match(await guest.fs.readTextFile("/proc/mounts"), /^\/dev\/vda \/ ext4 ro/m);
+  } finally {
+    await close(machine);
+  }
+});
+
 test("powering off unmounts every filesystem, however many there are", async () => {
   const data = new Uint8Array(ext4_rootfs);
   const { agent: guest, machine } = await boot({ mounts: [root_mount()] }, [

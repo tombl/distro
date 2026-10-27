@@ -22,7 +22,7 @@
 //                    ret) bytes), or the spawn/reap reply body.
 
 import { Bytes, FixedArray, I64LE, Struct, U16LE, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
+import { AT, NR, OpenHow, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 
 /** Host convention for bulk I/O: syscall data payloads are at most 32 KiB. */
@@ -167,6 +167,35 @@ export async function openat(
 ): Promise<GuestFd> {
   const { ret } = await syscall(session, NR.openat, AT.FDCWD, c_string(path), flags, mode);
   return new GuestFd(session, Number(ret), path);
+}
+
+/** openat2(2): opens `path` relative to `dirfd`, resolved as `how.resolve` says. */
+export async function openat2(
+  session: GuestSession,
+  dirfd: GuestFd,
+  path: string,
+  how: { flags: number; resolve: number },
+): Promise<GuestFd> {
+  const bytes = new Bytes(OpenHow.size);
+  bytes.alloc(OpenHow).value = {
+    flags: BigInt(how.flags),
+    mode: 0n,
+    resolve: BigInt(how.resolve),
+  };
+  const { ret } = await syscall(
+    session,
+    NR.openat2,
+    dirfd,
+    c_string(path),
+    { in: bytes.array },
+    OpenHow.size,
+  );
+  return new GuestFd(session, Number(ret), path);
+}
+
+/** mkdirat(2) relative to an open directory rather than the working directory. */
+export async function mkdirat_in(dirfd: GuestFd, name: string, mode: number): Promise<void> {
+  await syscall(dirfd.session, NR.mkdirat, dirfd, c_string(name), mode);
 }
 
 /** Read up to `capacity` bytes; an empty result is EOF. Blocks (holding its
