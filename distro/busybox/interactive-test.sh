@@ -27,6 +27,11 @@ mount -t proc proc /proc || fail "mounting proc failed"
   printf '%s\n' 'printf "%s\n" "$!" >/tmp/job-pid'
   printf '%s\n' 'jobs -l'
   printf '%s\n' 'jobs -p >/tmp/jobs-before'
+  # Until the job execs sleep, it still ignores SIGTERM like the interactive
+  # shell that forked it, and the kernel discards the kill. The shell can get
+  # here first: it reads this input without blocking, so on one cpu the job
+  # need not have run yet.
+  printf '%s\n' 'until read -r _ comm _ </proc/$!/stat && [ "$comm" = "(sleep)" ]; do :; done'
   # One line: an interactive shell forgets a finished job once the next
   # prompt has reported it.
   printf '%s\n' 'kill %1; wait %1; printf "%s\n" "$?" >/tmp/wait-status'
