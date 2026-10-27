@@ -1,0 +1,80 @@
+---
+title: Run in Node
+description: What differs when you boot a machine in Node.js instead of a browser.
+section: howtos
+order: 6
+---
+
+# Run in Node
+
+`@lowland/kernel` and `@lowland/guest` have the same API in Node.js as in a browser. This page
+covers only what is different in Node.js.
+
+## Node.js versions
+
+Use Node.js 22 or later. The examples on this site use `await using`, which needs Node.js 24
+or later. On Node.js 22, close the machine yourself:
+
+```ts
+const machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
+try {
+  await guest.run(["uname", "-a"]);
+} finally {
+  machine.close();
+  await machine.closed;
+}
+```
+
+## No headers or bundler setup
+
+A browser page must be cross-origin isolated before it can boot a machine. Node.js has no such
+requirement, because shared memory is always available. There are no headers to send.
+
+The packages find `vmlinux.wasm`, the guest agent's `agent.img`, and the kernel's worker
+script next to their own modules in `node_modules`, and read them from disk. Nothing needs to
+be copied or configured.
+
+## Workers
+
+Where a browser uses Web Workers, Node.js uses `worker_threads`. The kernel starts and stops
+these workers itself. [How it works](/how-it-works/) explains what runs in them.
+
+## Read the root image from disk
+
+The [`@lowland/guest` usage example](/reference/guest/#usage) reads the whole image into
+memory with `readFile()`. To read only the blocks the kernel asks for, use a file handle
+instead. `read` may return a promise:
+
+```ts
+import { open } from "node:fs/promises";
+
+const file = await open("rootfs.erofs");
+const { size } = await file.stat();
+const root = blockDevice({
+  capacity: size,
+  async read(offset, target) {
+    const { bytesRead } = await file.read(target, 0, target.byteLength, offset);
+    return bytesRead;
+  },
+});
+```
+
+Close the file handle after the machine has closed.
+
+## Process lifetime
+
+An open machine keeps the Node.js process running. A script that boots a machine and never
+closes it does not exit. Close the machine with `machine.close()`, or let `await using` close
+it at the end of the block. Once the machine has closed, the process exits as usual.
+
+If the guest shuts itself down, for example with `poweroff -f`, the machine closes without a
+call from your code and `machine.closed` resolves.
+
+## Features only in Node.js
+
+Two features use host capabilities that browsers do not have:
+
+- `NodeFS`, from `@lowland/guest/node`, shares a directory on the host filesystem with the
+  guest. See [Share a host directory](/share-a-host-directory/).
+- A `connectTcp` function built on `node:net` gives guests real TCP connections, including
+  TLS. See [Access the internet](/access-the-internet/).

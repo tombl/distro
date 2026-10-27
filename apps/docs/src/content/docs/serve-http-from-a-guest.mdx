@@ -1,0 +1,53 @@
+---
+title: Serve HTTP from a guest
+description: Turn a web server running in a guest into a function that takes a Request and returns a Response.
+section: howtos
+order: 10
+---
+
+# Serve HTTP from a guest
+
+`guestFetchHandler()` connects to a web server running inside a guest and gives you a
+function with the same shape as `fetch`: it takes a `Request` and returns a `Response`. Your
+application decides where those requests come from.
+
+## Create a handler
+
+The guest must be attached to a network, as in [Connect guests](/connect-guests/). Start a
+server in the guest, then create a handler for its port:
+
+```ts
+import { guestFetchHandler } from "@lowland/guest";
+
+await guest.fs.mkdir("/tmp/www");
+await guest.fs.writeTextFile("/tmp/www/index.html", "hello from the guest\n");
+await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+
+const handler = guestFetchHandler(attachment, { port: 8080 });
+
+const response = await handler(new Request("http://my-app.example/index.html"));
+console.log(response.status, await response.text()); // 200 "hello from the guest\n"
+```
+
+Each call opens one connection to the guest. Request and response bodies are streamed. The
+`Host` header the guest receives is the host from the request URL, so links the server
+generates point to the address the user sees.
+
+If nothing is listening on the port, the call rejects. A server started with `exec()` may need
+a moment before it accepts connections, so retry if the first call fails.
+
+## Route requests to it
+
+Because the handler has the same shape as `fetch`, it fits wherever an application already
+handles `Request` objects:
+
+- In Node.js, pass it to a server framework that accepts fetch-style handlers, and the guest
+  server is reachable from outside.
+- In a browser, the guest runs in a page, but navigations are handled by a service worker. The
+  service worker can pass each request to the page, which calls the handler and sends the
+  response back. This shows the guest server's pages in a tab or an iframe.
+
+How to do this depends on how your application is hosted and bundled. The low.land demo serves
+each guest port at its own origin through a service worker. Its implementation is in
+[`packages/bridge-site`](https://github.com/tombl/distro/tree/main/packages/bridge-site) and can
+be a starting point for your own. It is specific to low.land and is not a supported package.

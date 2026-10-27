@@ -1,0 +1,89 @@
+---
+title: Attach a terminal
+description: Wire an interactive shell in a guest to xterm.js.
+section: howtos
+order: 4
+---
+
+# Attach a terminal
+
+This guide connects an interactive shell in a guest to [xterm.js](https://xtermjs.org/). It
+assumes a page set up as in [Set up a browser page](/set-up-a-browser-page/), and the root device
+and guest agent from the [`@lowland/guest` usage example](/reference/guest/#usage).
+
+## Run a shell on a terminal
+
+The `terminal` option of `guest.exec()` runs a program on a pseudoterminal in the guest instead
+of on pipes. The program leads its own session with that terminal as its controlling terminal,
+the way a login shell does. The guest kernel handles echo, line editing, Ctrl+C and Ctrl+Z, and
+the shell has job control, so the page only moves bytes. Standard error appears in `stdout`, as it
+does on any terminal.
+
+```ts
+import { Terminal } from "@xterm/xterm";
+
+const terminal = new Terminal();
+terminal.open(document.querySelector("#terminal")!);
+
+const shell = await guest.exec(["sh"], {
+  terminal: { rows: terminal.rows, columns: terminal.cols },
+  env: { TERM: "xterm-256color" },
+});
+
+const input = shell.stdin.getWriter();
+const encoder = new TextEncoder();
+terminal.onData((data) => void input.write(encoder.encode(data)));
+terminal.onResize(({ rows, cols }) => void shell.resize({ rows, columns: cols }));
+
+const output = shell.stdout.pipeTo(
+  new WritableStream({
+    write: (data) => new Promise<void>((resolve) => terminal.write(data, resolve)),
+  }),
+);
+```
+
+xterm.js reports keyboard input as strings, so the page encodes it. It already sends Enter as
+`\r`, which is what a terminal expects. Waiting for the write callback means the guest slows
+down when xterm.js falls behind, instead of output piling up in the page.
+`TERM=xterm-256color` tells full-screen programs which escape sequences xterm.js supports.
+
+`resize()` sends `SIGWINCH` to the program in the foreground, so full-screen programs redraw. If
+you size the terminal with `@xterm/addon-fit`, a call to `fit()` that changes the size fires
+`onResize`, so the guest follows the terminal.
+
+`stdout` ends once every program has closed the terminal, which can be later than the shell's
+exit if it left jobs running in the background. To start a new shell when the user types
+`exit`, wait for `status` instead. Give the output a moment to finish, then call `close()`:
+
+```ts
+await shell.status;
+await Promise.race([output, new Promise((resolve) => setTimeout(resolve, 1000))]);
+await shell.close();
+```
+
+Here `output` is the promise that `pipeTo()` returned. Closing hangs up the terminal, which ends
+`stdout` and discards anything the guest has not yet delivered.
+
+## The console device
+
+`consoleDevice(input, output)` from `@lowland/kernel` adds a console to the machine, which the
+guest sees as `/dev/hvc0`. `input` is a `ReadableStream<Uint8Array>` of the bytes a keyboard
+would send, and `output` a `WritableStream<Uint8Array>` of the bytes to display. Either may be
+`null`. The console starts at 80 columns by 24 rows, and `device.resize(columns, rows)` changes
+its size.
+
+Kernel messages printed after the console starts appear on it. Earlier boot messages are
+discarded unless you add the `bootConsole(output)` plugin, which writes them to a stream of your
+choice. This is useful when a machine fails early in boot.
+
+An image can start a shell on the console itself. If the root image has an executable `/init`,
+the guest agent starts it with the console as its standard input and output. The machine powers
+off when `/init` exits, so a script that ends with `exec setsid cttyhack sh` keeps a shell on the
+console for the life of the machine. `setsid cttyhack` gives the shell `/dev/hvc0` as its
+controlling terminal, which job control and Ctrl+C need.
+
+## Related pages
+
+The [`@lowland/guest` reference](/reference/guest/) documents `exec` and its `terminal`
+option. The [`@lowland/kernel` reference](/reference/kernel/) documents `consoleDevice`,
+`bootConsole`, and the other devices.

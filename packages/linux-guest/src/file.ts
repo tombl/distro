@@ -22,7 +22,7 @@ export interface FileInfo {
   readonly size: number;
   readonly mtime: Date | null;
   readonly atime: Date | null;
-  /** Always `null`; the guest does not track creation time. */
+  /** Always `null`. The guest does not track creation time. */
   readonly birthtime: Date | null;
   readonly dev: number;
   readonly ino: number;
@@ -138,7 +138,7 @@ export class FsFile implements AsyncDisposable {
 
   /** The file as a byte stream, read from the current offset to the end. */
   readonly readable: ReadableStream<Uint8Array>;
-  /** The file as a byte sink; each write goes to the current offset. */
+  /** The file as a byte sink. Each write goes to the current offset. */
   readonly writable: WritableStream<Uint8Array>;
 
   constructor(fd: GuestFd) {

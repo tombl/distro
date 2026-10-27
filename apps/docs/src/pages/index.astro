@@ -1,0 +1,52 @@
+---
+import Docs from "../layouts/Docs.astro";
+import { getDocsSections } from "../lib/docs";
+
+const sections = await getDocsSections();
+---
+
+<Docs
+  description="Learn how to run and control Lowland Linux machines in browsers and Node.js."
+  current=""
+  headings={[]}
+>
+  <h1>Lowland documentation</h1>
+  <p>
+    Lowland runs Linux, compiled to WebAssembly, inside a browser tab or a Node.js process. These
+    pages cover the JavaScript packages that boot and control it. If you are new, start with the
+    tutorial.
+  </p>
+
+  {sections.map(({ heading, items }) => (
+    <>
+      <h2>{heading}</h2>
+      <ul class="contents">
+        {items.map((item) => (
+          <li>
+            <a href={item.href}>{item.code ? <code>{item.label}</code> : item.label}</a>
+            <p>{item.description}</p>
+          </li>
+        ))}
+      </ul>
+    </>
+  ))}
+</Docs>
+
+<style>
+  .contents {
+    list-style: none;
+    padding: 0;
+
+    li + li {
+      margin-block-start: 0.75rem;
+    }
+
+    a {
+      color: var(--code-foreground);
+    }
+
+    p {
+      margin: 0;
+    }
+  }
+</style>

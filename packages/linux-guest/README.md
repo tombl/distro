@@ -1,8 +1,7 @@
 # `@lowland/guest`
 
-`@lowland/guest` is the Lowland guest-agent integration. It contributes its
-private boot filesystem and vsock transport to an `@lowland/kernel` machine and
-exposes processes, files, mounts, and networking through the returned agent.
+`@lowland/guest` runs programs and works with files inside a Linux machine booted by
+`@lowland/kernel`.
 
 ## Installation
 
@@ -13,133 +12,79 @@ npm install @lowland/kernel @lowland/guest
 ## Usage
 
 ```js
+import { readFile } from "node:fs/promises";
 import { blockDevice, bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 
-const rootfs = new Uint8Array(
-  await fetch("/rootfs.erofs").then((response) => response.arrayBuffer()),
-);
+const image = await readFile("rootfs.erofs");
 const root = blockDevice({
-  capacity: rootfs.byteLength,
+  capacity: image.byteLength,
   read(offset, target) {
-    const source = rootfs.subarray(offset, offset + target.byteLength);
+    const source = image.subarray(offset, offset + target.byteLength);
     target.set(source);
     return source.byteLength;
   },
 });
 
 const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [root, guest],
-});
+await using machine = await bootMachine({ cpus: 1, plugins: [root, guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-`exec()` returns a live `ChildProcess` with streaming standard I/O. `run()`
-collects its status, stdout, and stderr and is convenient for bounded commands.
-Both methods accept an argv array without shell parsing.
+The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
+The Build an image guide explains how to make one.
 
-With the `terminal` option, `exec()` runs the process on a guest
-pseudoterminal instead of pipes. The process leads its own session with that
-terminal as its controlling terminal, so an interactive shell gets job
-control, and Ctrl-C (`\x03`) or Ctrl-Z (`\x1a`) written to `stdin` signals
-its foreground job. Standard error shares `stdout`, as it does on a real
-terminal. `resize()` changes the window size and delivers `SIGWINCH`:
+The same code runs in a browser, with the image fetched instead of read from disk. The page must
+be served with the cross-origin isolation headers described in the
+[tutorial](https://docs.low.land/getting-started/).
 
-```js
-const shell = await guest.exec(["sh"], { terminal: { rows: 24, columns: 80 } });
-void shell.stdout.pipeTo(display);
-void keyboard.pipeTo(shell.stdin);
-await shell.resize({ rows: 40, columns: 120 });
-console.log(await shell.status);
-```
+## Processes
 
-The plugin boots its private EROFS using the GPT partition label
-`LOWLAND_AGENT`, so its position among block-device plugins is irrelevant. The
-agent then requires exactly one attached EROFS or ext4 filesystem labeled
-`LOWLAND_ROOT`, pivots into it, and unmounts its private boot filesystem.
-Missing and duplicate system roots fail `bootMachine()` through the plugin
-readiness hook.
+`guest.run()` waits for a program to exit and collects its status and output. `guest.exec()`
+returns the running process with streaming standard input and output. Both take an argv array
+and do not go through a shell.
 
-Read-only roots get an overlay: an EROFS image, or an ext4 image on a block
-device without a `write` callback, is mounted read-only beneath a temporary
-writable OverlayFS, so the system root is writable for the lifetime of the boot
-and its changes are discarded at close. A writable ext4 system disk is mounted
-read-write directly and persists.
+## Files
 
-A machine closes without unmounting its system disk, so an ext4 image that was
-booted writable still has an unreplayed journal. Replaying it needs write
-access, so a read-only ext4 root is mounted without journal recovery: it shows
-the filesystem as of its last checkpoint, and changes that only reached the
-journal are not visible. Run `sync` in the guest before closing a writable
-machine to write its changes back to the disk.
+`guest.fs` reads and writes files inside the machine. Files written from JavaScript are
+immediately visible to programs in the guest, and the reverse is also true.
+
+An EROFS root filesystem gets a writable layer in memory on top of it, so programs can change
+any file until the machine closes. An ext4 root filesystem is mounted read-write.
 
 ## Networking
 
-Networking is another composable guest integration:
+`createNetwork()` connects guests to each other and to the outside world through functions you
+provide for TCP connections and DNS lookups:
 
 ```js
 import { createNetwork } from "@lowland/guest";
 
-const guest = guestAgent();
 const network = createNetwork({ connectTcp, resolveDns });
-const attachment = network.attach(guest);
-
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [root, guest, attachment],
-});
-
-console.log(attachment.address);
-```
-
-The attachment contributes the virtio NIC and configures it after the agent is
-ready. Each agent supports one network attachment; attach multiple agents to
-the same network to put them on one private IPv4 subnet.
-
-## Host directory adapters
-
-`@lowland/guest/node` provides `NodeFS`, and
-`@lowland/guest/browser` provides `BrowserFS`. Adapt them with the kernel's
-`fileSystemDevice()` and mount the resulting virtio-fs device through the
-agent:
-
-```js
-import { fileSystemDevice } from "@lowland/kernel";
-import { NodeFS } from "@lowland/guest/node";
-
-const shared = fileSystemDevice(new NodeFS("/srv/guest-share"), {
-  tag: "host",
-  cache: false,
-});
 const guest = guestAgent();
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [root, guest, shared],
+  plugins: [root, guest, network.attach(guest)],
 });
-await guest.fs.mkdir("/tmp/host");
-await guest.mount("host", "/tmp/host", { type: "virtiofs" });
 ```
 
-Pass `{ readOnly: true }` to `NodeFS` when read-only access is part of the trust
-boundary. A read-only guest mount alone does not prevent writes through raw
-filesystem requests. The Node adapter confines paths beneath its configured
-root and does not follow final symlinks, but portable Node lacks the
-descriptor-relative operations needed to make that confinement race-free
-against an unrelated host process restructuring the directory. Use an OS
-sandbox or native helper when that stronger boundary is required.
+Guests attached to the same network share one private IPv4 subnet.
 
-`BrowserFS` accepts OPFS and user-selected `FileSystemDirectoryHandle` values.
-The browser API has no Unix inode metadata or atomic portable rename, so the
-adapter synthesizes metadata and implements rename as copy-then-remove. A
-failed rename can leave a partial destination or both names. Use `cache: false`
-for directories modified outside the guest; this disables metadata and name
-caching, but not the guest's data page cache.
+## Sharing host directories
+
+`NodeFS` from `@lowland/guest/node` and `BrowserFS` from `@lowland/guest/browser` expose a host
+directory to the guest, which mounts it with `guest.mount()`. Their
+[reference](https://docs.low.land/reference/guest/) describes what each one can and cannot
+protect against.
+
+## Documentation
+
+See [docs.low.land](https://docs.low.land) for guides and the
+[API reference](https://docs.low.land/reference/guest/).
 
 ## License
 
-The TypeScript and JavaScript sources are available under the MIT license. The
-published agent image also contains GPL-2.0-only BusyBox and MIT-licensed musl.
+The TypeScript and JavaScript sources are available under the MIT license. The published agent
+image also contains GPL-2.0-only BusyBox and MIT-licensed musl.

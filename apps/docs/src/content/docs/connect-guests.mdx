@@ -1,0 +1,83 @@
+---
+title: Connect guests
+description: Put several guests on one network so they can reach each other, and connect to them from the host.
+section: howtos
+order: 9
+---
+
+# Connect guests
+
+Guests attached to the same network share a private IPv4 subnet and reach each other over
+ordinary TCP and UDP.
+
+## Attach several guests
+
+Create one network and attach each guest to it:
+
+```ts
+import { createNetwork, guestAgent } from "@lowland/guest";
+
+const network = createNetwork({ connectTcp, resolveDns });
+
+const server = guestAgent();
+const serverNet = network.attach(server);
+const client = guestAgent();
+const clientNet = network.attach(client);
+
+await using serverMachine = await bootMachine({
+  cpus: 1,
+  plugins: [rootDevice(), server, serverNet],
+});
+await using clientMachine = await bootMachine({
+  cpus: 1,
+  plugins: [rootDevice(), client, clientNet],
+});
+```
+
+Each machine needs its own root filesystem device, so `rootDevice()` here creates a new one
+each time, as in the [`@lowland/guest` usage example](/reference/guest/#usage).
+`connectTcp` and `resolveDns` give the guests internet access, as described in
+[Access the internet](/access-the-internet/).
+
+Each attachment has an address. The first guest gets `192.0.2.2`, the next `192.0.2.3`, and so
+on. The network itself is at `192.0.2.1`.
+
+```ts
+console.log(serverNet.address); // "192.0.2.2"
+```
+
+## Reach one guest from another
+
+Start a server in one guest and connect to it from the other by address:
+
+```ts
+await server.fs.mkdir("/tmp/www");
+await server.fs.writeTextFile("/tmp/www/index.html", "hello\n");
+const httpd = await server.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+
+await client.run(["wget", "-qO-", `http://${serverNet.address}:8080/`]);
+```
+
+## Connect from the host
+
+`attachment.connect()` opens a TCP connection from JavaScript to a port on that guest. It
+resolves once the guest accepts the connection, and rejects if nothing is listening:
+
+```ts
+const connection = await serverNet.connect({ port: 8080 });
+const writer = connection.writable.getWriter();
+await writer.write(new TextEncoder().encode("GET /index.html HTTP/1.0\r\n\r\n"));
+await writer.close();
+console.log(await new Response(connection.readable).text());
+```
+
+A server started with `exec()` may not be listening yet when `exec()` resolves. If the
+connection is refused, wait briefly and try again.
+
+For HTTP servers, [Serve HTTP from a guest](/serve-http-from-a-guest/) shows a simpler
+interface that works with `Request` and `Response` objects.
+
+## Close the network
+
+`network.close()` closes every connection and detaches every guest. A network is also
+disposable, so `using network = createNetwork(...)` closes it at the end of the block.

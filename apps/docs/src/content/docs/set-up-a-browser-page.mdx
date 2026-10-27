@@ -1,0 +1,182 @@
+---
+title: Set up a browser page
+description: Serve the cross-origin isolation headers and load the packages in a browser, with or without a bundler.
+section: howtos
+order: 5
+---
+
+# Set up a browser page
+
+A page that boots a machine needs two things. It must be served with headers that make it
+cross-origin isolated, and it must load the packages and their files from its own origin. This
+page covers both, with and without a bundler, and then shows how to boot your own image.
+
+The examples use three packages:
+
+```sh
+npm install @lowland/kernel @lowland/guest @lowland/image
+```
+
+`@lowland/image` provides `rootImage()`, which attaches the standard root filesystem. A
+machine boots with it and the guest agent:
+
+```ts
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+const guest = guestAgent();
+const machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+const result = await guest.run(["uname", "-a"]);
+```
+
+In a browser, `rootImage()` downloads the whole image, about 6.5 MB, before the machine boots.
+It downloads it once per page, and every machine on the page shares the same copy.
+
+## Send the cross-origin isolation headers
+
+Serve every response with these two headers:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+The machine's virtual CPUs are workers that share one WebAssembly memory, and browsers allow
+shared memory only on cross-origin isolated pages. The tutorial explains this in
+[Why those headers?](/getting-started/#why-those-headers).
+
+To check a page, evaluate `crossOriginIsolated` in the browser console. It must be `true`. If
+it is `false`, inspect the document's response headers in the network panel.
+
+With these headers, the page can only load resources from other origins if those origins allow
+it. If you serve an image from a different origin, that server must send CORS headers such as
+`Access-Control-Allow-Origin`.
+
+## Load the packages without a bundler
+
+Install the packages from npm and serve the `node_modules` directory, or a copy of it, from the
+same origin as the page. An import map then resolves the package names:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "@lowland/bytes": "/node_modules/@lowland/kernel/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js",
+      "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js",
+      "@lowland/image": "/node_modules/@lowland/image/dist/index.js"
+    }
+  }
+</script>
+<script type="module">
+  import { bootMachine } from "@lowland/kernel";
+  import { guestAgent } from "@lowland/guest";
+  import { rootImage } from "@lowland/image";
+</script>
+```
+
+`@lowland/bytes` is a dependency that the kernel and guest packages include in their own
+`node_modules` directories. npm does not install it at the top level, so the import map points
+at the copy inside `@lowland/kernel`.
+
+The files must come from the page's origin. The kernel starts each worker from the
+`worker.js` file next to its own module, and browsers only start workers from the page's
+origin. An import map that points at a CDN fails with a `SecurityError` when the machine
+boots.
+
+## Use Vite
+
+Install the packages and import them as usual. Add the headers to the development server and
+to `vite preview`:
+
+```js title="vite.config.js"
+import { defineConfig } from "vite";
+
+const headers = {
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+};
+
+export default defineConfig({
+  server: { headers },
+  preview: { headers },
+});
+```
+
+With Vite 8, nothing else is needed. The packages locate the kernel's worker script and
+`vmlinux.wasm`, the guest agent's `agent.img`, and the root image `rootfs.erofs` with
+`new URL(..., import.meta.url)`. Vite recognizes this pattern and emits the files as assets,
+both in development and in a production build.
+
+With Vite 7, the development server breaks these URLs when it pre-bundles dependencies, and the
+machine fails to boot. Exclude all three packages from pre-bundling:
+
+```js title="vite.config.js"
+export default defineConfig({
+  server: { headers },
+  preview: { headers },
+  optimizeDeps: { exclude: ["@lowland/kernel", "@lowland/guest", "@lowland/image"] },
+});
+```
+
+With any other bundler, check that the build output contains the worker script,
+`vmlinux.wasm`, `agent.img`, and `rootfs.erofs`, and that the machine boots from the built
+files.
+
+## Send the headers in production
+
+Your production host must send the same two headers. Static hosts such as Cloudflare Pages
+and Netlify read them from a `_headers` file in the output directory:
+
+```text title="_headers"
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+```
+
+In a Vite project, put this file in `public/` so that the build copies it to the output. On
+other servers, add the headers in the server configuration.
+
+## Boot your own image
+
+To boot an image you built yourself, as described in Build an image, serve
+the image file from the page's origin and attach it with `blockDevice()` in place of
+`rootImage()`. The simplest way is to fetch the whole file:
+
+```ts
+import { blockDevice } from "@lowland/kernel";
+
+const response = await fetch("/my-image.erofs");
+const image = new Uint8Array(await response.arrayBuffer());
+const root = blockDevice({
+  capacity: image.byteLength,
+  read(offset, target) {
+    const source = image.subarray(offset, offset + target.byteLength);
+    target.set(source);
+    return source.byteLength;
+  },
+});
+```
+
+For a large image, `read` can instead fetch only the bytes the kernel asks for, with HTTP range
+requests. `read` may return a promise:
+
+```ts
+const url = "/my-image.erofs";
+const head = await fetch(url, { method: "HEAD" });
+const root = blockDevice({
+  capacity: Number(head.headers.get("Content-Length")),
+  async read(offset, target) {
+    const range = `bytes=${offset}-${offset + target.byteLength - 1}`;
+    const response = await fetch(url, { headers: { Range: range } });
+    if (response.status !== 206) throw new Error(`range request failed: ${response.status}`);
+    target.set(new Uint8Array(await response.arrayBuffer()));
+    return target.byteLength;
+  },
+});
+```
+
+This makes one request for every read. In practice, fetch larger aligned chunks and keep them
+in memory, so that nearby reads share a request.

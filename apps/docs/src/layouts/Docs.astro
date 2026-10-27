@@ -1,0 +1,226 @@
+---
+import type { MarkdownHeading } from "astro";
+
+import DocumentationNavigation from "../components/DocumentationNavigation.astro";
+import Footnotes from "../components/Footnotes.astro";
+import TableOfContents from "../components/TableOfContents.astro";
+import Base from "./Base.astro";
+
+interface Props {
+  title?: string;
+  description: string;
+  current: string;
+  headings: MarkdownHeading[];
+  markdownHref?: string;
+}
+
+const { title, description, current, headings, markdownHref } = Astro.props;
+// footnote-label is the GFM footnotes section, which Footnotes renders inline.
+const toc = headings
+  .filter(({ depth, slug }) => depth > 1 && slug !== "footnote-label")
+  .map(({ depth, slug, text }) => ({ href: `#${slug}`, label: text, depth }));
+---
+
+<Base title={title} description={description}>
+  <div slot="header" class="mobile-header-navigation">
+    <details>
+      <summary>Contents</summary>
+      <div class="mobile-disclosure-panel">
+        <DocumentationNavigation current={current}>
+          <TableOfContents items={toc} />
+        </DocumentationNavigation>
+      </div>
+    </details>
+  </div>
+
+  <div class="layout">
+    <aside class="navigation">
+      <DocumentationNavigation current={current}>
+        <TableOfContents items={toc} />
+      </DocumentationNavigation>
+    </aside>
+
+    <main>
+      {markdownHref && <a class="view-markdown" href={markdownHref}>view as markdown</a>}
+      <slot />
+    </main>
+
+    {toc.length > 0 && (
+      <aside class="page-toc">
+        <TableOfContents items={toc} heading />
+      </aside>
+    )}
+  </div>
+
+  <Footnotes />
+
+  <script>
+    // Close the panel when one of its links is followed, so same-page anchor
+    // jumps land on the heading rather than below the expanded panel.
+    document.querySelector(".mobile-header-navigation")?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("a")) target.closest("details")?.removeAttribute("open");
+    });
+  </script>
+
+</Base>
+
+<style>
+  .layout {
+    flex: 1;
+    width: min(100%, var(--page-width));
+    margin-inline: auto;
+    padding-inline: 1rem;
+
+    > main {
+      position: relative;
+      padding-block: 2rem 6rem;
+    }
+  }
+
+  aside {
+    display: none;
+  }
+
+  .view-markdown {
+    display: none;
+    position: absolute;
+    inset-inline-end: 0;
+    /* Baseline-aligned with the h1: main's top padding + the h1's margin,
+       ascent, minus this line's own ascent. */
+    inset-block-start: 3.35rem;
+    font-size: 0.8125rem;
+    color: var(--muted);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 120ms;
+
+    &:hover {
+      color: var(--code-foreground);
+    }
+  }
+
+  .mobile-header-navigation {
+    margin-block-start: 0.5rem;
+
+    > details > summary {
+      width: fit-content;
+      color: var(--muted);
+      cursor: pointer;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    .mobile-disclosure-panel {
+      padding-block: 1rem 0.5rem;
+
+      > :global(nav) {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+        gap: 1.5rem;
+      }
+    }
+  }
+
+  /* Three tiers: single column below 48rem, sidebar + content between 48 and
+     72rem ("On this page" folds into the sidebar under the current item; see
+     DocumentationNavigation), all three columns above 72rem. */
+  @media (min-width: 48rem) {
+    .mobile-header-navigation {
+      display: none;
+    }
+
+    .view-markdown {
+      display: block;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns:
+        minmax(0, var(--side-column))
+        minmax(0, var(--content-column));
+      column-gap: var(--column-gap);
+
+      > main {
+        grid-column: 2;
+        min-width: 0;
+      }
+    }
+
+    aside.navigation {
+      display: block;
+      grid-column: 1;
+    }
+
+    .layout aside {
+      /* Sidebars start below the page h1: main's top padding plus the h1's
+         margin and line box. The sticky top is negative so the offset scrolls
+         away, leaving --stuck-inset of breathing room when pinned. */
+      --below-h1: 4.625rem;
+      --stuck-inset: 1.5rem;
+      padding-block: var(--below-h1) 1.5rem;
+      align-self: start;
+      position: sticky;
+      top: calc(var(--stuck-inset) - var(--below-h1));
+      max-height: calc(100dvh + var(--below-h1) - var(--stuck-inset));
+      overflow-y: auto;
+      scrollbar-width: none;
+
+      /* Fade the edges only while content is clipped beyond them: the fades
+         are driven by scroll position, and a non-overflowing sidebar has an
+         inactive scroll(self) timeline, which leaves both at 0. */
+      mask-image: linear-gradient(
+        to bottom,
+        transparent,
+        black var(--nav-fade-top),
+        black calc(100% - var(--nav-fade-bottom)),
+        transparent
+      );
+      animation-name: nav-fade-top, nav-fade-bottom;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: scroll(self);
+      animation-range:
+        0 2.5rem,
+        calc(100% - 2.5rem) 100%;
+    }
+  }
+
+  @media (min-width: 72rem) {
+    .layout {
+      grid-template-columns:
+        minmax(0, var(--side-column))
+        minmax(0, var(--content-column))
+        minmax(0, var(--side-column));
+    }
+
+    aside.page-toc {
+      display: block;
+      grid-column: 3;
+    }
+  }
+
+  @property --nav-fade-top {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @property --nav-fade-bottom {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0px;
+  }
+
+  @keyframes nav-fade-top {
+    to {
+      --nav-fade-top: 2.5rem;
+    }
+  }
+
+  @keyframes nav-fade-bottom {
+    from {
+      --nav-fade-bottom: 2.5rem;
+    }
+  }
+</style>

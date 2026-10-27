@@ -1,0 +1,115 @@
+---
+title: The network model
+description: Why networking is an Ethernet switch in your process, and where the internet boundary sits.
+section: explanation
+order: 2
+---
+
+# The network model
+
+A guest has an ordinary Linux network interface, and programs in it use ordinary sockets. The
+network those sockets reach is not a real one. It exists entirely inside your JavaScript
+process, and every connection that leaves it goes through a function you wrote. This page
+explains how that network is built and why it is built that way.
+
+## A switch in your process
+
+`createNetwork()` creates an Ethernet switch as a JavaScript object. `network.attach(guest)`
+gives the guest's machine a virtio network card and plugs it into a port on that switch. In
+the guest, the card is `eth0`.
+
+The switch forwards Ethernet frames between its ports, as a hardware switch does. It learns
+which port each MAC address is on, and sends frames for unknown addresses, broadcasts, and
+multicast to every port. Frames between two guests go from one virtual card to the other
+without any TCP/IP processing on the host. Guests on one network can therefore use any
+protocol that runs over Ethernet, including TCP, UDP, and ICMP.
+
+Because the switch is an object in your process, every guest on a network runs in that same
+process.
+
+## Addresses
+
+A network is the subnet `192.0.2.0/24`. This range is reserved for documentation and examples,
+so it does not overlap with real networks the host might use.
+
+Each call to `attach()` takes the next address in order, starting at `192.0.2.2`, up to
+`192.0.2.254`. Addresses are not reused within a network. `attachment.address` reports the
+address. Once the guest agent is running, the network
+configures `eth0` with that address and a default route through `192.0.2.1`. There is no DHCP.
+The guest's DNS server is set by the image's `/etc/resolv.conf`, which must name `192.0.2.1`.
+
+## The gateway
+
+The address `192.0.2.1` belongs to the gateway, which is another port on the switch. The
+gateway is not a guest. It is a small TCP/IP implementation, written in JavaScript, that is
+part of the network object. It answers ARP requests for its own address and handles TCP and
+UDP. It does not answer ICMP, so `ping 192.0.2.1` gets no reply, while pinging another guest
+works.
+
+The gateway is where the virtual network meets the rest of your program. Everything that is
+not between two guests passes through it.
+
+## Leaving the subnet
+
+A guest sends traffic for any address outside the subnet to its default route, the gateway.
+The gateway does not forward these packets anywhere. It ends the guest's TCP connection itself
+and calls the `connectTcp` function you passed to `createNetwork()`, once per connection.
+
+The function receives a `TcpSession`. `session.target` is the address and port the guest
+connected to. `session.readable` carries the bytes the guest sends, `session.writable` carries
+the bytes back, and `session.signal` aborts when the connection ends. Connections to
+`192.0.2.1` itself arrive with the target address `127.0.0.1`.
+
+The guest's connection is not accepted until the function first reads or writes. If the
+function throws before then, the guest sees the connection refused. This lets the function
+decide whether to allow a destination before the guest's program learns anything.
+
+The target is always an IP address, never a hostname. By the time a program connects, it has
+already looked the name up.
+
+## DNS and UDP
+
+Guests send DNS queries to the gateway on UDP port 53. The gateway reads the hostname from
+each query, calls `resolveDns(hostname)`, and answers with the IPv4 addresses it returns.
+`resolveDns` is therefore where names are turned into the addresses that later reach
+`connectTcp`.
+
+UDP between guests passes through the switch like any other traffic. UDP from a guest to the
+gateway reaches the host only on port 53, or on a channel the host has opened with
+`network.connect({ transport: "udp", ... })`. UDP to addresses outside the subnet is dropped.
+There is no adapter for it.
+
+## Connections from the host
+
+`network.connect()`, or `attachment.connect()` for one guest, opens a connection from
+JavaScript into a guest. The gateway starts the TCP handshake on the guest's behalf, so the
+guest sees an ordinary incoming connection from `192.0.2.1`. The promise resolves once the
+guest accepts and rejects if nothing is listening.
+
+`guestFetchHandler()` is built on this. It sends each `Request` as one HTTP/1.1 exchange over
+a new connection and turns the reply into a `Response`.
+
+## The browser path
+
+A web page cannot open TCP or UDP sockets. It can make HTTP requests with `fetch()`, subject
+to the browser's cross-origin rules. `hostFetchNetwork()` adapts the network to that limit.
+It returns a `connectTcp` and a `resolveDns` that you pass to `createNetwork()`.
+
+Its `resolveDns` answers every hostname with the same placeholder address, because a page
+cannot perform DNS lookups. As a result, `connectTcp` cannot tell from the target which site a
+connection is for. Instead, it reads one HTTP request from the connection and takes the
+destination from the `Host` header. It builds an HTTPS `Request` for that host and path, passes
+it to the `fetch` function you supplied, and writes the response back to the guest. Each
+connection carries one request.
+
+This only works if the gateway can read the request. A program that speaks TLS itself sends
+encrypted bytes, and the gateway cannot find the host or path in them. Guest programs therefore
+use plain `http://` URLs, and the browser's `fetch()` supplies the encryption on the way out.
+
+## Related guides
+
+- [Access the internet](/access-the-internet/) shows `connectTcp` and `resolveDns` for Node.js
+  and the browser.
+- [Connect guests](/connect-guests/) attaches several guests to one network and connects to
+  them from the host.
+- [Serve HTTP from a guest](/serve-http-from-a-guest/) uses `guestFetchHandler()`.

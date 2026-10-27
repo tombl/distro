@@ -1,0 +1,15 @@
+# Fingerprinted Vite assets and content-addressed root files never change in
+# place. HTML and the service worker revalidate so deployments are immediate.
+/_astro/*
+  Cache-Control: public, max-age=31556952, immutable
+
+/rootfs-*.erofs
+  Cache-Control: public, max-age=31556952, immutable
+
+/service-worker.js
+  Cache-Control: no-cache
+
+/*
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: cross-origin

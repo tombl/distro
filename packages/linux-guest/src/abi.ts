@@ -151,7 +151,7 @@ const mount_flags = scalar_group("MS_", {
   REC: 16384,
 });
 
-/** Linux mount flags accepted by {@link Guest.mount}. */
+/** Linux mount flags accepted by {@link GuestAgent.mount}. */
 export const MountFlags = mount_flags.values;
 
 const unmount_flags = scalar_group("MNT_", {
@@ -159,7 +159,7 @@ const unmount_flags = scalar_group("MNT_", {
   DETACH: 2,
 });
 
-/** Linux unmount flags accepted by {@link Guest.unmount}. */
+/** Linux unmount flags accepted by {@link GuestAgent.unmount}. */
 export const UnmountFlags = unmount_flags.values;
 
 // ---------------------------------------------------------------------------

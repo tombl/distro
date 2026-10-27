@@ -1,0 +1,18 @@
+---
+import type { ComponentProps } from "astro/types";
+import { Code } from "astro:components";
+
+interface Props {
+  code: string;
+  language?: string;
+}
+
+const { code, language } = Astro.props;
+const lang = (language ?? "plaintext") as ComponentProps<typeof Code>["lang"];
+---
+
+<Code
+  {code}
+  {lang}
+  themes={{ light: "github-light-default", dark: "github-dark-default" }}
+/>

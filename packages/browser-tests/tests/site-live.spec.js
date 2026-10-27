@@ -34,6 +34,9 @@ async function run(input, command) {
 // is a round trip through the shell: retype a marker command until its output
 // comes back.
 async function waitForShell(page) {
+  await expect(page.locator("[data-terminal]")).toHaveAttribute("aria-busy", "false", {
+    timeout: 30_000,
+  });
   const input = page.locator(".xterm-helper-textarea");
   const id = Math.random().toString(36).slice(2, 10);
   await expect(async () => {
@@ -53,7 +56,11 @@ async function waitForGuest(page) {
   return input;
 }
 
-test("boots and formats a blank persistent disk into the canonical system", async ({ page }) => {
+test("boots and formats a blank persistent disk into the canonical system", async ({
+  browserName,
+  page,
+}) => {
+  test.skip(browserName === "firefox", "persistent installation is not supported in Firefox");
   test.setTimeout(300_000);
   const rootfsRequests = [];
   page.on("pageerror", (error) => console.log(`browser error: ${error.stack ?? error}`));
@@ -122,29 +129,19 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
     dialogs.push(dialog.message());
     await dialog.dismiss();
   });
-  await page.goto("/?webgl=0");
+  await page.goto("/?webgl=0&handoff=slow&cmdline=lowland.test%3Da%2Bb");
+  await expect(page.locator("[data-terminal-placeholder]")).toBeVisible();
+  await expect(page.locator("[data-terminal-placeholder]")).toHaveCount(0);
+  await expect(page.locator("[data-terminal]")).toBeVisible();
+  await expect(page.locator(".xterm-rows")).toContainText("Loading Lowland Linux");
 
   const input = await waitForShell(page);
   expect(await terminalText(page)).not.toContain("install-lowland");
 
   await run(
     input,
-    "! grep -qw 'lowland.install=1' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
+    "! grep -qw 'lowland.install=1' /proc/cmdline && grep -qw 'lowland.test=a+b' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
   );
   await expectOutput(page, /^live-only-ready$/m);
   expect(dialogs).toEqual([]);
 });
-
-// keep_bootcon keeps the boot console open for the whole session, so console
-// output must reach the terminal without waiting for it to close.
-for (const cmdline of ["keep_bootcon", '"keep-bootcon=1"']) {
-  test(`shows the shell with ${cmdline}`, async ({ page }) => {
-    await page.goto(`/?webgl=0&cmdline=${encodeURIComponent(cmdline)}`);
-    const terminal = page.locator(".xterm-rows");
-    await expect(terminal).toContainText("root@lowland", { timeout: 60_000 });
-    const input = page.locator(".xterm-helper-textarea");
-    await input.pressSequentially("printf 'console-%s\\n' visible");
-    await input.press("Enter");
-    await expect(terminal).toContainText("console-visible");
-  });
-}

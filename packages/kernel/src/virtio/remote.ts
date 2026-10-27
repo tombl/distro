@@ -91,7 +91,7 @@ const deserialize_error = ({ name, message, stack }: SerializedError) => {
  * The endpoint may instead be a MessagePort. That form is useful when the
  * caller needs to initialize a worker with other data, or serve several
  * devices from one worker. Closing the device closes this protocol and its
- * driver; ownership of the Worker or MessagePort remains with the caller. The
+ * driver. Ownership of the Worker or MessagePort remains with the caller. The
  * caller must keep that endpoint alive until `device.closed` settles.
  *
  * @example
@@ -322,7 +322,7 @@ function connect_remote_device(
 
 /**
  * Serves `device` over `endpoint` for `workerDevice` to attach to a machine.
- * In a dedicated worker, the usual endpoint is `self`; a MessagePort is useful
+ * In a dedicated worker, the usual endpoint is `self`. A MessagePort is useful
  * when the worker needs other initialization or serves more than one device.
  *
  * @example

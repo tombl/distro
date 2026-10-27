@@ -1,0 +1,55 @@
+@import "@lowland/web-ui/base.css";
+@import "@xterm/xterm/css/xterm.css";
+
+body {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.root-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.intro {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.machine {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--terminal-foreground);
+  background: var(--code-background);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  scroll-margin-block-start: 0;
+}
+
+/* xterm's own element also carries the `terminal` class, so target the host
+   by its data attribute rather than the shared class name. */
+[data-terminal],
+.terminal-placeholder {
+  position: absolute;
+  inset: 0.5rem;
+  margin: 0;
+}
+
+.terminal-placeholder {
+  z-index: 1;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 15px;
+  /* xterm uses the font's natural height. JavaScript refines both metrics to
+     xterm's device-pixel grid before the first paint. */
+  line-height: normal;
+  font-kerning: none;
+  color: var(--terminal-foreground);
+  white-space: pre;
+  overflow: hidden;
+}

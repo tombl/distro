@@ -1,0 +1,122 @@
+---
+title: How it works
+description: How a Linux kernel ends up running inside a JavaScript process.
+section: explanation
+order: 1
+---
+
+# How it works
+
+A machine is an ordinary Linux kernel, compiled to WebAssembly and run by your JavaScript
+engine. This page describes how its parts fit together, and then what this design means for
+programs that run inside it.
+
+## The kernel
+
+Linux supports many processor architectures. Lowland adds one more, `wasm`, to a fork of the
+kernel. The kernel is built for this architecture like any other and produces a single
+WebAssembly module, `vmlinux.wasm`, which ships in `@lowland/kernel`.
+
+Where a kernel for real hardware would use privileged instructions, this kernel calls
+functions that JavaScript provides as WebAssembly imports. For example, it calls an import to
+start a worker, to read the time, or to notify a device. The architecture has no memory
+management unit, so the kernel is built without virtual memory.
+
+## Workers and CPUs
+
+Every kernel task runs in its own worker. In a browser these are Web Workers, and in Node.js
+they are `worker_threads`. This includes each thread of each user program, and the kernel's
+own threads. A worker runs kernel code and, for a user task, that program's code as well.
+
+The `cpus` option of `bootMachine()` sets how many virtual CPUs the machine has. A virtual CPU
+is not a thread. It is a token that workers pass between them, and a worker runs only while it
+holds one. When the scheduler switches from one task to another, the current worker hands its
+CPU to the next task's worker and then waits until it is given a CPU again. The number of CPUs
+is therefore the number of tasks that can run at the same time.
+
+The kernel cannot interrupt WebAssembly code that is running. A task keeps its CPU until it
+calls into the kernel, for example with a system call.
+
+## Memory
+
+The kernel's physical memory is one shared `WebAssembly.Memory`, available as
+`machine.memory`. It holds all of the kernel's data, including the page cache and the virtio
+queues. The main thread and every worker use this same memory, and they coordinate with atomic
+operations on it.
+
+Each user process has a separate `WebAssembly.Memory` of its own, which all of its threads
+share. A program cannot address kernel memory as data. When a system call needs to move data
+between the two, the kernel copies it.
+
+## Devices
+
+The kernel finds its devices in a device tree that `bootMachine()` builds. Every device is a
+virtio device implemented in JavaScript: block devices, the console, the entropy source,
+shared directories, network cards, and vsock. Plugins such as `guestAgent()` add devices
+during boot.
+
+The virtio queues live in kernel memory. A device reads requests from that memory and writes
+its replies there, and then raises an interrupt. Devices run on the main thread, unless you
+move one into a worker of your own with `workerDevice()`.
+
+## The guest agent
+
+`guestAgent()` adds two devices. The first is a small disk that contains the agent program,
+which the kernel boots as PID 1. The agent mounts the system image, the filesystem labelled
+`LOWLAND_ROOT`, and switches into it as the new root.
+
+The second device is a vsock device, which carries stream connections between the guest and
+your process. Your process opens these connections and the agent accepts them. One
+connection lasts as long as the session, and further connections carry requests. A request
+asks the agent to make one system call, to start a program, or to wait for a program to exit.
+Higher-level operations, such as `guest.fs.readFile()`, are made of these requests on the host
+side.
+
+## Running a program
+
+When a process calls `execve()` on a WebAssembly file, the kernel's `binfmt_wasm` handler
+loads it. The kernel reads the whole file, compiles it as a WebAssembly module in the
+process's worker, and gives the process a new memory. It then calls the module's `_start`
+function.
+
+A program imports only its memory and a few functions from the kernel, the most important of
+which makes system calls. It cannot import anything else, so every program is a single,
+statically linked `wasm32` module. Programs are built against musl for the
+`wasm32-unknown-linux-musl` target.
+
+## What this means for programs
+
+The design above changes some of what programs can assume about Linux. This section describes
+the differences. Port software explains how to adapt a program.
+
+### Creating processes
+
+`fork()` and `vfork()` are not available. The C library does not declare them. New processes
+are created with `clone()`, which starts the child in a function that the caller passes. The C
+library's `posix_spawn()` and `system()` work this way, and are the usual way to run another
+program.
+
+Without `CLONE_VM`, `clone()` gives the child a private copy of the caller's memory. This only
+works while the calling process has a single thread. In a process with more than one thread it
+fails with `EOPNOTSUPP`.
+
+### Memory mapping
+
+There is no `mmap()`, `munmap()`, or `mprotect()`, and this includes anonymous mappings. The C
+library does not declare them. `malloc()` grows the process's memory instead. To read a file,
+use `read()`.
+
+### Threads
+
+POSIX threads work. Each thread runs in its own worker and shares its process's memory.
+
+### Signals
+
+Signal handlers installed with `sigaction()` run, but a thread receives signals only when it
+enters the kernel, during a system call or as one returns. A thread that runs without making
+system calls receives no signals, not even `SIGKILL`, and it keeps its CPU until it makes one.
+
+### Size and startup
+
+Every time a program starts, the kernel reads and compiles the whole binary. A large binary
+therefore takes longer to start than a small one.

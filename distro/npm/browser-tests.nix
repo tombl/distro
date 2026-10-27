@@ -22,7 +22,6 @@ let
       name = "browser-tests-${project}";
       package = "@lowland/browser-tests";
       directory = "packages/browser-tests";
-      paths = [ "apps/site/service-worker.js" ];
       assets = test-assets.select assets;
       inherit project browser built;
     };
@@ -54,13 +53,23 @@ pkgs.runCommand "browser-tests" { } "mkdir $out"
   checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
     lib.genAttrs [ "chromium" "firefox" "webkit" ] engine
     // {
+      # The site's service worker is built with the site, not kept as a source file.
       service-worker = check {
         project = "service-worker";
         browser = "chromium";
+        assets = [ "site" ];
       };
       site-live = check {
         project = "site-live";
         browser = "chromium";
+        assets = [
+          "apk"
+          "site"
+        ];
+      };
+      site-live-firefox = check {
+        project = "site-live-firefox";
+        browser = "firefox";
         assets = [
           "apk"
           "site"
