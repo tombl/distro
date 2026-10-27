@@ -190,12 +190,7 @@ export class Linux implements AsyncDisposable {
     const network = options.network?.attach();
     const machine = await bootMachine({
       cpus: options.cpus ?? 1,
-      plugins: [
-        guest,
-        entropyDevice(),
-        ...(network ? [network] : []),
-        ...(options.plugins ?? []),
-      ],
+      plugins: [guest, entropyDevice(), ...(network ? [network] : []), ...(options.plugins ?? [])],
     });
     return new Linux(
       machine,

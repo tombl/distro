@@ -13,12 +13,7 @@
 <pre id="log"></pre>
 <script type="module">
   import { guestAgent } from "lowland/guest";
-  import {
-    bootMachine,
-    consoleDevice,
-    createNetwork,
-    guestFetchHandler,
-  } from "lowland/machine";
+  import { bootMachine, consoleDevice, createNetwork, guestFetchHandler } from "lowland/machine";
   import { serveGuest } from "/client.js";
 
   const hubOrigin = "__HUB_ORIGIN__";
