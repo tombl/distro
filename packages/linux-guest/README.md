@@ -49,9 +49,18 @@ agent then requires exactly one attached EROFS or ext4 filesystem labeled
 Missing and duplicate system roots fail `bootMachine()` through the plugin
 readiness hook.
 
-An EROFS system image is always mounted read-only beneath a temporary writable
-OverlayFS, so the system root is writable for the lifetime of the boot. An ext4
-system disk is mounted read-write directly.
+Read-only roots get an overlay: an EROFS image, or an ext4 image on a block
+device without a `write` callback, is mounted read-only beneath a temporary
+writable OverlayFS, so the system root is writable for the lifetime of the boot
+and its changes are discarded at close. A writable ext4 system disk is mounted
+read-write directly and persists.
+
+A machine closes without unmounting its system disk, so an ext4 image that was
+booted writable still has an unreplayed journal. Replaying it needs write
+access, so a read-only ext4 root is mounted without journal recovery: it shows
+the filesystem as of its last checkpoint, and changes that only reached the
+journal are not visible. Run `sync` in the guest before closing a writable
+machine to write its changes back to the disk.
 
 ## Networking
 
