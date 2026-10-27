@@ -1,4 +1,4 @@
-/* Guest agent (protocol v5): a dumb syscall executor, and PID 1.
+/* Guest agent (protocol v6): a dumb syscall executor, and PID 1.
  *
  * The kernel runs the agent as /init from its initramfs. The host opens one
  * connection to the session port plus up to `max_lanes` lanes on the lane
@@ -36,7 +36,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/reboot.h>
@@ -53,10 +52,11 @@ enum {
 	session_port = 1024,
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
-	protocol_version = 5,
+	protocol_version = 6,
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
+	max_file_actions = 64,
 	/* Fits an empty pipe on any page size, so handing it to PID 1 never
 	 * blocks. */
 	max_init_payload = 32 * 1024,
@@ -71,8 +71,20 @@ enum request_kind {
 	req_syscall = 1,
 	req_spawn = 2,
 	req_reap = 3,
-	req_spawn_terminal = 4,
 	req_switch_root = 5,
+};
+
+/* A spawn's flags: POSIX_SPAWN_SETSID, and POSIX_SPAWN_SETSIGDEF for every
+ * signal. */
+enum spawn_flag {
+	spawn_setsid = 1,
+	spawn_default_signals = 2,
+};
+
+enum file_action {
+	action_dup2 = 1,
+	action_open = 2,
+	action_close = 3,
 };
 
 /* A session worker's exit status, passed on by its keeper: the host asked
@@ -218,15 +230,6 @@ struct cursor {
 	size_t offset;
 };
 
-static bool cursor_u16(struct cursor *cursor, uint16_t *out)
-{
-	if (cursor->length - cursor->offset < 2)
-		return false;
-	*out = load_u16(cursor->data + cursor->offset);
-	cursor->offset += 2;
-	return true;
-}
-
 static bool cursor_u32(struct cursor *cursor, uint32_t *out)
 {
 	if (cursor->length - cursor->offset < 4)
@@ -255,7 +258,7 @@ static char *cursor_string(struct cursor *cursor)
 	return string;
 }
 
-/* A command to start: what a spawn payload describes. */
+/* A command to start: the head of a spawn payload, and a switch root's init. */
 struct command {
 	uint32_t argc, envc;
 	char **argv;
@@ -279,9 +282,8 @@ static void free_command(struct command *command)
 	*command = (struct command){ 0 };
 }
 
-/* Parses { argc u32 } argc x string, string cwd, { envc u32 } envc x string
- * to the end of the cursor. False means the payload is invalid; free the
- * command either way. */
+/* Parses { argc u32 } argc x string, string cwd, { envc u32 } envc x string.
+ * False means the payload is invalid; free the command either way. */
 static bool parse_command(struct cursor *cur, struct command *command)
 {
 	uint32_t i;
@@ -310,7 +312,7 @@ static bool parse_command(struct cursor *cur, struct command *command)
 		if (!command->envp[i] || !strchr(command->envp[i], '='))
 			return false;
 	}
-	return cur->offset == cur->length;
+	return true;
 }
 
 /* Syscall request body: { nr u32, arg_kinds u8[6], arg_values u64[6] } then
@@ -507,48 +509,71 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 	}
 }
 
-/* Allocates a pseudoterminal for a terminal spawn and sizes it before the
- * child can ask. The agent keeps only the master; the child opens the
- * subsidiary by name after setsid, which makes it the controlling terminal.
- * Returns an errno value. */
-static int open_terminal(int *master, char *name, size_t name_size,
-			 uint16_t rows, uint16_t columns)
+/* Adds a spawn's file actions: { count u32 } then, per action, { op u32 }
+ * and its operands. Returns 0, an errno value from posix_spawn, or -1 when
+ * the list is malformed. */
+static int add_file_actions(struct cursor *cur,
+			    posix_spawn_file_actions_t *actions)
 {
-	struct winsize size = { .ws_row = rows, .ws_col = columns };
+	uint32_t count, i;
 
-	*master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
-	if (*master == -1 || grantpt(*master) == -1 || unlockpt(*master) == -1)
-		return errno;
-	if (ioctl(*master, TIOCSWINSZ, &size) == -1)
-		return errno;
-	return ptsname_r(*master, name, name_size);
+	if (!cursor_u32(cur, &count) || count > max_file_actions)
+		return -1;
+	for (i = 0; i < count; i++) {
+		uint32_t op, fd, newfd, oflag, mode;
+		char *path;
+		int error;
+
+		if (!cursor_u32(cur, &op))
+			return -1;
+		switch (op) {
+		case action_dup2:
+			if (!cursor_u32(cur, &fd) || !cursor_u32(cur, &newfd))
+				return -1;
+			error = posix_spawn_file_actions_adddup2(actions, (int)fd,
+								 (int)newfd);
+			break;
+		case action_open:
+			if (!cursor_u32(cur, &newfd) || !cursor_u32(cur, &oflag) ||
+			    !cursor_u32(cur, &mode) || !(path = cursor_string(cur)))
+				return -1;
+			error = posix_spawn_file_actions_addopen(
+				actions, (int)newfd, path, (int)oflag, (mode_t)mode);
+			free(path);
+			break;
+		case action_close:
+			if (!cursor_u32(cur, &fd))
+				return -1;
+			error = posix_spawn_file_actions_addclose(actions, (int)fd);
+			break;
+		default:
+			return -1;
+		}
+		if (error)
+			return error;
+	}
+	return 0;
 }
 
-/* Spawn request body: { len u32 } then { argc u32 } argc x string,
- * string cwd, { envc u32 } envc x string. A terminal spawn's payload starts
- * with { rows u16, columns u16 }. The length prefix exists so a payload that
+/* Spawn request body: { len u32 } then the command, { flags u32 }, and the
+ * file actions. The child changes to cwd, then runs the file actions in order
+ * on descriptors the host made. The length prefix exists so a payload that
  * fails to parse is already consumed and can get an EINVAL reply without
  * desyncing the lane. */
-static int serve_spawn(int fd, bool terminal)
+static int serve_spawn(int fd)
 {
 	uint8_t *payload;
 	struct cursor cur;
-	uint32_t len, i;
+	uint32_t len, flags, i;
 	struct command command = { 0 };
-	int in[2] = { -1, -1 };
-	int out[2] = { -1, -1 };
-	int err[2] = { -1, -1 };
-	int master = -1;
-	char terminal_name[32];
-	uint16_t rows = 0, columns = 0;
 	posix_spawn_file_actions_t actions;
 	posix_spawnattr_t attributes;
-	sigset_t default_signals;
+	sigset_t all;
 	bool have_actions = false, have_attributes = false;
 	int slot = -1;
 	int spawn_errno;
 	pid_t pid;
-	uint8_t body[16];
+	uint8_t body[4];
 	int rc = -1;
 
 	payload = read_payload(fd, max_spawn_payload, &len);
@@ -556,103 +581,62 @@ static int serve_spawn(int fd, bool terminal)
 		return -1;
 	cur = (struct cursor){ payload, len, 0 };
 
-	if (terminal && (!cursor_u16(&cur, &rows) || !cursor_u16(&cur, &columns)))
+	if (!parse_command(&cur, &command) || !cursor_u32(&cur, &flags) ||
+	    flags & ~(spawn_setsid | spawn_default_signals))
 		goto invalid;
-	if (!parse_command(&cur, &command))
-		goto invalid;
-
-	pthread_mutex_lock(&children_mutex);
-	for (i = 0; i < process_capacity; i++)
-		if (!children[i].used) {
-			children[i].used = true;
-			children[i].pid = 0;
-			children[i].reaped = false;
-			children[i].status = 0;
-			slot = (int)i;
-			break;
-		}
-	pthread_mutex_unlock(&children_mutex);
-	if (slot < 0) {
-		rc = write_reply(fd, -1, EAGAIN);
-		goto out;
-	}
-
 	spawn_errno = posix_spawn_file_actions_init(&actions);
 	if (spawn_errno)
 		goto spawn_failed;
 	have_actions = true;
+	/* chdir first, so relative paths in the file actions name the files a
+	 * shell's redirections would. */
+	spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, command.cwd);
+	if (!spawn_errno) {
+		spawn_errno = add_file_actions(&cur, &actions);
+		if (spawn_errno == -1 || cur.offset != cur.length)
+			goto invalid;
+	}
+	if (spawn_errno)
+		goto spawn_failed;
 	spawn_errno = posix_spawnattr_init(&attributes);
 	if (spawn_errno)
 		goto spawn_failed;
 	have_attributes = true;
-	/* The agent ignores SIGPIPE so a vanished host cannot kill it; commands
-	 * get the default, or every pipeline in a shell would report EPIPE. A
-	 * terminal command leads its own session, and opening the terminal
-	 * without O_NOCTTY there makes it the controlling terminal. */
-	sigemptyset(&default_signals);
-	sigaddset(&default_signals, SIGPIPE);
-	if ((spawn_errno = posix_spawnattr_setsigdefault(&attributes,
-							 &default_signals)) ||
+	/* The agent ignores SIGPIPE so a vanished host cannot kill it; with
+	 * default signals a command does not inherit that, or every pipeline in
+	 * a shell would report EPIPE. */
+	sigfillset(&all);
+	if ((spawn_errno = posix_spawnattr_setsigdefault(&attributes, &all)) ||
 	    (spawn_errno = posix_spawnattr_setflags(
-		     &attributes, POSIX_SPAWN_SETSIGDEF |
-					  (terminal ? POSIX_SPAWN_SETSID : 0))))
+		     &attributes,
+		     (flags & spawn_setsid ? POSIX_SPAWN_SETSID : 0) |
+			     (flags & spawn_default_signals ? POSIX_SPAWN_SETSIGDEF :
+							      0))))
 		goto spawn_failed;
-	if (terminal) {
-		if ((spawn_errno = open_terminal(&master, terminal_name,
-						 sizeof(terminal_name), rows,
-						 columns)) ||
-		    (spawn_errno = posix_spawn_file_actions_addopen(
-			     &actions, 0, terminal_name, O_RDWR, 0)) ||
-		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 1)) ||
-		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 2)))
-			goto spawn_failed;
-	} else {
-		if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
-		    pipe2(err, O_CLOEXEC) == -1) {
-			spawn_errno = errno;
-			goto spawn_failed;
-		}
-		if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
-		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
-		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
-		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
-		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
-		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])))
-			goto spawn_failed;
-	}
-	if ((spawn_errno = posix_spawn_file_actions_addchdir_np(&actions,
-								command.cwd)))
-		goto spawn_failed;
+
 	/* Publish the pid before the sole reaper can classify a fast exit. */
 	pthread_mutex_lock(&children_mutex);
-	spawn_errno = spawn_with_path(&pid, &actions, &attributes, command.argv,
-				      command.envp);
-	if (!spawn_errno) {
-		children[slot].pid = pid;
-		pthread_cond_broadcast(&children_changed);
+	for (i = 0; i < process_capacity; i++)
+		if (!children[i].used) {
+			slot = (int)i;
+			break;
+		}
+	if (slot < 0) {
+		spawn_errno = EAGAIN;
+	} else {
+		spawn_errno = spawn_with_path(&pid, &actions, &attributes,
+					      command.argv, command.envp);
+		if (!spawn_errno) {
+			children[slot] = (typeof(children[slot])){ .used = true,
+								   .pid = pid };
+			pthread_cond_broadcast(&children_changed);
+		}
 	}
 	pthread_mutex_unlock(&children_mutex);
 	if (spawn_errno)
 		goto spawn_failed;
-	posix_spawn_file_actions_destroy(&actions);
-	posix_spawnattr_destroy(&attributes);
 	store_u32(body, (uint32_t)pid);
-	if (terminal) {
-		store_u32(body + 4, (uint32_t)master);
-		if (write_reply(fd, 0, 0) || write_all(fd, body, 8))
-			goto out;
-		rc = 0;
-		goto out;
-	}
-	close_fd(&in[0]);
-	close_fd(&out[1]);
-	close_fd(&err[1]);
-	store_u32(body + 4, (uint32_t)in[1]);
-	store_u32(body + 8, (uint32_t)out[0]);
-	store_u32(body + 12, (uint32_t)err[0]);
-	if (write_reply(fd, 0, 0) || write_all(fd, body, sizeof(body)))
-		goto out;
-	rc = 0;
+	rc = write_reply(fd, 0, 0) || write_all(fd, body, sizeof(body)) ? -1 : 0;
 	goto out;
 
 spawn_failed:
@@ -661,27 +645,16 @@ spawn_failed:
 	 * diagnostic on the guest console so an embedder can repair its image. */
 	fprintf(stderr, "linux-guest-agent: spawning %s in %s: %s\n",
 		command.argv[0], command.cwd, strerror(spawn_errno));
-	if (have_actions)
-		posix_spawn_file_actions_destroy(&actions);
-	if (have_attributes)
-		posix_spawnattr_destroy(&attributes);
-	close_fd(&master);
-	close_fd(&in[0]);
-	close_fd(&in[1]);
-	close_fd(&out[0]);
-	close_fd(&out[1]);
-	close_fd(&err[0]);
-	close_fd(&err[1]);
-	pthread_mutex_lock(&children_mutex);
-	children[slot].used = false;
-	pthread_cond_broadcast(&children_changed);
-	pthread_mutex_unlock(&children_mutex);
 	rc = write_reply(fd, -1, spawn_errno > 0 ? (uint32_t)spawn_errno : EIO);
 	goto out;
 
 invalid:
 	rc = write_reply(fd, -1, EINVAL);
 out:
+	if (have_actions)
+		posix_spawn_file_actions_destroy(&actions);
+	if (have_attributes)
+		posix_spawnattr_destroy(&attributes);
 	free_command(&command);
 	free(payload);
 	return rc;
@@ -745,8 +718,8 @@ static int check_sysroot(void)
 	return 0;
 }
 
-/* Switch root request body: { len u32 } then, when len is nonzero, a spawn
- * payload naming the init that PID 1 starts in the new root. The session
+/* Switch root request body: { len u32 } then, when len is nonzero, a command
+ * naming the init that PID 1 starts in the new root. The session
  * validates /sysroot and hands the init to PID 1, which enters /sysroot once
  * the host has ended this session. PID 1 switches root once per boot. */
 static int serve_switch_root(int fd)
@@ -762,7 +735,7 @@ static int serve_switch_root(int fd)
 	if (!payload)
 		return -1;
 	cur = (struct cursor){ payload, len, 0 };
-	if (len && !parse_command(&cur, &init))
+	if (len && (!parse_command(&cur, &init) || cur.offset != len))
 		error = EINVAL;
 	if (len)
 		free_command(&init);
@@ -812,8 +785,7 @@ static void serve_lane(int fd)
 				return;
 			break;
 		case req_spawn:
-		case req_spawn_terminal:
-			if (serve_spawn(fd, kind == req_spawn_terminal))
+			if (serve_spawn(fd))
 				return;
 			break;
 		case req_reap:
@@ -1263,7 +1235,7 @@ static void enter_system_root(int init_pipe)
 	if (!init_length)
 		return;
 	cur = (struct cursor){ request + 4, init_length, 0 };
-	if (!parse_command(&cur, &init))
+	if (!parse_command(&cur, &init) || cur.offset != init_length)
 		error = EINVAL;
 	else
 		error = start_init(&init);

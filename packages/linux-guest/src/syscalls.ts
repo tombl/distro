@@ -1,4 +1,4 @@
-// The guest syscall table (protocol v5): what the bytes on a lane mean.
+// The guest syscall table (protocol v6): what the bytes on a lane mean.
 //
 // Each exported function is one syscall the veneer composes, defined once:
 // wire encoding, reply decoding, 64-bit argument splitting, and errno
@@ -10,18 +10,21 @@
 // Wire shape, both directions fully determined (no framing):
 //   syscall request: { kind u8 = 1, nr u32, arg_kinds u8[6], arg_values u64[6] }
 //                    then in-blob bytes in argument order
-//   spawn request:   { kind u8 = 2, len u32 } then { argc u32 } argc x string,
-//                    string cwd, { envc u32 } envc x string  (string = u32 len + bytes)
+//   spawn request:   { kind u8 = 2, len u32 } then a command, { flags u32 },
+//                    { count u32 } and count file actions
+//   command:         { argc u32 } argc x string, string cwd, { envc u32 }
+//                    envc x string  (string = u32 len + bytes)
+//   file action:     { op u32 = 1 (dup2), fd u32, newfd u32 }
+//                  | { op u32 = 2 (open), newfd u32, oflag u32, mode u32, string path }
+//                  | { op u32 = 3 (close), fd u32 }
 //   reap request:    { kind u8 = 3, pid u32 }
-//   terminal spawn:  { kind u8 = 4, len u32 } then { rows u16, columns u16 }
-//                    and the spawn payload
 //   switch root:     { kind u8 = 5, len u32 } then, when len is nonzero, the
-//                    spawn payload of the init PID 1 starts in the new root
+//                    command of the init PID 1 starts in the new root
 //   reply:           { ret i64, errno u32 } then, when ret != -1: each
 //                    out-blob (full: capacity bytes; ret-sized: min(capacity,
 //                    ret) bytes), or the spawn/reap reply body.
 
-import { Bytes, FixedArray, I64LE, Struct, U16LE, U32LE, U64LE, U8 } from "@lowland/bytes";
+import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
 import { AT, NR, OpenHow, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 
@@ -36,7 +39,6 @@ const MAX_BLOB = 128 * 1024;
 const REQ_SYSCALL = 1;
 const REQ_SPAWN = 2;
 const REQ_REAP = 3;
-const REQ_SPAWN_TERMINAL = 4;
 const REQ_SWITCH_ROOT = 5;
 
 const ARG_SCALAR = 0;
@@ -54,18 +56,6 @@ class SyscallReq extends Struct({
 class ReplyHead extends Struct({
   ret: I64LE,
   errno: U32LE,
-}) {}
-
-class SpawnReply extends Struct({
-  pid: U32LE,
-  stdin: U32LE,
-  stdout: U32LE,
-  stderr: U32LE,
-}) {}
-
-class TerminalSpawnReply extends Struct({
-  pid: U32LE,
-  terminal: U32LE,
 }) {}
 
 /** An fd owned by the host in the guest's fd table. Closes exactly once no
@@ -350,6 +340,16 @@ export async function umount2(session: GuestSession, target: string, flags: numb
   await syscall(session, NR.umount2, c_string(target), flags);
 }
 
+/** Makes a pipe, returning its read and write ends. */
+export async function pipe2(session: GuestSession, flags: number): Promise<[GuestFd, GuestFd]> {
+  const { out } = await syscall(session, NR.pipe2, { out: 8 }, flags);
+  const view = new DataView(out[0]!.buffer, out[0]!.byteOffset);
+  return [
+    new GuestFd(session, U32LE.get(view, 0), "pipe"),
+    new GuestFd(session, U32LE.get(view, 4), "pipe"),
+  ];
+}
+
 export async function kill(session: GuestSession, pid: number, signal: number): Promise<void> {
   await syscall(session, NR.kill, pid, signal);
 }
@@ -359,6 +359,17 @@ export async function set_window_size(fd: GuestFd, rows: number, columns: number
   const size = new Bytes(Winsize.size);
   size.alloc(Winsize).value = { ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0 };
   await syscall(fd.session, NR.ioctl, fd, TIOC.SWINSZ, { in: size.array });
+}
+
+/** Unlocks a pseudoterminal's subsidiary so it can be opened: unlockpt(3). */
+export async function unlock_terminal(fd: GuestFd): Promise<void> {
+  await syscall(fd.session, NR.ioctl, fd, TIOC.SPTLCK, { in: new Uint8Array(4) });
+}
+
+/** The number N of a pseudoterminal's subsidiary, `/dev/pts/N`. */
+export async function terminal_number(fd: GuestFd): Promise<number> {
+  const { out } = await syscall(fd.session, NR.ioctl, fd, TIOC.GPTN, { out: 4 });
+  return U32LE.get(new DataView(out[0]!.buffer, out[0]!.byteOffset), 0);
 }
 
 /** Hangs up a terminal: blocked reads of it return end of file, and every
@@ -391,46 +402,77 @@ export async function read_kernel_log(
 
 // --- process lifecycle (the agent's only domain knowledge) -----------------
 
-export interface Spawned {
-  pid: number;
-  stdin: GuestFd;
-  stdout: GuestFd;
-  stderr: GuestFd;
+/** A spawn's flags. */
+export const SPAWN = {
+  /** `POSIX_SPAWN_SETSID`: the process leads a new session. */
+  SETSID: 1,
+  /** `POSIX_SPAWN_SETSIGDEF` for every signal, so the process does not
+   *  inherit the agent's ignored `SIGPIPE`. */
+  SETSIGDEF: 2,
+} as const;
+
+/** A posix_spawn file action. The process runs them in order, after it
+ *  changes to its working directory, on descriptors of the session. */
+export type FileAction =
+  | { op: "dup2"; fd: GuestFd | number; newfd: number }
+  | { op: "open"; path: string; oflag: number; mode?: number; newfd: number }
+  | { op: "close"; fd: number };
+
+const FILE_ACTION = { dup2: 1, open: 2, close: 3 } as const;
+
+function write_string(payload: Bytes, value: string) {
+  const bytes = new TextEncoder().encode(value);
+  payload.alloc(U32LE).value = bytes.byteLength;
+  payload.append(bytes);
 }
 
-export interface SpawnedTerminal {
-  pid: number;
-  /** The terminal's controlling side; the process has the other side as
-   *  its standard input, output, and error. */
-  terminal: GuestFd;
-}
-
-function spawn_payload(
+function command_payload(
   payload: Bytes,
   argv: readonly string[],
   cwd: string,
   env: readonly string[],
 ) {
-  const write_string = (value: string) => {
-    const bytes = new TextEncoder().encode(value);
-    payload.alloc(U32LE).value = bytes.byteLength;
-    payload.append(bytes);
-  };
   payload.alloc(U32LE).value = argv.length;
-  for (const arg of argv) write_string(arg);
-  write_string(cwd);
+  for (const arg of argv) write_string(payload, arg);
+  write_string(payload, cwd);
   payload.alloc(U32LE).value = env.length;
-  for (const entry of env) write_string(entry);
+  for (const entry of env) write_string(payload, entry);
 }
 
+/** posix_spawn in the guest: searches the `PATH` in `env` for `argv[0]`,
+ *  and returns the pid. The process inherits only the descriptors the file
+ *  actions put in place, because every descriptor the host holds is
+ *  close-on-exec. */
 export async function spawn(
   session: GuestSession,
   argv: readonly string[],
   cwd: string,
   env: readonly string[],
-): Promise<Spawned> {
+  flags: number,
+  actions: readonly FileAction[],
+): Promise<number> {
   const payload = new Bytes();
-  spawn_payload(payload, argv, cwd, env);
+  command_payload(payload, argv, cwd, env);
+  payload.alloc(U32LE).value = flags;
+  payload.alloc(U32LE).value = actions.length;
+  for (const action of actions) {
+    payload.alloc(U32LE).value = FILE_ACTION[action.op];
+    switch (action.op) {
+      case "dup2":
+        payload.alloc(U32LE).value = typeof action.fd === "number" ? action.fd : action.fd.fd;
+        payload.alloc(U32LE).value = action.newfd;
+        break;
+      case "open":
+        payload.alloc(U32LE).value = action.newfd;
+        payload.alloc(U32LE).value = action.oflag;
+        payload.alloc(U32LE).value = action.mode ?? 0;
+        write_string(payload, action.path);
+        break;
+      case "close":
+        payload.alloc(U32LE).value = action.fd;
+        break;
+    }
+  }
 
   const request = new Bytes();
   request.alloc(U8).value = REQ_SPAWN;
@@ -443,49 +485,11 @@ export async function spawn(
     await lane.write(request.array);
     const reply = new ReplyHead(await lane.read(ReplyHead.size));
     if (reply.ret === -1n) return { errno: reply.errno };
-    const body = new SpawnReply(await lane.read(SpawnReply.size));
-    return { body: { pid: body.pid, stdin: body.stdin, stdout: body.stdout, stderr: body.stderr } };
+    const body = await lane.read(4);
+    return { pid: U32LE.get(new DataView(body.buffer, body.byteOffset), 0) };
   });
-  if (!result.body) throw new SystemError(result.errno);
-  return {
-    pid: result.body.pid,
-    stdin: new GuestFd(session, result.body.stdin, `${argv[0]}:stdin`),
-    stdout: new GuestFd(session, result.body.stdout, `${argv[0]}:stdout`),
-    stderr: new GuestFd(session, result.body.stderr, `${argv[0]}:stderr`),
-  };
-}
-
-/** Spawns a process on a new pseudoterminal of the given size, as the
- *  leader of a new session with that terminal as its controlling terminal. */
-export async function spawn_terminal(
-  session: GuestSession,
-  argv: readonly string[],
-  cwd: string,
-  env: readonly string[],
-  size: { rows: number; columns: number },
-): Promise<SpawnedTerminal> {
-  const payload = new Bytes();
-  payload.alloc(U16LE).value = size.rows;
-  payload.alloc(U16LE).value = size.columns;
-  spawn_payload(payload, argv, cwd, env);
-
-  const request = new Bytes();
-  request.alloc(U8).value = REQ_SPAWN_TERMINAL;
-  request.alloc(U32LE).value = payload.length;
-  request.append(payload.array);
-
-  const result = await session.exchange(async (lane) => {
-    await lane.write(request.array);
-    const reply = new ReplyHead(await lane.read(ReplyHead.size));
-    if (reply.ret === -1n) return { errno: reply.errno };
-    const body = new TerminalSpawnReply(await lane.read(TerminalSpawnReply.size));
-    return { body: { pid: body.pid, terminal: body.terminal } };
-  });
-  if (!result.body) throw new SystemError(result.errno);
-  return {
-    pid: result.body.pid,
-    terminal: new GuestFd(session, result.body.terminal, `${argv[0]}:terminal`),
-  };
+  if (result.pid === undefined) throw new SystemError(result.errno);
+  return result.pid;
 }
 
 /** Asks PID 1 to enter /sysroot once this session ends, then start `init`
@@ -496,7 +500,7 @@ export async function switch_root(
   init?: { argv: readonly string[]; cwd: string; env: readonly string[] },
 ): Promise<void> {
   const payload = new Bytes();
-  if (init) spawn_payload(payload, init.argv, init.cwd, init.env);
+  if (init) command_payload(payload, init.argv, init.cwd, init.env);
 
   const request = new Bytes();
   request.alloc(U8).value = REQ_SWITCH_ROOT;

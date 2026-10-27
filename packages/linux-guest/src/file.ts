@@ -130,7 +130,22 @@ export function openFlags(options: OpenOptions = {}): number {
  * are serialized. The file is an async disposable: `await using` closes it
  * when the block ends.
  */
+let use_descriptor: <T>(file: FsFile, use: (fd: GuestFd) => Promise<T>) => Promise<T>;
+
+/** @internal Runs `use` with the file's descriptor, holding off the file's
+ *  close and its other operations until `use` settles. */
+export function with_file_descriptor<T>(
+  file: FsFile,
+  use: (fd: GuestFd) => Promise<T>,
+): Promise<T> {
+  return use_descriptor(file, use);
+}
+
 export class FsFile implements AsyncDisposable {
+  static {
+    use_descriptor = (file, use) => file.#run(() => use(file.#fd));
+  }
+
   #tail = Promise.resolve<void>(undefined);
   #closed = false;
   #close?: Promise<void>;
