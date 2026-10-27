@@ -328,3 +328,27 @@ guest_test("session teardown", async (t) => {
     }
   });
 });
+
+// Without a console device the agent starts with no standard descriptors.
+// Pipes must not take their numbers, or spawn errors are misreported.
+test("reports failed spawns in a machine without a console", async () => {
+  const agent = guestAgent();
+  const machine = await bootMachine({ cpus: 1, plugins: [root_device(), agent] });
+  try {
+    for (const [argv, code] of [
+      [["/no/such"], "ENOENT"],
+      [["no-such-command"], "ENOENT"],
+      [["/etc"], "EACCES"],
+    ] as const) {
+      await assert.rejects(
+        agent.exec(argv),
+        (error) => error instanceof SystemError && error.code === code,
+      );
+      const result = await agent.run(["true"]);
+      assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+    }
+  } finally {
+    machine.close();
+    await machine.closed;
+  }
+});
