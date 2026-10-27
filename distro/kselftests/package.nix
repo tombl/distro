@@ -13,9 +13,9 @@
 # <name>.nix descriptor and a <name>-test.sh guest script. A suite is anything
 # with a .nix here, discovered by readDir, so adding one means dropping two files
 # in suites/ (and git add-ing them so the flake sees them) — no registration
-# line to edit and collide on. Shared logic — the wasm build recipe, the patches
-# applied once to the selftests tree, and the VM check wiring — lives here so the
-# suite files stay pure data.
+# line to edit and collide on. Shared logic — the wasm build recipe and the VM
+# check wiring — lives here so the suite files stay pure data. Wasm fixes to the
+# selftests themselves live on tombl/linux, not in this tree.
 #
 # clone3/raw-clone tests are skipped on principle across every suite: the wasm
 # clone syscall takes a custom fn/fn_arg ABI, not the generic stack-based one, so
@@ -35,10 +35,6 @@ let
     )
   );
 
-  # Patches are shared because suites share headers (kselftest.h, futex logging)
-  # and each patch touches a disjoint file, so the apply order does not matter.
-  patches = suffixed ./patches ".patch";
-
   # A discovered suite is real test coverage, not a boot-only placeholder.
   checkedSuites = lib.mapAttrs (
     name: suite:
@@ -49,7 +45,7 @@ in
 stdenv.mkDerivation (finalAttrs: {
   pname = "kselftests";
   inherit (linux) version;
-  inherit src patches;
+  inherit src;
 
   # lib.mk force-sets CC from LLVM/CROSS_COMPILE, but a make command-line
   # assignment wins; passing the wasm cc-wrapper as CC sidesteps lib.mk's missing
