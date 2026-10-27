@@ -109,7 +109,7 @@ let
     env.CI = "true";
     pnpmDeps = node-workspace.deps;
     nativeBuildInputs = [
-      pkgs.nodejs
+      pkgs.nodejs_26
       pkgs.pnpmConfigHook
       node-workspace.pnpm
     ];
