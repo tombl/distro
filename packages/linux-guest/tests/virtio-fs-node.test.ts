@@ -246,3 +246,63 @@ test("node virtio-fs adapter detects an ancestor replaced by a symlink", async (
     (error) => error instanceof FSError && error.errno === 13,
   );
 });
+
+test("node virtio-fs adapter moves known descendants with a renamed directory", async () => {
+  const context = { mode: 0o40755, uid: process.getuid!(), gid: process.getgid!() };
+  const filesystem = new NodeFS(shared);
+  const tree = await filesystem.mkdir!(filesystem.root, "tree", context);
+  const inner = await filesystem.mkdir!(tree, "inner", context);
+  await writeFile(path.join(shared, "tree", "inner", "leaf"), "leaf");
+  const leaf = await filesystem.lookup(inner, "leaf");
+  assert(leaf);
+  // A sibling whose name extends the renamed one's is not below it.
+  const sibling = await filesystem.mkdir!(filesystem.root, "tree-sibling", context);
+
+  await filesystem.rename!(filesystem.root, "tree", filesystem.root, "moved");
+
+  assert.equal(await filesystem.lookup(filesystem.root, "moved"), tree);
+  assert.equal(await filesystem.lookup(tree, "inner"), inner);
+  assert.equal(await filesystem.lookup(inner, "leaf"), leaf);
+  const opened = await filesystem.open!(leaf, linux_open.readonly);
+  assert.equal(new TextDecoder().decode(await filesystem.read!(leaf, opened, 0n, 4)), "leaf");
+  await filesystem.release!(leaf, opened);
+  assert.equal(await filesystem.lookup(filesystem.root, "tree"), undefined);
+  assert.equal(await filesystem.lookup(filesystem.root, "tree-sibling"), sibling);
+  assert.equal((await filesystem.getattr(sibling)).mode & constants.S_IFMT, constants.S_IFDIR);
+});
+
+test("node virtio-fs adapter detaches the descendants of a replaced or removed name", async () => {
+  const context = { mode: 0o40755, uid: process.getuid!(), gid: process.getgid!() };
+  const filesystem = new NodeFS(shared);
+  const source = await filesystem.mkdir!(filesystem.root, "replace-source", context);
+  const target = await filesystem.mkdir!(filesystem.root, "replace-target", context);
+  const kept = await filesystem.mkdir!(filesystem.root, "replace-target-kept", context);
+  await mkdir(path.join(shared, "replace-target", "child"));
+  const child = await filesystem.lookup(target, "child");
+  assert(child);
+  await rm(path.join(shared, "replace-target", "child"), { recursive: true });
+  // The source has a child of the same name, which the old one must not become.
+  await mkdir(path.join(shared, "replace-source", "child"));
+
+  // Replacing the empty target detaches it and everything known below it.
+  await filesystem.rename!(filesystem.root, "replace-source", filesystem.root, "replace-target");
+  for (const node of [target, child]) {
+    await assert.rejects(
+      filesystem.getattr(node),
+      (error) => error instanceof FSError && error.errno === 2,
+    );
+  }
+  assert.equal(await filesystem.lookup(filesystem.root, "replace-target"), source);
+  const replacement = await filesystem.lookup(source, "child");
+  assert(replacement);
+  assert.notEqual(replacement, child);
+  await filesystem.rmdir!(source, "child");
+  assert.equal(await filesystem.lookup(filesystem.root, "replace-target-kept"), kept);
+
+  await filesystem.rmdir!(filesystem.root, "replace-target");
+  await assert.rejects(
+    filesystem.getattr(source),
+    (error) => error instanceof FSError && error.errno === 2,
+  );
+  assert.equal((await filesystem.getattr(kept)).mode & constants.S_IFMT, constants.S_IFDIR);
+});
