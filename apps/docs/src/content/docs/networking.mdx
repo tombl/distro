@@ -9,30 +9,38 @@ order: 4
 
 A machine has no network unless you give it one. When you do, the network is a JavaScript
 object in your process, and every connection that leaves it goes through a function you wrote.
-That function is the whole policy. There is no NAT and no firewall to configure.
+That function is the whole policy. There are no routes or firewall rules to configure.
 
 ## A switch in your process
 
 ```js
-import { createNetwork, guestAgent } from "lowland/guest";
+import { guestAgent } from "lowland/guest";
+import { bootMachine, createNetwork } from "lowland/machine";
 
 const network = createNetwork({ connectTcp, resolveDns });
 const guest = guestAgent({ mounts: [rootImage()] });
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [guest, network.attach(guest)],
+  plugins: [guest, network.attach()],
 });
 ```
 
-`createNetwork()` creates an Ethernet switch. `network.attach(guest)` gives the machine a virtio
+`createNetwork()` creates an Ethernet switch. `network.attach()` gives the machine a virtio
 network card, `eth0` in the guest, plugged into that switch. The switch learns MAC addresses and
 floods broadcasts like a hardware one, so guests on the same network can use any protocol over
 Ethernet between themselves. All of them run in the same process as the switch.
 
 A network is the subnet `192.0.2.0/24`, a range reserved for documentation, so it does not
 collide with real networks. Attachments get `192.0.2.2`, `192.0.2.3` and so on, in order, and
-addresses are not reused. `attachment.address` reports the address. Once the guest agent is
-ready, the network configures `eth0` statically. There is no DHCP.
+addresses are not reused. `attachment.address` reports the address. There is no DHCP: the
+attachment adds the kernel argument `ip=`, and the kernel itself configures `lo`, `eth0`, the
+default route and the hostname `lowland` before `/init` runs. So the network needs no guest
+agent and nothing from the image. The kernel lists the nameserver in `/proc/net/pnp`, which
+`/etc/resolv.conf` links to in the bundled image and in images from `buildImage()`. An image of
+your own resolves names once it has the same link.
+
+A machine takes one network attachment, because `ip=` configures one interface. Passing a second
+one makes `bootMachine()` throw.
 
 `192.0.2.1` is the gateway. It is not a guest but a small TCP/IP stack inside the network
 object. It answers ARP, TCP and DNS, but not ICMP, so pinging it gets no reply while pinging
@@ -57,44 +65,37 @@ the guest learns anything.
 DNS queries to the gateway reach `resolveDns(hostname)`, which returns IPv4 addresses. Other UDP
 leaving the subnet is dropped. There is no hook for it.
 
+Both functions are optional. Without `connectTcp`, every connection that leaves the subnet is
+refused. Without `resolveDns`, the gateway answers every query `REFUSED`. musl's resolver waits
+for a better answer, so a lookup in the guest fails with "Try again" after about five seconds.
+`createNetwork()` with neither is a network that only reaches inwards: you can still connect to
+the guest, and guests on it can still reach each other.
+
 ## In Node.js
 
-Node.js can open real sockets, so the guest gets real TCP, TLS included:
+Node.js can open real sockets, so the guest gets real TCP, TLS included. `nodeNetwork()` connects
+through the host's sockets and resolves names with the host's resolver:
 
 ```js
-import { resolve4 } from "node:dns/promises";
-import { once } from "node:events";
-import { createConnection } from "node:net";
-import { Duplex } from "node:stream";
+import { createNetwork } from "lowland/machine";
+import { nodeNetwork } from "lowland/node";
 
-const network = createNetwork({
-  async connectTcp(session) {
-    const socket = createConnection({
-      host: session.target.hostname,
-      port: session.target.port,
-      signal: session.signal,
-    });
-    await once(socket, "connect");
-    const streams = Duplex.toWeb(socket);
-    await Promise.all([
-      session.readable.pipeTo(streams.writable),
-      streams.readable.pipeTo(session.writable),
-    ]);
-  },
-  resolveDns: resolve4,
-});
+const network = createNetwork(nodeNetwork());
 ```
 
-Programs that half-close a connection, such as an HTTP client that shuts down its write side
-and waits for the reply, need Node.js 24.20 or 26.7 or later. Earlier versions of
-`Duplex.toWeb()` drop the reply.
+Connections to `192.0.2.1` reach the host's loopback. This is what `lowland run --network nat`
+uses. Each direction of a connection closes on its own, so a program that half-closes, such as an
+HTTP client that shuts down its write side and waits for the reply, works.
+
+`nodeNetwork()` returns the two functions, so you can replace one:
+`createNetwork({ ...nodeNetwork(), resolveDns })`.
 
 ## In a browser
 
 A page cannot open sockets, so `hostFetchNetwork()` turns guest HTTP into `fetch()` calls:
 
 ```js
-import { createNetwork, hostFetchNetwork } from "lowland/guest";
+import { createNetwork, hostFetchNetwork } from "lowland/machine";
 
 const network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
 ```
@@ -119,13 +120,14 @@ To let snippets fetch from one API and nothing else:
 
 ```js
 const allowed = new Set(await resolve4("api.example.com"));
+const { connectTcp } = nodeNetwork();
 
 const network = createNetwork({
   async connectTcp(session) {
     if (!allowed.has(session.target.hostname) || session.target.port !== 443) {
       throw new Error("blocked");
     }
-    // ...connect as above...
+    await connectTcp(session);
   },
   resolveDns: async (name) => (name === "api.example.com" ? [...allowed] : []),
 });
@@ -145,7 +147,7 @@ For HTTP, `guestFetchHandler()` wraps this in the shape of `fetch`, taking a `Re
 returning a `Response`:
 
 ```js
-import { guestFetchHandler } from "lowland/guest";
+import { guestFetchHandler } from "lowland/machine";
 
 await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/www"]);
 const handler = guestFetchHandler(attachment, { port: 8080 });
@@ -166,10 +168,10 @@ a starting point rather than a supported package.
 Attach several guests to one network and they reach each other by address:
 
 ```js
-const network = createNetwork({ connectTcp, resolveDns });
-const serverNet = network.attach(server);
-const clientNet = network.attach(client);
-// boot both machines with their attachments...
+const network = createNetwork();
+const serverNet = network.attach();
+const clientNet = network.attach();
+// boot each machine with its attachment...
 
 await client.run(["wget", "-qO-", `http://${serverNet.address}:8080/`]);
 ```

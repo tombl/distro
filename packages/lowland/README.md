@@ -12,7 +12,7 @@ npm install lowland
 ```sh
 npx lowland run uname -a
 npx lowland run -v ./src:/work -w /work sh -c 'ls -l'
-npx lowland run --image app.erofs --disk data.ext4:/data --network host my-app
+npx lowland run --image app.erofs --disk data.ext4:/data --network nat my-app
 ```
 
 `lowland run` boots a fresh machine, runs one command, and exits with the
@@ -35,8 +35,8 @@ pipes, with stdout and stderr kept separate.
 - `-e`, `--env <name[=value]>` sets an environment variable, or passes one
   through from the host.
 - `--cpus <count>` boots more virtual CPUs than the default of one.
-- `--network host` connects the machine to the host's network: guest TCP
-  connections and DNS lookups go out through the host, and `192.0.2.1`
+- `--network nat` gives the guest egress through the host's sockets: its TCP
+  connections and DNS lookups go out as lowland's own, and `192.0.2.1`
   reaches the host's loopback. The default, `--network none`, has no network.
 - `-t`, `--tty` runs the command on a terminal. stdin must be a terminal.
 
@@ -82,7 +82,9 @@ code runs in a browser:
 - `mounts` take a filesystem: a `NodeFS` from `lowland/node` for a host
   directory, or a `BrowserFS` from `lowland/browser` for the origin private
   file system.
-- `network` takes a network from `createNetwork()` in `lowland/guest`.
+- `network` takes a network from `createNetwork()` in `lowland/machine`, such
+  as `createNetwork(nodeNetwork())` with `nodeNetwork` from `lowland/node` for
+  the host's network, as `--network nat` uses.
 - `cpus` and further `plugins` go to the machine.
 
 `run()` collects a command's output, and `spawn()` streams it. Like
@@ -113,11 +115,11 @@ described in [Hosting](https://docs.low.land/hosting/).
 | Import | Contents |
 | --- | --- |
 | `lowland` | `Linux`, a machine with the guest agent and an image |
-| `lowland/machine` | `bootMachine()`, virtio devices, and the plugin API: the virtual hardware |
-| `lowland/guest` | `guestAgent()`, processes, files, mounts, and networks inside a machine |
+| `lowland/machine` | `bootMachine()`, virtio devices, networks, and the plugin API: the virtual hardware |
+| `lowland/guest` | `guestAgent()`, processes, files, and mounts inside a machine |
 | `lowland/image` | `rootImage()`, which attaches the canonical image or your own |
 | `lowland/image/build` | `buildImage()`, which builds images in Node |
-| `lowland/node` | `NodeFS`, a host directory for the guest |
+| `lowland/node` | `NodeFS`, a host directory for the guest, and `nodeNetwork()`, the host's network |
 | `lowland/browser` | `BrowserFS`, the origin private file system for the guest |
 
 ```js

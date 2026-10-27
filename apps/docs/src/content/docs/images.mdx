@@ -93,7 +93,8 @@ other applications do not. The image is EROFS and contains:
 - apk-tools, configured to install signed packages from the public repository,
   `http://assets.low.land/apk/wasm32/Packages.adb`.
 - CA certificates.
-- An `/etc/resolv.conf` that sends DNS queries to the network created by `createNetwork()`.
+- An `/etc/resolv.conf` that links to `/proc/net/pnp`, where the kernel lists the nameserver of
+  the machine's network. A machine without a network has no nameserver.
 
 To install packages, attach a network as described in
 [Networking](/networking/), then run apk:
