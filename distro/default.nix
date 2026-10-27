@@ -165,6 +165,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     linux-guest = callPackage ./npm/linux-guest { };
     lowland-image = callPackage ./npm/image { };
     lowland = callPackage ./npm/lowland.nix { };
+    # The archives a release publishes to npm, one per published package.
+    npm-packages = callPackage ./npm/packages.nix { };
     runner = callPackage ./npm/runner { };
     browser-tests = callPackage ./npm/browser-tests.nix { };
     test-assets = callPackage ./npm/test-assets.nix { };

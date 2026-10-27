@@ -2,7 +2,7 @@
   "name": "@lowland/image",
   "version": "0.0.0",
   "description": "The canonical Lowland system image and a builder for custom images.",
-  "homepage": "https://linux.tombl.dev/reference/image/",
+  "homepage": "https://docs.low.land/images/",
   "license": "MIT AND GPL-2.0-only AND GPL-2.0-or-later AND MPL-2.0",
   "repository": {
     "type": "git",
@@ -38,5 +38,8 @@
   "peerDependencies": {
     "@lowland/guest": "workspace:^",
     "@lowland/kernel": "workspace:^"
+  },
+  "engines": {
+    "node": "^24.20.0 || >=26.7.0"
   }
 }

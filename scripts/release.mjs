@@ -3,6 +3,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { versionedPackages, workspaceRoot } from "./packages.mjs";
 
 const bump = process.argv[2];
 if (!["major", "minor", "patch"].includes(bump)) {
@@ -42,14 +43,13 @@ if (output("git", ["rev-parse", "HEAD"]) !== output("git", ["rev-parse", "origin
   fail("main is not synchronized with origin/main");
 }
 
-const workspace = readFileSync("pnpm-workspace.yaml", "utf8");
-const packageDirectories = [...workspace.matchAll(/^\s*-\s+([^#\s]+)\s*$/gm)].map((match) => match[1]);
-const packages = packageDirectories
-  .map((directory) => {
-    const path = resolve(directory, "package.json");
-    return { path, manifest: JSON.parse(readFileSync(path, "utf8")) };
-  })
-  .filter(({ manifest }) => typeof manifest.version === "string");
+// The published packages and the private packages they bundle carry the
+// release version; the release job validates the same set.
+const root = workspaceRoot();
+const packages = versionedPackages(root).map(({ directory }) => {
+  const path = resolve(root, directory, "package.json");
+  return { path, manifest: JSON.parse(readFileSync(path, "utf8")) };
+});
 
 const versions = new Set(packages.map(({ manifest }) => manifest.version));
 if (versions.size !== 1) fail(`workspace packages are not in lockstep: ${[...versions].join(", ")}`);

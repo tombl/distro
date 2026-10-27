@@ -13,6 +13,7 @@ pkgs.stdenvNoCC.mkDerivation {
     "packages/bytes"
     "packages/kernel"
     "scripts/pack-package.mjs"
+    "scripts/packages.mjs"
   ];
   env.CI = "true";
   pnpmDeps = node-workspace.deps;

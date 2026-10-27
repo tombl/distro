@@ -214,16 +214,10 @@ jobs:
 
           exit "$build_status"
       - name: Build npm packages
+        # One archive per published package (scripts/packages.mjs).
         run: |
-          nix build .#kernel --out-link result-kernel --print-build-logs
-          nix build .#linux-guest --out-link result-linux-guest --print-build-logs
-          nix build .#lowland-image --out-link result-lowland-image --print-build-logs
-          nix build .#lowland --out-link result-lowland --print-build-logs
-          mkdir npm-packages
-          cp -L result-kernel/package.tgz npm-packages/kernel.tgz
-          cp -L result-linux-guest/package.tgz npm-packages/linux-guest.tgz
-          cp -L result-lowland-image/package.tgz npm-packages/image.tgz
-          cp -L result-lowland/package.tgz npm-packages/lowland.tgz
+          archives=$(nix build .#npm-packages --no-link --print-out-paths --print-build-logs)
+          cp -RL "$archives" npm-packages
       - uses: actions/upload-artifact@v4
         with:
           name: npm-packages
@@ -352,7 +346,11 @@ jobs:
     needs:
       - build
       - heavy-check
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    # heavy-check is skipped when every heavy check is cached.
+    if: >-
+      !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
+      github.event.pull_request.head.repo.full_name == 'tombl/distro')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -409,13 +407,64 @@ jobs:
             "Docs preview" preview \
             "${{ github.event.pull_request.head.sha }}"
 
+  # The release job's validation and publishing, run as a dry run on every
+  # push, so a tag finds no surprises in the archives or the release metadata.
+  release-dry-run:
+    name: Release dry run
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-packages
+          path: npm-packages
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11.16.0
+      - name: Validate and publish (dry run)
+        run: |
+          set -euo pipefail
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            directory=$(node scripts/packages.mjs | jq --raw-output '.[0].directory')
+            version=$(jq --raw-output .version "$directory/package.json")
+          fi
+
+          # Off a tag, preview the pending changes in [Unreleased]. With none
+          # (a release commit), show the version's own section.
+          if [[ $GITHUB_REF != refs/tags/v* ]] &&
+            node scripts/release-notes.mjs "$version" --unreleased > release-notes.md 2>/dev/null; then
+            :
+          else
+            node scripts/release-notes.mjs "$version" > release-notes.md
+          fi
+          node scripts/publish.mjs "$version" npm-packages --dry-run
+
+          {
+            echo "### Release dry run for $version"
+            echo
+            echo "Would publish, in order: $(node scripts/packages.mjs | jq --raw-output 'map(.name) | join(", ")')."
+            echo "Would attach to the GitHub release: $(cd npm-packages && echo *.tgz)."
+            echo
+            cat release-notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
   publish-release:
     name: Publish npm packages and GitHub release
     needs:
       - build
       - heavy-check
+      - release-dry-run
     if: >-
       !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
+      needs.release-dry-run.result == 'success' &&
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'tombl/distro'
     runs-on: ubuntu-24.04
     permissions:
@@ -433,48 +482,25 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install --global npm@11.16.0
-      - name: Validate release metadata
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          test "$(jq --raw-output .version packages/bytes/package.json)" = "$version"
-          test "$(jq --raw-output .version packages/kernel/package.json)" = "$version"
-          test "$(jq --raw-output .version packages/linux-guest/package.json)" = "$version"
-          test "$(jq --raw-output .version packages/image/package.json)" = "$version"
-          test "$(jq --raw-output .version packages/lowland/package.json)" = "$version"
-          test "$(jq --raw-output .version packages/runner/package.json)" = "$version"
-          node scripts/release-notes.mjs "$version" > release-notes.md
+      - name: Release notes
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
       - name: Publish packages
         env:
           NPM_CONFIG_PROVENANCE: true
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-
-          publish() {
-            package="$1"
-            archive="$2"
-            if npm view "${package}@${version}" version >/dev/null 2>&1; then
-              echo "${package}@${version} is already published"
-            else
-              npm publish "$archive" --access public
-            fi
-          }
-
-          publish @lowland/kernel ./npm-packages/kernel.tgz
-          publish @lowland/guest ./npm-packages/linux-guest.tgz
-          publish @lowland/image ./npm-packages/image.tgz
-          publish lowland ./npm-packages/lowland.tgz
+        run: node scripts/publish.mjs "${GITHUB_REF_NAME#v}" npm-packages
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "$GITHUB_REF_NAME already has a GitHub release"
+            gh release upload "$GITHUB_REF_NAME" npm-packages/*.tgz --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --verify-tag \
               --title "$GITHUB_REF_NAME" \
-              --notes-file release-notes.md
+              --notes-file release-notes.md \
+              npm-packages/*.tgz
           fi
 
   # npm drops a trusted-publisher configuration that has not published within
@@ -488,9 +514,10 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 26
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: npm install --global npm@11.16.0
@@ -502,7 +529,11 @@ jobs:
           summary=()
           failed=0
 
-          for package in @lowland/kernel @lowland/guest @lowland/image lowland; do
+          # mapfile can't see a failure in a process substitution.
+          names=$(node scripts/packages.mjs | jq --raw-output '.[].name') || exit 1
+          [ -n "$names" ] || { echo "scripts/packages.mjs lists no published packages"; exit 1; }
+          mapfile -t packages <<< "$names"
+          for package in "${packages[@]}"; do
             if npm view "${package}@${VERSION}" version >/dev/null 2>&1; then
               summary+=("${package}@${VERSION}: already published")
               continue

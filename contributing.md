@@ -113,3 +113,25 @@ incremental state in your checkout.
   whole scope by importing `./distro` with `debug = true`.
 - Use Chrome DevTools with the
   [DWARF debug extension](https://goo.gle/wasm-debugging-extension)
+
+## Releasing
+
+A workspace package is published to npm iff its `package.json` is not
+`"private": true`. `node scripts/packages.mjs` prints that set, and the archive
+build (`.#npm-packages`), the release job, its dry run and the trusted-publishing
+setup all read it. Publishing a new package takes three steps:
+
+1. Remove `"private": true` and fill in the npm metadata; `packages.mjs` lists
+   what's missing.
+2. Add the package's derivation to the map in `distro/npm/packages.nix`. The
+   `npm-packages-check-published-set` check fails until the map matches.
+3. Run `scripts/npm-trust-setup.sh`, which claims the name on npm and trusts
+   `ci.yml` to publish it.
+
+Published packages and the private packages they bundle share one version.
+Every other workspace package has none. To release, add the changes to
+`CHANGELOG.md` under `[Unreleased]`, then run `pnpm release <major|minor|patch>`
+on a clean, current `main`. It bumps the versions, dates the changelog section,
+and pushes the commit with a `v` tag. The tag's CI run publishes the packages
+and creates the GitHub release with the archives attached. Every other run
+performs the same steps as a dry run in the "Release dry run" job.
