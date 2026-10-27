@@ -14,7 +14,8 @@ a function that takes a shell snippet from a user, runs it, and returns its outp
 ## The machine
 
 ```js
-const machine = await bootMachine({ cpus: 2, plugins: [rootImage(), guest] });
+const guest = guestAgent({ mounts: [rootImage()] });
+const machine = await bootMachine({ cpus: 2, plugins: [guest] });
 ```
 
 `cpus` is not a thread count. Every kernel task, including each thread of each program, runs in
@@ -117,8 +118,8 @@ import { rootImage } from "@lowland/image";
 const image = rootImage();
 
 export async function runSnippet(code, { timeout = 5000 } = {}) {
-  const guest = guestAgent();
-  await using machine = await bootMachine({ cpus: 1, plugins: [image, guest] });
+  const guest = guestAgent({ mounts: [image] });
+  await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 
   const deadline = setTimeout(() => machine.close(), timeout);
   try {
@@ -138,7 +139,7 @@ export async function runSnippet(code, { timeout = 5000 } = {}) {
 console.log(await runSnippet("echo hello; uname -m"));
 ```
 
-One `rootImage()` plugin can be passed to any number of machines. In a browser the image is
+One `rootImage()` mount entry can be used by any number of machines. In a browser the image is
 downloaded once and shared, and in Node.js it is read from disk as each machine needs it. A
 guest agent belongs to exactly one machine, so each run creates a new one.
 

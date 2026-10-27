@@ -44,7 +44,7 @@ the server configuration.
 ## Bundlers
 
 The packages find their assets with `new URL(..., import.meta.url)`: the kernel's
-`vmlinux.wasm` and worker script, the guest agent's `agent.img`, and the image's
+`vmlinux.wasm` and worker script, the guest agent's `agent.cpio`, and the image's
 `rootfs.erofs`. Bundlers that understand that pattern emit them as assets.
 
 Vite 8 needs only the headers, as in the [Quick start](/quick-start/#in-a-web-page). Vite 7's
@@ -83,7 +83,7 @@ module, and a cross-origin worker fails with a `SecurityError` at boot.
 ## Downloads
 
 In a browser, the default `rootImage()` downloads about 6.5 MB before the first boot. The kernel
-and the guest agent's image are fetched too. All of them are fetched once per page and shared
+and the guest agent's initramfs are fetched too. All of them are fetched once per page and shared
 by every machine on it, and ordinary HTTP caching applies to later visits.
 
 A custom image is a URL relative to the page. If it does not serve an image, `bootMachine()`

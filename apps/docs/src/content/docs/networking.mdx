@@ -17,10 +17,10 @@ That function is the whole policy. There is no NAT and no firewall to configure.
 import { createNetwork, guestAgent } from "@lowland/guest";
 
 const network = createNetwork({ connectTcp, resolveDns });
-const guest = guestAgent();
+const guest = guestAgent({ mounts: [rootImage()] });
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [rootImage(), guest, network.attach(guest)],
+  plugins: [guest, network.attach(guest)],
 });
 ```
 

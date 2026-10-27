@@ -36,7 +36,7 @@ multithreaded process, `clone()` without `CLONE_VM` fails with `EOPNOTSUPP`.
 
 Both rely on `fork()`. Most servers have a foreground or single-process mode, such as BusyBox
 `httpd -f`, and a threaded or event-driven mode for connections. Use those. Run daemons in the
-foreground with `exec()`, or from `/init`, rather than letting them detach.
+foreground with `exec()`, or as the agent's `init`, rather than letting them detach.
 
 ## Mapping memory
 

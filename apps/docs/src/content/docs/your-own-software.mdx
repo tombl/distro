@@ -69,15 +69,15 @@ EROFS, the default, is read-only and compressed, and one file can back many mach
 The guest puts a memory layer above it.
 
 Build ext4 with `--format ext4 --size 64M` when the guest should write back to the image, and
-attach it with `rootImage("data.ext4", { writable: true })`. Run `sync` before the machine
-closes, because closing does not flush the guest's page cache. Attach a writable image to one
-machine at a time.
+mount it writable, `{ path: "/", source: "data.ext4", type: "ext4" }`, instead of through
+`rootImage()`. Run `sync` before the machine closes, because closing does not flush the guest's
+page cache. Attach a writable image to one machine at a time.
 
-### `/init`
+### An init program
 
-If an image has an executable `/init`, the guest agent starts it once the root filesystem is
-mounted, with the console as its standard streams. The machine powers off when `/init` exits.
-Use it for services that live as long as the machine.
+`guestAgent({ init: ["/init"] })` starts a program once the root filesystem is mounted, as the
+kernel starts `/init`, with the console as its standard streams. The machine powers off when it
+exits. Use it for services that live as long as the machine.
 
 ## Compiling your own
 

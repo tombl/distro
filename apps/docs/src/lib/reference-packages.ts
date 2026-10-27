@@ -25,6 +25,10 @@ export const referencePackages = [
           "Device",
           "blockDevice",
           "BlockStorage",
+          "diskStorage",
+          "DiskSource",
+          "DiskStorageOptions",
+          "DiskFileHandle",
           "consoleDevice",
           "ConsoleDevice",
           "entropyDevice",
@@ -81,8 +85,18 @@ export const referencePackages = [
     groups: [
       {
         title: "Start a guest",
-        description: "Create the guest plugin and attach its high-level API to a machine.",
-        symbols: ["guestAgent", "GuestAgent", "RunResult"],
+        description:
+          "Create the guest plugin, give it a mount table to boot, and use its high-level API.",
+        symbols: [
+          "guestAgent",
+          "GuestAgent",
+          "GuestAgentOptions",
+          "Mount",
+          "MountSource",
+          "GuestBoot",
+          "GuestBootError",
+          "RunResult",
+        ],
       },
       {
         title: "Run processes",
@@ -107,7 +121,7 @@ export const referencePackages = [
       {
         title: "Mount filesystems",
         description: "Attach and detach filesystems inside the running guest.",
-        symbols: ["Mount", "MountOptions", "Unmount", "MountFlags", "UnmountFlags"],
+        symbols: ["MountOptions", "Unmount", "MountFlags", "UnmountFlags"],
       },
       {
         title: "Connect networks",

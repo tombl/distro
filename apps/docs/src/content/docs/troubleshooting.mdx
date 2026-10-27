@@ -19,17 +19,19 @@ on its scripts.
 The kernel tried to start a worker from another origin. This happens when an import map points
 the packages at a CDN. Serve them from the page's origin.
 
-## `... did not return a filesystem image: got text/html`
+## `... did not return a disk image: got text/html`
 
 The image URL served a web page instead of an image, usually a dev server's fallback for a path
 that does not exist. Check the path relative to the page, and that the image is in the build
 output.
 
-## `no supported filesystem is labeled LOWLAND_ROOT`
+## `mounting m0 (...) at /: ...`
 
-`bootMachine()` rejected with a `GuestBootError`. The machine needs exactly one EROFS or ext4
-filesystem labelled `LOWLAND_ROOT`. Either no attached image has that label, or two do. Images
-from `buildImage()` and `mkImage` have it unless you passed another `label`.
+`bootMachine()` rejected with a `GuestBootError`, because a mount in the guest agent's table
+failed. Its `kernelLog` is the end of the guest kernel's log, which usually says why. A source
+that is not a filesystem fails with `EINVAL` from every type the guest tried. An ext4 image
+that closed without unmounting fails read-only with `EROFS`, because its journal needs
+recovery, which read-only storage cannot have. Mount it writable once to recover it.
 
 ## The machine fails during boot and nothing explains why
 

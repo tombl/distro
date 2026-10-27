@@ -26,8 +26,8 @@ import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "@lowland/image";
 
-const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
@@ -66,10 +66,10 @@ headers, other bundlers, and pages without a bundler.
 
 ## What happened
 
-`bootMachine()` started a Linux kernel with one virtual CPU and two plugins. `rootImage()`
-attached a read-only root filesystem. `guestAgent()` attached a small init program that runs as
-PID 1 and accepts requests from your process: start this program, read this file, mount that
-device. Everything else in this guide goes through those two objects, the machine and the
+`bootMachine()` started a Linux kernel with one virtual CPU and one plugin. `guestAgent()`
+added a small init program that runs as PID 1 and accepts requests from your process: start
+this program, read this file, mount that device. Its mount table has one entry: `rootImage()`,
+a read-only root filesystem beneath a writable layer in memory. Everything else in this guide goes through those two objects, the machine and the
 guest.
 
 The next chapter starts building the example that runs through this guide: a service that runs

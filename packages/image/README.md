@@ -17,20 +17,17 @@ import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "@lowland/image";
 
-const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [rootImage(), guest],
-});
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-`rootImage()` attaches the image as a read-only block device. The image is a
-deflate-compressed EROFS filesystem labeled `LOWLAND_ROOT`, which the guest
-agent finds and mounts as the root filesystem. Changes to the root filesystem last only for the life
-of the machine.
+`rootImage()` is the root entry of the guest agent's mount table: the image,
+opened read-only, beneath a temporary writable layer in memory. The image is a
+deflate-compressed EROFS filesystem. Changes to the root filesystem last only
+for the life of the machine.
 
 The image ships inside this package and is loaded relative to the module, so
 it needs no configuration in Node or browsers. Node reads the file on demand.
@@ -54,14 +51,11 @@ export default {
 
 ## Custom images
 
-Pass a source to `rootImage()` to attach your own EROFS or ext4 image instead:
+Pass a source to `rootImage()` to boot your own EROFS or ext4 image instead:
 
 ```js
-const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [rootImage("app.erofs"), guest],
-});
+const guest = guestAgent({ mounts: [rootImage("app.erofs")] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 ```
 
 In Node, a string is a file path, and `rootImage()` also accepts a `file:` URL
@@ -70,34 +64,29 @@ browsers, a string is a URL relative to the page, and the image is fetched once
 and shared between machines. Every platform accepts a `Uint8Array`,
 `ArrayBuffer`, `Blob`, or `Response` that holds the whole image.
 
-The guest agent mounts the filesystem labeled `LOWLAND_ROOT` as the root, so a
-custom root image needs that label. A source that contains neither an EROFS
-nor an ext4 filesystem, or whose size is not a whole number of 512-byte
-sectors, fails `bootMachine()` with an error that names it. This catches a
-development server that answers a mistyped asset URL with an HTML page.
+`rootImage()` reads the superblock of bytes, and of a path in Node, at once: it
+throws unless there is an EROFS or ext4 filesystem, whose type the entry then
+names. Other sources are read when the machine boots, and the guest tries each
+filesystem it supports. A source served as an HTML page, or whose size is not
+a whole number of 512-byte sectors, fails `bootMachine()` with an error that
+names it. This catches a development server that answers a mistyped asset URL
+with an HTML page.
 
 ## Writable images
 
-Images are read-only by default. The guest agent boots a read-only image
-beneath a temporary writable overlay, so the guest can still write to its root,
-but those changes are discarded when the machine closes and the image itself is
-never modified. Pass `writable: true` to let the guest write to an ext4 image
-and keep its changes:
+`rootImage()` never changes the image. The guest can still write to its root,
+but those changes are discarded when the machine closes. To keep them, mount an
+ext4 image writable with a mount entry of your own instead:
 
 ```js
-const guest = guestAgent();
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [rootImage("app.ext4", { writable: true }), guest],
-});
+const guest = guestAgent({ mounts: [{ path: "/", source: "app.ext4", type: "ext4" }] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 ```
 
 A path is opened for reading and writing. A `FileHandle` must already be open
 for writing, and it stays open after the machine closes. A `Uint8Array` or
 `ArrayBuffer` is modified in place. Fetched images, blobs, and responses cannot
-be writable. EROFS is always read-only, so `rootImage()` throws for writable
-EROFS bytes, and `bootMachine()` rejects a writable EROFS path or `FileHandle`.
-Attach a writable image to only one running machine at a time.
+be writable. Attach a writable image to only one running machine at a time.
 
 The guest decides when its writes reach the image. Data is written once the
 guest flushes it, for example by running `sync` or unmounting the filesystem,
@@ -152,11 +141,11 @@ destination directory alone, and a merge otherwise keeps the existing
 directory's mode. Entries apply in path order, so a file inside a directory
 entry overrides what it copied.
 
-The default format is EROFS, which the guest agent mounts read-only. Pass
+The default format is EROFS, which the kernel mounts read-only. Pass
 `format: "ext4"` for a writable image, with `size` setting its capacity. The
-label defaults to `LOWLAND_ROOT`, so the guest agent boots the result. Attach
-it with `rootImage("app.erofs")`, or with
-`rootImage("app.ext4", { writable: true })` for an ext4 image.
+image has no label unless you pass `label`. Boot it with
+`rootImage("app.erofs")`, or mount an ext4 image writable with
+`{ path: "/", source: "app.ext4", type: "ext4" }`.
 
 EROFS images are compressed with deflate by default, which typically makes
 them 2 to 3 times smaller at a modest cost on reads. `compression: "lzma"` is

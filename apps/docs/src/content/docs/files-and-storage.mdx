@@ -21,9 +21,9 @@ That suits the example service. Each snippet starts from a clean system, and not
 outlives its machine. It also means that one image file can back any number of machines at
 once.
 
-To keep the root filesystem's changes, boot from an ext4 image with
-`rootImage(file, { writable: true })`. The [Your own software](/your-own-software/) chapter
-covers building one. A writable image belongs to one machine at a time.
+To keep the root filesystem's changes, boot from an ext4 image with a writable mount entry
+instead, `{ path: "/", source: file, type: "ext4" }`. The [Your own software](/your-own-software/)
+chapter covers building one. A writable image belongs to one machine at a time.
 
 ## Moving files in and out
 
@@ -81,8 +81,9 @@ mounts by its tag:
 import { bootMachine, fileSystemDevice } from "@lowland/kernel";
 import { NodeFS } from "@lowland/guest/node";
 
+const guest = guestAgent({ mounts: [rootImage()] });
 const shared = fileSystemDevice(new NodeFS("./project", { readOnly: true }), { tag: "project" });
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest, shared] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest, shared] });
 
 await guest.fs.mkdir("/project");
 await guest.mount("project", "/project", { type: "virtiofs" });
@@ -177,8 +178,8 @@ const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), { type: 
 const disk = await workerDevice(worker);
 disk.closed.finally(() => worker.terminate());
 
-const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest, disk] });
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest, disk] });
 ```
 
 `read` and `write` receive views straight into guest memory, valid until the call returns, so
