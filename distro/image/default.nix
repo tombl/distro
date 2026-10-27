@@ -10,6 +10,7 @@
 #                        #             | { source; mode ? null; }
 #     links ? { };       # "/abs/path" = "symlink target"
 #     format ? "erofs";  # "erofs" (immutable) or "ext4" (writable)
+#     compression ? "none";  # EROFS only: "deflate", "lzma", or "none"
 #     label ? "LOWLAND_ROOT";  # filesystem label, at most 15 characters
 #     size ? "256M";     # ext4 capacity; EROFS is always exactly its contents
 #   }
@@ -32,6 +33,12 @@
 # image then gains the standard FHS mount points (with a sticky,
 # world-writable /tmp) and is encoded with every file owned by root. EROFS
 # images are bit-for-bit reproducible.
+#
+# EROFS images are uncompressed by default. "deflate" (level 9, 64 KiB
+# clusters, tail packing) shrinks a typical image 2-3x for a modest read
+# cost; "lzma" is about 14% smaller again but reads roughly twice as slowly;
+# "none" stores files as-is. The guest kernel cannot read LZ4 images, so
+# there is no "lz4". ext4 images are never compressed and ignore the option.
 #
 # The result is the image file itself. passthru carries `format`, `label`,
 # and `packages`, the APKs of the installed closure.
@@ -56,6 +63,7 @@ in
   files ? { },
   links ? { },
   format ? "erofs",
+  compression ? "none",
   label ? "LOWLAND_ROOT",
   size ? "256M",
 }:
@@ -138,6 +146,7 @@ mkFilesystem {
     name
     root
     format
+    compression
     label
     size
     ;
