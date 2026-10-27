@@ -30,7 +30,7 @@ let
   portBoot =
     pkgs.runCommand "template-port-boot"
       {
-        nativeBuildInputs = [ pkgs.nodejs ];
+        nativeBuildInputs = [ pkgs.nodejs_26 ];
         passthru.ci.heavy = true;
       }
       ''
