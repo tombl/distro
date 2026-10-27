@@ -517,6 +517,12 @@ test("agent protocol", async (t) => {
         await assert.rejects(sh(":", [{ op: "dup2", fd: 1000, newfd: 0 }]), fails("EBADF"));
         await assert.rejects(sh(":", [{ op: "dup2", fd: -1, newfd: 0 }]), fails("EBADF"));
         await assert.rejects(sh(":", [{ op: "close", fd: -1 }]), fails("EBADF"));
+        // Wherever it is in the list, as long as the list parses.
+        const bad: FileAction = { op: "dup2", fd: -1, newfd: 0 };
+        const fine: FileAction = { op: "close", fd: 9 };
+        await assert.rejects(sh(":", [bad, fine]), fails("EBADF"));
+        await assert.rejects(sh(":", [fine, bad, fine]), fails("EBADF"));
+        await assert.rejects(sh(":", [bad, { op: "chdir" } as never]), fails("EINVAL"));
         // A path that does not exist reads like a missing program, also when
         // PATH is searched, and paths the agent cannot parse.
         const missing: FileAction = { op: "open", path: "/no/such", oflag: O.RDONLY, newfd: 0 };

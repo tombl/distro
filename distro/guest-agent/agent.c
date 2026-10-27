@@ -510,19 +510,21 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 }
 
 /* Adds a spawn's file actions: { count u32 } then, per action, { op u32 }
- * and its operands. Returns 0, an errno value from posix_spawn, or -1 when
- * the list is malformed. */
+ * and its operands. Returns -1 when the list is malformed anywhere, else the
+ * first errno an action could not be added with (EBADF for a negative
+ * descriptor), else 0. */
 static int add_file_actions(struct cursor *cur,
 			    posix_spawn_file_actions_t *actions)
 {
 	uint32_t count, i;
+	int error = 0;
 
 	if (!cursor_u32(cur, &count) || count > max_file_actions)
 		return -1;
 	for (i = 0; i < count; i++) {
 		uint32_t op, fd, newfd, oflag, mode;
 		char *path;
-		int error;
+		int added;
 
 		if (!cursor_u32(cur, &op))
 			return -1;
@@ -530,29 +532,29 @@ static int add_file_actions(struct cursor *cur,
 		case action_dup2:
 			if (!cursor_u32(cur, &fd) || !cursor_u32(cur, &newfd))
 				return -1;
-			error = posix_spawn_file_actions_adddup2(actions, (int)fd,
+			added = posix_spawn_file_actions_adddup2(actions, (int)fd,
 								 (int)newfd);
 			break;
 		case action_open:
 			if (!cursor_u32(cur, &newfd) || !cursor_u32(cur, &oflag) ||
 			    !cursor_u32(cur, &mode) || !(path = cursor_string(cur)))
 				return -1;
-			error = posix_spawn_file_actions_addopen(
+			added = posix_spawn_file_actions_addopen(
 				actions, (int)newfd, path, (int)oflag, (mode_t)mode);
 			free(path);
 			break;
 		case action_close:
 			if (!cursor_u32(cur, &fd))
 				return -1;
-			error = posix_spawn_file_actions_addclose(actions, (int)fd);
+			added = posix_spawn_file_actions_addclose(actions, (int)fd);
 			break;
 		default:
 			return -1;
 		}
-		if (error)
-			return error;
+		if (!error)
+			error = added;
 	}
-	return 0;
+	return error;
 }
 
 /* Spawn request body: { len u32 } then the command, { flags u32 }, and the
@@ -571,7 +573,7 @@ static int serve_spawn(int fd)
 	sigset_t all;
 	bool have_actions = false, have_attributes = false;
 	int slot = -1;
-	int spawn_errno;
+	int spawn_errno, error;
 	pid_t pid;
 	uint8_t body[4];
 	int rc = -1;
@@ -589,14 +591,15 @@ static int serve_spawn(int fd)
 		goto spawn_failed;
 	have_actions = true;
 	/* chdir first, so relative paths in the file actions name the files a
-	 * shell's redirections would. */
+	 * shell's redirections would. A malformed list is EINVAL wherever it
+	 * goes wrong; an action that cannot be added fails the spawn with its
+	 * errno, which wins over trailing bytes, because the length prefix has
+	 * consumed the whole payload either way. */
 	spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, command.cwd);
-	if (!spawn_errno) {
-		spawn_errno = add_file_actions(&cur, &actions);
-		if (spawn_errno == -1 || cur.offset != cur.length)
-			goto invalid;
-	}
-	if (spawn_errno)
+	error = add_file_actions(&cur, &actions);
+	if (error == -1 || (!error && cur.offset != cur.length))
+		goto invalid;
+	if (spawn_errno || (spawn_errno = error))
 		goto spawn_failed;
 	spawn_errno = posix_spawnattr_init(&attributes);
 	if (spawn_errno)
