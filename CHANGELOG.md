@@ -6,10 +6,10 @@
 
 ### Added
 
-- `@lowland/kernel` runs an SMP Linux kernel compiled to WebAssembly and
+- `lowland/machine` runs an SMP Linux kernel compiled to WebAssembly and
   exposes extensible machine lifecycle and virtio block, console, filesystem,
   network, vsock, and entropy device APIs.
-- `@lowland/guest` provides a bootable guest SDK with process execution and
+- `lowland/guest` provides a bootable guest SDK with process execution and
   streaming I/O, and filesystem and mount operations. `guestAgent()` boots the
   agent as an initramfs and realizes a mount table, `mounts`, like fstab:
   disks and shared filesystems mounted `rw`, `ro`, or beneath a temporary
@@ -17,19 +17,19 @@
   tried from the kernel's filesystems. `boot` replaces the default boot with
   your own calls, and `init` starts a program in the new root whose exit
   powers the machine off.
-- `@lowland/image` provides the canonical system image as the root of a mount
+- `lowland/image` provides the canonical system image as the root of a mount
   table with `rootImage()`: a read-only EROFS root with BusyBox, apk-tools and
   CA certificates beneath a writable overlay, set up for the published apk
   repository. `rootImage(source)` boots a custom EROFS or ext4 image from a
   path, URL, `FileHandle`, bytes, `Blob` or `Response`.
-- `@lowland/kernel`'s `diskStorage(source, { writable })` opens a path, URL,
+- `diskStorage(source, { writable })` from `lowland/machine` opens a path, URL,
   `FileHandle`, bytes, `Blob`, `Response` or `BlockStorage` as block storage,
   rejecting only HTML error pages and partial sectors.
-- `buildImage()` from `@lowland/image/build` builds custom images in Node from
+- `buildImage()` from `lowland/image/build` builds custom images in Node from
   apk packages, host files and symlinks, in a builder machine shipped with the
   package. Images are compressed with deflate by default; `compression`
   selects `lzma` or `none`.
-- The `lowland` package exports `Linux`, one API that boots a machine and runs
+- `lowland` exports `Linux`, one API that boots a machine and runs
   commands in Node and in browsers. Its command line runs a command in a fresh
   machine with `npx lowland run`, sharing host directories (`-v`), setting the
   working directory (`-w`), CPUs and host networking, and giving interactive
@@ -81,16 +81,16 @@
 - Updated the WebAssembly architecture port to Linux 7.1 and moved immutable
   system images from SquashFS to EROFS.
 - **Breaking:** Lowland is one npm package, `lowland`, with an entry point
-  per layer. `@lowland/kernel` is `lowland/machine`, which also exports the
-  plugin API from `@lowland/kernel/plugin`. `@lowland/guest` is
-  `lowland/guest`, with `NodeFS` in `lowland/node` and `BrowserFS` in
+  per layer, instead of the `@lowland/kernel`, `@lowland/guest` and
+  `@lowland/image` placeholders. `@lowland/kernel` is `lowland/machine`, which
+  also exports the plugin API from `@lowland/kernel/plugin`. `@lowland/guest`
+  is `lowland/guest`, with `NodeFS` in `lowland/node` and `BrowserFS` in
   `lowland/browser`. `@lowland/image` is `lowland/image` and
   `lowland/image/build`. The binary-data helpers are internal source. Each
   entry point loads only its own assets, so an application bundles the
-  canonical image only if it imports `lowland/image`, and
-  `Linux.create()` needs an `image`: `rootImage()` for the canonical one, or
-  your own.
-- **Breaking:** `@lowland/kernel` no longer exposes its virtio layer. Custom
+  canonical image only if it imports `lowland/image`, and `Linux.create()`
+  needs an `image`: `rootImage()` for the canonical one, or your own.
+- **Breaking:** `lowland/machine` no longer exposes its virtio layer. Custom
   devices built on `VirtioController`, `VirtioDriver`, `VirtioDeviceOptions`,
   `VirtqueueHandler`, and the `Virtqueue*` types are no longer supported, and
   `DeviceTreeNode` and `MachineSetup.deviceTree` are removed. Devices are typed
@@ -112,7 +112,7 @@
 - **Breaking (kernel ABI):** the `virtio.reset` import takes the address of a
   word the host sets once a device has finished with guest memory, and the
   kernel waits for it before reusing that memory. The kernel and
-  `@lowland/kernel` must be updated together.
+  `lowland/machine` must be updated together.
 
 - **Breaking:** `/bin/sh` in images is BusyBox ash instead of hush, as on
   Alpine, so scripts get `set -u` and `set -e` behaves as POSIX requires.
@@ -128,7 +128,7 @@
 - Node kernel threads no longer load undici to receive their first message.
 - A missing system disk fails the boot at once instead of after 11 seconds of
   polling.
-- `@lowland/guest` rejects an `agent.cpio` that is not a newc archive, such
+- `lowland/guest` rejects an `agent.cpio` that is not a newc archive, such
   as a dev server's HTML fallback page, with an error naming the URL, and
   retries a failed load.
 
