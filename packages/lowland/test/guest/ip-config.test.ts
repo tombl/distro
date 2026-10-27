@@ -125,9 +125,15 @@ test("a network without adapters refuses outbound TCP and DNS", async () => {
   await with_guest(network, async (guest) => {
     const tcp = await sh(guest, "wget -qO- http://198.51.100.1/");
     assert.notEqual(tcp.code, 0);
-    assert.match(tcp.output, /can't connect to remote host \(198\.51\.100\.1\): Connection refused/);
+    assert.match(
+      tcp.output,
+      /can't connect to remote host \(198\.51\.100\.1\): Connection refused/,
+    );
     const gateway = await sh(guest, "wget -qO- http://192.0.2.1/");
-    assert.match(gateway.output, /can't connect to remote host \(192\.0\.2\.1\): Connection refused/);
+    assert.match(
+      gateway.output,
+      /can't connect to remote host \(192\.0\.2\.1\): Connection refused/,
+    );
     const dns = await sh(guest, "nslookup example.com");
     assert.notEqual(dns.code, 0);
     assert.match(dns.output, /can't find example\.com: REFUSED/);
