@@ -10,14 +10,15 @@
 
 ## Repository layout
 
-- `packages/default.nix`: the wasm32 package scope. This attrset is the
+- `distro/default.nix`: the wasm32 package scope. This attrset is the
   product; every package is listed here.
-- `packages/*/package.nix`: package definitions, written like nixpkgs packages
-  against the scope's wasm `stdenv`.
-- `packages/stdenv.nix`: the wasm stdenv — nixpkgs' generic stdenv with our
+- `distro/*/package.nix`: package definitions, written like nixpkgs packages
+  against the scope's wasm `stdenv`. Upstream source pins generally live
+  alongside them; some packages reuse nixpkgs' source.
+- `distro/stdenv.nix`: the wasm stdenv — nixpkgs' generic stdenv with our
   fork toolchain behind its cc-wrapper.
-- `flake.nix`: pins nixpkgs and every package source, and instantiates the
-  scope.
+- `packages/*`: the JavaScript packages, built and tested with pnpm.
+- `flake.nix`: pins nixpkgs and instantiates the scope.
 
 ## Package outputs
 
