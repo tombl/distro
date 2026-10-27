@@ -151,7 +151,7 @@ returning a `Response`:
 ```js
 import { guestFetchHandler } from "lowland/machine";
 
-await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/www"]);
+await guest.spawn(["httpd", "-f", "-p", "8080", "-h", "/www"]);
 const handler = guestFetchHandler(attachment, { port: 8080 });
 
 const response = await handler(new Request("http://my-app.example/"));

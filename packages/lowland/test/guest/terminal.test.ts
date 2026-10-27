@@ -57,7 +57,7 @@ guest_test("terminal processes", async (t, fixture) => {
   const guest = await fixture.spawn();
 
   await t.test("runs on a controlling terminal of the requested size", async () => {
-    const child = await guest.exec(
+    const child = await guest.spawn(
       ["sh", "-c", "[ -t 0 ] && [ -t 1 ] && [ -t 2 ] && tty && stty size && echo oops >&2"],
       { terminal: { rows: 30, columns: 100 } },
     );
@@ -90,7 +90,7 @@ guest_test("terminal processes", async (t, fixture) => {
   });
 
   await t.test("reports exit codes and ends output when the terminal closes", async () => {
-    const child = await guest.exec(["sh", "-c", "echo bye; exit 7"], { terminal: true });
+    const child = await guest.spawn(["sh", "-c", "echo bye; exit 7"], { terminal: true });
     const output = collect(child.stdout);
     assert.deepEqual(await child.status, { success: false, code: 7, signal: null });
     assert.equal(new TextDecoder().decode(await output), "bye\r\n");
@@ -98,7 +98,7 @@ guest_test("terminal processes", async (t, fixture) => {
 
   await t.test("delivers SIGWINCH on resize", async () => {
     const screen = new Screen(
-      await guest.exec(
+      await guest.spawn(
         ["sh", "-c", 'trap "stty size" WINCH; echo ready; while :; do sleep 0.05; done'],
         { terminal: { rows: 24, columns: 80 } },
       ),
@@ -108,7 +108,7 @@ guest_test("terminal processes", async (t, fixture) => {
       await screen.process.resize({ rows: 50, columns: 132 });
       await screen.expect(/50 132\r\n/);
     } finally {
-      await screen.process.close();
+      await screen.process[Symbol.asyncDispose]();
     }
   });
 
@@ -132,7 +132,7 @@ guest_test("terminal processes", async (t, fixture) => {
 
   await t.test("supports job control", async () => {
     const screen = new Screen(
-      await guest.exec(["sh"], { terminal: true, env: { PS1: "$ ", ENV: "/dev/null" } }),
+      await guest.spawn(["sh"], { terminal: true, env: { PS1: "$ ", ENV: "/dev/null" } }),
     );
     const shell = screen.process.pid;
     const job_state = async () => {
@@ -172,22 +172,22 @@ guest_test("terminal processes", async (t, fixture) => {
       assert.deepEqual(await screen.process.status, { success: false, code: 3, signal: null });
       await screen.ended;
     } finally {
-      await screen.process.close();
+      await screen.process[Symbol.asyncDispose]();
     }
   });
 
   await t.test("hangs up a terminal that background jobs hold open", async () => {
     const screen = new Screen(
-      await guest.exec(["sh"], { terminal: true, env: { PS1: "$ ", ENV: "/dev/null" } }),
+      await guest.spawn(["sh"], { terminal: true, env: { PS1: "$ ", ENV: "/dev/null" } }),
     );
     await screen.expect(/\$ $/);
     await screen.type("sleep 100 &\n");
     await screen.expect(/\$ $/);
-    await screen.process.close();
+    await screen.process[Symbol.asyncDispose]();
     await screen.ended;
     assert.deepEqual(await screen.process.status, {
       success: false,
-      code: 0,
+      code: null,
       signal: "SIGKILL",
     });
     // Resizing a closed terminal is a no-op rather than a stray ioctl.
@@ -195,19 +195,19 @@ guest_test("terminal processes", async (t, fixture) => {
   });
 
   await t.test("gives up the terminal while a read is blocked on it", async () => {
-    const child = await guest.exec(["sleep", "30"], { terminal: true });
+    const child = await guest.spawn(["sleep", "30"], { terminal: true });
     const reader = child.stdout.getReader();
     const pending = reader.read();
     await child.stdin.close();
     await reader.cancel();
     assert.deepEqual(await pending, { done: true, value: undefined });
     // Giving up the terminal hangs it up, which sends its leader SIGHUP.
-    await child.close();
+    await child[Symbol.asyncDispose]();
     assert.ok(["SIGHUP", "SIGKILL"].includes(String((await child.status).signal)));
   });
 
   await t.test("gives up the terminal while a write is blocked on it", async () => {
-    const child = await guest.exec(["sh", "-c", "stty raw -echo; echo ready; exec sleep 30"], {
+    const child = await guest.spawn(["sh", "-c", "stty raw -echo; echo ready; exec sleep 30"], {
       terminal: true,
     });
     const reader = child.stdout.getReader();
@@ -222,31 +222,31 @@ guest_test("terminal processes", async (t, fixture) => {
     const input = child.stdin.getWriter();
     await input.write(new Uint8Array(1024 * 1024).fill(0x61));
     await Promise.all([input.close(), reader.cancel()]);
-    await child.close();
+    await child[Symbol.asyncDispose]();
     await child.status;
   });
 
   await t.test("leaves a terminal that reused the descriptor alone", async () => {
-    const finished = await guest.exec(["true"], { terminal: true });
+    const finished = await guest.spawn(["true"], { terminal: true });
     await finished.stdin.close();
     await collect(finished.stdout);
     await finished.status;
 
-    const screen = new Screen(await guest.exec(["cat"], { terminal: true }));
+    const screen = new Screen(await guest.spawn(["cat"], { terminal: true }));
     try {
-      await finished.close();
+      await finished[Symbol.asyncDispose]();
       await screen.type("still here\n");
       await screen.expect(/still here\r\n.*still here\r\n/s);
     } finally {
-      await screen.process.close();
+      await screen.process[Symbol.asyncDispose]();
     }
   });
 
   await t.test("rejects resizing a process without a terminal", async () => {
-    const child = await guest.exec(["true"]);
+    const child = await guest.spawn(["true"]);
     assert.equal(child.terminal, false);
     await assert.rejects(child.resize({ rows: 1, columns: 1 }), TypeError);
     await child.status;
-    await child.close();
+    await child[Symbol.asyncDispose]();
   });
 });

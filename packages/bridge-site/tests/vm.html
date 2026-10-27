@@ -58,7 +58,7 @@
     });
     await guest.fs.mkdir("/tmp/www");
     await guest.fs.writeTextFile("/tmp/www/index.html", "<h1>hello from the guest</h1>\n");
-    await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+    await guest.spawn(["httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
     const httpd = guestFetchHandler(attachment, { port: 8080 });
     for (;;) {
       try {

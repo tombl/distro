@@ -144,7 +144,7 @@ test("a network without adapters still carries connections into the guest", asyn
   using network = createNetwork();
   await with_guest(network, async (guest, attachment) => {
     // With its stdin at EOF, nc exits once the host closes.
-    const server = await guest.exec(["/bin/sh", "-c", "nc -l -p 8080 </dev/null"]);
+    const server = await guest.spawn(["/bin/sh", "-c", "nc -l -p 8080 </dev/null"]);
     const received = collect(server.stdout);
     const connection = await connect_with_retry(() => attachment!.connect({ port: 8080 }));
     const writer = connection.writable.getWriter();

@@ -14,7 +14,8 @@ import type { MachinePlugin, MachinePluginInput } from "./machine/plugin.ts";
 import {
   guestAgent,
   type ChildProcess,
-  type ExecOptions,
+  type RunOptions,
+  type SpawnOptions,
   type FileSystem,
   type GuestAgent,
   type Mount,
@@ -213,8 +214,8 @@ export class Linux implements AsyncDisposable {
    * `/` unless `options.cwd` says otherwise. With `options.terminal`, it
    * runs on a guest terminal and its standard error is part of `stdout`.
    */
-  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult> {
-    return this.#guest.run(argv, { ...options, cwd: options?.cwd ?? "/" });
+  run(argv: readonly string[], options?: RunOptions): Promise<RunResult> {
+    return this.#guest.run(argv, options);
   }
 
   /**
@@ -239,8 +240,8 @@ export class Linux implements AsyncDisposable {
    * await shell.status;
    * ```
    */
-  async spawn(argv: readonly string[], options?: ExecOptions): Promise<ChildProcess> {
-    return this.#guest.exec(argv, { ...options, cwd: options?.cwd ?? "/" });
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess> {
+    return this.#guest.spawn(argv, options);
   }
 
   /**

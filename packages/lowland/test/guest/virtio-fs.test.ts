@@ -197,7 +197,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 guest_test("virtio-fs", async (_t, fixture) => {
   const backend = new MemoryFileSystem();
   const guest = await fixture.spawn([fileSystemDevice(backend, { tag: "test", cache: false })]);
-  const mounted = await guest.exec([
+  const mounted = await guest.spawn([
     "sh",
     "-c",
     "mkdir -p /tmp/shared && mount -t virtiofs test /tmp/shared",
@@ -290,7 +290,7 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.mkdir("/tmp/shared/destination");
   const movedDirectoryOpened = Promise.withResolvers<void>();
   backend.directoryOpenWaiter = movedDirectoryOpened.resolve;
-  const holdingMovedDirectory = await guest.exec([
+  const holdingMovedDirectory = await guest.spawn([
     "sh",
     "-c",
     "exec 3< /tmp/shared/source/child; sleep 3600",
@@ -299,7 +299,7 @@ guest_test("virtio-fs", async (_t, fixture) => {
   await guest.fs.rename("/tmp/shared/source/child", "/tmp/shared/destination/child");
   await guest.fs.writeFile("/tmp/getdents-inode", getdents_inode);
   await guest.fs.chmod("/tmp/getdents-inode", 0o755);
-  const dotdot = await guest.exec([
+  const dotdot = await guest.spawn([
     "/tmp/getdents-inode",
     "/tmp/shared/destination/child",
     "..",
@@ -316,7 +316,7 @@ guest_test("virtio-fs", async (_t, fixture) => {
   const held = await guest.fs.open("/tmp/shared/held");
   const directoryOpened = Promise.withResolvers<void>();
   backend.directoryOpenWaiter = directoryOpened.resolve;
-  const holdingDirectory = await guest.exec(["sh", "-c", "exec 3< /tmp/shared; sleep 3600"]);
+  const holdingDirectory = await guest.spawn(["sh", "-c", "exec 3< /tmp/shared; sleep 3600"]);
   await directoryOpened.promise;
   const releases = backend.releases;
   const directoryReleases = backend.directoryReleases;

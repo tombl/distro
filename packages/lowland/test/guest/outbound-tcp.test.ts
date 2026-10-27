@@ -34,7 +34,7 @@ guest_test("outbound TCP", async (t, fixture) => {
   const guest = await fixture.spawn();
 
   async function run(command: string) {
-    const process = await guest.exec(["/bin/sh", "-c", command]);
+    const process = await guest.spawn(["/bin/sh", "-c", command]);
     const [stdout, stderr, status] = await Promise.all([
       collect(process.stdout),
       collect(process.stderr),
@@ -129,7 +129,7 @@ guest_test("outbound TCP", async (t, fixture) => {
     const port = await listen(server);
     try {
       // `connect` writes, reads back the echo, then closes.
-      const reply = guest.exec([
+      const reply = guest.spawn([
         "/tmp/network-test",
         "connect",
         fixture.network.gateway,
@@ -162,7 +162,7 @@ guest_test("outbound TCP", async (t, fixture) => {
     });
     const port = await listen(server);
     try {
-      const result = await guest.exec([
+      const result = await guest.spawn([
         "/tmp/network-test",
         "connect",
         fixture.network.gateway,
@@ -198,7 +198,7 @@ guest_test("outbound TCP", async (t, fixture) => {
         assert.equal(new TextDecoder().decode(fetched.stdout).trim(), String(body.byteLength));
         const flushing = session_for(fixture, port);
         await assert_graceful(flushing);
-        void rebooted.exec(["wget", "-qO-", `http://${fixture.network.gateway}:${held_port}/`]);
+        void rebooted.spawn(["wget", "-qO-", `http://${fixture.network.gateway}:${held_port}/`]);
         let open: OutboundSession | undefined;
         for (let i = 0; i < 500 && !open; i++) {
           open = fixture.outbound.findLast((session) => session.target.port === held_port);

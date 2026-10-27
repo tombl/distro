@@ -77,7 +77,7 @@ test("resolves any name and reconstructs the request over fetch", async () => {
   const port = await listen(server);
   try {
     await with_guest(hostFetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
-      const wget = await guest.exec(["wget", "-q", "-O", "-", "http://example.test/greeting"]);
+      const wget = await guest.spawn(["wget", "-q", "-O", "-", "http://example.test/greeting"]);
       const [output, status] = await Promise.all([collect(wget.stdout), wget.status]);
       assert.equal(decoder.decode(output), "hello from the server");
       assert.deepEqual(status, { success: true, code: 0, signal: null });
@@ -96,7 +96,7 @@ test("streams a large response through with its bytes intact", async () => {
   const port = await listen(server);
   try {
     await with_guest(hostFetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
-      const wget = await guest.exec(["wget", "-q", "-O", "-", "http://example.test/blob"]);
+      const wget = await guest.spawn(["wget", "-q", "-O", "-", "http://example.test/blob"]);
       const [output, status] = await Promise.all([collect(wget.stdout), wget.status]);
       assert.deepEqual(output, payload);
       assert.deepEqual(status, { success: true, code: 0, signal: null });
@@ -114,7 +114,7 @@ test("streams concurrent large responses into one guest without loss", async () 
     await with_guest(hostFetchNetwork({ fetch: loopback_fetch(port) }), async (guest) => {
       const downloads = await Promise.all(
         Array.from({ length: 6 }, (_, i) =>
-          guest.exec(["wget", "-q", "-O", "-", `http://example.test/blob${i}`]),
+          guest.spawn(["wget", "-q", "-O", "-", `http://example.test/blob${i}`]),
         ),
       );
       for (const wget of downloads) {
@@ -134,7 +134,7 @@ test("serializes a 502 when fetch rejects", async () => {
   });
   await with_guest(network, async (guest) => {
     const request = "GET /down HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n";
-    const nc = await guest.exec(["sh", "-c", `printf '${request}' | nc 198.18.0.1 80`]);
+    const nc = await guest.spawn(["sh", "-c", `printf '${request}' | nc 198.18.0.1 80`]);
     const output = decoder.decode(await collect(nc.stdout));
     assert.match(output, /^HTTP\/1\.1 502 Bad Gateway/);
     assert.match(output, /Bad Gateway\n$/);
@@ -217,7 +217,7 @@ test("rejecting before first I/O refuses the pending guest connection", async ()
     },
   };
   await with_guest(options, async (guest) => {
-    const nc = await guest.exec(["nc", "-w", "1", "198.18.0.1", "80"]);
+    const nc = await guest.spawn(["nc", "-w", "1", "198.18.0.1", "80"]);
     assert.equal((await nc.status).success, false);
   });
   assert.equal(aborted, true);

@@ -12,8 +12,9 @@ import {
 import { E, MountFlags, SIG, SystemError, UnmountFlags } from "./abi.ts";
 import {
   create_guest_client,
-  type Exec,
-  type ExecOptions,
+  type FileData,
+  type RunOptions,
+  type SpawnOptions,
   type FileSystem,
   type GuestClientCapabilities,
   type Mount as MountCall,
@@ -68,6 +69,17 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
   } while (performance.now() < deadline);
   throw new Error("guest agent did not become ready", { cause: failure });
+}
+
+function byte_stream(data: FileData): ReadableStream<Uint8Array> {
+  if (data instanceof ReadableStream) return data;
+  if (data instanceof Blob) return data.stream();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(data);
+      controller.close();
+    },
+  });
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {
@@ -136,10 +148,54 @@ export interface Mount {
  */
 export interface GuestAgent extends MachinePluginProvider {
   readonly fs: FileSystem;
-  /** Starts a process with streaming standard I/O. */
-  readonly exec: Exec;
-  /** Runs a process and collects its status, stdout, and stderr. */
-  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult>;
+  /**
+   * Starts a program with streaming standard I/O, and resolves to the
+   * running process.
+   *
+   * Takes an argv array rather than a command string: the array is the argv
+   * the program receives, exactly as `execve` would see it, with no shell in
+   * between to quote, split, or expand. An argument containing spaces is one
+   * element. The first element is looked up on the guest's `PATH`. If the
+   * program does not exist, the promise rejects with a `SystemError` whose
+   * code is `"ENOENT"`.
+   *
+   * A guest currently runs up to eight processes at once. Further calls wait
+   * for a slot rather than failing.
+   *
+   * @example Run a command and collect its output
+   * ```ts
+   * const process = await guest.spawn(["uname", "-a"]);
+   * console.log(await new Response(process.stdout).text());
+   * ```
+   *
+   * @example Run a shell pipeline
+   * ```ts
+   * const process = await guest.spawn(["sh", "-c", "echo hello | tr a-z A-Z"]);
+   * console.log(await new Response(process.stdout).text());
+   * ```
+   *
+   * @example Run commands in parallel
+   * ```ts
+   * const [date, uname] = await Promise.all([
+   *   guest.spawn(["date"]),
+   *   guest.spawn(["uname", "-a"]),
+   * ]);
+   * console.log(await new Response(date.stdout).text());
+   * console.log(await new Response(uname.stdout).text());
+   * ```
+   */
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
+  /**
+   * Runs a program and collects its status, stdout, and stderr. A status
+   * that is not success does not reject.
+   *
+   * @example Feed a command its input
+   * ```ts
+   * const sorted = await guest.run(["sort"], { input: "b\na\n" });
+   * console.log(new TextDecoder().decode(sorted.stdout)); // "a\nb\n"
+   * ```
+   */
+  run(argv: readonly string[], options?: RunOptions): Promise<RunResult>;
   readonly mount: MountCall;
   readonly unmount: Unmount;
   /**
@@ -793,18 +849,103 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
 
   const agent: GuestAgent = {
     fs: client.fs,
-    exec: client.exec,
+    spawn: client.spawn,
     mount: client.mount,
     unmount: client.unmount,
-    async run(argv, options) {
-      const child: ChildProcess = await client.exec(argv, options);
-      const [status, stdout, stderr] = await Promise.all([
-        child.status,
-        collect(child.stdout),
-        collect(child.stderr),
-        child.stdin.close(),
-      ]);
-      return { status, stdout, stderr };
+    async run(argv, options = {}) {
+      const { input, ...spawn_options } = options;
+      if (input !== undefined && spawn_options.stdio && spawn_options.stdio[0] !== "pipe") {
+        throw new TypeError("run `input` needs standard input to be a pipe");
+      }
+      // Taken before the command starts, so an input that can't be read,
+      // such as a locked stream, fails run() before there is a process.
+      const reader =
+        input === undefined
+          ? undefined
+          : byte_stream(
+              typeof input === "string" ? new TextEncoder().encode(input) : input,
+            ).getReader();
+      let child: ChildProcess;
+      try {
+        child = await client.spawn(argv, spawn_options);
+      } catch (error) {
+        // The input was never read, so it is left as it was.
+        reader?.releaseLock();
+        throw error;
+      }
+      // Feeding stops once the command has exited and its output has ended,
+      // so an input stream that never ends can't hold up the result.
+      const stop = new AbortController();
+      // Settles with `value`, or with "stopped" once run() stops feeding. The
+      // stop listener goes as soon as `value` settles, so a long input
+      // doesn't collect one per chunk.
+      const until_stopped = <T>(value: Promise<T>) =>
+        new Promise<T | "stopped">((resolve, reject) => {
+          if (stop.signal.aborted) {
+            // Nobody will look at `value` now, but its failure is no
+            // unhandled rejection.
+            value.catch(() => {});
+            return resolve("stopped");
+          }
+          const stopped = () => resolve("stopped");
+          stop.signal.addEventListener("abort", stopped, { once: true });
+          value
+            .finally(() => stop.signal.removeEventListener("abort", stopped))
+            .then(resolve, reject);
+        });
+      let input_error: { error: unknown } | undefined;
+      const feed = async () => {
+        if (!reader) return void (await until_stopped(child.stdin.close()));
+        const writer = child.stdin.getWriter();
+        try {
+          for (;;) {
+            const next = await until_stopped(reader.read());
+            if (next === "stopped") return;
+            if (next.done) break;
+            // A command that exits without reading all of it closes the pipe,
+            // which is no failure of run().
+            const written = writer.write(next.value).then(
+              () => true,
+              () => false,
+            );
+            if ((await until_stopped(written)) !== true) return;
+          }
+        } catch (error) {
+          // The input itself failed. Its end still reaches the command as
+          // EOF, and run() reports the error once the command has finished.
+          input_error = { error };
+        } finally {
+          // Cancelled and unlocked by the time run() returns, without
+          // waiting on the source's own cancel.
+          void reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+        await until_stopped(writer.close().catch(() => {}));
+      };
+      // Awaited only once the command has finished: a guest that powers off
+      // meanwhile must not leave its rejection unhandled. The stop below
+      // ends the feed at once, so the wait is short.
+      const feeding = feed();
+      feeding.catch(() => {});
+      let result: RunResult;
+      try {
+        const [status, stdout, stderr] = await Promise.all([
+          child.status,
+          collect(child.stdout),
+          collect(child.stderr),
+        ]);
+        result = { status, stdout, stderr };
+      } finally {
+        stop.abort();
+        await feeding.catch(() => {});
+        // run() owns the process: disposing of it closes its descriptors and
+        // hangs up its terminal, which ends a write that a descendant never
+        // reads. It signals the process only if it hasn't been reaped, which
+        // is when run() fails. Not awaited, since that write may outlast it.
+        void child[Symbol.asyncDispose]().catch(() => {});
+      }
+      if (input_error) throw input_error.error;
+      return result;
     },
     async disk(serial) {
       return disk_with_serial(await find_disks(agent), serial);

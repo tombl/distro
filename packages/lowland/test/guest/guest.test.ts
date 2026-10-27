@@ -77,7 +77,7 @@ guest_test("guest", async (t, fixture) => {
   const guest = await fixture.spawn();
 
   await t.test("configures the network", async () => {
-    const network_configuration = await guest.exec(["sh", "-c", "ip address; ip route"]);
+    const network_configuration = await guest.spawn(["sh", "-c", "ip address; ip route"]);
     const [output, error, status] = await Promise.all([
       collect(network_configuration.stdout),
       collect(network_configuration.stderr),
@@ -124,7 +124,7 @@ guest_test("guest", async (t, fixture) => {
   });
 
   await t.test("mounts devpts", async () => {
-    const probe = await guest.exec([
+    const probe = await guest.spawn([
       "sh",
       "-c",
       "test -c /dev/ptmx && grep -q ' /dev/pts devpts ' /proc/mounts",
@@ -205,7 +205,7 @@ test("stays on its initramfs without a root", async () => {
     // The agent is still /init, and the initramfs has nothing else to run.
     assert.equal((await guest.fs.stat("/init")).isFile, true);
     await assert.rejects(
-      guest.exec(["sh"]),
+      guest.spawn(["sh"]),
       (error) => error instanceof SystemError && error.code === "ENOENT",
     );
     assert.match(await guest.fs.readTextFile("/proc/mounts"), /^tmpfs \/scratch tmpfs rw/m);

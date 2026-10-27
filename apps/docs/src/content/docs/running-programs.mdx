@@ -60,11 +60,11 @@ or chatty, use `exec()`.
 
 ## Stream with exec
 
-`guest.exec()` resolves once the program has started, with a process whose standard streams are
+`guest.spawn()` resolves once the program has started, with a process whose standard streams are
 web streams:
 
 ```js
-const process = await guest.exec(["tr", "a-z", "A-Z"]);
+const process = await guest.spawn(["tr", "a-z", "A-Z"]);
 
 const output = new Response(process.stdout).text();
 
@@ -145,7 +145,7 @@ export async function runSnippet(code, { timeout = 5000 } = {}) {
 
   const deadline = setTimeout(() => machine.close(), timeout);
   try {
-    const process = await guest.exec(["sh", "-c", code]);
+    const process = await guest.spawn(["sh", "-c", code]);
     await process.stdin.close();
     const [stdout, stderr, status] = await Promise.all([
       new Response(process.stdout).text(),
@@ -186,7 +186,7 @@ terminal.open(document.querySelector("#terminal")!);
 const encoder = new TextEncoder();
 
 for (;;) {
-  const shell = await guest.exec(["sh"], {
+  const shell = await guest.spawn(["sh"], {
     terminal: { rows: terminal.rows, columns: terminal.cols },
     env: { TERM: "xterm-256color" },
   });

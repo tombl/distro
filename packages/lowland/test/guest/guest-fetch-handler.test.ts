@@ -11,7 +11,7 @@ const encoder = new TextEncoder();
 // request to EOF before replying avoids a close-with-unread-data RST that
 // would race the canned response.
 function serve(guest: TestGuest, port: number, script: string) {
-  return guest.exec(["tcpsvd", "-c", "2", "0.0.0.0", String(port), "sh", "-c", script]);
+  return guest.spawn(["tcpsvd", "-c", "2", "0.0.0.0", String(port), "sh", "-c", script]);
 }
 
 guest_test("guest-fetch-handler", async (t, fixture) => {
@@ -24,7 +24,7 @@ guest_test("guest-fetch-handler", async (t, fixture) => {
   await t.test("serves a site over busybox httpd", async () => {
     await guest.fs.mkdir("/tmp/www", { recursive: true });
     await guest.fs.writeFile("/tmp/www/index.html", encoder.encode("<h1>hello</h1>\n"));
-    const server = await guest.exec(["/usr/sbin/httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
+    const server = await guest.spawn(["/usr/sbin/httpd", "-f", "-p", "8080", "-h", "/tmp/www"]);
     try {
       const ok = await connect_with_retry(() =>
         fetch(new Request("http://guest.example/index.html")),
@@ -181,7 +181,7 @@ guest_test("guest-fetch-handler", async (t, fixture) => {
       encoder.encode("#!/bin/sh\necho 'Content-type: text/plain'\necho\ncat\n"),
     );
     await guest.fs.chmod("/tmp/www/cgi-bin/echo", 0o755);
-    const server = await guest.exec(["/usr/sbin/httpd", "-f", "-p", "8087", "-h", "/tmp/www"]);
+    const server = await guest.spawn(["/usr/sbin/httpd", "-f", "-p", "8087", "-h", "/tmp/www"]);
     const done = guestFetchHandler(guest.network, { port: 8087 });
     try {
       const res = await connect_with_retry(() =>

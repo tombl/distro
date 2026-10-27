@@ -10,11 +10,11 @@ export {
   type RunResult,
 } from "./agent.ts";
 export {
-  type Exec,
-  type ExecOptions,
   type FileData,
   type FileSystem,
   type MountOptions,
+  type RunOptions,
+  type SpawnOptions,
   type Unmount,
 } from "./client.ts";
 export {
@@ -29,6 +29,7 @@ export {
 export {
   ChildProcess,
   type CommandStatus,
+  exitCode,
   type Signal,
   type StdioSpec,
   type TerminalSize,

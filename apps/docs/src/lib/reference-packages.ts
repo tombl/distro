@@ -13,6 +13,22 @@ export const referenceSections = [
         description: "Boot a machine with an image, disks, shared directories, and a network.",
         symbols: ["Linux", "LinuxOptions", "DiskOptions", "MountOptions"],
       },
+      {
+        title: "Run commands and end the machine",
+        description:
+          "The types of a command's options and results, and of how a machine ends, as Linux uses them.",
+        symbols: [
+          "SpawnOptions",
+          "RunOptions",
+          "RunResult",
+          "ChildProcess",
+          "CommandStatus",
+          "exitCode",
+          "SystemError",
+          "MachineExit",
+          "PowerOptions",
+        ],
+      },
     ],
   },
   {
@@ -136,7 +152,14 @@ export const referenceSections = [
       {
         title: "Run processes",
         description: "Execute programs, stream their output, inspect exits, and send signals.",
-        symbols: ["Exec", "ExecOptions", "ChildProcess", "CommandStatus", "Signal"],
+        symbols: [
+          "SpawnOptions",
+          "RunOptions",
+          "ChildProcess",
+          "CommandStatus",
+          "exitCode",
+          "Signal",
+        ],
       },
       {
         title: "Work with files",

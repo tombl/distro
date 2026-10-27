@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import {
-  SystemError,
-  type ChildProcess,
-  type CommandStatus,
-  type TerminalSize,
-} from "../guest/index.ts";
+import { SystemError, type ChildProcess, exitCode, type TerminalSize } from "../guest/index.ts";
 import { rootImage } from "../image/index.ts";
 import { createNetwork, type Network } from "../machine/index.ts";
 import { NodeFS, nodeNetwork } from "../node/index.ts";
@@ -66,16 +61,6 @@ const VALUE_OPTIONS = new Set([
 ]);
 
 const NETWORKS = ["none", "nat"] as const;
-
-const SIGNALS: Record<string, number> = {
-  SIGHUP: 1,
-  SIGINT: 2,
-  SIGQUIT: 3,
-  SIGKILL: 9,
-  SIGUSR1: 10,
-  SIGUSR2: 12,
-  SIGTERM: 15,
-};
 
 /** A `--disk` or `--mount` value: a host path and where it goes in the guest. */
 export interface Attachment {
@@ -210,13 +195,6 @@ export async function machineOptions(run: RunArguments, network?: Network): Prom
     cpus: run.cpus,
     network,
   };
-}
-
-/** The exit status a shell would report for a guest command. */
-export function exitCode(status: CommandStatus): number {
-  if (status.signal === null) return status.code;
-  const number = typeof status.signal === "number" ? status.signal : SIGNALS[status.signal];
-  return 128 + (number ?? 0);
 }
 
 /** The host terminal a guest terminal follows. */
@@ -414,7 +392,7 @@ async function attach(child: ChildProcess, terminal: HostTerminal | undefined) {
         // A pipe passes a reader that went away on to the writer as EPIPE,
         // but a terminal stays open for its input, so its writer would block
         // instead. Hang it up, as closing a terminal emulator would.
-        if (broken && terminal) void child.close().catch(() => {});
+        if (broken && terminal) void child[Symbol.asyncDispose]().catch(() => {});
       }),
       terminal ? undefined : forward_output(child.stderr, process.stderr, child.status),
     ]);
@@ -437,6 +415,9 @@ async function attach(child: ChildProcess, terminal: HostTerminal | undefined) {
 function report(error: unknown) {
   process.stderr.write(`lowland run: ${error instanceof Error ? error.message : error}\n`);
 }
+
+/** How long the guest has to shut down once the command has finished. */
+const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 /** How `execute()` runs a command. */
 export interface ExecuteOptions {
@@ -472,10 +453,16 @@ export async function execute(
       report(error);
       code = EXIT_FAILURE;
     }
-    try {
-      await linux[Symbol.asyncDispose]();
-    } catch (error) {
-      report(error);
+    // The guest ends its processes, then syncs and unmounts its disks.
+    const exit = await linux.shutdown({ timeoutMs: SHUTDOWN_TIMEOUT_MS });
+    if (exit.reason !== "poweroff") {
+      report(
+        exit.reason === "crash"
+          ? exit.error
+          : exit.reason === "kill"
+            ? `the machine did not shut down within ${SHUTDOWN_TIMEOUT_MS / 1000} s, and was killed`
+            : `the machine ended with ${exit.reason}`,
+      );
       return EXIT_FAILURE;
     }
     return code;

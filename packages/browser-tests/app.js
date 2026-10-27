@@ -63,7 +63,7 @@ async function withGuest(scenario, options) {
 
 globalThis.bootSmoke = () =>
   withGuest(async (guest) => {
-    const result = await collectProcess(await guest.exec(["uname", "-a"]));
+    const result = await collectProcess(await guest.spawn(["uname", "-a"]));
     return { ...result, machineClosed: true };
   });
 
@@ -81,7 +81,7 @@ globalThis.opfsWorkerDiskRoundTrip = async () => {
     const write = await withGuest(
       async (guest) =>
         collectProcess(
-          await guest.exec([
+          await guest.spawn([
             "sh",
             "-c",
             `until [ -b /dev/vdb ]; do sleep 0.1; done; printf '%s\\n' '${marker}' | dd of=/dev/vdb bs=512 conv=fsync 2>/dev/null`,
@@ -94,7 +94,7 @@ globalThis.opfsWorkerDiskRoundTrip = async () => {
     const read = await withGuest(
       async (guest) =>
         collectProcess(
-          await guest.exec([
+          await guest.spawn([
             "sh",
             "-c",
             "until [ -b /dev/vdb ]; do sleep 0.1; done; dd if=/dev/vdb bs=512 count=1 2>/dev/null | head -n 1",
@@ -155,7 +155,7 @@ globalThis.spawnStress = () =>
     // when spawns outpace its asynchronous reservation reclaim: paced
     // spawning passes everywhere, bursts are what break.
     const script = "i=0; while [ $i -lt 100 ]; do ls / >/dev/null || exit 1; i=$((i+1)); done";
-    return collectProcess(await guest.exec(["sh", "-c", script]));
+    return collectProcess(await guest.spawn(["sh", "-c", script]));
   });
 
 // Counts the 4 GiB shared memories a fresh worker can still reserve: the
@@ -185,7 +185,7 @@ globalThis.execReservations = (depth) =>
     const before = await memoryHeadroom();
     // Each image execs the next, and the last waits for its stdin to close.
     const chain = 'n=$((n-1)); [ $n -gt 0 ] && exec sh -c "$S"; echo ready; read line || true';
-    const child = await guest.exec(["env", `n=${depth}`, `S=${chain}`, "sh", "-c", chain]);
+    const child = await guest.spawn(["env", `n=${depth}`, `S=${chain}`, "sh", "-c", chain]);
     const stderr = new Response(child.stderr).text();
     const reader = child.stdout.getReader();
     const decoder = new TextDecoder();
@@ -227,7 +227,7 @@ globalThis.remoteMemoryMetadata = () =>
         "wait $pid 2>/dev/null || true",
         'printf \'cmdline=%s\\nenviron=%s\\nauxv=%s\\n\' "$cmdline" "$(printf \'%s\\n\' "$environ" | grep \'^MARKER=\')" "$auxv_size"',
       ].join("\n");
-      return collectProcess(await guest.exec(["sh", "-c", script]));
+      return collectProcess(await guest.spawn(["sh", "-c", script]));
     },
     { cpus: 1 },
   );
@@ -269,7 +269,7 @@ globalThis.runRemoteMemoryLifecycleBatch = async (batch, iterations) => {
     "done",
     "printf 'batch=%s processes=%s\\n' \"" + batch + '" "$i"',
   ].join("\n");
-  return collectProcess(await lifecycleGuest.agent.exec(["sh", "-c", script]));
+  return collectProcess(await lifecycleGuest.agent.spawn(["sh", "-c", script]));
 };
 
 globalThis.closeRemoteMemoryLifecycle = async () => {
@@ -526,7 +526,7 @@ globalThis.opfsVirtioFileSystemGuest = async () => {
   const mounted = await withGuest(
     async (guest) => {
       const mount = await collectProcess(
-        await guest.exec([
+        await guest.spawn([
           "sh",
           "-c",
           "mkdir -p /tmp/shared && mount -t virtiofs browser-test /tmp/shared",

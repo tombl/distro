@@ -4,7 +4,13 @@ import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import { test } from "node:test";
 import { O } from "../../src/guest/abi.ts";
 import { GuestSession } from "../../src/guest/conn.ts";
-import { guestAgent, SeekMode, SystemError, type GuestAgent } from "../../src/guest/index.ts";
+import {
+  exitCode,
+  guestAgent,
+  SeekMode,
+  SystemError,
+  type GuestAgent,
+} from "../../src/guest/index.ts";
 import { spawn_stdio, spawn_terminal } from "../../src/guest/process.ts";
 import {
   type FileAction,
@@ -41,7 +47,7 @@ async function within<T>(ms: number, promise: Promise<T>): Promise<T> {
 
 async function assert_missing_program(guest: GuestAgent) {
   const missing = (error: unknown) => error instanceof SystemError && error.code === "ENOENT";
-  await assert.rejects(guest.exec(["no-such-program"]), missing);
+  await assert.rejects(guest.spawn(["no-such-program"]), missing);
   await assert.rejects(guest.run(["no-such-program"]), missing);
 }
 
@@ -53,10 +59,13 @@ guest_test("processes", async (t, fixture) => {
     const large = pattern_bytes(256 * 1024);
     await guest.fs.writeFile(`${directory}/large.bin`, large);
     await t.test("streams stdio and configures the environment", async () => {
-      const child = await guest.exec(["sh", "-c", 'cat; printf \'%s:%s\' "$GREETING" "$PWD" >&2'], {
-        cwd: directory,
-        env: { GREETING: "hello" },
-      });
+      const child = await guest.spawn(
+        ["sh", "-c", 'cat; printf \'%s:%s\' "$GREETING" "$PWD" >&2'],
+        {
+          cwd: directory,
+          env: { GREETING: "hello" },
+        },
+      );
       const output = collect(child.stdout);
       const error = collect(child.stderr);
       const status = child.status;
@@ -70,7 +79,7 @@ guest_test("processes", async (t, fixture) => {
     });
 
     await t.test("runs processes concurrently with filesystem traffic", async () => {
-      const concurrent = await Promise.all([guest.exec(["cat"]), guest.exec(["cat"])]);
+      const concurrent = await Promise.all([guest.spawn(["cat"]), guest.spawn(["cat"])]);
       const collected = concurrent.map((process) => ({
         output: collect(process.stdout),
         error: collect(process.stderr),
@@ -92,31 +101,79 @@ guest_test("processes", async (t, fixture) => {
     });
 
     await t.test("kills processes with signals", async () => {
-      const signalled = await guest.exec(["sleep", "30"]);
+      const signalled = await guest.spawn(["sleep", "30"]);
       await signalled.kill("SIGTERM");
-      assert.deepEqual(await signalled.status, {
-        success: false,
-        code: 0,
-        signal: "SIGTERM",
+      const status = await signalled.status;
+      assert.deepEqual(status, { success: false, code: null, signal: "SIGTERM" });
+      assert.equal(exitCode(status), 143);
+    });
+
+    await t.test("runs in / unless told otherwise", async () => {
+      const result = await guest.run(["pwd"]);
+      assert.equal(new TextDecoder().decode(result.stdout), "/\n");
+      assert.equal(exitCode(result.status), 0);
+    });
+
+    await t.test("feeds run() its input", async () => {
+      const text = await guest.run(["sort"], { input: "b\na\n" });
+      assert.equal(new TextDecoder().decode(text.stdout), "a\nb\n");
+      const bytes = await guest.run(["wc", "-c"], { input: new Uint8Array(70_000) });
+      assert.equal(new TextDecoder().decode(bytes.stdout).trim(), "70000");
+      // A command that stops reading early is no failure of run().
+      const head = await guest.run(["head", "-c", "1"], { input: new Uint8Array(1 << 20) });
+      assert.equal(head.stdout.byteLength, 1);
+      const failed = await guest.run(["sh", "-c", "exit 3"], { input: "ignored" });
+      assert.deepEqual(failed.status, { success: false, code: 3, signal: null });
+      assert.equal(exitCode(failed.status), 3);
+      // An input stream that never ends doesn't hold up a command that
+      // exits without reading it, and is cancelled.
+      let cancelled = false;
+      const open = new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
       });
+      const done = await guest.run(["true"], { input: open });
+      assert.equal(done.status.success, true);
+      assert.equal(cancelled, true);
+      // An input that fails still ends stdin, so the command finishes, and
+      // run() reports the input's error.
+      const failure = new Error("the input failed");
+      let pulls = 0;
+      const failing = new ReadableStream<Uint8Array>({
+        // The first chunk is delivered, and the stream fails on the next pull.
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(new TextEncoder().encode("partial\n"));
+          else controller.error(failure);
+        },
+      });
+      await assert.rejects(guest.run(["cat"], { input: failing }), (error) => error === failure);
+      // An input that can't be read fails run() before the command starts.
+      const locked = new ReadableStream<Uint8Array>();
+      locked.getReader();
+      await assert.rejects(guest.run(["cat"], { input: locked }), TypeError);
+      await assert.rejects(
+        guest.run(["cat"], { input: "x", stdio: ["null", "pipe", "pipe"] }),
+        TypeError,
+      );
     });
 
     await t.test("reports fatal process signals", async () => {
-      const crashed = await guest.exec(["sh", "-c", "kill -SEGV $$"]);
+      const crashed = await guest.spawn(["sh", "-c", "kill -SEGV $$"]);
       assert.deepEqual(await crashed.status, {
         success: false,
-        code: 0,
+        code: null,
         signal: 11,
       });
     });
 
     await t.test("isolates user module traps to the offending process", async () => {
-      const survivor = await guest.exec(["cat"]);
+      const survivor = await guest.spawn(["cat"]);
       const survivor_output = collect(survivor.stdout);
-      const crashed = await guest.exec(["/tmp/user-trap"]);
+      const crashed = await guest.spawn(["/tmp/user-trap"]);
       assert.deepEqual(await crashed.status, {
         success: false,
-        code: 0,
+        code: null,
         signal: 11,
       });
 
@@ -130,7 +187,7 @@ guest_test("processes", async (t, fixture) => {
         signal: null,
       });
 
-      const after = await guest.exec(["true"]);
+      const after = await guest.spawn(["true"]);
       assert.deepEqual(await after.status, {
         success: true,
         code: 0,
@@ -139,7 +196,7 @@ guest_test("processes", async (t, fixture) => {
     });
 
     await t.test("reports explicit exit statuses", async () => {
-      const exited = await guest.exec(["sh", "-c", "exit 37"]);
+      const exited = await guest.spawn(["sh", "-c", "exit 37"]);
       assert.deepEqual(await exited.status, {
         success: false,
         code: 37,
@@ -154,7 +211,7 @@ guest_test("processes", async (t, fixture) => {
       await guest.fs.writeTextFile(command, '#!/bin/sh\nprintf \'%s:%s\' "$PATH" "$PWD"\n');
       await guest.fs.chmod(command, 0o755);
 
-      const child = await guest.exec(["path-command"], {
+      const child = await guest.spawn(["path-command"], {
         cwd: directory,
         env: { PATH: "custom-bin" },
       });
@@ -172,7 +229,7 @@ guest_test("processes", async (t, fixture) => {
 
     await t.test("aborts processes", async () => {
       const abort_controller = new AbortController();
-      const aborted = await guest.exec(["sleep", "30"], {
+      const aborted = await guest.spawn(["sleep", "30"], {
         signal: abort_controller.signal,
       });
       const abort_reason = new Error("cancel process");
@@ -184,14 +241,14 @@ guest_test("processes", async (t, fixture) => {
       // The short-lived background process keeps the old stdin pipe open
       // after close kills the tracked process, holding one injected write in
       // flight long enough for a subsequent spawn to reuse its numeric fd.
-      const stopped = await guest.exec(["sh", "-c", "sleep 0.2 <&0 & exec sleep 30"]);
+      const stopped = await guest.spawn(["sh", "-c", "sleep 0.2 <&0 & exec sleep 30"]);
       const input = stopped.stdin.getWriter();
       for (let offset = 0; offset < large.byteLength; offset += 32 * 1024) {
         await input.write(large.subarray(offset, offset + 32 * 1024));
       }
-      await stopped.close();
+      await stopped[Symbol.asyncDispose]();
 
-      const replacement = await guest.exec(["cat"]);
+      const replacement = await guest.spawn(["cat"]);
       const output = collect(replacement.stdout);
       await new Promise((resolve) => setTimeout(resolve, 500));
       await replacement.stdin.getWriter().close();
@@ -204,14 +261,14 @@ guest_test("processes", async (t, fixture) => {
     });
 
     await t.test("connects standard descriptors to /dev/null", async () => {
-      const child = await guest.exec(["sleep", "30"], { stdio: ["null", "null", "pipe"] });
+      const child = await guest.spawn(["sleep", "30"], { stdio: ["null", "null", "pipe"] });
       try {
         assert.equal(await guest.fs.readLink(`/proc/${child.pid}/fd/0`), "/dev/null");
         assert.equal(await guest.fs.readLink(`/proc/${child.pid}/fd/1`), "/dev/null");
         assert.equal((await collect(child.stdout)).byteLength, 0);
         await assert.rejects(child.stdin.getWriter().write(new Uint8Array(1)), TypeError);
       } finally {
-        await child.close();
+        await child[Symbol.asyncDispose]();
       }
       // Input ends at once and output is discarded. run() closes stdin, which
       // is fine with no pipe behind it.
@@ -300,14 +357,14 @@ guest_test("processes", async (t, fixture) => {
         { stdio: ["pipe", "pipe", "file"] },
         { stdio: [closed, "pipe", "pipe"] },
       ]) {
-        await assert.rejects(guest.exec(["true"], options as never), TypeError);
+        await assert.rejects(guest.spawn(["true"], options as never), TypeError);
       }
       assert.deepEqual((await guest.run(["true"])).status, succeeded);
     });
 
     await t.test("reaps adopted orphan processes", async () => {
       const pid_file = `${directory}/orphan.pid`;
-      const orphaned = await guest.exec([
+      const orphaned = await guest.spawn([
         "sh",
         "-c",
         `sh -c 'sleep 0.1' & echo $! > "${pid_file}"`,
@@ -346,7 +403,7 @@ test("guest without a console", async (t) => {
   });
   try {
     await t.test("streams stdin, stdout, and stderr separately", async () => {
-      const child = await guest.exec(["sh", "-c", "cat; printf error >&2"]);
+      const child = await guest.spawn(["sh", "-c", "cat; printf error >&2"]);
       const output = collect(child.stdout);
       const error = collect(child.stderr);
       const stdin = child.stdin.getWriter();
@@ -635,7 +692,7 @@ test("reports failed spawns in a machine without a console", async () => {
       [["/etc"], "EACCES"],
     ] as const) {
       await assert.rejects(
-        agent.exec(argv),
+        agent.spawn(argv),
         (error) => error instanceof SystemError && error.code === code,
       );
       const result = await agent.run(["true"]);

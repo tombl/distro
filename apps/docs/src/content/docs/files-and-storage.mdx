@@ -40,7 +40,7 @@ for (const [name, contents] of Object.entries(files)) {
   await guest.fs.writeTextFile(`/work/${name}`, contents);
 }
 
-const process = await guest.exec(["sh", "-c", code], { cwd: "/work" });
+const process = await guest.spawn(["sh", "-c", code], { cwd: "/work" });
 // ...wait for it as before...
 
 const outputs = {};
@@ -64,7 +64,7 @@ Each call is at least one round trip to the guest. For a large tree of small fil
 archive and unpack it inside the guest instead:
 
 ```js
-const tar = await guest.exec(["tar", "-xz", "-C", "/work"]);
+const tar = await guest.spawn(["tar", "-xz", "-C", "/work"]);
 await archive.pipeTo(tar.stdin); // a ReadableStream of a .tar.gz
 await tar.status;
 ```
