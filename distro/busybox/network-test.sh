@@ -86,5 +86,15 @@ grep -qx udp-service /tmp/udp-service-response || fail "udpsvd did not run its s
 kill "$udpsvd_pid" 2>/dev/null || :
 wait "$udpsvd_pid" 2>/dev/null || :
 
+# A CLONE_VM child that dies must not take the parent's exit with it. wget's
+# openssl helper fails to exec here, and the internal TLS fallback then fails
+# to connect: both must report an ordinary failure instead of trapping in exit.
+wget -Y off -q -O /dev/null https://127.0.0.1:18084/ 2>/dev/null
+wget_rc=$?
+[ "$wget_rc" -eq 1 ] || fail "HTTPS wget to a closed port returned $wget_rc instead of 1"
+/bin/busybox time /nonexistent 2>/dev/null
+time_rc=$?
+[ "$time_rc" -eq 127 ] || fail "time of a missing program returned $time_rc instead of 127"
+
 echo "::vm-test::pass"
 while :; do :; done
