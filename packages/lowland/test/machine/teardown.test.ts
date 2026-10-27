@@ -5,10 +5,10 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bootMachine } from "../src/index.ts";
-import type { MachinePlugin } from "../src/plugin.ts";
-import { platform } from "../src/platform.ts";
-import { type Device, public_handle, VirtioDevice } from "../src/virtio/device.ts";
+import { bootMachine } from "../../src/machine/index.ts";
+import type { MachinePlugin } from "../../src/machine/plugin.ts";
+import { platform } from "../../src/machine/platform.ts";
+import { type Device, public_handle, VirtioDevice } from "../../src/machine/virtio/device.ts";
 
 const uleb = (value: number) => {
   const bytes = [];

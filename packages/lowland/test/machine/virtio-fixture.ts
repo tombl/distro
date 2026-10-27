@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-import { VirtioBus } from "../src/virtio/bus.ts";
-import { type Device, device_of, public_handle, VirtioDevice } from "../src/virtio/device.ts";
-import type { Virtqueue } from "../src/virtio/queue.ts";
+import { VirtioBus } from "../../src/machine/virtio/bus.ts";
+import {
+  type Device,
+  device_of,
+  public_handle,
+  VirtioDevice,
+} from "../../src/machine/virtio/device.ts";
+import type { Virtqueue } from "../../src/machine/virtio/queue.ts";
 
 export type TestQueueHandler = (queue: Virtqueue) => void | PromiseLike<void>;
 

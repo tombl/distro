@@ -15,7 +15,7 @@ import {
   parse_status_line,
   serialize_head,
   strip_hop_by_hop,
-} from "../src/http.ts";
+} from "../../src/guest/http.ts";
 import {
   chunked_frame,
   int,

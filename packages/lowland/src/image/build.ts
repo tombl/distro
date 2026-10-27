@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, bootMachine, type BlockStorage, entropyDevice } from "@lowland/kernel";
-import { createNetwork, guestAgent, type Network } from "@lowland/guest";
-import { NodeFS } from "@lowland/guest/node";
+import { blockDevice, bootMachine, type BlockStorage, entropyDevice } from "../machine/index.ts";
+import { createNetwork, guestAgent, type Network } from "../guest/index.ts";
+import { NodeFS } from "../node/index.ts";
 import { randomUUID } from "node:crypto";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
@@ -207,7 +207,7 @@ const PUBLIC_REPOSITORY: PackageRepository = { url: REPOSITORY, network: node_ne
  * The build runs in a Lowland machine that boots a builder image shipped in
  * this package. It formats the output, installs the packages, copies the
  * files, creates the links, and adds the standard mount points. Boot the
- * result with `rootImage()`, or mount it with `@lowland/guest`.
+ * result with `rootImage()`, or mount it with `lowland/guest`.
  * The machine uses the host network only when a package is named rather than
  * given as a local file. Named packages must be signed by the public
  * repository, while local package files are trusted as given. The output is
@@ -329,7 +329,7 @@ export async function build_image(
       mounts: [
         {
           path: "/",
-          source: new URL("../builder.erofs", import.meta.url),
+          source: new URL("../../assets/builder.erofs", import.meta.url),
           type: "erofs",
           mode: "overlay",
         },

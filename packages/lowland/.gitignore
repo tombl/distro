@@ -1,1 +1,4 @@
 dist/
+node_modules/
+# Nix copies the kernel, agent and images here (`pnpm artifacts`).
+/assets/

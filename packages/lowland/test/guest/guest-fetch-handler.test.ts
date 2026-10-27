@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { guestFetchHandler } from "../src/guest-fetch-handler.ts";
-import type { NetworkAttachment, TcpConnection } from "../src/index.ts";
+import { guestFetchHandler } from "../../src/guest/guest-fetch-handler.ts";
+import type { NetworkAttachment, TcpConnection } from "../../src/guest/index.ts";
 import { guest_test, type TestGuest } from "./fixture.ts";
 import { connect_with_retry } from "./helpers.ts";
 

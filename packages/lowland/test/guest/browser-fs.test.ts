@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BrowserFS } from "../src/browser.ts";
+import { BrowserFS } from "../../src/browser/index.ts";
 
 const not_found = () => new DOMException("entry not found", "NotFoundError");
 

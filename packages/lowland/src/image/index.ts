@@ -1,42 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-import type { DiskFileHandle } from "@lowland/kernel";
-import type { Mount } from "@lowland/guest";
-import { platform } from "./platform.ts";
-import { check_bytes, check_image, HEADER_OFFSET, HEADER_SIZE } from "./validate.ts";
+import type { Mount } from "../guest/agent.ts";
+import { image_mount, type ImageSource } from "./source.ts";
 
-/** The parts of a Node `FileHandle` that an image needs. */
-export type ImageFileHandle = DiskFileHandle;
-
-/**
- * A filesystem image to boot with `rootImage()`.
- *
- * A string is a file path in Node and a URL, relative to the page, in
- * browsers. A `URL` with the `file:` scheme is a path, and any other `URL` is
- * fetched. Byte arrays, blobs, and responses hold the whole image in memory.
- */
-export type ImageSource =
-  | string
-  | URL
-  | ImageFileHandle
-  | Uint8Array
-  | ArrayBuffer
-  | Blob
-  | Response;
-
-/** The filesystem of an image whose superblock can be read now, checking it on the way. */
-function filesystem_of_source(source: ImageSource): "erofs" | "ext4" | undefined {
-  if (source instanceof Uint8Array || source instanceof ArrayBuffer) {
-    const bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
-    return check_bytes("the image bytes are not", bytes);
-  }
-  const path = typeof source === "string" ? source : source instanceof URL ? source : undefined;
-  if (path === undefined || (path instanceof URL && path.protocol !== "file:")) return undefined;
-  const read = platform.read_header(path, HEADER_OFFSET, HEADER_SIZE);
-  if (!read) return undefined;
-  const name = path instanceof URL ? decodeURIComponent(path.pathname) : path;
-  return check_image(`${name} is not`, read.header, read.size);
-}
+export type { ImageFileHandle, ImageSource } from "./source.ts";
 
 /**
  * The canonical Lowland system image, or your own, as the root of the guest
@@ -73,14 +40,15 @@ function filesystem_of_source(source: ImageSource): "erofs" | "ext4" | undefined
  */
 export function rootImage(source?: ImageSource): Mount {
   if (source === undefined) {
-    // This package built it, so it is EROFS.
+    // The only reference to the canonical image in the package, so a bundle
+    // contains it only when its application imports lowland/image. This
+    // package built it, so it is EROFS.
     return {
       path: "/",
-      source: new URL("../rootfs.erofs", import.meta.url),
+      source: new URL("../../assets/rootfs.erofs", import.meta.url),
       type: "erofs",
       mode: "overlay",
     };
   }
-  const type = filesystem_of_source(source);
-  return { path: "/", source, ...(type && { type }), mode: "overlay" };
+  return image_mount(source);
 }

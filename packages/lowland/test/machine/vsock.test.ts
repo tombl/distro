@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { vsockDevice } from "../src/virtio/vsock.ts";
+import { vsockDevice } from "../../src/machine/virtio/vsock.ts";
 import { attach_devices, close_device } from "./virtio-fixture.ts";
 
 const HEADER_SIZE = 44;

@@ -13,9 +13,7 @@
     "test": "playwright test"
   },
   "dependencies": {
-    "@lowland/bytes": "workspace:*",
-    "@lowland/guest": "workspace:*",
-    "@lowland/kernel": "workspace:*"
+    "lowland": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "catalog:"

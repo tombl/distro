@@ -1,10 +1,10 @@
-// Must load before @lowland/kernel captures node:worker_threads' Worker.
+// Must load before lowland/machine captures node:worker_threads' Worker.
 import { drain_worker_queue, worker_queue } from "./worker-queue.ts";
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent } from "../src/index.ts";
+import { bootMachine } from "../../src/machine/index.ts";
+import { guestAgent } from "../../src/guest/index.ts";
 import { root_mount } from "./assets.ts";
 import { collect } from "./helpers.ts";
 

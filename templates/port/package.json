@@ -6,7 +6,6 @@
     "boot": "node boot.mjs"
   },
   "dependencies": {
-    "@lowland/guest": "*",
-    "@lowland/kernel": "*"
+    "lowland": "*"
   }
 }

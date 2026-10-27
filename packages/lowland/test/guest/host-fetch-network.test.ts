@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { type AddressInfo } from "node:net";
 import { test } from "node:test";
-import { bootMachine, consoleDevice, entropyDevice } from "@lowland/kernel";
+import { bootMachine, consoleDevice, entropyDevice } from "../../src/machine/index.ts";
 import {
   createNetwork,
   guestAgent,
@@ -11,9 +11,9 @@ import {
   type NetworkOptions,
   type NetworkAttachment,
   type TcpSession,
-} from "../src/index.ts";
-import { hostFetchNetwork } from "../src/host-fetch-network.ts";
-import { ByteReader } from "../src/http.ts";
+} from "../../src/guest/index.ts";
+import { hostFetchNetwork } from "../../src/guest/host-fetch-network.ts";
+import { ByteReader } from "../../src/guest/http.ts";
 import { root_mount } from "./assets.ts";
 import { closed_input, collect, console_output, pattern_bytes } from "./helpers.ts";
 

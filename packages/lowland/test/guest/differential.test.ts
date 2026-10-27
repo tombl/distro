@@ -21,8 +21,8 @@ import { createServer, type IncomingMessage } from "node:http";
 import net from "node:net";
 import { type Duplex } from "node:stream";
 import { test } from "node:test";
-import { hostFetchNetwork } from "../src/host-fetch-network.ts";
-import type { NetworkOptions, TcpSession } from "../src/index.ts";
+import { hostFetchNetwork } from "../../src/guest/host-fetch-network.ts";
+import type { NetworkOptions, TcpSession } from "../../src/guest/index.ts";
 import { build_request_corpus, type CorpusEntry } from "./fuzz.ts";
 import { collect } from "./helpers.ts";
 

@@ -9,10 +9,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent } from "@lowland/guest";
-import { buildImage } from "../../src/build.ts";
-import { rootImage } from "../../src/index.ts";
+import { bootMachine } from "../../../src/machine/index.ts";
+import { guestAgent } from "../../../src/guest/index.ts";
+import { buildImage } from "../../../src/image/build.ts";
+import { rootImage } from "../../../src/image/index.ts";
 import { jq_package } from "../assets.ts";
 
 test("builds an image from the public repository and a local package", async (t) => {

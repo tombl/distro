@@ -21,10 +21,10 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Duplex } from "node:stream";
 import test, { type TestContext } from "node:test";
-import { bootMachine } from "@lowland/kernel";
-import { createNetwork, guestAgent } from "@lowland/guest";
-import { build_image, buildImage, type BuildImageOptions } from "../src/build.ts";
-import { rootImage } from "../src/index.ts";
+import { bootMachine } from "../../src/machine/index.ts";
+import { createNetwork, guestAgent } from "../../src/guest/index.ts";
+import { build_image, buildImage, type BuildImageOptions } from "../../src/image/build.ts";
+import { rootImage } from "../../src/image/index.ts";
 import { busybox_package, jq_package, unsigned_repository } from "./assets.ts";
 
 // These tests never use the network. test/online covers the public

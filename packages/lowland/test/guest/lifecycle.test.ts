@@ -1,5 +1,10 @@
-import { bootConsole, bootMachine, consoleDevice, MachinePanicError } from "@lowland/kernel";
-import type { MachinePlugin } from "@lowland/kernel/plugin";
+import {
+  bootConsole,
+  bootMachine,
+  consoleDevice,
+  MachinePanicError,
+} from "../../src/machine/index.ts";
+import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { lifecycle_assets } from "./assets.ts";

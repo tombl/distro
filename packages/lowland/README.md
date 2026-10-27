@@ -3,6 +3,10 @@
 `lowland` runs Linux machines from the command line in Node, or from
 JavaScript in Node and browsers.
 
+```sh
+npm install lowland
+```
+
 ## Running commands
 
 ```sh
@@ -21,9 +25,9 @@ window resizes the guest terminal. `-t`, `--tty` runs a given command on a
 terminal too, such as `npx lowland run -t vi`. Otherwise commands run over
 pipes, with stdout and stderr kept separate.
 
-- `--image <path>` boots another root image, such as one from `lowland build`.
-  The root is always read-only beneath a temporary overlay, so running an
-  image never changes it.
+- `--image <path>` boots another root image, such as one from `lowland build`,
+  instead of the canonical image. The root is always read-only beneath a
+  temporary overlay, so running an image never changes it.
 - `--disk <path:guest[:ro]>` attaches an EROFS or ext4 image file and mounts it.
   Writes to an ext4 disk persist in the file unless it is mounted `:ro`.
 - `-v`, `--mount <host:guest[:ro]>` shares a host directory.
@@ -55,9 +59,11 @@ The same machines are available from JavaScript, in Node and in browsers:
 
 ```js
 import { Linux } from "lowland";
-import { NodeFS } from "@lowland/guest/node";
+import { rootImage } from "lowland/image";
+import { NodeFS } from "lowland/node";
 
 await using linux = await Linux.create({
+  image: rootImage(),
   mounts: [{ source: new NodeFS("./src"), path: "/work" }],
 });
 const result = await linux.run(["ls", "/work"]);
@@ -67,12 +73,16 @@ console.log(new TextDecoder().decode(result.stdout));
 `Linux.create()` takes the flags as objects rather than paths, so the same
 code runs in a browser:
 
-- `image` and each disk's `source` take any source `rootImage()` from
-  `@lowland/image` accepts: a file path in Node, a URL, a file handle, bytes,
-  a blob, or a response.
-- `mounts` take a filesystem: a `NodeFS` for a host directory, or a
-  `BrowserFS` from `@lowland/guest/browser` for the origin private file system.
-- `network` takes a network from `createNetwork()` in `@lowland/guest`.
+- `image` is required. `rootImage()` from `lowland/image` is the canonical
+  image, with BusyBox, apk-tools, and CA certificates. Your own image, and
+  each disk's `source`, take any source `rootImage()` accepts: a file path in
+  Node, a URL, a file handle, bytes, a blob, or a response. The root is
+  mounted read-only beneath a writable layer in memory, unless `image` is a
+  mount entry of your own at `/`.
+- `mounts` take a filesystem: a `NodeFS` from `lowland/node` for a host
+  directory, or a `BrowserFS` from `lowland/browser` for the origin private
+  file system.
+- `network` takes a network from `createNetwork()` in `lowland/guest`.
 - `cpus` and further `plugins` go to the machine.
 
 `run()` collects a command's output, and `spawn()` streams it. Like
@@ -93,6 +103,57 @@ term.onData((data) => void keys.write(new TextEncoder().encode(data)));
 term.onResize(({ rows, cols }) => void shell.resize({ rows, columns: cols }));
 ```
 
+In a browser, the page must be served with the cross-origin isolation headers
+described in [Hosting](https://docs.low.land/hosting/).
+
+## Entry points
+
+`Linux` is built from layers that you can also use directly:
+
+| Import | Contents |
+| --- | --- |
+| `lowland` | `Linux`, a machine with the guest agent and an image |
+| `lowland/machine` | `bootMachine()`, virtio devices, and the plugin API: the virtual hardware |
+| `lowland/guest` | `guestAgent()`, processes, files, mounts, and networks inside a machine |
+| `lowland/image` | `rootImage()`, which attaches the canonical image or your own |
+| `lowland/image/build` | `buildImage()`, which builds images in Node |
+| `lowland/node` | `NodeFS`, a host directory for the guest |
+| `lowland/browser` | `BrowserFS`, the origin private file system for the guest |
+
+```js
+import { bootMachine } from "lowland/machine";
+import { guestAgent } from "lowland/guest";
+import { rootImage } from "lowland/image";
+
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
+const result = await guest.run(["uname", "-a"]);
+```
+
+The guest agent boots from an initramfs, mounts its mount table, which is
+like fstab, and makes the entry at `/` the root. Each entry is a path, a
+source (a disk or a filesystem such as `NodeFS`), a type, a mode (`"rw"`,
+`"ro"`, or `"overlay"`), and options.
+
+Each entry point loads only the files it needs. The kernel, `vmlinux.wasm`,
+comes with `lowland/machine` and what imports it, the guest agent's
+initramfs, `agent.cpio`, with `lowland/guest`, and the canonical images with
+`lowland/image`. An
+application that boots its own image never bundles the canonical one.
+
+These files load relative to their modules, so they need no configuration in
+Node or browsers. Bundlers that emit `new URL(..., import.meta.url)` assets,
+such as Vite 8, need no configuration either. The Vite 7 development server
+moves prebundled dependencies into `node_modules/.vite/deps` without these
+files, so exclude the package from dependency optimization there:
+
+```js
+// vite.config.js
+export default {
+  optimizeDeps: { exclude: ["lowland"] },
+};
+```
+
 ## Building images
 
 ```sh
@@ -102,7 +163,7 @@ npx lowland build --package busybox --package curl \
 ```
 
 `lowland build` builds a system image from apk packages and host files. It
-takes the same options as `buildImage()` from `@lowland/image/build`, as
+takes the same options as `buildImage()` from `lowland/image/build`, as
 flags:
 
 - `-p`, `--package <name|path>` installs a package by name, or from a local
@@ -119,6 +180,19 @@ flags:
 
 Run `npx lowland build --help` for a summary.
 
+## Documentation
+
+See [docs.low.land](https://docs.low.land) for guides and the
+[API reference](https://docs.low.land/reference/lowland/).
+
 ## License
 
-MIT
+The TypeScript and JavaScript sources are available under the MIT license. The
+package also contains:
+
+- `vmlinux.wasm`, the Linux kernel, under `GPL-2.0-only WITH Linux-syscall-note`;
+- the guest agent's initramfs, statically linked with MIT-licensed musl;
+- the canonical and builder images, with GPL-2.0-only BusyBox and apk-tools,
+  MIT-licensed musl, and the MPL-2.0 Mozilla CA certificate bundle. The
+  builder image also contains GPL-2.0-only e2fsprogs and GPL-2.0-or-later
+  erofs-utils.

@@ -4,14 +4,14 @@ import {
   entropyDevice,
   type Machine,
   type Device,
-} from "@lowland/kernel";
+} from "../../src/machine/index.ts";
 import {
   createNetwork,
   guestAgent,
   type GuestAgent,
   type Network,
   type NetworkAttachment,
-} from "../src/index.ts";
+} from "../../src/guest/index.ts";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
 import { createConnection } from "node:net";

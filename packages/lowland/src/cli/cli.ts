@@ -39,7 +39,7 @@ if (name === "-h" || name === "--help" || name === "help") {
   process.exit(0);
 }
 if (name === "-v" || name === "--version") {
-  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
   process.stdout.write(`${manifest.version}\n`);
   process.exit(0);
 }

@@ -3,8 +3,8 @@
   "compilerOptions": {
     "declaration": false,
     "noEmit": true,
-    "rootDir": "..",
+    "rootDir": "../../..",
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["*.ts", "machine/*.ts", "guest/*.ts", "image/*.ts", "image/online/*.ts"]
 }

@@ -1,18 +1,14 @@
-import {
-  blockDevice,
-  diskStorage,
-  fileSystemDevice,
-  vsockDevice,
-  type DiskSource,
-  type FS,
-  type Machine,
-} from "@lowland/kernel";
+import { blockDevice } from "../machine/virtio/block.ts";
+import { diskStorage, type DiskSource } from "../machine/disk.ts";
+import { fileSystemDevice, type FS } from "../machine/virtio/fs.ts";
+import { vsockDevice } from "../machine/virtio/vsock.ts";
+import type { Machine } from "../machine/index.ts";
 import {
   machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
   type MachineSetup,
-} from "@lowland/kernel/plugin";
+} from "../machine/plugin.ts";
 import { E, MountFlags, SystemError, UnmountFlags } from "./abi.ts";
 import {
   create_guest_client,
@@ -30,7 +26,7 @@ import type { ChildProcess, CommandStatus } from "./process.ts";
 let agent_initramfs: Promise<Uint8Array<ArrayBuffer>> | undefined;
 
 async function read_agent_initramfs() {
-  const url = new URL("../agent.cpio", import.meta.url);
+  const url = new URL("../../assets/agent.cpio", import.meta.url);
   const asset = await platform.load_asset(url);
   check_agent_initramfs(url, asset);
   return asset.bytes;

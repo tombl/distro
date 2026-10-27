@@ -7,8 +7,8 @@ import {
   FSError,
   type FSSetAttributes,
   fileSystemDevice,
-} from "@lowland/kernel";
-import { SeekMode } from "../src/index.ts";
+} from "../../src/machine/index.ts";
+import { SeekMode } from "../../src/guest/index.ts";
 import { getdents_inode } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";

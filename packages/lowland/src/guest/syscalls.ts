@@ -24,7 +24,7 @@
 //                    out-blob (full: capacity bytes; ret-sized: min(capacity,
 //                    ret) bytes), or the spawn/reap reply body.
 
-import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "@lowland/bytes";
+import { Bytes, FixedArray, I64LE, Struct, U32LE, U64LE, U8 } from "../bytes/index.ts";
 import { AT, NR, OpenHow, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 

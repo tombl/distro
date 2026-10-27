@@ -10,10 +10,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const ATTRIBUTE = "lowland-image.package.checks.tests.assets";
+const ATTRIBUTE = "lowland.package.checks.image.assets";
 
 async function build() {
-  const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
   const { stdout } = await promisify(execFile)("nix", [
     "build",
     `${repository_root}#${ATTRIBUTE}`,
@@ -35,7 +35,7 @@ export const jq_package = join(directory, "jq.apk");
 export const unsigned_repository = join(directory, "unsigned-repository");
 
 /** The canonical image shipped in this package. */
-export const canonical_image = fileURLToPath(new URL("../rootfs.erofs", import.meta.url));
+export const canonical_image = fileURLToPath(new URL("../../assets/rootfs.erofs", import.meta.url));
 
 /** A scratch directory removed when disposed. */
 export async function scratch_directory() {

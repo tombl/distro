@@ -5,13 +5,13 @@ import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
 import { Worker } from "node:worker_threads";
-import { blockDevice } from "../src/virtio/block.ts";
-import type { Device } from "../src/virtio/device.ts";
-import { consoleDevice } from "../src/virtio/console.ts";
-import { fileSystemDevice } from "../src/virtio/fs.ts";
-import { ethernetDevice, ethernetNetwork } from "../src/virtio/net.ts";
-import { vsockDevice } from "../src/virtio/vsock.ts";
-import { serveDevice, serveDeviceError, workerDevice } from "../src/virtio/remote.ts";
+import { blockDevice } from "../../src/machine/virtio/block.ts";
+import type { Device } from "../../src/machine/virtio/device.ts";
+import { consoleDevice } from "../../src/machine/virtio/console.ts";
+import { fileSystemDevice } from "../../src/machine/virtio/fs.ts";
+import { ethernetDevice, ethernetNetwork } from "../../src/machine/virtio/net.ts";
+import { vsockDevice } from "../../src/machine/virtio/vsock.ts";
+import { serveDevice, serveDeviceError, workerDevice } from "../../src/machine/virtio/remote.ts";
 import { attach_devices, close_device, TestDevice } from "./virtio-fixture.ts";
 import {
   allocate_shared_memory,
@@ -21,8 +21,8 @@ import {
   uncatchable,
   user_module_imports_supported,
   type UserWidth,
-} from "../src/wasm.ts";
-import { read_wasm_function_imports } from "../src/wasm_binary.ts";
+} from "../../src/machine/wasm.ts";
+import { read_wasm_function_imports } from "../../src/machine/wasm_binary.ts";
 
 // Assembles WebAssembly text with wasm-tools, which the Nix devshell provides.
 function wat(source: string) {

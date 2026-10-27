@@ -8,7 +8,7 @@ import {
   FSError,
   type FSSetAttributes,
   type FSTimestamp,
-} from "@lowland/kernel";
+} from "../machine/virtio/fs.ts";
 
 const FileType = {
   directory: 0o040000,

@@ -3,10 +3,11 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { rootImage } from "../src/image/index.ts";
 import { Linux } from "../src/linux.ts";
 import { closeTerminals, Terminal } from "./pty.ts";
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/cli/cli.ts", import.meta.url));
 
 /** Runs `lowland run` with `args` on a host pseudoterminal. */
 function lowland_on_terminal(args: string[], size?: { rows: number; columns: number }) {
@@ -166,7 +167,7 @@ describe("lowland run on a terminal", () => {
 
 describe("Linux terminals", () => {
   it("runs a command on a terminal and resizes it", async () => {
-    await using linux = await Linux.create();
+    await using linux = await Linux.create({ image: rootImage() });
     const result = await linux.run(["sh", "-c", "test -t 0 && stty size; echo error >&2"], {
       terminal: { rows: 30, columns: 100 },
     });

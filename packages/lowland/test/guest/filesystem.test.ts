@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { SeekMode, SystemError } from "../src/index.ts";
+import { SeekMode, SystemError } from "../../src/guest/index.ts";
 import { guest_test } from "./fixture.ts";
 import { pattern_bytes } from "./helpers.ts";
 

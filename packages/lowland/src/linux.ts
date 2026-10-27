@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-import { bootMachine, entropyDevice, type FS, type Machine } from "@lowland/kernel";
-import { machinePlugin, type MachinePlugin, type MachinePluginInput } from "@lowland/kernel/plugin";
+import { bootMachine, entropyDevice, type FS, type Machine } from "./machine/index.ts";
+import { machinePlugin, type MachinePlugin, type MachinePluginInput } from "./machine/plugin.ts";
 import {
   guestAgent,
   type ChildProcess,
@@ -12,13 +12,14 @@ import {
   type Network,
   type NetworkAttachment,
   type RunResult,
-} from "@lowland/guest";
-import { rootImage, type ImageSource } from "@lowland/image";
+} from "./guest/index.ts";
+import { image_mount, type ImageSource } from "./image/source.ts";
 
 /** A disk image attached to a machine and mounted at a guest path. */
 export interface DiskOptions {
   /**
-   * A filesystem image, as any source `rootImage()` accepts: a file path in
+   * A filesystem image, as any source `rootImage()` from `lowland/image`
+   * accepts: a file path in
    * Node, a URL, a file handle, bytes, a blob, or a response. A writable
    * disk needs a path, a file handle, or bytes.
    */
@@ -36,9 +37,9 @@ export interface DiskOptions {
 /** A filesystem shared into a machine and mounted at a guest path. */
 export interface MountOptions {
   /**
-   * The filesystem to share, such as a `NodeFS` from `@lowland/guest/node`
-   * for a host directory, or a `BrowserFS` from `@lowland/guest/browser` for
-   * the origin private file system.
+   * The filesystem to share, such as a `NodeFS` from `lowland/node` for a
+   * host directory, or a `BrowserFS` from `lowland/browser` for the origin
+   * private file system.
    */
   source: FS<object, any>;
   /** The absolute guest path to mount the filesystem at. */
@@ -54,11 +55,15 @@ export interface MountOptions {
 /** The configuration of a machine created by `Linux.create()`. */
 export interface LinuxOptions {
   /**
-   * The root image, as any source `rootImage()` accepts. Defaults to the
-   * canonical image from `@lowland/image`. The root is always read-only
-   * beneath a temporary overlay, so the image never changes.
+   * The root: `rootImage()` from `lowland/image` for the canonical image, or
+   * your own image as any source `rootImage()` accepts, which is mounted
+   * read-only beneath a temporary overlay, so it never changes. A mount entry
+   * at `/` of your own is used as given.
+   *
+   * There is no default, so an application that boots its own image never
+   * bundles the canonical one: only importing `lowland/image` does.
    */
-  image?: ImageSource;
+  image: Mount | ImageSource;
   /** Disk images to attach and mount, in order. */
   disks?: readonly DiskOptions[];
   /** Filesystems to share and mount, in order. */
@@ -91,6 +96,15 @@ function check_guest_path(kind: string, path: string) {
   }
 }
 
+/** The root mount for `LinuxOptions.image`. */
+function root_mount(image: Mount | ImageSource): Mount {
+  // A mount entry has a path; no image source does.
+  if (typeof (image as Partial<Mount>).path !== "string") return image_mount(image as ImageSource);
+  const mount = image as Mount;
+  if (mount.path !== "/") throw new TypeError(`the image must be mounted at /, not ${mount.path}`);
+  return mount;
+}
+
 // Scratch space in memory, whatever the root is.
 const DEFAULT_MOUNTS: readonly Mount[] = [
   { path: "/run", type: "tmpfs", options: "mode=0755" },
@@ -105,7 +119,10 @@ const DEFAULT_MOUNTS: readonly Mount[] = [
  *
  * @example Run a command
  * ```ts
- * await using linux = await Linux.create();
+ * import { Linux } from "lowland";
+ * import { rootImage } from "lowland/image";
+ *
+ * await using linux = await Linux.create({ image: rootImage() });
  * const result = await linux.run(["uname", "-a"]);
  * console.log(new TextDecoder().decode(result.stdout));
  * ```
@@ -130,7 +147,11 @@ export class Linux implements AsyncDisposable {
   }
 
   /** Boots a machine and mounts its disks and filesystems. */
-  static async create(options: LinuxOptions = {}): Promise<Linux> {
+  static async create(options: LinuxOptions): Promise<Linux> {
+    if (options?.image === undefined) {
+      throw new TypeError("Linux.create() needs an image, such as rootImage() from lowland/image");
+    }
+    const root = root_mount(options.image);
     const disks = options.disks ?? [];
     const mounts = options.mounts ?? [];
     const guest_paths = new Set<string>();
@@ -147,7 +168,7 @@ export class Linux implements AsyncDisposable {
 
     const guest = guestAgent({
       mounts: [
-        rootImage(options.image),
+        root,
         ...DEFAULT_MOUNTS,
         ...disks.map((disk): Mount => ({
           path: disk.path,

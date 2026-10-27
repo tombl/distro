@@ -18,7 +18,17 @@ import {
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
-export { bootConsole } from "./plugin.ts";
+export {
+  bootConsole,
+  type KernelArguments,
+  type MachineDevices,
+  type MachineInitramfs,
+  machinePlugin,
+  type MachinePlugin,
+  type MachinePluginInput,
+  type MachinePluginProvider,
+  type MachineSetup,
+} from "./plugin.ts";
 export type { Device } from "./virtio/device.ts";
 export { blockDevice, type BlockDeviceOptions, type BlockStorage } from "./virtio/block.ts";
 export {
@@ -104,7 +114,7 @@ export class MachinePanicError extends Error {
 
 async function read_resources() {
   const { bytes, module: vmlinux } = await platform.load_wasm(
-    new URL("../vmlinux.wasm", import.meta.url),
+    new URL("../../assets/vmlinux.wasm", import.meta.url),
   );
 
   const memories = read_wasm_memories(bytes);

@@ -2,19 +2,19 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bootMachine, type Machine } from "../src/index.ts";
+import { bootMachine, type Machine } from "../../src/machine/index.ts";
 import {
   configure_machine,
   run_machine_booted,
   run_machine_closing,
-} from "../src/plugin-internal.ts";
+} from "../../src/machine/plugin-internal.ts";
 import {
   bootConsole,
   machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
-} from "../src/plugin.ts";
-import { public_handle } from "../src/virtio/device.ts";
+} from "../../src/machine/plugin.ts";
+import { public_handle } from "../../src/machine/virtio/device.ts";
 import { close_device, TestDevice } from "./virtio-fixture.ts";
 
 function machine_stub(): Machine {

@@ -1,41 +1,70 @@
 {
   "name": "lowland",
   "version": "0.1.0",
-  "description": "Linux machines in Node and browsers, as a JavaScript API and the lowland command line.",
+  "description": "Linux machines in Node and browsers: the Linux API, the machine, guest and image layers beneath it, and the lowland command line.",
   "homepage": "https://docs.low.land/",
-  "license": "MIT",
+  "license": "MIT AND GPL-2.0-only AND GPL-2.0-or-later AND MPL-2.0 AND (GPL-2.0-only WITH Linux-syscall-note)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tombl/distro.git",
     "directory": "packages/lowland"
   },
   "bin": {
-    "lowland": "./dist/cli.js"
+    "lowland": "./dist/cli/cli.js"
   },
   "files": [
+    "assets",
     "dist"
   ],
   "type": "module",
+  "sideEffects": [
+    "./dist/cli/cli.js",
+    "./dist/machine/worker.js"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./machine": {
+      "types": "./dist/machine/index.d.ts",
+      "default": "./dist/machine/index.js"
+    },
+    "./guest": {
+      "types": "./dist/guest/index.d.ts",
+      "default": "./dist/guest/index.js"
+    },
+    "./image": {
+      "types": "./dist/image/index.d.ts",
+      "default": "./dist/image/index.js"
+    },
+    "./image/build": {
+      "types": "./dist/image/build.d.ts",
+      "default": "./dist/image/build.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
     }
   },
   "scripts": {
     "build": "tsc",
-    "check": "tsc --noEmit && tsc -p test",
-    "test": "node --test --test-concurrency=1 test/*.test.ts",
-    "test:unit": "node --test test/cli.test.ts"
-  },
-  "dependencies": {
-    "@lowland/guest": "workspace:^",
-    "@lowland/image": "workspace:^",
-    "@lowland/kernel": "workspace:^"
+    "check": "tsc --noEmit && tsc -p tsconfig.web.json && tsc -p test",
+    "test": "node --test --test-concurrency=1 test/machine/*.test.ts test/guest/*.test.ts test/image/*.test.ts test/*.test.ts",
+    "test:machine": "node --test test/machine/*.test.ts",
+    "test:guest": "node --test --test-concurrency=1 test/guest/*.test.ts",
+    "test:image": "node --test --test-concurrency=1 test/image/*.test.ts",
+    "test:image:online": "node --test --test-concurrency=1 test/image/online/*.test.ts",
+    "test:cli": "node --test --test-concurrency=1 test/*.test.ts",
+    "test:unit": "node --test test/machine/*.test.ts test/cli.test.ts"
   },
   "devDependencies": {
-    "@types/node": "^24",
-    "typescript": "^7.0.2"
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
   },
   "engines": {
     "node": "^24.20.0 || >=26.7.0"

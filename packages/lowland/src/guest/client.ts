@@ -2,7 +2,7 @@
 // Every operation here reads like the C it replaces; errno-based control
 // flow catches SystemError, because exceptions are the errno channel.
 
-import type { VsockDevice } from "@lowland/kernel";
+import type { VsockDevice } from "../machine/virtio/vsock.ts";
 import { AT, DT, E, O, parse_dirents, RESOLVE, SystemError } from "./abi.ts";
 import { GuestSession } from "./conn.ts";
 import {

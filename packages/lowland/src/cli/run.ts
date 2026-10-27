@@ -7,8 +7,9 @@ import {
   type CommandStatus,
   type Network,
   type TerminalSize,
-} from "@lowland/guest";
-import { NodeFS } from "@lowland/guest/node";
+} from "../guest/index.ts";
+import { rootImage } from "../image/index.ts";
+import { NodeFS } from "../node/index.ts";
 import { spawnSync } from "node:child_process";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
@@ -17,7 +18,7 @@ import { createConnection, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
 import type { ReadStream, WriteStream } from "node:tty";
 import { parseArgs } from "node:util";
-import { Linux, type LinuxOptions } from "./linux.ts";
+import { Linux, type LinuxOptions } from "../linux.ts";
 import { EXIT_FAILURE, UsageError } from "./usage.ts";
 
 export const runUsage = `Usage: lowland run [options] [--] [command...]
@@ -269,7 +270,9 @@ export async function machineOptions(run: RunArguments, network?: Network): Prom
     }),
   );
   return {
-    image: run.image,
+    // The command line is not bundled into applications, so it can default
+    // to the canonical image.
+    image: rootImage(run.image),
     disks: run.disks,
     mounts: run.mounts.map(({ source, path, readOnly }) => ({
       source: new NodeFS(source, { readOnly }),

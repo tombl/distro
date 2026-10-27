@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // The only Nix-aware part of the test suite. The Nix check points
-// LOWLAND_TEST_ASSETS at @lowland/image's test assets, and outside Nix the
+// LOWLAND_TEST_ASSETS at lowland/image's test assets, and outside Nix the
 // tests build them.
 import { execFile } from "node:child_process";
 import { chmod, copyFile, mkdtemp, rm } from "node:fs/promises";
@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const ATTRIBUTE = "lowland-image.package.checks.tests.assets";
+const ATTRIBUTE = "lowland.package.checks.image.assets";
 
 async function build() {
   const repository_root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");

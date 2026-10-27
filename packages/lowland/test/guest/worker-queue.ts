@@ -1,6 +1,6 @@
 // Firefox starts at most dom.workers.maxPerDomain (512) workers per site and
 // queues the rest until one exits, without an error. Model that in Node by
-// replacing node:worker_threads' Worker before @lowland/kernel loads, so a
+// replacing node:worker_threads' Worker before lowland/machine loads, so a
 // test file must import this module first.
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";

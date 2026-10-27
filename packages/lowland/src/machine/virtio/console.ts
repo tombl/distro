@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { Struct, U16LE } from "@lowland/bytes";
+import { Struct, U16LE } from "../../bytes/index.ts";
 import { assert } from "../util.ts";
 import { type Device, public_handle, VirtioDevice } from "./device.ts";
 import type { Virtqueue } from "./queue.ts";

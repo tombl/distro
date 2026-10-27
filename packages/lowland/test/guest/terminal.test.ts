@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "../src/index.ts";
+import type { ChildProcess } from "../../src/guest/index.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
 

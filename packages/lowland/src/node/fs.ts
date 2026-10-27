@@ -8,7 +8,7 @@ import {
   FSError,
   type FSSetAttributes,
   type FSStat,
-} from "@lowland/kernel";
+} from "../machine/virtio/fs.ts";
 import { constants, type BigIntStats, type Dirent } from "node:fs";
 import {
   access,

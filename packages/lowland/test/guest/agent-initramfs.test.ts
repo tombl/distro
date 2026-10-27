@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { check_agent_initramfs } from "../src/agent-initramfs.ts";
-import { web } from "../src/platform.ts";
+import { check_agent_initramfs } from "../../src/guest/agent-initramfs.ts";
+import { web } from "../../src/guest/platform.ts";
 import { agent_initramfs } from "./assets.ts";
 
 const url = new URL("https://example.com/assets/agent.cpio");

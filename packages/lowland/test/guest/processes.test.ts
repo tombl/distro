@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { bootConsole, bootMachine, vsockDevice } from "@lowland/kernel";
-import type { MachinePlugin } from "@lowland/kernel/plugin";
+import { bootConsole, bootMachine, vsockDevice } from "../../src/machine/index.ts";
+import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import { test } from "node:test";
-import { O } from "../src/abi.ts";
-import { GuestSession } from "../src/conn.ts";
-import { guestAgent, SeekMode, SystemError, type GuestAgent } from "../src/index.ts";
-import { spawn_stdio, spawn_terminal } from "../src/process.ts";
+import { O } from "../../src/guest/abi.ts";
+import { GuestSession } from "../../src/guest/conn.ts";
+import { guestAgent, SeekMode, SystemError, type GuestAgent } from "../../src/guest/index.ts";
+import { spawn_stdio, spawn_terminal } from "../../src/guest/process.ts";
 import {
   type FileAction,
   getpid,
@@ -18,7 +18,7 @@ import {
   spawn,
   SPAWN,
   write,
-} from "../src/syscalls.ts";
+} from "../../src/guest/syscalls.ts";
 import { agent_initramfs, busybox_initramfs, root_mount } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, console_output, pattern_bytes } from "./helpers.ts";

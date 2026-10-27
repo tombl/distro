@@ -1,15 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { blockDevice } from "@lowland/kernel";
-import type { MachinePlugin } from "@lowland/kernel/plugin";
-import { testAsset } from "../../../scripts/test-assets.ts";
-import type { Mount } from "../src/index.ts";
+import { blockDevice } from "../../src/machine/index.ts";
+import type { MachinePlugin } from "../../src/machine/plugin.ts";
+import { testAsset } from "../../../../scripts/test-assets.ts";
+import type { Mount } from "../../src/guest/index.ts";
 
 async function asset(name: string) {
   return readFile(await testAsset(name));
 }
 
 /** The package's own agent initramfs. */
-export const agent_initramfs = await readFile(new URL("../agent.cpio", import.meta.url));
+export const agent_initramfs = await readFile(new URL("../../assets/agent.cpio", import.meta.url));
 export const rootfs = await asset("rootfs.erofs");
 export const ext4_rootfs = await asset("rootfs.ext4");
 

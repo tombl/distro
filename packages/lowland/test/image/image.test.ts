@@ -5,9 +5,9 @@ import { open, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent, type Mount } from "@lowland/guest";
-import { rootImage } from "../src/index.ts";
+import { bootMachine } from "../../src/machine/index.ts";
+import { guestAgent, type Mount } from "../../src/guest/index.ts";
+import { rootImage } from "../../src/image/index.ts";
 import { canonical_image, scratch_directory, writable_ext4_copy } from "./assets.ts";
 
 const decoder = new TextDecoder();
@@ -63,7 +63,7 @@ test("boots the root image with the guest agent", async (t) => {
 test("is the root of a mount table, beneath an overlay", () => {
   assert.deepEqual(rootImage(), {
     path: "/",
-    source: new URL("../rootfs.erofs", import.meta.resolve("../src/index.ts")),
+    source: new URL("../../assets/rootfs.erofs", import.meta.resolve("../../src/image/index.ts")),
     type: "erofs",
     mode: "overlay",
   });

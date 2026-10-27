@@ -8,11 +8,9 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@lowland/guest": "workspace:*",
-    "@lowland/image": "workspace:*",
-    "@lowland/kernel": "workspace:*",
     "@lowland/web-ui": "workspace:*",
     "@pierre/diffs": "^1.6.1",
+    "lowland": "workspace:*",
     "sucrase": "^3.35.1"
   },
   "devDependencies": {

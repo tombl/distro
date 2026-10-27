@@ -4,13 +4,13 @@ import {
   type EthernetDevice,
   type EthernetPort,
   type MacAddress,
-} from "@lowland/kernel";
+} from "../machine/virtio/net.ts";
 import {
   machinePlugin,
   type MachinePlugin,
   type MachinePluginProvider,
-} from "@lowland/kernel/plugin";
-import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "@lowland/bytes";
+} from "../machine/plugin.ts";
+import { Bytes, FixedArray, Struct, U16BE, U32BE, U8 } from "../bytes/index.ts";
 import { wait_for_agent, type GuestAgent } from "./agent.ts";
 
 const GATEWAY_ADDRESS = "192.0.2.1";

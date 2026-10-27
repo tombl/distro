@@ -5,7 +5,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { diskStorage, type BlockStorage, type DiskFileHandle } from "../src/index.ts";
+import { diskStorage, type BlockStorage, type DiskFileHandle } from "../../src/machine/index.ts";
 
 function disk(size = 4096) {
   const bytes = new Uint8Array(size);

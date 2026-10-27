@@ -6,7 +6,7 @@ import {
   type ImageCompression,
   type ImageFile,
   type ImageFormat,
-} from "@lowland/image/build";
+} from "../image/build.ts";
 import { parseArgs } from "node:util";
 import { UsageError } from "./usage.ts";
 

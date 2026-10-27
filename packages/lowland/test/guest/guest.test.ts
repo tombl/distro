@@ -3,8 +3,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { blockDevice, bootMachine, diskStorage, type BlockStorage } from "@lowland/kernel";
-import type { MachinePlugin } from "@lowland/kernel/plugin";
+import {
+  blockDevice,
+  bootMachine,
+  diskStorage,
+  type BlockStorage,
+} from "../../src/machine/index.ts";
+import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import {
   guestAgent,
   GuestBootError,
@@ -12,10 +17,10 @@ import {
   SystemError,
   type GuestAgentOptions,
   type Mount,
-} from "../src/index.ts";
-import { E, NR } from "../src/abi.ts";
-import { GuestSession, type Lane } from "../src/conn.ts";
-import { NodeFS } from "../src/node.ts";
+} from "../../src/guest/index.ts";
+import { E, NR } from "../../src/guest/abi.ts";
+import { GuestSession, type Lane } from "../../src/guest/conn.ts";
+import { NodeFS } from "../../src/node/index.ts";
 import { ext4_root_mount, ext4_rootfs, root_mount, rootfs } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect } from "./helpers.ts";
