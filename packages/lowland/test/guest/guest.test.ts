@@ -57,15 +57,17 @@ function needs_recovery(disk: Uint8Array) {
   return (new DataView(disk.buffer, disk.byteOffset + 1024).getUint32(0x60, true) & 0x4) !== 0;
 }
 
-/** Boots a writable ext4 root, writes to it, and closes without unmounting. */
+/** Boots a writable ext4 root, writes to it, syncs, and kills the machine. */
 async function leave_journal_dirty(disk: Uint8Array) {
   const { agent: guest, machine } = await boot({ mounts: [ext4_root_mount(disk)] });
   try {
     await guest.fs.writeTextFile("/unclean-write-test", "journaled\n");
+    await guest.fs.sync();
   } finally {
-    await close(machine);
+    machine.kill();
+    await machine.exited;
   }
-  // The machine closes without unmounting, so the journal still needs
+  // The machine ends without unmounting, so the journal still needs
   // recovery: EXT4_FEATURE_INCOMPAT_RECOVER in s_feature_incompat.
   const superblock = new DataView(disk.buffer, disk.byteOffset + 1024);
   assert.ok(superblock.getUint32(0x60, true) & 0x4);

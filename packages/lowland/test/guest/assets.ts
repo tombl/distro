@@ -45,6 +45,8 @@ const boot_initramfs = await asset("boot.cpio");
 export const busybox_initramfs = boot_initramfs;
 
 export const lifecycle_assets = {
+  /** The busybox system /init switches into, as an EROFS image. */
+  rootfs: lifecycle_rootfs,
   /** The busybox initramfs that mounts /dev/vda and switches into it. */
   boot: (): MachinePlugin => ({
     configure: (setup) => setup.initramfs.add(boot_initramfs),

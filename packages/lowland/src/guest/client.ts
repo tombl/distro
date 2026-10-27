@@ -23,6 +23,7 @@ import {
   read_kernel_log,
   readlinkat,
   renameat,
+  signal_init,
   switch_root,
   symlinkat,
   sync,
@@ -336,6 +337,14 @@ export interface GuestClientCapabilities {
   /** The end of the kernel log, as text. */
   kernel_log(): Promise<string>;
   /**
+   * Sends `signal` to PID 1, over this client's session. Resolves `true`
+   * once the request has gone out, even if the session ends before the
+   * reply, and `false` if it could not be sent.
+   */
+  signal_init(signal: number): Promise<boolean>;
+  /** Forgets the session, as when the guest has rebooted. */
+  reset(): void;
+  /**
    * Opens `path` as a directory with `root` as its `/`, creating missing
    * directories: symlinks, absolute or relative, and `..` never leave
    * `root`. The result is an `O_PATH` descriptor, which other calls on this
@@ -388,6 +397,7 @@ function* prefixes(path: string): Generator<string> {
 
 class GuestClient {
   #session: Promise<GuestSession> | null = null;
+  #connected: GuestSession | null = null;
   #processes = 0;
   #process_waiters: (() => void)[] = [];
   private readonly vsock: VsockDevice;
@@ -396,9 +406,11 @@ class GuestClient {
     this.vsock = vsock;
   }
 
-  // Lazy, memoized connect; cleared on failure so the next call retries. This
-  // is what machine.ts's readiness loop depends on.
+  // Lazy, memoized connect; cleared on failure so the next call retries, and
+  // when the session dies, so a rebooted guest gets a new one. This is what
+  // the agent's readiness loop depends on.
   #connect(timeoutMs?: number): Promise<GuestSession> {
+    if (this.#connected?.dead) this.reset();
     if (!this.#session) {
       const attempt = GuestSession.connect(
         this.vsock,
@@ -408,8 +420,34 @@ class GuestClient {
         throw error;
       });
       this.#session = attempt;
+      void attempt.then(
+        (session) => {
+          if (this.#session === attempt) this.#connected = session;
+        },
+        () => {},
+      );
     }
     return this.#session;
+  }
+
+  reset() {
+    const session = this.#session;
+    this.#session = null;
+    this.#connected = null;
+    void session?.then(
+      (session) => session.close(),
+      () => {},
+    );
+  }
+
+  async signal_init(signal: number) {
+    let session: GuestSession;
+    try {
+      session = await this.#connect();
+    } catch {
+      return false;
+    }
+    return signal_init(session, signal);
   }
 
   async ping(timeoutMs = 5000) {
@@ -424,7 +462,10 @@ class GuestClient {
     const pending = this.#connect();
     const session = await pending;
     await switch_root(session, init && { ...init, cwd: "/" });
-    if (this.#session === pending) this.#session = null;
+    if (this.#session === pending) {
+      this.#session = null;
+      this.#connected = null;
+    }
     session.close();
   }
 
@@ -757,6 +798,8 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
     sync: client.sync.bind(client),
     switch_root: client.switch_root.bind(client),
     kernel_log: client.kernel_log.bind(client),
+    signal_init: client.signal_init.bind(client),
+    reset: client.reset.bind(client),
     open_directory_in: client.open_directory_in.bind(client),
     fs: {
       readFile: client.readFile.bind(client),

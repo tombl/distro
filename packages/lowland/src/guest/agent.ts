@@ -9,7 +9,7 @@ import {
   type MachinePluginProvider,
   type MachineSetup,
 } from "../machine/plugin.ts";
-import { E, MountFlags, SystemError, UnmountFlags } from "./abi.ts";
+import { E, MountFlags, SIG, SystemError, UnmountFlags } from "./abi.ts";
 import {
   create_guest_client,
   type Exec,
@@ -42,11 +42,17 @@ function load_agent_initramfs() {
 }
 
 async function wait_for_guest(client: GuestClientCapabilities, machine: Machine) {
-  let machine_ended = false;
+  // Once the machine has ended, its reason is the error, whatever the ping
+  // that noticed first says, such as a vsock device that closed under it.
+  let ended_error: { error: unknown } | undefined;
   const ended = machine.exited.then((exit) => {
-    machine_ended = true;
-    if (exit.reason === "crash") throw exit.error;
-    throw new Error(`machine ended (${exit.reason}) before guest agent became ready`);
+    ended_error = {
+      error:
+        exit.reason === "crash"
+          ? exit.error
+          : new Error(`machine ended (${exit.reason}) before guest agent became ready`),
+    };
+    throw ended_error.error;
   });
 
   const deadline = performance.now() + 30_000;
@@ -56,7 +62,7 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
       await Promise.race([client.ping(1000), ended]);
       return;
     } catch (error) {
-      if (machine_ended) throw error;
+      if (ended_error) throw ended_error.error;
       failure = error;
     }
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
@@ -663,7 +669,9 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
   const client = create_guest_client(vsock);
   let configured = false;
   let attached_machine: Machine | undefined;
-  let ready: Promise<void> | undefined;
+  // This boot's readiness. A reboot gives the machine a new memory, and the
+  // agent has to boot the guest again over a new session.
+  let ready: { memory: WebAssembly.Memory; promise: Promise<void> } | undefined;
   let is_ready = false;
 
   const boot = async (machine: Machine) => {
@@ -722,9 +730,30 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       return Promise.reject(new Error("guest agent is attached to a different machine"));
     }
     attached_machine = machine;
-    return (ready ??= boot(machine).then(() => {
-      is_ready = true;
-    }));
+    if (ready?.memory !== machine.memory) {
+      is_ready = false;
+      // The previous boot's session died with its kernel.
+      client.reset();
+      const current = {
+        memory: machine.memory,
+        promise: boot(machine).then(() => {
+          if (ready === current) is_ready = true;
+        }),
+      };
+      ready = current;
+    }
+    return ready.promise;
+  };
+
+  // PID 1 takes SIGUSR2 as poweroff and SIGTERM as reboot, as BusyBox init
+  // does. The signal goes over the session this client already holds: PID 1
+  // serves one session at a time, so a session of the hook's own would wait
+  // behind it.
+  const power = async (action: "poweroff" | "reboot") => {
+    // Before the agent is ready, the kernel's button runs /sbin/poweroff or
+    // /sbin/reboot, which signal PID 1 the same way.
+    if (!is_ready) return false;
+    return client.signal_init(action === "poweroff" ? SIG.USR2 : SIG.TERM);
   };
 
   const plugin: MachinePlugin = {
@@ -759,6 +788,7 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
     async booted(machine) {
       await wait(machine);
     },
+    power,
   };
 
   const agent: GuestAgent = {

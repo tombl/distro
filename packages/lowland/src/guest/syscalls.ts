@@ -91,10 +91,16 @@ type Arg =
   | { in: Uint8Array }
   | { out: number; ret_sized?: boolean };
 
-async function syscall(
+function syscall(session: GuestSession, nr: number, ...args: Arg[]) {
+  return syscall_with(session, nr, args);
+}
+
+async function syscall_with(
   session: GuestSession,
   nr: number,
-  ...args: Arg[]
+  args: readonly Arg[],
+  // Called once the request is written to its lane.
+  sent?: () => void,
 ): Promise<{
   ret: bigint;
   out: Uint8Array[]; // one entry per out arg, in order; empty when ret is -1
@@ -129,6 +135,7 @@ async function syscall(
 
   const { ret, errno, out } = await session.exchange(async (lane) => {
     await lane.write(request.array);
+    sent?.();
     const reply = new ReplyHead(await lane.read(ReplyHead.size));
     if (reply.ret === -1n) return { ret: reply.ret, errno: reply.errno, out: [] };
     const out: Uint8Array[] = [];
@@ -352,6 +359,23 @@ export async function pipe2(session: GuestSession, flags: number): Promise<[Gues
 
 export async function kill(session: GuestSession, pid: number, signal: number): Promise<void> {
   await syscall(session, NR.kill, pid, signal);
+}
+
+/**
+ * Sends `signal` to PID 1 to power the guest off or reboot it. Resolves
+ * `true` once the guest has the request, and `false` if it never got it.
+ * PID 1's shutdown may end the session before the reply arrives, which is
+ * no failure: the request went out, so the shutdown is under way.
+ */
+export async function signal_init(session: GuestSession, signal: number): Promise<boolean> {
+  let sent = false;
+  try {
+    await syscall_with(session, NR.kill, [1, signal], () => (sent = true));
+    return true;
+  } catch (error) {
+    if (error instanceof SystemError) return false;
+    return sent;
+  }
 }
 
 /** Resizes a terminal; the kernel sends SIGWINCH to its foreground group. */

@@ -196,6 +196,11 @@ export class GuestSession {
     }
   }
 
+  /** Whether the session has ended: no exchange on it can succeed. */
+  get dead(): boolean {
+    return this.#dead !== null;
+  }
+
   close(): void {
     this.#die(new Error("guest session closed"));
   }
