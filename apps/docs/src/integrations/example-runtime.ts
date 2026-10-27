@@ -8,12 +8,12 @@ import type { AstroIntegration, ViteUserConfig } from "astro";
 
 type Plugin = Extract<NonNullable<ViteUserConfig["plugins"]>[number], { name: string }>;
 
-// Runnable examples load the published packages the way a page without a
+// Runnable examples load the published package the way a page without a
 // bundler does: from files on the docs origin, through an import map. This
 // integration serves those files in development and copies them into the
 // build, under a path that changes whenever any of them does.
 
-const packages = ["@lowland/bytes", "@lowland/kernel", "@lowland/guest", "@lowland/image"];
+const packages = ["lowland"];
 const virtualId = "virtual:example-runtime";
 const prefix = "/_runtime";
 
@@ -24,15 +24,8 @@ interface RuntimePackage {
   exports: Record<string, string>;
 }
 
-// The docs app depends on every package except @lowland/bytes, which comes
-// with the kernel.
 async function findPackage(root: string, name: string): Promise<string> {
-  const direct = join(root, "node_modules", name);
-  try {
-    return await realpath(direct);
-  } catch {
-    return realpath(join(await findPackage(root, "@lowland/kernel"), "node_modules", name));
-  }
+  return realpath(join(root, "node_modules", name));
 }
 
 async function listFiles(dir: string): Promise<string[]> {

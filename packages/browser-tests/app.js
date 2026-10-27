@@ -5,9 +5,9 @@ import {
   consoleDevice,
   fileSystemDevice,
   workerDevice,
-} from "@lowland/kernel";
-import { guestAgent } from "@lowland/guest";
-import { BrowserFS } from "@lowland/guest/browser";
+} from "lowland/machine";
+import { guestAgent } from "lowland/guest";
+import { BrowserFS } from "lowland/browser";
 
 async function collectProcess(child) {
   const [status, stdout, stderr] = await Promise.all([

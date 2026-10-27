@@ -1,11 +1,26 @@
-export const referencePackages = [
+// The reference documents the one published package, lowland, in a section
+// per subpath. The facade's section carries the package README.
+export const referenceSections = [
   {
-    slug: "kernel",
-    directory: "kernel",
-    name: "@lowland/kernel",
-    entrypoints: ["@lowland/kernel", "@lowland/kernel/plugin"],
-    description: "APIs for Linux virtual machines and virtio devices.",
-    npm: "https://www.npmjs.com/package/@lowland/kernel",
+    slug: "lowland",
+    name: "lowland",
+    entrypoints: ["lowland"],
+    readme: true,
+    description: "A Linux machine with the guest agent and an image, and the lowland command line.",
+    groups: [
+      {
+        title: "Create a machine",
+        description: "Boot a machine with an image, disks, shared directories, and a network.",
+        symbols: ["Linux", "LinuxOptions", "DiskOptions", "MountOptions"],
+      },
+    ],
+  },
+  {
+    slug: "machine",
+    name: "lowland/machine",
+    entrypoints: ["lowland/machine"],
+    readme: false,
+    description: "Linux virtual machines and their virtio devices.",
     groups: [
       {
         title: "Boot a machine",
@@ -77,11 +92,10 @@ export const referencePackages = [
   },
   {
     slug: "guest",
-    directory: "linux-guest",
-    name: "@lowland/guest",
-    entrypoints: ["@lowland/guest", "@lowland/guest/node", "@lowland/guest/browser"],
+    name: "lowland/guest",
+    entrypoints: ["lowland/guest", "lowland/node", "lowland/browser"],
+    readme: false,
     description: "A bootable Linux guest with processes, files, and networking.",
-    npm: "https://www.npmjs.com/package/@lowland/guest",
     groups: [
       {
         title: "Start a guest",
@@ -144,7 +158,7 @@ export const referencePackages = [
       {
         title: "Share host directories",
         description:
-          "Expose a host directory to the guest. Import NodeFS from @lowland/guest/node and BrowserFS from @lowland/guest/browser.",
+          "Expose a host directory to the guest. Import NodeFS from lowland/node and BrowserFS from lowland/browser.",
         symbols: ["NodeFS", "NodeFSOptions", "BrowserFS"],
       },
       {
@@ -154,9 +168,36 @@ export const referencePackages = [
       },
     ],
   },
+  {
+    slug: "image",
+    name: "lowland/image",
+    entrypoints: ["lowland/image", "lowland/image/build"],
+    readme: false,
+    description: "The canonical system image, and a builder for your own.",
+    groups: [
+      {
+        title: "Attach an image",
+        description: "Attach the canonical image, or your own, as a machine's root.",
+        symbols: ["rootImage", "ImageSource", "RootImageOptions", "ImageFileHandle"],
+      },
+      {
+        title: "Build an image",
+        description:
+          "Build an image from apk packages and host files in Node. Import buildImage from lowland/image/build.",
+        symbols: [
+          "buildImage",
+          "BuildImageOptions",
+          "ImageFile",
+          "ImageFormat",
+          "ImageCompression",
+          "PackageRepository",
+        ],
+      },
+    ],
+  },
 ] as const;
 
-export type ReferencePackage = (typeof referencePackages)[number];
+export type ReferenceSection = (typeof referenceSections)[number];
 
 export function referenceSymbolId(name: string): string {
   return name.replaceAll(/[^a-zA-Z0-9_-]/g, "-");

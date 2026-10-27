@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, serveDevice, serveDeviceError } from "@lowland/kernel";
+import { blockDevice, serveDevice, serveDeviceError } from "lowland/machine";
 
 type Configuration = {
   handle: FileSystemFileHandle;

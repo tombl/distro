@@ -9,8 +9,8 @@ import {
   fileSystemDevice,
   type Device,
   workerDevice,
-} from "@lowland/kernel";
-import type { MachinePluginInput } from "@lowland/kernel/plugin";
+  type MachinePluginInput,
+} from "lowland/machine";
 import {
   createNetwork,
   guestAgent,
@@ -18,8 +18,8 @@ import {
   hostFetchNetwork,
   MountFlags,
   type GuestBoot,
-} from "@lowland/guest";
-import { BrowserFS } from "@lowland/guest/browser";
+} from "lowland/guest";
+import { BrowserFS } from "lowland/browser";
 import { serveGuest } from "@lowland/bridge-site/client";
 
 const terminalElement = document.querySelector<HTMLElement>("[data-terminal]");

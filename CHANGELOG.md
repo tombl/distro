@@ -80,8 +80,16 @@
 
 - Updated the WebAssembly architecture port to Linux 7.1 and moved immutable
   system images from SquashFS to EROFS.
-- Published packages bundle their private binary-data helpers so applications
-  only need to install the public kernel and guest packages.
+- **Breaking:** Lowland is one npm package, `lowland`, with an entry point
+  per layer. `@lowland/kernel` is `lowland/machine`, which also exports the
+  plugin API from `@lowland/kernel/plugin`. `@lowland/guest` is
+  `lowland/guest`, with `NodeFS` in `lowland/node` and `BrowserFS` in
+  `lowland/browser`. `@lowland/image` is `lowland/image` and
+  `lowland/image/build`. The binary-data helpers are internal source. Each
+  entry point loads only its own assets, so an application bundles the
+  canonical image only if it imports `lowland/image`, and
+  `Linux.create()` needs an `image`: `rootImage()` for the canonical one, or
+  your own.
 - **Breaking:** `@lowland/kernel` no longer exposes its virtio layer. Custom
   devices built on `VirtioController`, `VirtioDriver`, `VirtioDeviceOptions`,
   `VirtqueueHandler`, and the `Virtqueue*` types are no longer supported, and

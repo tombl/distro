@@ -78,8 +78,8 @@ virtio-fs device backed by `NodeFS` in Node.js or `BrowserFS` in a browser, whic
 mounts by its tag:
 
 ```js
-import { bootMachine, fileSystemDevice } from "@lowland/kernel";
-import { NodeFS } from "@lowland/guest/node";
+import { bootMachine, fileSystemDevice } from "lowland/machine";
+import { NodeFS } from "lowland/node";
 
 const guest = guestAgent({ mounts: [rootImage()] });
 const shared = fileSystemDevice(new NodeFS("./project", { readOnly: true }), { tag: "project" });
@@ -126,7 +126,7 @@ Fast access to an OPFS file is only available in a dedicated worker, through
 attaches it with `workerDevice()`:
 
 ```ts title="disk-worker.ts"
-import { blockDevice, type BlockStorage, serveDevice, serveDeviceError } from "@lowland/kernel";
+import { blockDevice, type BlockStorage, serveDevice, serveDeviceError } from "lowland/machine";
 
 const capacity = 256 * 1024 * 1024;
 
@@ -196,7 +196,7 @@ No worker is needed. Wrap a `FileHandle` opened with `"r+"`:
 
 ```js
 import { open } from "node:fs/promises";
-import { blockDevice } from "@lowland/kernel";
+import { blockDevice } from "lowland/machine";
 
 const file = await open("disk.img", "r+");
 const { size } = await file.stat();

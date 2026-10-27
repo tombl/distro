@@ -14,7 +14,7 @@ That function is the whole policy. There is no NAT and no firewall to configure.
 ## A switch in your process
 
 ```js
-import { createNetwork, guestAgent } from "@lowland/guest";
+import { createNetwork, guestAgent } from "lowland/guest";
 
 const network = createNetwork({ connectTcp, resolveDns });
 const guest = guestAgent({ mounts: [rootImage()] });
@@ -94,7 +94,7 @@ and waits for the reply, need Node.js 24.20 or 26.7 or later. Earlier versions o
 A page cannot open sockets, so `hostFetchNetwork()` turns guest HTTP into `fetch()` calls:
 
 ```js
-import { createNetwork, hostFetchNetwork } from "@lowland/guest";
+import { createNetwork, hostFetchNetwork } from "lowland/guest";
 
 const network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
 ```
@@ -145,7 +145,7 @@ For HTTP, `guestFetchHandler()` wraps this in the shape of `fetch`, taking a `Re
 returning a `Response`:
 
 ```js
-import { guestFetchHandler } from "@lowland/guest";
+import { guestFetchHandler } from "lowland/guest";
 
 await guest.exec(["httpd", "-f", "-p", "8080", "-h", "/www"]);
 const handler = guestFetchHandler(attachment, { port: 8080 });

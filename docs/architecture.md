@@ -4,9 +4,9 @@ This repository builds the userspace and opinionated SDK for WebAssembly Linux. 
 
 ## Package boundary
 
-`@lowland/kernel`, published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The package remains useful without this distro and exposes devices as the extension point.
+`lowland/machine`, the machine layer of the `lowland` package published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The layer remains useful without this distro and exposes devices as the extension point.
 
-The guest package owns the guest agent and its host client, the supported root filesystem contract, and the APIs for running commands and moving data across the guest boundary. `guestAgent()` is a kernel plugin provider rather than another machine constructor: it contributes the agent as an initramfs, its vsock transport, a device for each source in its mount table, and the hook that boots the guest, while retaining the bound guest capabilities on the returned object. Mount table disks carry virtio serials, so the boot is independent of virtio device ordering. Applications compose it with ordinary kernel plugins and call the kernel's sole `bootMachine()` function.
+The guest layer, `lowland/guest`, owns the guest agent and its host client, the supported root filesystem contract, and the APIs for running commands and moving data across the guest boundary. `guestAgent()` is a kernel plugin provider rather than another machine constructor: it contributes the agent as an initramfs, its vsock transport, a device for each source in its mount table, and the hook that boots the guest, while retaining the bound guest capabilities on the returned object. Mount table disks carry virtio serials, so the boot is independent of virtio device ordering. Applications compose it with ordinary kernel plugins and call the kernel's sole `bootMachine()` function.
 
 ## Userspace
 
@@ -20,11 +20,11 @@ C++ exceptions and `setjmp`/`longjmp` both use WebAssembly exception handling in
 
 ## Networking
 
-`@lowland/kernel` provides a virtio-net NIC and a small learning Ethernet switch.
+`lowland/machine` provides a virtio-net NIC and a small learning Ethernet switch.
 The switch is the primitive: NICs attached to the same switch exchange ordinary
 Ethernet frames without involving the guest agent or host TCP/IP endpoint.
 
-`@lowland/guest` builds an opinionated IPv4 network on that primitive.
+`lowland/guest` builds an opinionated IPv4 network on that primitive.
 `network.attach(agent)` returns a plugin which attaches a NIC, assigns a static
 address in `192.0.2.0/24`, and configures the kernel's address and default route
 after the agent becomes ready. Its JavaScript endpoint

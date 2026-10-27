@@ -6,17 +6,17 @@ import ReferenceDocumentation from "../../components/ReferenceDocumentation.astr
 import Docs from "../../layouts/Docs.astro";
 import { buildReference } from "../../lib/reference-model";
 import { generateReferenceDocs } from "../../lib/reference-docs";
-import { referencePackages, type ReferencePackage } from "../../lib/reference-packages";
+import { referenceSections, type ReferenceSection } from "../../lib/reference-packages";
 import { renderPackageReadme } from "../../lib/reference-readme";
 
 interface Props {
-  pkg: ReferencePackage;
+  pkg: ReferenceSection;
   document: Document;
 }
 
 export async function getStaticPaths() {
   const paths = [];
-  for (const pkg of referencePackages) {
+  for (const pkg of referenceSections) {
     paths.push({
       params: { package: pkg.slug },
       props: { pkg, document: await generateReferenceDocs(pkg) },

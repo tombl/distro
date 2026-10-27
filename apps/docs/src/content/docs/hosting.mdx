@@ -43,41 +43,42 @@ the server configuration.
 
 ## Bundlers
 
-The packages find their assets with `new URL(..., import.meta.url)`: the kernel's
+The package finds its assets with `new URL(..., import.meta.url)`: the kernel's
 `vmlinux.wasm` and worker script, the guest agent's `agent.cpio`, and the image's
-`rootfs.erofs`. Bundlers that understand that pattern emit them as assets.
+`rootfs.erofs`. Bundlers that understand that pattern emit them as assets. Each entry point
+refers only to its own: `lowland/machine` to the kernel, `lowland/guest` to the agent, and
+`lowland/image` to the image, so an application that boots its own image never bundles the
+canonical one.
 
 Vite 8 needs only the headers, as in the [Quick start](/quick-start/#in-a-web-page). Vite 7's
 dev server breaks these URLs when it pre-bundles dependencies, and the machine fails to boot.
-Exclude the packages:
+Exclude the package:
 
 ```js
-optimizeDeps: { exclude: ["@lowland/kernel", "@lowland/guest", "@lowland/image"] },
+optimizeDeps: { exclude: ["lowland"] },
 ```
 
-With any other bundler, check that the build output contains those four files, and that the
+With any other bundler, check that the build output contains those files, and that the
 built page boots.
 
 ## No bundler
 
-Serve `node_modules`, or a copy of it, from the page's origin and map the package names:
+Serve `node_modules`, or a copy of it, from the page's origin and map the entry points you
+import:
 
 ```html
 <script type="importmap">
   {
     "imports": {
-      "@lowland/bytes": "/node_modules/@lowland/kernel/node_modules/@lowland/bytes/dist/index.js",
-      "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
-      "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js",
-      "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js",
-      "@lowland/image": "/node_modules/@lowland/image/dist/index.js"
+      "lowland/machine": "/node_modules/lowland/dist/machine/index.js",
+      "lowland/guest": "/node_modules/lowland/dist/guest/index.js",
+      "lowland/image": "/node_modules/lowland/dist/image/index.js"
     }
   }
 </script>
 ```
 
-npm installs `@lowland/bytes` inside the packages that depend on it, so the map points there.
-Don't map the packages to a CDN. The kernel starts workers from the script next to its own
+Don't map the package to a CDN. The kernel starts workers from the script next to its own
 module, and a cross-origin worker fails with a `SecurityError` at boot.
 
 ## Downloads
