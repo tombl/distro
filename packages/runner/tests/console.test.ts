@@ -38,8 +38,11 @@ test("console preserves input queued before boot", { timeout: 45_000 }, async (t
   });
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [root, consoleDevice(input, output_sink(output))],
-    initcpio: readFile(initramfs),
+    plugins: [
+      { configure: (setup) => setup.initramfs.add(readFile(initramfs)) },
+      root,
+      consoleDevice(input, output_sink(output)),
+    ],
   });
   t.after(() => machine.close());
 

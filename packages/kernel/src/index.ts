@@ -20,7 +20,7 @@ import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.
 
 export { bootConsole } from "./plugin.ts";
 export type { Device } from "./virtio/device.ts";
-export { blockDevice, type BlockStorage } from "./virtio/block.ts";
+export { blockDevice, type BlockDeviceOptions, type BlockStorage } from "./virtio/block.ts";
 export { type Endpoint, serveDevice, serveDeviceError, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
@@ -53,18 +53,17 @@ export {
   type VsockListener,
 } from "./virtio/vsock.ts";
 
-type MaybePromise<T> = T | PromiseLike<T>;
-
 /** The resources and boot configuration of a Linux machine. */
 export interface BootMachineOptions {
   /** Virtual CPUs to boot, one Web Worker each. */
   cpus: number;
   /** Kernel command-line arguments, appended after `console=hvc0`. */
   args?: readonly string[];
-  /** Plugins to configure in array order before the machine boots. */
+  /**
+   * Plugins to configure in array order before the machine boots. They add
+   * the devices, kernel arguments, and initramfs archives.
+   */
   plugins?: readonly MachinePluginInput[];
-  /** Initial ramdisk loaded into memory and passed to the kernel. */
-  initcpio?: MaybePromise<ArrayBufferView>;
 }
 
 /**
@@ -142,22 +141,34 @@ const PAGE_SIZE = 0x10000;
 // Leave the final wasm32 page out so the physical-memory size fits in u32.
 const KERNEL_MEMORY_MAXIMUM_PAGES = 0xffff;
 
-function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): number {
+function kernel_initial_pages(memory: WasmMemoryType): number {
   const maximum = BigInt(KERNEL_MEMORY_MAXIMUM_PAGES);
   assert(
     memory.minimum <= maximum && memory.maximum !== undefined && memory.maximum >= maximum,
     "Kernel memory limits are incompatible with a 4 GiB - 64 KiB memory",
   );
-  const initcpio_pages = Math.ceil(initcpio_size / PAGE_SIZE);
-  const initial = Number(memory.minimum) + initcpio_pages;
-  assert(initial <= KERNEL_MEMORY_MAXIMUM_PAGES, "Initramfs does not fit in kernel memory");
-  return initial;
+  return Number(memory.minimum);
+}
+
+/**
+ * The kernel pulls each boot blob with the device tree's convention: called
+ * with (0, 0) it asks for the size, then it copies into a buffer it allocated.
+ */
+function boot_blob(memory: WebAssembly.Memory, blob: Uint8Array, name: string) {
+  return (buf: number, size: number) => {
+    const address = buf >>> 0;
+    const capacity = size >>> 0;
+    if (address === 0 && capacity === 0) return blob.byteLength;
+    assert(capacity >= blob.byteLength, `${name} truncated`);
+    new Uint8Array(memory.buffer).set(blob, address);
+    return blob.byteLength;
+  };
 }
 
 /**
  * Boots the packaged kernel and resolves once it is running: the devices
  * are live and the kernel is executing from then on. What runs next is up
- * to the initramfs and kernel command line.
+ * to the plugins' initramfs archives and the kernel command line.
  *
  * In a browser the page must be cross-origin isolated, because the
  * machine's memory is shared between workers.
@@ -166,8 +177,8 @@ function kernel_initial_pages(memory: WasmMemoryType, initcpio_size: number): nu
  * ```ts
  * const machine = await bootMachine({
  *   cpus: navigator.hardwareConcurrency,
- *   initcpio: initramfs,
  *   plugins: [
+ *     { configure: (setup) => setup.initramfs.add(initramfs) },
  *     consoleDevice(input, output),
  *     entropyDevice(),
  *     blockDevice(disk),
@@ -278,10 +289,7 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
 
   try {
     const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
-    const initcpio = options.initcpio ? await options.initcpio : undefined;
-    const module_pages = Number(memory_type.minimum);
-    const initcpio_addr = module_pages * PAGE_SIZE;
-    const pages = kernel_initial_pages(memory_type, initcpio?.byteLength ?? 0);
+    const pages = kernel_initial_pages(memory_type);
     const { memory: wasm_memory, maximum_pages } = allocate_shared_memory(
       pages,
       KERNEL_MEMORY_MAXIMUM_PAGES,
@@ -309,27 +317,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     };
 
     Object.assign(devicetree, bus.describe());
-    const memory_reservations: { address: number; size: number }[] = [];
-
-    if (initcpio) {
-      const chosen = devicetree.chosen as DeviceTreeNode;
-      chosen["linux,initrd-start"] = initcpio_addr;
-      chosen["linux,initrd-end"] = initcpio_addr + initcpio.byteLength;
-      new Uint8Array(wasm_memory.buffer).set(
-        new Uint8Array(initcpio.buffer, initcpio.byteOffset, initcpio.byteLength),
-        initcpio_addr,
-      );
-      memory_reservations.push({
-        address: initcpio_addr,
-        size: initcpio.byteLength,
-      });
-    }
-
     (devicetree.chosen as DeviceTreeNode).sections = sections;
 
-    const generated_devicetree = generate_devicetree(devicetree, {
-      memory_reservations,
-    });
+    const generated_devicetree = generate_devicetree(devicetree);
 
     // The imports must exist before instantiation returns the instance they
     // call back into, but they only run once exports.boot() starts the kernel.
@@ -427,21 +417,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     const imports = {
       env: { memory: wasm_memory },
       boot: {
-        get_devicetree: (buf, size) => {
-          const address = buf >>> 0;
-          const capacity = size >>> 0;
-          if (address === 0 && capacity === 0) return generated_devicetree.byteLength;
-          assert(capacity >= generated_devicetree.byteLength, "Device tree truncated");
-          new Uint8Array(wasm_memory.buffer).set(generated_devicetree, address);
-          return generated_devicetree.byteLength;
-        },
-        get_initramfs: (buf, size) => {
-          const address = buf >>> 0;
-          const capacity = size >>> 0;
-          assert(capacity >= initramfs.byteLength, "Initramfs truncated");
-          new Uint8Array(wasm_memory.buffer).set(initramfs, address);
-          return initramfs.byteLength;
-        },
+        get_devicetree: boot_blob(wasm_memory, generated_devicetree, "Device tree"),
+        get_initramfs: boot_blob(wasm_memory, initramfs, "Built-in initramfs"),
+        get_initrd: boot_blob(wasm_memory, configured.initramfs, "Initramfs"),
       },
       kernel: kernel_imports({
         is_worker: false,

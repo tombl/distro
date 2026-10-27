@@ -162,6 +162,79 @@ test("configuration failure closes devices already contributed", async () => {
   await device.handle.closed;
 });
 
+test("initramfs archives concatenate in plugin order on 4-byte boundaries", async () => {
+  const configured = await configure_machine(
+    [],
+    [
+      { configure: (setup) => setup.initramfs.add(new Uint8Array([1, 2, 3, 4, 5])) },
+      {
+        configure(setup) {
+          setup.initramfs.add(Promise.resolve(new Uint8Array([6, 7])));
+          setup.initramfs.add(new Uint16Array([0x0908]));
+        },
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    configured.initramfs,
+    new Uint8Array([1, 2, 3, 4, 5, 0, 0, 0, 6, 7, 0, 0, 8, 9]),
+  );
+});
+
+test("initramfs archives larger than the limit fail before allocating", async () => {
+  // Only the length is read before the limit check, so nothing is allocated.
+  const huge = {
+    buffer: new ArrayBuffer(0),
+    byteOffset: 0,
+    byteLength: 2 ** 30,
+  } as ArrayBufferView;
+  await assert.rejects(
+    configure_machine(
+      [],
+      [
+        {
+          configure(setup) {
+            setup.initramfs.add(huge);
+            setup.initramfs.add(new Uint8Array(1));
+          },
+        },
+      ],
+    ),
+    { name: "RangeError", message: /more than the \d+-byte limit/ },
+  );
+});
+
+test("a machine without archives has an empty initramfs", async () => {
+  const configured = await configure_machine([], []);
+
+  assert.equal(configured.initramfs.byteLength, 0);
+});
+
+test("a rejected initramfs archive fails configuration and closes devices", async () => {
+  let closes = 0;
+  const device = new TestDevice({
+    close() {
+      closes += 1;
+    },
+  });
+  const failure = new Error("archive failed to load");
+
+  await assert.rejects(
+    configure_machine(
+      [],
+      [
+        device.handle,
+        { configure: (setup) => setup.initramfs.add(Promise.reject(failure)) },
+        { configure: () => new Promise((resolve) => setTimeout(resolve, 10)) },
+      ],
+    ),
+    (error) => error === failure,
+  );
+  assert.equal(closes, 1);
+  await device.handle.closed;
+});
+
 test("virtio devices expose their generic lifecycle", async () => {
   const device = new TestDevice().handle;
   let settled = false;

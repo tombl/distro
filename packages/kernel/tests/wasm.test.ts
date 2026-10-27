@@ -322,7 +322,111 @@ test("virtio block reports a short caller-buffer read as IOERR", async () => {
   await interrupted.promise;
 
   assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 1);
+  // Every byte the used length covers is initialized: the unread tail is zeroed.
+  const payload = new Uint8Array(block_memory.buffer, 256, 512);
+  assert.ok(payload.subarray(0, 511).every((byte) => byte === 0xaa));
+  assert.equal(payload[511], 0);
+  assert.equal(new DataView(block_memory.buffer, 0, 16).getUint32(8, true), 513);
   await close_device(device);
+});
+
+test("virtio block counts every writable buffer of an unsupported request", async () => {
+  const block_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const device = blockDevice({ capacity: 512, read: (_offset, target) => target.byteLength });
+  const interrupted = Promise.withResolvers<void>();
+  const imports = attach_devices({
+    memory: block_memory,
+    devices: [device],
+    trigger_irq() {
+      interrupted.resolve();
+    },
+    on_error(error) {
+      interrupted.reject(error);
+    },
+  });
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    const view = new DataView(block_memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, length, true);
+    view.setUint16(14, flags, true);
+  };
+  const available = 1 << 7;
+  const next = 1;
+  const writable = 1 << 1;
+  new DataView(block_memory.buffer).setUint32(128, 99, true);
+  descriptor(0, 128, 16, available | next);
+  descriptor(1, 256, 4, available | next);
+  descriptor(2, 512, 8, available | next | writable);
+  descriptor(3, 1024, 1, available | writable);
+  new Uint8Array(block_memory.buffer, 512, 8).fill(0xff);
+  new Uint8Array(block_memory.buffer, 1024, 1)[0] = 0xff;
+
+  imports.enable_vring(0, 0, 8, 0, 1);
+  imports.notify(0, 0);
+  await interrupted.promise;
+
+  assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 2);
+  assert.deepEqual(new Uint8Array(block_memory.buffer, 512, 8).slice(), new Uint8Array(8));
+  assert.equal(new DataView(block_memory.buffer, 0, 16).getUint32(8, true), 9);
+  await close_device(device);
+});
+
+test("virtio block answers GET_ID with its NUL-padded serial", async () => {
+  const block_memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+  const device = blockDevice(
+    { capacity: 512, read: (_offset, target) => target.byteLength },
+    { serial: "m1" },
+  );
+  const interrupted = Promise.withResolvers<void>();
+  const imports = attach_devices({
+    memory: block_memory,
+    devices: [device],
+    trigger_irq() {
+      interrupted.resolve();
+    },
+    on_error(error) {
+      interrupted.reject(error);
+    },
+  });
+  const descriptor = (index: number, address: number, length: number, flags: number) => {
+    const view = new DataView(block_memory.buffer, index * 16, 16);
+    view.setBigUint64(0, BigInt(address), true);
+    view.setUint32(8, length, true);
+    view.setUint16(14, flags, true);
+  };
+  const available = 1 << 7;
+  const next = 1;
+  const writable = 1 << 1;
+  const get_id = 8;
+  new DataView(block_memory.buffer).setUint32(128, get_id, true);
+  descriptor(0, 128, 16, available | next);
+  descriptor(1, 256, 20, available | next | writable);
+  descriptor(2, 1024, 1, available | writable);
+  new Uint8Array(block_memory.buffer, 256, 20).fill(0xff);
+  new Uint8Array(block_memory.buffer, 1024, 1)[0] = 0xff;
+
+  imports.enable_vring(0, 0, 4, 0, 1);
+  imports.notify(0, 0);
+  await interrupted.promise;
+
+  const id = new Uint8Array(20);
+  id.set(new TextEncoder().encode("m1"));
+  assert.deepEqual(new Uint8Array(block_memory.buffer, 256, 20).slice(), id);
+  assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 0);
+  // The used element replaces descriptor 0; its length covers the ID and
+  // the status byte.
+  assert.equal(new DataView(block_memory.buffer, 0, 16).getUint32(8, true), 21);
+  await close_device(device);
+});
+
+test("virtio block rejects a serial the guest could not read back", () => {
+  const storage = {
+    capacity: 512,
+    read: (_offset: number, target: Uint8Array) => target.byteLength,
+  };
+  assert.throws(() => blockDevice(storage, { serial: "x".repeat(21) }));
+  assert.throws(() => blockDevice(storage, { serial: "caf\u00e9" }));
+  assert.throws(() => blockDevice(storage, { serial: "a\0b" }));
 });
 
 test("console input is held until the guest opens its port", async () => {

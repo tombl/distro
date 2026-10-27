@@ -137,8 +137,6 @@ export interface BootMachineOptions {
   cpus: number;
   args?: readonly string[];
   plugins?: readonly MachinePluginInput[];
-  /** Low-level custom-embedding support; canonical packages boot from disks. */
-  initcpio?: ArrayBufferView | PromiseLike<ArrayBufferView>;
 }
 
 export interface Machine extends AsyncDisposable {
@@ -154,10 +152,10 @@ export function bootMachine(options: BootMachineOptions): Promise<Machine>;
 resource policy explicit. The zero-argument `Linux.create()` facade may choose
 one CPU as product policy; applications such as the site choose explicitly.
 Caller-supplied kernel arguments remain explicit top-level policy.
-There is no `rootfs` or privileged `image` option. `initcpio` preserves the
-kernel's low-level initramfs handoff for custom embeddings and focused kernel
-tests, but canonical packages do not use it. A disk is a device supplied by a
-plugin like any other integration.
+There is no `rootfs` or privileged `image` option. A disk is a device supplied
+by a plugin like any other integration, and so is an initramfs: a plugin passes
+newc archives to `setup.initramfs.add()`, the host concatenates them, and the
+kernel pulls the result through its `boot.get_initrd` import.
 
 The advanced plugin surface can live at `@lowland/kernel/plugin`:
 
@@ -179,6 +177,7 @@ export interface MachinePlugin {
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
+  readonly initramfs: MachineInitramfs;
   readonly bootConsole: ReadableStream<Uint8Array>;
 }
 ```
@@ -264,9 +263,10 @@ layered.
 
 Linux retains its initramfs support and the host/kernel handoff ABI for custom
 embeddings. The canonical packages do not materialize or bundle an initramfs.
-The device-tree handoff already uses a size-query/copy protocol. The remaining
-fixed-capacity initramfs handoff should eventually use the same protocol; that
-kernel improvement is independent of the package migration.
+Both handoffs, the device tree and the initramfs, use one size-query/copy
+protocol: the kernel calls the import with no buffer to learn the size,
+allocates the buffer itself, and calls it again to have the host copy into it.
+The host never chooses an address in guest memory.
 
 ## High-level JavaScript API
 

@@ -26,10 +26,26 @@ export interface MachineDevices {
   add(...devices: Device[]): void;
 }
 
+/**
+ * The initial ramdisk accumulated while configuring a machine. The kernel
+ * unpacks it into its root filesystem and runs `/init` from it.
+ */
+export interface MachineInitramfs {
+  /**
+   * Appends an uncompressed newc (`cpio -H newc`) archive. Archives are
+   * unpacked in the order they were added, so a later archive's files replace
+   * an earlier archive's files at the same path, as when concatenating
+   * initramfs images for any Linux bootloader. A promise is awaited before
+   * the machine boots, and its rejection fails `bootMachine()`.
+   */
+  add(archive: ArrayBufferView | PromiseLike<ArrayBufferView>): void;
+}
+
 /** Configuration available to machine plugins before boot. */
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
+  readonly initramfs: MachineInitramfs;
   /**
    * Early kernel output. Consume this stream during configuration, before the
    * machine boots.

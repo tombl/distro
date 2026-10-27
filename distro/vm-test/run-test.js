@@ -274,8 +274,7 @@ for (const diskPath of diskPaths) {
 
 machine = await bootMachine({
   cpus,
-  plugins: devices,
-  initcpio: readFileSync(initramfsPath),
+  plugins: [{ configure: (setup) => setup.initramfs.add(readFileSync(initramfsPath)) }, ...devices],
 }).catch((error) => {
   finish({ passed: false, reason: `machine failed to boot: ${error}` });
   return null;
