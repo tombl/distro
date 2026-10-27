@@ -132,14 +132,12 @@ export function mountEditor(
     const diagnostics = await request<Diagnostic[]>({ type: "diagnostics", file: path, text });
     if (!diagnostics || editor.getText() !== text) return;
     editor.setMarkers(
-      diagnostics.map(
-        (diagnostic): Marker => ({
-          start: positionAt(text, diagnostic.start),
-          end: positionAt(text, diagnostic.start + Math.max(diagnostic.length, 1)),
-          severity: diagnostic.severity,
-          message: diagnostic.message,
-        }),
-      ),
+      diagnostics.map((diagnostic): Marker => ({
+        start: positionAt(text, diagnostic.start),
+        end: positionAt(text, diagnostic.start + Math.max(diagnostic.length, 1)),
+        severity: diagnostic.severity,
+        message: diagnostic.message,
+      })),
     );
   });
 

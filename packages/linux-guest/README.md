@@ -38,6 +38,10 @@ headers described in [Hosting](https://docs.low.land/hosting/).
 returns the running process with streaming standard input and output. Both take an argv array
 and do not go through a shell.
 
+With the `terminal` option, `guest.exec()` runs the program on a guest pseudoterminal instead
+of pipes, so an interactive shell gets job control and Ctrl-C written to `stdin` signals its
+foreground job. Standard error shares `stdout`, and `resize()` changes the window size.
+
 ## Files
 
 `guest.fs` reads and writes files inside the machine. Files written from JavaScript are
