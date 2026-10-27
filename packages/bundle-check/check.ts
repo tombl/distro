@@ -27,7 +27,7 @@ const output = join(here, "dist");
 
 const ASSETS = {
   kernel: "vmlinux.wasm",
-  agent: "agent.img",
+  agent: "agent.cpio",
   rootfs: "rootfs.erofs",
   builder: "builder.erofs",
 } as const;

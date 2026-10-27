@@ -3,5 +3,5 @@ import { bootMachine } from "lowland/machine";
 import { guestAgent } from "lowland/guest";
 import { rootImage } from "lowland/image";
 
-const guest = guestAgent();
-export const machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+const guest = guestAgent({ mounts: [rootImage()] });
+export const machine = await bootMachine({ cpus: 1, plugins: [guest] });
