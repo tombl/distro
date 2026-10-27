@@ -25,6 +25,19 @@ import { collect, console_output, pattern_bytes } from "./helpers.ts";
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const succeeded = { success: true, code: 0, signal: null };
 
+// Fails rather than hangs if `promise` does not settle in time.
+async function within<T>(ms: number, promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function assert_missing_program(guest: GuestAgent) {
   const missing = (error: unknown) => error instanceof SystemError && error.code === "ENOENT";
   await assert.rejects(guest.exec(["no-such-program"]), missing);
@@ -243,6 +256,29 @@ guest_test("processes", async (t, fixture) => {
         });
       }
       assert.equal(await guest.fs.readTextFile(path), "out\nerr\n");
+    });
+
+    await t.test("spawns concurrently on crossed guest files", async () => {
+      // Each spawn holds its files only until the agent replies, whatever
+      // their order, so crossing them cannot deadlock either the spawns or
+      // the files' close.
+      const a = await guest.fs.open(`${directory}/a.txt`, { write: true, create: true });
+      const b = await guest.fs.open(`${directory}/b.txt`, { write: true, create: true });
+      const results = await within(
+        10_000,
+        Promise.all([
+          guest.run(["sh", "-c", "echo 1; echo 2 >&2"], { stdio: ["null", a, b] }),
+          guest.run(["sh", "-c", "echo 3; echo 4 >&2"], { stdio: ["null", b, a] }),
+        ]),
+      );
+      await within(10_000, Promise.all([a.close(), b.close()]));
+      assert.deepEqual(
+        results.map((result) => result.status),
+        [succeeded, succeeded],
+      );
+      const lines = async (path: string) => (await guest.fs.readTextFile(path)).split("\n").sort();
+      assert.deepEqual(await lines(`${directory}/a.txt`), ["", "1", "4"]);
+      assert.deepEqual(await lines(`${directory}/b.txt`), ["", "2", "3"]);
     });
 
     await t.test("passes a process only its standard descriptors", async () => {
