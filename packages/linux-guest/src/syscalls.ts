@@ -207,6 +207,10 @@ export async function fsync(fd: GuestFd): Promise<void> {
 }
 
 /** Read one buffer of dirent64 records; an empty result is the end. */
+export async function sync(session: GuestSession): Promise<void> {
+  await syscall(session, NR.sync);
+}
+
 export async function getdents64(fd: GuestFd, capacity: number): Promise<Uint8Array> {
   const { out } = await syscall(
     fd.session,

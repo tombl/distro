@@ -173,6 +173,7 @@ export type MachinePluginInput = MachinePlugin | MachinePluginProvider;
 export interface MachinePlugin {
   configure(setup: MachineSetup): void | Promise<void>;
   booted?(machine: Machine): void | Promise<void>;
+  closing?(): void | Promise<void>;
 }
 
 export interface MachineSetup {
