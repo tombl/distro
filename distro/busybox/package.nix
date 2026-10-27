@@ -8,8 +8,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "busybox";
-    rev = "0ef30c97d547be7fd9c9d66af33486e02366df36";
-    hash = "sha256-3W7iSQK2I3yYOMsXIgDO1JVYMdOAy2oUBN7SzbtRlcU=";
+    rev = "7a7adb6ed098b58e52256902d2de54c03d9fa962";
+    hash = "sha256-HVSPS36NuiBbfGIYoZSvRNJIMftxnK6B7DrmvSI00Ek=";
   },
   vm-test,
 }:
@@ -18,14 +18,6 @@ stdenv.mkDerivation (finalAttrs: {
   pname = "busybox";
   version = "1.37.0";
   inherit src;
-
-  # ash is /bin/sh, as on Alpine. Upstream only supports it with fork().
-  patches = [
-    ./wasm-ash-nommu.patch
-    ./wasm-ash-callback-clone.patch
-    ./wasm-ash-preempt.patch
-    ./wasm-timeout-detach-watcher.patch
-  ];
 
   # busybox builds host tools with HOSTCC during the target build.
   depsBuildBuild = [ pkgs.stdenv.cc ];
