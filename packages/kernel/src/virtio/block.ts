@@ -195,7 +195,6 @@ class BlockDevice extends VirtioDevice {
     const valid = data.length <= SEG_MAX && start + BigInt(length) <= this.#capacity;
     const offset = Number(start);
     let result: number = BlockDeviceStatus.OK;
-    let n = 0;
     switch (request.type) {
       case BlockDeviceRequestType.IN: {
         assert(
@@ -214,7 +213,6 @@ class BlockDevice extends VirtioDevice {
           storage.readv && ((at, targets) => storage.readv!(at, targets)),
         );
         if (read !== length) result = BlockDeviceStatus.IOERR;
-        else n = length;
         break;
       }
       case BlockDeviceRequestType.OUT: {
@@ -263,6 +261,7 @@ class BlockDevice extends VirtioDevice {
           "data must be writable when GET_ID",
         );
         // The guest's buffer is not zeroed, so write the padding too.
+        let n = 0;
         for (const segment of segments) {
           const piece = this.#id.subarray(n, n + segment.byteLength);
           segment.set(piece);
@@ -276,7 +275,10 @@ class BlockDevice extends VirtioDevice {
     }
 
     status.array[0] = result;
-    chain.release(n);
+    // The used length counts every byte the device may have written, from
+    // the start of the writable buffers through the status byte that ends
+    // them, so a driver can rely on the status.
+    chain.release((data.length > 0 && data[0]!.writable ? length : 0) + 1);
   }
 
   protected close() {

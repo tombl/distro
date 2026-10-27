@@ -21,7 +21,8 @@ export interface ConfiguredMachine {
 // newc archives may be separated by NUL padding in 4-byte units, which the
 // kernel skips between members. Each archive starts on such a boundary.
 function concatenate_archives(archives: readonly ArrayBufferView[]): Uint8Array {
-  const align = (size: number) => (size + 3) & ~3;
+  // Plain arithmetic: bitwise operators would wrap past 2 GiB.
+  const align = (size: number) => Math.ceil(size / 4) * 4;
   const total = archives.reduce((size, archive) => align(size) + archive.byteLength, 0);
   const initramfs = new Uint8Array(total);
   let offset = 0;

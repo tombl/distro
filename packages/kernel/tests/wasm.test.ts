@@ -367,6 +367,9 @@ test("virtio block answers GET_ID with its NUL-padded serial", async () => {
   id.set(new TextEncoder().encode("m1"));
   assert.deepEqual(new Uint8Array(block_memory.buffer, 256, 20).slice(), id);
   assert.equal(new Uint8Array(block_memory.buffer, 1024, 1)[0], 0);
+  // The used element replaces descriptor 0; its length covers the ID and
+  // the status byte.
+  assert.equal(new DataView(block_memory.buffer, 0, 16).getUint32(8, true), 21);
   await close_device(device);
 });
 
