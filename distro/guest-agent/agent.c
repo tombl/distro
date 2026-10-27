@@ -1,4 +1,4 @@
-/* Guest agent (protocol v3): a dumb syscall executor.
+/* Guest agent (protocol v4): a dumb syscall executor.
  *
  * The host opens one connection to the session port plus up to `max_lanes`
  * lanes on the lane port. A lane carries strictly serial request/reply
@@ -10,8 +10,8 @@
  * The session connection carries no requests. Its only job is to be a death
  * signal that cannot be stuck behind a blocked syscall. Each session runs in
  * its own process, so EOF tears down its threads and descriptors atomically;
- * PID 1 then kills and reaps the remaining descendants before accepting the
- * next session.
+ * that process's parent, a per-session keeper, then kills and reaps the
+ * remaining descendants before PID 1 accepts the next session.
  *
  * See distro/guest-agent/protocol.md for the frozen contract.
  */
@@ -40,6 +40,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <dirent.h>
 #include <linux/vm_sockets.h>
 #include <unistd.h>
 
@@ -47,7 +48,7 @@ enum {
 	session_port = 1024,
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
-	protocol_version = 3,
+	protocol_version = 4,
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
@@ -61,6 +62,7 @@ enum request_kind {
 	req_syscall = 1,
 	req_spawn = 2,
 	req_reap = 3,
+	req_spawn_terminal = 4,
 };
 
 enum arg_kind {
@@ -171,6 +173,15 @@ struct cursor {
 	size_t length;
 	size_t offset;
 };
+
+static bool cursor_u16(struct cursor *cursor, uint16_t *out)
+{
+	if (cursor->length - cursor->offset < 2)
+		return false;
+	*out = load_u16(cursor->data + cursor->offset);
+	cursor->offset += 2;
+	return true;
+}
 
 static bool cursor_u32(struct cursor *cursor, uint32_t *out)
 {
@@ -348,6 +359,7 @@ static const char *environment_path(char *const envp[])
  * Try each supplied PATH entry with posix_spawn instead: file actions run
  * before exec, so relative entries are correctly resolved after chdir. */
 static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions,
+			   const posix_spawnattr_t *attributes,
 			   char *const argv[], char *const envp[])
 {
 	const char *file = argv[0];
@@ -358,7 +370,7 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 	if (!*file)
 		return ENOENT;
 	if (strchr(file, '/'))
-		return posix_spawn(pid, file, actions, NULL, argv, envp);
+		return posix_spawn(pid, file, actions, attributes, argv, envp);
 	file_length = strnlen(file, NAME_MAX + 1);
 	if (file_length > NAME_MAX)
 		return ENAMETOOLONG;
@@ -378,7 +390,8 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 			candidate[directory_length++] = '/';
 		memcpy(candidate + directory_length, file, file_length + 1);
 
-		error = posix_spawn(pid, candidate, actions, NULL, argv, envp);
+		error = posix_spawn(pid, candidate, actions, attributes, argv,
+				    envp);
 		if (!error)
 			return 0;
 		if (error == EACCES)
@@ -391,11 +404,29 @@ static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions
 	}
 }
 
+/* Allocates a pseudoterminal for a terminal spawn and sizes it before the
+ * child can ask. The agent keeps only the master; the child opens the
+ * subsidiary by name after setsid, which makes it the controlling terminal.
+ * Returns an errno value. */
+static int open_terminal(int *master, char *name, size_t name_size,
+			 uint16_t rows, uint16_t columns)
+{
+	struct winsize size = { .ws_row = rows, .ws_col = columns };
+
+	*master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+	if (*master == -1 || grantpt(*master) == -1 || unlockpt(*master) == -1)
+		return errno;
+	if (ioctl(*master, TIOCSWINSZ, &size) == -1)
+		return errno;
+	return ptsname_r(*master, name, name_size);
+}
+
 /* Spawn request body: { len u32 } then { argc u32 } argc x string,
- * string cwd, { envc u32 } envc x string. The length prefix exists so a
- * payload that fails to parse is already consumed and can get an EINVAL
- * reply without desyncing the lane. */
-static int serve_spawn(int fd)
+ * string cwd, { envc u32 } envc x string. A terminal spawn's payload starts
+ * with { rows u16, columns u16 }. The length prefix exists so a payload that
+ * fails to parse is already consumed and can get an EINVAL reply without
+ * desyncing the lane. */
+static int serve_spawn(int fd, bool terminal)
 {
 	uint8_t len_bytes[4];
 	uint8_t *payload = NULL;
@@ -407,8 +438,13 @@ static int serve_spawn(int fd)
 	int in[2] = { -1, -1 };
 	int out[2] = { -1, -1 };
 	int err[2] = { -1, -1 };
+	int master = -1;
+	char terminal_name[32];
+	uint16_t rows = 0, columns = 0;
 	posix_spawn_file_actions_t actions;
-	bool have_actions = false;
+	posix_spawnattr_t attributes;
+	sigset_t default_signals;
+	bool have_actions = false, have_attributes = false;
 	int slot = -1;
 	int spawn_errno;
 	pid_t pid;
@@ -427,6 +463,8 @@ static int serve_spawn(int fd)
 		goto out;
 	cur = (struct cursor){ payload, len, 0 };
 
+	if (terminal && (!cursor_u16(&cur, &rows) || !cursor_u16(&cur, &columns)))
+		goto invalid;
 	if (!cursor_u32(&cur, &argc) || argc < 1 || argc > max_arguments)
 		goto invalid;
 	argv = calloc((size_t)argc + 1, sizeof(char *));
@@ -467,26 +505,54 @@ static int serve_spawn(int fd)
 		goto out;
 	}
 
-	if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
-	    pipe2(err, O_CLOEXEC) == -1) {
-		spawn_errno = errno;
-		goto spawn_failed;
-	}
 	spawn_errno = posix_spawn_file_actions_init(&actions);
 	if (spawn_errno)
 		goto spawn_failed;
 	have_actions = true;
-	if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
-	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
-	    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
-	    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])) ||
-	    (spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
+	spawn_errno = posix_spawnattr_init(&attributes);
+	if (spawn_errno)
+		goto spawn_failed;
+	have_attributes = true;
+	/* The agent ignores SIGPIPE so a vanished host cannot kill it; commands
+	 * get the default, or every pipeline in a shell would report EPIPE. A
+	 * terminal command leads its own session, and opening the terminal
+	 * without O_NOCTTY there makes it the controlling terminal. */
+	sigemptyset(&default_signals);
+	sigaddset(&default_signals, SIGPIPE);
+	if ((spawn_errno = posix_spawnattr_setsigdefault(&attributes,
+							 &default_signals)) ||
+	    (spawn_errno = posix_spawnattr_setflags(
+		     &attributes, POSIX_SPAWN_SETSIGDEF |
+					  (terminal ? POSIX_SPAWN_SETSID : 0))))
+		goto spawn_failed;
+	if (terminal) {
+		if ((spawn_errno = open_terminal(&master, terminal_name,
+						 sizeof(terminal_name), rows,
+						 columns)) ||
+		    (spawn_errno = posix_spawn_file_actions_addopen(
+			     &actions, 0, terminal_name, O_RDWR, 0)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 1)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, 0, 2)))
+			goto spawn_failed;
+	} else {
+		if (pipe2(in, O_CLOEXEC) == -1 || pipe2(out, O_CLOEXEC) == -1 ||
+		    pipe2(err, O_CLOEXEC) == -1) {
+			spawn_errno = errno;
+			goto spawn_failed;
+		}
+		if ((spawn_errno = posix_spawn_file_actions_adddup2(&actions, in[0], 0)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, out[1], 1)) ||
+		    (spawn_errno = posix_spawn_file_actions_adddup2(&actions, err[1], 2)) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, in[1])) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, out[0])) ||
+		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])))
+			goto spawn_failed;
+	}
+	if ((spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
 		goto spawn_failed;
 	/* Publish the pid before the sole reaper can classify a fast exit. */
 	pthread_mutex_lock(&children_mutex);
-	spawn_errno = spawn_with_path(&pid, &actions, argv, envp);
+	spawn_errno = spawn_with_path(&pid, &actions, &attributes, argv, envp);
 	if (!spawn_errno) {
 		children[slot].pid = pid;
 		pthread_cond_broadcast(&children_changed);
@@ -495,10 +561,18 @@ static int serve_spawn(int fd)
 	if (spawn_errno)
 		goto spawn_failed;
 	posix_spawn_file_actions_destroy(&actions);
+	posix_spawnattr_destroy(&attributes);
+	store_u32(body, (uint32_t)pid);
+	if (terminal) {
+		store_u32(body + 4, (uint32_t)master);
+		if (write_reply(fd, 0, 0) || write_all(fd, body, 8))
+			goto out;
+		rc = 0;
+		goto out;
+	}
 	close_fd(&in[0]);
 	close_fd(&out[1]);
 	close_fd(&err[1]);
-	store_u32(body, (uint32_t)pid);
 	store_u32(body + 4, (uint32_t)in[1]);
 	store_u32(body + 8, (uint32_t)out[0]);
 	store_u32(body + 12, (uint32_t)err[0]);
@@ -516,6 +590,9 @@ spawn_failed:
 		strerror(spawn_errno));
 	if (have_actions)
 		posix_spawn_file_actions_destroy(&actions);
+	if (have_attributes)
+		posix_spawnattr_destroy(&attributes);
+	close_fd(&master);
 	close_fd(&in[0]);
 	close_fd(&in[1]);
 	close_fd(&out[0]);
@@ -604,7 +681,8 @@ static void serve_lane(int fd)
 				return;
 			break;
 		case req_spawn:
-			if (serve_spawn(fd))
+		case req_spawn_terminal:
+			if (serve_spawn(fd, kind == req_spawn_terminal))
 				return;
 			break;
 		case req_reap:
@@ -708,6 +786,7 @@ static int listener(unsigned port, int backlog)
 }
 
 enum { session_stack_size = 64 * 1024 };
+static _Alignas(16) char keeper_stack[session_stack_size];
 static _Alignas(16) char session_stack[session_stack_size];
 
 struct session_worker_args {
@@ -722,11 +801,6 @@ static int session_worker(void *opaque)
 	pthread_t reaper;
 	int lane_listener, rc;
 
-	/* Keep commands and their descendants in a session-owned process group.
-	 * PID 1 can then tear down only that session without touching /init. */
-	if (setpgid(0, 0) == -1)
-		_exit(1);
-	close(args->session_listener);
 	/* Adopt descendants orphaned by commands so the session's reaper can
 	 * collect them while the session is still alive. */
 	if (prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
@@ -746,6 +820,89 @@ static int session_worker(void *opaque)
 		_exit(0);
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
 	_exit(rc ? 1 : 0);
+}
+
+static pid_t parent_pid(const char *pid)
+{
+	char path[32], stat[512], *end;
+	ssize_t length;
+	long ppid;
+	int fd;
+
+	if (snprintf(path, sizeof(path), "/proc/%s/stat", pid) >= (int)sizeof(path))
+		return -1;
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return -1;
+	length = read(fd, stat, sizeof(stat) - 1);
+	close(fd);
+	if (length <= 0)
+		return -1;
+	stat[length] = 0;
+	/* "pid (comm) state ppid ...", where comm may itself contain ')'. */
+	end = strrchr(stat, ')');
+	if (!end || sscanf(end + 1, " %*c %ld", &ppid) != 1)
+		return -1;
+	return (pid_t)ppid;
+}
+
+/* SIGKILLs every process this subreaper has adopted until none remain. A
+ * killed process's own children are adopted here in turn, so the loop covers
+ * the whole subtree whatever sessions and process groups commands created. */
+static int kill_descendants(void)
+{
+	pid_t self = getpid();
+
+	for (;;) {
+		DIR *proc = opendir("/proc");
+		struct dirent *entry;
+		pid_t waited;
+
+		if (!proc)
+			return -1;
+		while ((entry = readdir(proc)))
+			if (entry->d_name[0] >= '1' && entry->d_name[0] <= '9' &&
+			    parent_pid(entry->d_name) == self)
+				kill((pid_t)atoi(entry->d_name), SIGKILL);
+		closedir(proc);
+		do
+			waited = waitpid(-1, NULL, 0);
+		while (waited == -1 && errno == EINTR);
+		if (waited == -1)
+			return errno == ECHILD ? 0 : -1;
+		while (waitpid(-1, NULL, WNOHANG) > 0)
+			;
+	}
+}
+
+/* Each session runs under a keeper: a subreaper parent that outlives the
+ * session worker. Commands may leave the session's process group, and a
+ * terminal command leads its own session, so neither can identify them once
+ * the worker is gone; instead its exit hands every surviving descendant to
+ * the keeper, which kills them before PID 1 accepts another session. */
+static int session_keeper(void *opaque)
+{
+	struct session_worker_args *args = opaque;
+	pid_t worker, waited;
+	int status;
+
+	/* Keep the session out of PID 1's process group, so no signal aimed at
+	 * /init's group reaches it. */
+	if (setpgid(0, 0) == -1 || prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
+		_exit(1);
+	close(args->session_listener);
+	args->session_listener = -1;
+	worker = clone(session_worker, session_stack + session_stack_size,
+		       SIGCHLD, args);
+	if (worker == -1)
+		_exit(1);
+	close(args->fd);
+	do
+		waited = waitpid(worker, &status, 0);
+	while (waited == -1 && errno == EINTR);
+	if (waited == -1 || kill_descendants())
+		_exit(1);
+	_exit(WIFEXITED(status) ? WEXITSTATUS(status) : 1);
 }
 
 static int mount_if_needed(const char *source, const char *target,
@@ -1044,7 +1201,7 @@ int main(void)
 	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
 	for (;;) {
 		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
-		pid_t worker, waited;
+		pid_t keeper, waited;
 		int status;
 		struct session_worker_args args;
 
@@ -1059,38 +1216,23 @@ int main(void)
 			.fd = fd,
 			.session_listener = session_listener,
 		};
-		worker = clone(session_worker, session_stack + session_stack_size,
+		/* The keeper's exit means the session's worker and every one of
+		 * its descendants are gone, so the next session starts clean. */
+		keeper = clone(session_keeper, keeper_stack + session_stack_size,
 			       SIGCHLD, &args);
-		if (worker == -1) {
+		if (keeper == -1) {
 			perror("clone session");
 			close(fd);
 			return 1;
 		}
 		close(fd);
 		do {
-			waited = waitpid(worker, &status, 0);
+			waited = waitpid(keeper, &status, 0);
 			if (waited == -1 && errno == EINTR)
 				check_system_init(system_init);
 		} while (waited == -1 && errno == EINTR);
 		if (waited == -1) {
 			perror("wait session");
-			return 1;
-		}
-
-		/* The worker's exit closes every session-owned descriptor and lane.
-		 * Its descendants are now owned by PID 1; kill and reap its process
-		 * group before allowing another session to start. */
-		if (kill(-worker, SIGKILL) == -1 && errno != ESRCH) {
-			perror("kill session descendants");
-			return 1;
-		}
-		for (;;) {
-			waited = waitpid(-worker, NULL, 0);
-			if (waited > 0 || (waited == -1 && errno == EINTR))
-				continue;
-			if (waited == -1 && errno == ECHILD)
-				break;
-			perror("reap session descendants");
 			return 1;
 		}
 		if (!WIFEXITED(status) || WEXITSTATUS(status)) {

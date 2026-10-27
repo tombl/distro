@@ -21,6 +21,7 @@ import {
   readlinkat,
   renameat,
   spawn,
+  spawn_terminal,
   symlinkat,
   sync,
   unlinkat,
@@ -37,7 +38,7 @@ import {
   statToInfo,
   type WriteFileOptions,
 } from "./file.ts";
-import { ChildProcess } from "./process.ts";
+import { ChildProcess, type TerminalSize } from "./process.ts";
 
 /** Data that can be written to a guest file: bytes, a `Blob`, or a stream of bytes. */
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
@@ -67,6 +68,23 @@ export interface ExecOptions {
    * ```
    */
   signal?: AbortSignal;
+  /**
+   * Runs the process on a new guest pseudoterminal of this size, or 24 rows
+   * by 80 columns for `true`, instead of on pipes. The process leads a new
+   * session with the terminal as its controlling terminal, so shells enable
+   * job control, `isatty` holds, and control characters written to `stdin`
+   * reach the line discipline: `\x03` interrupts the foreground job and
+   * `\x1a` suspends it. `ChildProcess.resize` changes the size later.
+   *
+   * @example Run an interactive shell
+   * ```ts
+   * const shell = await guest.exec(["sh"], { terminal: { rows: 24, columns: 80 } });
+   * void shell.stdout.pipeTo(output);
+   * const input = shell.stdin.getWriter();
+   * await input.write(new TextEncoder().encode("tty\n"));
+   * ```
+   */
+  terminal?: boolean | TerminalSize;
 }
 
 /**
@@ -576,7 +594,11 @@ class GuestClient {
     const env = Object.entries(environment).map(([key, value]) => `${key}=${value}`);
     const release = await this.#acquire_process_slot();
     try {
-      const spawned = await spawn(session, argv, options.cwd ?? "/tmp", env);
+      const cwd = options.cwd ?? "/tmp";
+      const terminal = options.terminal === true ? { rows: 24, columns: 80 } : options.terminal;
+      const spawned = terminal
+        ? await spawn_terminal(session, argv, cwd, env, terminal)
+        : await spawn(session, argv, cwd, env);
       return new ChildProcess({
         session,
         ...spawned,
