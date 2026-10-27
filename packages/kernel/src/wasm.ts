@@ -152,9 +152,20 @@ export function memory_bytes(
   }
 }
 
-const WASM_USER_MEMORY_NONE = 0;
-const WASM_USER_MEMORY_SHARE = 1;
-const WASM_USER_MEMORY_COPY = 2;
+/** Values for the kernel.spawn_worker guest/host ABI. */
+export const UserMemory = {
+  /** A kernel thread, with no user context. */
+  None: 0,
+  /** A CLONE_VM thread, sharing the spawning worker's user context. */
+  Share: 1,
+  /** A fork, snapshotting the spawning worker's user context. */
+  Copy: 2,
+  /** The spawning worker's successor, running the image it is execing. */
+  Exec: 3,
+} as const;
+
+/** Values for the kernel.spawn_worker guest/host ABI. */
+export type UserMemory = (typeof UserMemory)[keyof typeof UserMemory];
 
 /** Values for the kernel.terminate_machine guest/host ABI. */
 export const MachineTerminationReason = {
@@ -189,6 +200,8 @@ export interface Imports {
       comm: number,
       comm_len: number,
       user_memory: number,
+      /** A struct wasm_spawn_wait for COPY and EXEC, else 0. */
+      wait: number,
     ): number;
     run_on_main(fn: number, arg: number): void;
   };
@@ -197,13 +210,15 @@ export interface Imports {
     compile_write(buf: number, offset: number, size: number): number;
     compile_end(maximum_memory_pages: number): number;
     compile_abort(): void;
-    instantiate(fresh_memory: number): void;
+    /**
+     * Starts the successor spawned for the compiled image, then ends this
+     * worker without returning.
+     */
+    exec_handoff(): void;
     call(): void;
     switch_entry(fn: UserWord, arg: UserWord): void;
     /** Returns WASM_HANDLER_ESCAPED if the handler left through an exception. */
     call_signal_handler(fn: UserWord, sig: number): number;
-    /** Abandons the user stack after an execve replaced the instance. */
-    unwind(): never;
     /**
      * Returns WASM_HANDLER_ESCAPED if the handler left through an exception,
      * and otherwise the result of its siginfo copy.
@@ -288,8 +303,10 @@ export function kernel_imports({
     fn: number,
     arg: number,
     name: string,
+    user_memory: UserMemory,
     user: UserContext | null,
-    copy_user_memory: boolean,
+    /** Where a COPY clone or exec successor reports its result. */
+    spawn_wait: number | null,
   ) => number;
   boot_console_write: (message: ArrayBuffer) => void;
   boot_console_close: () => void;
@@ -356,31 +373,31 @@ export function kernel_imports({
       new Uint8Array(memory.buffer).set(trace.subarray(0, capacity), address);
     },
 
-    spawn_worker: (fn, arg, comm, comm_len, user_memory) => {
+    spawn_worker: (fn, arg, comm, comm_len, user_memory, wait) => {
       const comm_address = comm >>> 0;
       const comm_length = comm_len >>> 0;
       const name = new TextDecoder().decode(
         new Uint8Array(memory.buffer, comm_address, comm_length).slice(), // copy to transfer to non-shared backing
       );
-      let user: UserContext | null = null;
-      let copy_user_memory = false;
-      if (user_memory !== WASM_USER_MEMORY_NONE) {
-        const context = get_user_context();
-        if (!context) return -22; // invalid argument
-
-        switch (user_memory) {
-          case WASM_USER_MEMORY_SHARE:
-            user = context;
-            break;
-          case WASM_USER_MEMORY_COPY:
-            user = context;
-            copy_user_memory = true;
-            break;
-          default:
-            return -22; // invalid argument
+      switch (user_memory) {
+        case UserMemory.None:
+          return spawn_worker(fn, arg, name, user_memory, null, null);
+        case UserMemory.Exec:
+          if (!wait) return -22; // invalid argument
+          return spawn_worker(fn, arg, name, user_memory, null, wait >>> 0);
+        case UserMemory.Share:
+        case UserMemory.Copy: {
+          const context = get_user_context();
+          if (!context) return -22; // invalid argument
+          if (user_memory === UserMemory.Share) {
+            return spawn_worker(fn, arg, name, user_memory, context, null);
+          }
+          if (!wait) return -22; // invalid argument
+          return spawn_worker(fn, arg, name, user_memory, context, wait >>> 0);
         }
+        default:
+          return -22; // invalid argument
       }
-      return spawn_worker(fn, arg, name, user, copy_user_memory);
     },
 
     run_on_main,

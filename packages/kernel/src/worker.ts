@@ -6,7 +6,6 @@ import { assert } from "./util.ts";
 import { read_wasm_memories } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
-  create_halt_error,
   HALT_KERNEL,
   type Imports,
   type Instance,
@@ -16,9 +15,32 @@ import {
   memory_bytes,
   user_module_imports_supported,
   type UserContext,
+  UserMemory,
   type UserWord,
   user_word_number,
 } from "./wasm.ts";
+
+/** A compiled user image whose memory is not allocated yet. */
+interface ExecImage {
+  module: WebAssembly.Module;
+  minimum_pages: number;
+  maximum_pages: number;
+}
+
+/*
+ * Exec runs the new image in a successor worker, so that every worker hosts
+ * one user memory for its whole life and ending the worker releases it. The
+ * two halves synchronize through the successor's control array:
+ */
+/** Whether the successor may enter the kernel: one of the HANDOFF_ values. */
+const EXEC_HANDOFF = 0;
+const HANDOFF_WAIT = 0;
+const HANDOFF_RUN = 1;
+const HANDOFF_ABORT = 2;
+
+export interface ExecSuccessor extends ExecImage {
+  control: Int32Array<SharedArrayBuffer>;
+}
 
 export interface InitMessage {
   type: "init";
@@ -27,8 +49,15 @@ export interface InitMessage {
   vmlinux: WebAssembly.Module;
   memory: WebAssembly.Memory;
   user: UserContext | null;
-  /** One-shot user-memory copy result: 0 pending, 1 complete, negative errno. */
-  user_copy_status: Int32Array<SharedArrayBuffer> | null;
+  /** Set for a COPY clone. */
+  copy: boolean;
+  /**
+   * The kernel's struct wasm_spawn_wait for a COPY clone or an exec
+   * successor: this worker stores the result in it and raises its irq.
+   */
+  spawn_wait: number | null;
+  /** Set when this worker succeeds an execing worker. */
+  exec: ExecSuccessor | null;
 }
 export interface ForwardedInitMessage {
   type: "forwarded_init";
@@ -44,6 +73,7 @@ export type WorkerMessage =
   | { type: "boot_console_close" }
   | { type: "terminate_machine"; reason: MachineTerminationReason }
   | { type: "run_on_main"; fn: number; arg: number }
+  | { type: "trigger_irq"; irq: number }
   | { type: "worker_exit" };
 
 const unavailable = () => {
@@ -54,27 +84,38 @@ const endpoint = platform.worker_endpoint();
 const postMessage = (message: WorkerMessage, transfer?: Transferable[]) =>
   post_endpoint(endpoint, message, transfer);
 
+/** Ends this worker. Kernel code must not run in it afterwards. */
+function quit(): void {
+  // Messages posted after platform.quit() are not guaranteed to arrive.
+  postMessage({ type: "worker_exit" });
+  platform.quit();
+}
+
 function user_imports({
   kernel_memory,
   get_kernel_instance,
-  parent_user: parent,
+  context,
 }: {
   kernel_memory: WebAssembly.Memory;
   get_kernel_instance: () => Instance;
-  parent_user: UserContext | null;
+  /** The one user image this worker hosts, if any. Exec replaces the worker. */
+  context: UserContext | null;
 }): {
   context: UserContext | null;
   prepare(): void;
+  /** Moves the image compiled for exec into its successor. */
+  take_exec_image(): ExecImage | null;
+  /** Records the successor that exec_handoff() starts. */
+  set_successor(control: Int32Array<SharedArrayBuffer>): void;
   imports: Imports["user"];
 } {
-  const HALT_USER = create_halt_error("halt user");
   // Values of enum wasm_handler_result in asm/wasm_imports.h.
   const WASM_HANDLER_ESCAPED = 1;
 
-  let context: UserContext | null = parent;
   let instance: WebAssembly.Instance | null = null;
   let pending_module_bytes: Uint8Array<ArrayBuffer> | null = null;
-  let pending: UserContext | null = null;
+  let pending_image: ExecImage | null = null;
+  let successor: Int32Array<SharedArrayBuffer> | null = null;
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
   const siginfo_copy_results: (number | null)[] = [];
@@ -144,52 +185,26 @@ function user_imports({
     return true;
   }
 
-  function call_start(): void {
+  let call_entry: () => void = () => {
     assert(instance);
     const { _start } = instance.exports;
     assert(typeof _start === "function", "_start not found");
     _start();
     throw new Error("_start reached the end without exiting");
-  }
-  let call_entry = call_start;
+  };
 
-  function create_instance(context: UserContext): WebAssembly.Instance {
-    const kernel_instance = get_kernel_instance();
-    return new WebAssembly.Instance(context.module, {
-      env: { memory: context.memory },
-      linux: {
-        // A direct wasm-to-wasm link with no JS frame. The kernel calls
-        // user.unwind when an execve replaced this instance.
-        syscall: kernel_instance.exports.syscall,
-        get_thread_area: kernel_instance.exports.get_thread_area,
-        copy_siginfo: (to: UserWord) => {
-          const result = kernel_instance.exports.copy_siginfo(to);
-          const current = siginfo_copy_results.length - 1;
-          if (current >= 0) siginfo_copy_results[current] = result;
-          return result;
-        },
-      },
-    });
-  }
-
-  function instantiate(fresh_memory: boolean): void {
-    if (fresh_memory) {
-      assert(pending);
-      context = pending;
-      pending = null;
-      // An escape from the replaced image has nowhere to go.
-      escape = null;
-    }
-
-    assert(context);
-    instance = create_instance(context);
+  function release_successor(state: number) {
+    if (!successor) return;
+    Atomics.store(successor, EXEC_HANDOFF, state);
+    Atomics.notify(successor, EXEC_HANDOFF);
+    successor = null;
   }
 
   // For host work done on top of guest frames. Halts and guest exceptions
   // (C++ throws, longjmp out of a signal handler) keep going; anything else
   // becomes a trap, so the guest cannot catch it and run on.
   function guest_safe(error: unknown): unknown {
-    if (error === HALT_USER || error === HALT_KERNEL) return error;
+    if (error === HALT_KERNEL) return error;
     if (error instanceof WebAssembly.Exception) return error;
     return uncatchable(error);
   }
@@ -211,17 +226,38 @@ function user_imports({
   }
 
   return {
-    get context() {
-      return context;
-    },
+    context,
     prepare() {
-      if (parent) instantiate(false);
+      if (!context) return;
+      const kernel_instance = get_kernel_instance();
+      instance = new WebAssembly.Instance(context.module, {
+        env: { memory: context.memory },
+        linux: {
+          syscall: kernel_instance.exports.syscall,
+          get_thread_area: kernel_instance.exports.get_thread_area,
+          copy_siginfo: (to: UserWord) => {
+            const result = kernel_instance.exports.copy_siginfo(to);
+            const current = siginfo_copy_results.length - 1;
+            if (current >= 0) siginfo_copy_results[current] = result;
+            return result;
+          },
+        },
+      });
+    },
+    take_exec_image() {
+      const image = pending_image;
+      pending_image = null;
+      return image;
+    },
+    set_successor(control) {
+      assert(!successor, "exec successor already spawned");
+      successor = control;
     },
     imports: {
       // program management:
       compile_begin(size) {
         pending_module_bytes = null;
-        pending = null;
+        pending_image = null;
         try {
           pending_module_bytes = new Uint8Array(size >>> 0);
           return 0;
@@ -282,44 +318,29 @@ function user_imports({
 
         if (maximum < minimum) return -12; // out of memory
 
-        let allocated: ReturnType<typeof allocate_shared_memory>;
-        try {
-          allocated = allocate_shared_memory(minimum, maximum);
-        } catch {
-          return -12; // out of memory
-        }
-
-        const next_context = { module, ...allocated };
-        pending = next_context;
+        // The successor allocates the memory, so that the worker that uses
+        // it is the only one that ever references it.
+        pending_image = { module, minimum_pages: minimum, maximum_pages: maximum };
         return 0;
       },
       compile_abort() {
         pending_module_bytes = null;
-        pending = null;
+        pending_image = null;
+        release_successor(HANDOFF_ABORT);
       },
-      instantiate(fresh_memory) {
-        // An exec has already committed to the new image, and the old
-        // image's frames are beneath this call: it must not catch a failure
-        // (a data segment out of bounds, say, or an exception from the new
-        // image's start function) and run on in replaced memory. A halt from
-        // that start function keeps its identity for call().
-        try {
-          instantiate(Boolean(fresh_memory));
-        } catch (error) {
-          if (error === HALT_USER || error === HALT_KERNEL) throw error;
-          throw uncatchable(error);
-        }
+      exec_handoff() {
+        assert(successor, "exec handoff without a successor");
+        release_successor(HANDOFF_RUN);
+        // The successor now runs on the task's kernel stack.
+        quit();
+        throw HALT_KERNEL;
       },
       call() {
-        for (;;) {
-          try {
-            call_entry();
-          } catch (error) {
-            if (error === HALT_USER) continue;
-            if (error === HALT_KERNEL) throw error;
-            console.error("error running user module:", error);
-            return;
-          }
+        try {
+          call_entry();
+        } catch (error) {
+          if (error === HALT_KERNEL) throw error;
+          console.error("error running user module:", error);
         }
       },
       switch_entry(fn, arg) {
@@ -328,7 +349,7 @@ function user_imports({
         // The worker prepares an instance sharing the parent's user context
         // before the kernel enters this callback.
 
-        assert(parent);
+        assert(context);
 
         call_entry = () => {
           user_function(fn, 1)(arg);
@@ -336,14 +357,6 @@ function user_imports({
           // throw new Error("thread entrypoint reached the end without exiting");
           console.warn("thread entrypoint reached the end without exiting");
         };
-      },
-
-      unwind() {
-        // The kernel's syscall export calls this once an execve has replaced
-        // the instance whose frames are still beneath it. Restart at the new
-        // instance's entry point.
-        call_entry = call_start;
-        throw HALT_USER;
       },
 
       rethrow() {
@@ -460,58 +473,128 @@ function user_imports({
   };
 }
 
-function start({
-  fn,
-  arg,
-  vmlinux,
-  memory,
-  user: initial_user_context,
-  user_copy_status,
-}: InitMessage) {
+/**
+ * Moves the user context out of the init message, copying it first for a
+ * COPY clone or allocating it for an exec successor. Returns undefined if
+ * that failed.
+ */
+function take_user_context(init: InitMessage): UserContext | null | undefined {
+  // The event that delivered the message keeps it reachable for the worker's
+  // lifetime, so clear the references there.
+  const { user, copy, exec } = init;
+  init.user = null;
+  if (exec) {
+    assert(!user && !copy, "exec successor with a user context");
+    try {
+      return {
+        module: exec.module,
+        ...allocate_shared_memory(exec.minimum_pages, exec.maximum_pages),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+  if (!user) {
+    assert(!copy, "user memory copy without a user context");
+    return null;
+  }
+  user.memory.grow(0);
+  if (!copy) return user;
+
+  // fork.c permits COPY only for a single-user mm, and the parent sleeps in
+  // the kernel until this worker reports, so the source is stable. Allocate
+  // here so the private backing store is owned by the destination isolate,
+  // not the long-lived parent.
+  try {
+    const source = memory_bytes(user.memory, 0);
+    if (!source) throw new RangeError("invalid source memory");
+    const copied = allocate_shared_memory(source.byteLength / 0x10000, user.maximum_pages);
+    const destination = memory_bytes(copied.memory, 0, source.byteLength);
+    if (!destination) throw new RangeError("invalid destination memory");
+    destination.set(source);
+    return { module: user.module, ...copied };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Reports a COPY clone's or exec successor's result to the kernel, which is
+ * sleeping on the spawn wait: store it, then raise the wait's irq.
+ */
+function report_spawn(
+  memory: WebAssembly.Memory,
+  wait: number,
+  status: number,
+  instance?: Instance,
+) {
+  const words = new Int32Array(memory.buffer, wait >>> 0, 2);
+  const irq = words[1]!;
+  Atomics.store(words, 0, status);
+  if (instance) instance.exports.trigger_irq(irq);
+  // Without a kernel instance, the page raises it.
+  else postMessage({ type: "trigger_irq", irq });
+}
+
+function start(init: InitMessage) {
+  const { fn, arg, vmlinux, memory, exec, spawn_wait } = init;
   // Refresh every WebAssembly.Memory received across a worker boundary
   // immediately, including any future additions to InitMessage. Chromium can
   // retain the fixed-length buffer wrapper captured before another isolate
   // grows it; grow(0) refreshes the wrapper before constructing any views.
   memory.grow(0);
-  initial_user_context?.memory.grow(0);
 
-  let user_context = initial_user_context;
-  if (user_copy_status) {
-    assert(user_context);
-    // fork.c permits COPY only for a single-user mm, and the caller blocks
-    // until publication below, so the source is stable. Allocate here so the
-    // private backing store is owned by the destination isolate, not the
-    // long-lived parent.
-    try {
-      const source = memory_bytes(user_context.memory, 0);
-      if (!source) throw new RangeError("invalid source memory");
-      const copied = allocate_shared_memory(
-        source.byteLength / 0x10000,
-        user_context.maximum_pages,
-      );
-      const destination = memory_bytes(copied.memory, 0, source.byteLength);
-      if (!destination) throw new RangeError("invalid destination memory");
-      destination.set(source);
-      user_context = { module: user_context.module, ...copied };
-      Atomics.store(user_copy_status, 0, 1);
-    } catch {
-      Atomics.store(user_copy_status, 0, -12);
+  // A failed copy or allocation fails the clone or execve with ENOMEM, before
+  // execve's point of no return.
+  const context = take_user_context(init);
+  const user = user_imports({
+    kernel_memory: memory,
+    get_kernel_instance: () => instance,
+    context: context ?? null,
+  });
+  let instance: Instance;
+  try {
+    instance = new WebAssembly.Instance(vmlinux, worker_imports(init, user)) as Instance;
+  } catch (error) {
+    if (spawn_wait === null) throw error;
+    report_spawn(memory, spawn_wait, -12);
+    quit();
+    return;
+  }
+  try {
+    if (context === undefined) throw new RangeError("user memory allocation failed");
+    user.prepare();
+  } catch (error) {
+    if (spawn_wait === null) throw error;
+    report_spawn(memory, spawn_wait, -12, instance);
+    quit();
+    return;
+  }
+  if (spawn_wait !== null) report_spawn(memory, spawn_wait, 1, instance);
+
+  if (exec) {
+    // The execing worker still runs on the task's kernel stack. Wait in JS,
+    // so this worker runs no kernel code until that worker has left.
+    let handoff: number;
+    while ((handoff = Atomics.load(exec.control, EXEC_HANDOFF)) === HANDOFF_WAIT) {
+      Atomics.wait(exec.control, EXEC_HANDOFF, HANDOFF_WAIT);
     }
-    Atomics.notify(user_copy_status, 0);
-    if (Atomics.load(user_copy_status, 0) < 0) {
-      postMessage({ type: "worker_exit" });
-      platform.quit();
+    if (handoff !== HANDOFF_RUN) {
+      quit();
       return;
     }
   }
 
-  const user = user_imports({
-    kernel_memory: memory,
-    get_kernel_instance: () => instance,
-    parent_user: user_context,
-  });
+  try {
+    instance.exports.__indirect_function_table.get(fn >>> 0)!(arg);
+  } catch (error) {
+    if (error === HALT_KERNEL) return;
+    throw error;
+  }
+}
 
-  const imports = {
+function worker_imports({ vmlinux, memory }: InitMessage, user: ReturnType<typeof user_imports>) {
+  return {
     env: { memory },
     boot: {
       get_devicetree: unavailable,
@@ -521,7 +604,14 @@ function start({
     kernel: kernel_imports({
       is_worker: true,
       memory,
-      spawn_worker(fn, arg, name, user, copy_user_memory) {
+      spawn_worker(fn, arg, name, user_memory, context, spawn_wait) {
+        let exec: ExecSuccessor | null = null;
+        if (user_memory === UserMemory.Exec) {
+          const image = user.take_exec_image();
+          if (!image) return -22; // invalid argument
+          exec = { ...image, control: new Int32Array(new SharedArrayBuffer(4)) };
+        }
+
         const direct = new MessageChannel();
         postMessage(
           {
@@ -531,23 +621,23 @@ function start({
           },
           [direct.port1],
         );
-        const user_copy_status = copy_user_memory ? new Int32Array(new SharedArrayBuffer(4)) : null;
         direct.port2.postMessage({
           type: "init",
           fn,
           arg,
           vmlinux,
           memory,
-          user,
-          user_copy_status,
+          user: context,
+          copy: user_memory === UserMemory.Copy,
+          spawn_wait,
+          exec,
         } satisfies InitMessage);
-        if (!user_copy_status) return 0;
-        // If publication wins the race, wait returns "not-equal"; no wakeup
-        // is lost.
-        Atomics.wait(user_copy_status, 0, 0);
-        const result = Atomics.load(user_copy_status, 0);
-        assert(result === 1 || result < 0, "copy wait completed without a result");
-        return result === 1 ? 0 : result;
+
+        // Never wait here: the new worker may not start until another worker
+        // exits. For COPY and EXEC the kernel sleeps on spawn_wait, which the
+        // new worker completes; an exec that fails later aborts the successor.
+        if (exec) user.set_successor(exec.control);
+        return 0;
       },
       boot_console_write(message) {
         postMessage({ type: "boot_console_write", message });
@@ -577,15 +667,6 @@ function start({
       notify: unavailable,
     },
   } satisfies Imports;
-
-  const instance = new WebAssembly.Instance(vmlinux, imports) as Instance;
-  user.prepare();
-  try {
-    instance.exports.__indirect_function_table.get(fn >>> 0)!(arg);
-  } catch (error) {
-    if (error === HALT_KERNEL) return;
-    throw error;
-  }
 }
 
 listen_endpoint(endpoint, {
