@@ -17,6 +17,7 @@ import {
   reap,
   spawn,
   SPAWN,
+  write,
 } from "../src/syscalls.ts";
 import { agent_initramfs, busybox_initramfs, root_mount } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
@@ -567,6 +568,51 @@ test("agent protocol", async (t) => {
         await using written = await openat(session, "/tmp/actions", O.RDONLY, 0);
         assert.equal(new TextDecoder().decode(await read(written, 64)), "out\nerr\n");
         assert.equal(await reap(session, await sh(":", [dev_null(0)])), 0);
+      } finally {
+        session.close();
+      }
+    });
+
+    await t.test("runs the file actions once, then searches PATH", async () => {
+      const session = await connect();
+      try {
+        const fails = (code: string) => (error: unknown) =>
+          error instanceof SystemError && error.code === code;
+        const run_true = async (path: string, actions: FileAction[] = []) => {
+          const pid = await spawn(
+            session,
+            ["true"],
+            "/",
+            [`PATH=${path}`],
+            SPAWN.SETSIGDEF,
+            actions,
+          );
+          return reap(session, pid);
+        };
+        const create = async (path: string, text: string, mode: number) => {
+          await using file = await openat(session, path, O.WRONLY | O.CREAT | O.TRUNC, mode);
+          await write(file, new TextEncoder().encode(text));
+        };
+
+        // An exclusive create fails if it runs again for /bin after /missing.
+        const exclusive: FileAction = {
+          op: "open",
+          path: "/tmp/exclusive",
+          oflag: O.WRONLY | O.CREAT | O.EXCL,
+          mode: 0o644,
+          newfd: 1,
+        };
+        assert.equal(await run_true("/missing:/bin", [exclusive]), 0);
+
+        // A script whose interpreter is missing fails with ENOENT, which
+        // moves on; one that cannot be executed is remembered as EACCES.
+        await mkdirat(session, "/tmp/broken", 0o755);
+        await create("/tmp/broken/true", "#!/no/such/interpreter\n", 0o755);
+        assert.equal(await run_true("/tmp/broken:/bin"), 0);
+        await mkdirat(session, "/tmp/unexecutable", 0o755);
+        await create("/tmp/unexecutable/true", "", 0o644);
+        await assert.rejects(run_true("/tmp/unexecutable:/missing"), fails("EACCES"));
+        await assert.rejects(run_true("/missing:/tmp/broken"), fails("ENOENT"));
       } finally {
         session.close();
       }

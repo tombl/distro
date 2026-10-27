@@ -77,14 +77,15 @@ The process changes to `cwd`, then runs the file actions in order, so a
 relative `open` path names what a shell redirection would. Descriptors are
 numbers in the session process's table. Every descriptor the host holds there
 is close-on-exec, and `dup2` clears that flag on `newfd`, so the process
-inherits exactly what its file actions put in place. The agent searches the
-supplied `PATH` for an `argv[0]` without a slash by trying `posix_spawn` with
-each entry, and the file actions run again in each attempt's child, so they
-should not depend on running once (an `open` with `O_EXCL`, say). A `dup2`
-or `close` of a negative descriptor, and a bad descriptor or path at run time,
-fail the spawn with the errno `posix_spawn` reports, which is indistinguishable
-from the `exec`'s own: an `open` that fails with `ENOENT` reads as a missing
-program. The agent tracks the process in a fixed table (16 entries; `EAGAIN`
+inherits exactly what its file actions put in place. The file actions run
+once, and then the same child searches the request's `PATH` for an `argv[0]`
+without a slash, as `execvpe` does: an entry that fails with `ENOENT` or
+`ENOTDIR` moves on to the next, so a script whose interpreter is missing does
+not end the search, and finding nothing is `EACCES` if any entry was, else
+`ENOENT`. A malformed action list is `EINVAL` wherever it goes wrong. A
+`dup2` or `close` of a negative descriptor fails the spawn with `EBADF`, and
+a bad descriptor or path at run time with the errno the action failed with,
+both indistinguishable from the `exec`'s own errors. The agent tracks the process in a fixed table (16 entries; `EAGAIN`
 when full — the host's process cap makes this unreachable). Success reply
 body: `{ pid u32 }`. From here stdio is plain injected `read`/`write`/`close`
 on the host's descriptors, and signals are plain injected `kill`.

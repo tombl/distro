@@ -460,53 +460,73 @@ static const char *environment_path(char *const envp[])
 	return "/usr/local/bin:/bin:/usr/bin";
 }
 
-/* musl's posix_spawnp searches the agent's process environment, not envp.
- * Try each supplied PATH entry with posix_spawn instead: file actions run
- * before exec, so relative entries are correctly resolved after chdir. */
-static int spawn_with_path(pid_t *pid, const posix_spawn_file_actions_t *actions,
-			   const posix_spawnattr_t *attributes,
-			   char *const argv[], char *const envp[])
+/* execvpe(3), searching the PATH in envp where musl's reads the agent's own
+ * environment. It runs in posix_spawn's child once the file actions have,
+ * on the small stack musl gives that child, so it is musl's __execvpe but
+ * for the PATH it reads. ENOENT and ENOTDIR move on to the next entry and
+ * EACCES is remembered, so a script whose interpreter is missing does not
+ * end the search; finding nothing is EACCES if any entry was, else ENOENT.
+ * Returns only on failure, with errno set. */
+static int exec_with_path(const char *file, char *const argv[],
+			  char *const envp[])
 {
-	const char *file = argv[0];
-	const char *path;
+	const char *path = environment_path(envp);
+	const char *entry, *end;
+	size_t file_length, path_length;
 	bool seen_eacces = false;
-	size_t file_length;
 
+	errno = ENOENT;
 	if (!*file)
-		return ENOENT;
+		return -1;
 	if (strchr(file, '/'))
-		return posix_spawn(pid, file, actions, attributes, argv, envp);
+		return execve(file, argv, envp);
 	file_length = strnlen(file, NAME_MAX + 1);
-	if (file_length > NAME_MAX)
-		return ENAMETOOLONG;
-
-	path = environment_path(envp);
-	for (;;) {
-		const char *separator = strchr(path, ':');
-		size_t directory_length = separator ? (size_t)(separator - path) : strlen(path);
-		char candidate[max_string + NAME_MAX + 2];
-		int error;
-
-		if (directory_length + (directory_length != 0) + file_length + 1 >
-		    sizeof(candidate))
-			return ENAMETOOLONG;
-		memcpy(candidate, path, directory_length);
-		if (directory_length)
-			candidate[directory_length++] = '/';
-		memcpy(candidate + directory_length, file, file_length + 1);
-
-		error = posix_spawn(pid, candidate, actions, attributes, argv,
-				    envp);
-		if (!error)
-			return 0;
-		if (error == EACCES)
-			seen_eacces = true;
-		else if (error != ENOENT && error != ENOTDIR)
-			return error;
-		if (!separator)
-			return seen_eacces ? EACCES : ENOENT;
-		path = separator + 1;
+	if (file_length > NAME_MAX) {
+		errno = ENAMETOOLONG;
+		return -1;
 	}
+	path_length = strnlen(path, PATH_MAX - 1) + 1;
+	for (entry = path;; entry = end + 1) {
+		char candidate[path_length + file_length + 1];
+		size_t length;
+
+		end = strchrnul(entry, ':');
+		length = (size_t)(end - entry);
+		if (length < path_length) {
+			memcpy(candidate, entry, length);
+			candidate[length] = '/';
+			memcpy(candidate + length + (length != 0), file,
+			       file_length + 1);
+			execve(candidate, argv, envp);
+			if (errno == EACCES)
+				seen_eacces = true;
+			else if (errno != ENOENT && errno != ENOTDIR)
+				return -1;
+		}
+		if (!*end)
+			break;
+	}
+	errno = seen_eacces ? EACCES : ENOENT;
+	return -1;
+}
+
+/* posix_spawnp with exec_with_path's search. musl's posix_spawn calls
+ * attr->__fn in place of execve once the child has run the file actions,
+ * which is how its own posix_spawnp passes __execvpe, so the actions run
+ * once whichever PATH entry the program is found in. __fn is internal to
+ * the pinned musl (tombl/musl 38da5853f, src/process/posix_spawn.c): a musl
+ * without it fails the assertion, and one that stops calling it fails the
+ * guest package's PATH tests. */
+_Static_assert(sizeof(((posix_spawnattr_t *)0)->__fn) == sizeof(void *),
+	       "posix_spawnattr_t has musl's exec hook, __fn");
+
+static int spawn_command(pid_t *pid, const posix_spawn_file_actions_t *actions,
+			 posix_spawnattr_t *attributes,
+			 const struct command *command)
+{
+	attributes->__fn = (void *)exec_with_path;
+	return posix_spawn(pid, command->argv[0], actions, attributes,
+			   command->argv, command->envp);
 }
 
 /* Adds a spawn's file actions: { count u32 } then, per action, { op u32 }
@@ -627,8 +647,8 @@ static int serve_spawn(int fd)
 	if (slot < 0) {
 		spawn_errno = EAGAIN;
 	} else {
-		spawn_errno = spawn_with_path(&pid, &actions, &attributes,
-					      command.argv, command.envp);
+		spawn_errno = spawn_command(&pid, &actions, &attributes,
+					    &command);
 		if (!spawn_errno) {
 			children[slot] = (typeof(children[slot])){ .used = true,
 								   .pid = pid };
@@ -1198,8 +1218,7 @@ static int start_init(struct command *init)
 	    !(error = posix_spawnattr_setsigmask(&attributes, &original_mask)) &&
 	    !(error = posix_spawnattr_setflags(
 		      &attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)))
-		error = spawn_with_path(&init_pid, &actions, &attributes,
-					init->argv, init->envp);
+		error = spawn_command(&init_pid, &actions, &attributes, init);
 	posix_spawn_file_actions_destroy(&actions);
 	posix_spawnattr_destroy(&attributes);
 	return error;
