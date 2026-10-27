@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
   cpSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,27 +12,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readManifest, workspacePackages, workspaceRoot } from "./packages.mjs";
 
 function fail(message) {
   console.error(`pack-package: ${message}`);
   process.exit(1);
-}
-
-function readManifest(directory) {
-  return JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-}
-
-function workspacePackages(root) {
-  const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
-  const directories = [...workspace.matchAll(/^\s*-\s+([^#\s]+)\s*$/gm)].map((match) => match[1]);
-  const packages = new Map();
-
-  for (const directory of directories) {
-    const absolute = resolve(root, directory);
-    const manifest = readManifest(absolute);
-    if (manifest.name) packages.set(manifest.name, { directory: absolute, manifest });
-  }
-  return packages;
 }
 
 // The default catalog: the indented `name: range` lines under `catalog:`.
@@ -108,13 +91,7 @@ if (!packageArgument || (outIndex !== -1 && !args[outIndex + 1])) {
   fail("usage: pack-package.mjs PACKAGE_DIRECTORY [--out ARCHIVE]");
 }
 
-let root = resolve(process.cwd());
-while (!existsSync(join(root, "pnpm-workspace.yaml"))) {
-  const parent = dirname(root);
-  if (parent === root) fail("could not find pnpm-workspace.yaml");
-  root = parent;
-}
-
+const root = workspaceRoot();
 const packageDirectory = resolve(process.cwd(), packageArgument);
 const packages = workspacePackages(root);
 const catalog = workspaceCatalog(root);
