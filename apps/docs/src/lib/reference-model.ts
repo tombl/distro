@@ -16,7 +16,7 @@ import type {
   TsTypeParamDef,
 } from "@deno/doc";
 
-import { referenceGroupId, referenceSymbolId, type ReferencePackage } from "./reference-packages";
+import { referenceGroupId, referenceSymbolId, type ReferenceSection } from "./reference-packages";
 
 type Symbol = Document["symbols"][number];
 
@@ -404,7 +404,7 @@ function isOptionsRecord(symbol: Symbol): boolean {
   );
 }
 
-export function buildReference(pkg: ReferencePackage, document: Document): Group[] {
+export function buildReference(pkg: ReferenceSection, document: Document): Group[] {
   const symbolsByName = new Map(document.symbols.map((symbol) => [symbol.name, symbol]));
   const referenceCounts = typeReferenceCounts(document.symbols);
 

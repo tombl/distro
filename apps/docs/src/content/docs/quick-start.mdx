@@ -7,24 +7,24 @@ order: 1
 
 # Quick start
 
-You need Node.js 24 or later. Install three packages:
+You need Node.js 24 or later. Install the package:
 
 ```sh
-npm install @lowland/kernel @lowland/guest @lowland/image
+npm install lowland
 ```
 
-`@lowland/kernel` is the kernel and its virtual devices. `@lowland/guest` runs programs and
-moves files inside a booted machine. `@lowland/image` provides a small root filesystem with
-BusyBox and the apk package manager.
+This guide uses three of its entry points. `lowland/machine` is the kernel and its virtual
+devices. `lowland/guest` runs programs and moves files inside a booted machine. `lowland/image`
+provides a small root filesystem with BusyBox and the apk package manager.
 
 ## In Node.js
 
 Save this as `hello.mjs`. On this site, Run boots it in your browser instead.
 
 ```js run
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent } from "@lowland/guest";
-import { rootImage } from "@lowland/image";
+import { bootMachine } from "lowland/machine";
+import { guestAgent } from "lowland/guest";
+import { rootImage } from "lowland/image";
 
 const guest = guestAgent({ mounts: [rootImage()] });
 await using machine = await bootMachine({ cpus: 1, plugins: [guest] });

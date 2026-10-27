@@ -1,5 +1,5 @@
-import { type Device, fileSystemDevice } from "@lowland/kernel";
-import { NodeFS } from "@lowland/guest/node";
+import { type Device, fileSystemDevice } from "lowland/machine";
+import { NodeFS } from "lowland/node";
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
 

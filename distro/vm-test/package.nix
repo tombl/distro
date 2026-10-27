@@ -4,7 +4,7 @@
   busybox,
   pkgs,
   lib,
-  kernel,
+  lowland,
   mkImage,
 }:
 
@@ -67,7 +67,7 @@ let
         set +e
         timeout --kill-after=5 300 node ${runner}/run-test.js \
           --cpus ${toString cpus} \
-          ${kernel}/dist/index.js \
+          ${lowland.machine}/dist/machine/index.js \
           ${initramfs} \
           ${lib.concatMapStringsSep " " (diskCopy: diskCopy.name) diskCopies} \
           2>&1

@@ -35,7 +35,7 @@ recovery, which read-only storage cannot have. Mount it writable once to recover
 
 ## The machine fails during boot and nothing explains why
 
-Add `bootConsole(output)` from `@lowland/kernel` to the plugins to see the kernel's boot
+Add `bootConsole(output)` from `lowland/machine` to the plugins to see the kernel's boot
 messages. A kernel panic rejects `machine.closed` with a `MachinePanicError`.
 
 ## The Node.js script never exits

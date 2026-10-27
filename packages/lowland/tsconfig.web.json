@@ -1,0 +1,16 @@
+// Checks that everything a browser can import type-checks without Node's
+// types, so the web entry points cannot depend on Node by accident.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/index.ts",
+    "src/machine/index.ts",
+    "src/guest/index.ts",
+    "src/image/index.ts",
+    "src/browser/index.ts"
+  ]
+}

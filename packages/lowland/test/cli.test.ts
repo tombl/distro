@@ -5,18 +5,24 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { parseBuildArgs } from "../src/build.ts";
-import { SystemError } from "@lowland/guest";
+import { parseBuildArgs } from "../src/cli/build.ts";
+import { SystemError } from "../src/guest/index.ts";
 import type { Linux } from "../src/linux.ts";
 import { createServer, connect } from "node:net";
 import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ExecOptions, TerminalSize } from "@lowland/guest";
-import { execute, exitCode, parseRunArgs, socket_readable, type HostTerminal } from "../src/run.ts";
-import { UsageError } from "../src/usage.ts";
+import type { ExecOptions, TerminalSize } from "../src/guest/index.ts";
+import {
+  execute,
+  exitCode,
+  parseRunArgs,
+  socket_readable,
+  type HostTerminal,
+} from "../src/cli/run.ts";
+import { UsageError } from "../src/cli/usage.ts";
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/cli/cli.ts", import.meta.url));
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function lowland(...args: string[]) {

@@ -1,9 +1,6 @@
 {
-  kernel,
   lib,
-  linux-guest,
   lowland,
-  lowland-image,
   node-workspace,
   pkgs,
 }:
@@ -13,10 +10,7 @@ let
   # its package.json is not private (scripts/packages.mjs), and the
   # published-set check keeps this map equal to that set.
   published = {
-    "@lowland/kernel" = kernel;
-    "@lowland/guest" = linux-guest.package;
-    "@lowland/image" = lowland-image.package;
-    inherit lowland;
+    lowland = lowland.package;
   };
 
   # @scope/name → scope-name.tgz, as in scripts/packages.mjs.

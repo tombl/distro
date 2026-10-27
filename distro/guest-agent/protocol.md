@@ -2,7 +2,7 @@
 
 The guest agent is a dumb syscall executor. It knows nothing about paths,
 stat layouts, directories, or flags — every operation-specific decision
-lives in the host library (`packages/linux-guest`), which composes injected
+lives in the host library (`packages/lowland/src/guest`), which composes injected
 syscalls. Process lifecycle (`spawn`/`reap`) is the only domain knowledge
 the agent owns, because it is the process's parent and must be, and as
 PID 1 it enters the root the host prepared (`switch_root`). It knows no
@@ -56,7 +56,7 @@ head), 3 out-blob-ret-sized (as 2, but only `min(capacity, ret)` bytes
 follow — for `read`, `getdents64`, ...). The agent executes via libc
 `syscall(nr, a0..a5)`, always six arguments, unused ones scalar 0. 64-bit
 arguments on this ILP32 target are split host-side (the syscall table in
-`packages/linux-guest/src/syscalls.ts` owns the hi/lo order per syscall).
+`packages/lowland/src/guest/syscalls.ts` owns the hi/lo order per syscall).
 
 **Spawn (kind 2):** `posix_spawn`, serialized. `{ len u32 }` then a
 `len`-byte payload: a command, `{ flags u32 }`, `{ count u32 }`, and `count`
@@ -138,7 +138,7 @@ fatal to the whole session.
 
 ## ABI ownership
 
-`packages/linux-guest/src/abi.ts` is the single schema for every guest ABI
+`packages/lowland/src/guest/abi.ts` is the single schema for every guest ABI
 fact the host uses: syscall numbers, `O_*`/`AT_*`/`S_IF*`/`DT_*`/errno/
 signal constants, wait-status bit math, and the byte layouts of
 `struct stat64` and `struct dirent64` for wasm32-musl. Each entry carries
@@ -146,7 +146,7 @@ the C expression it mirrors so `distro/guest-agent/gen-abi-check.ts` can
 emit a `_Static_assert` per entry; that file is compiled (never run) with
 the guest toolchain, turning any drift into a build failure. Per-syscall
 semantics (argument shapes, 64-bit splitting, which argument is the path)
-live once each in `packages/linux-guest/src/syscalls.ts`.
+live once each in `packages/lowland/src/guest/syscalls.ts`.
 
 ## PID 1
 

@@ -7,15 +7,16 @@ import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildImage } from "@lowland/image/build";
-import { createNetwork, GuestBootError } from "@lowland/guest";
-import { NodeFS } from "@lowland/guest/node";
+import { buildImage } from "../src/image/build.ts";
+import { createNetwork, GuestBootError } from "../src/guest/index.ts";
+import { NodeFS } from "../src/node/index.ts";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { Linux } from "../src/linux.ts";
+import { rootImage } from "../src/image/index.ts";
+import { Linux, type LinuxOptions } from "../src/linux.ts";
 import { busybox_package, ext4_root, scratch_directory } from "./assets.ts";
 
-const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const cli = fileURLToPath(new URL("../src/cli/cli.ts", import.meta.url));
 
 /** Runs the CLI with `input` on stdin and collects its output. */
 function lowland(args: string[], input = "") {
@@ -312,7 +313,7 @@ describe("lowland run", () => {
 
 describe("Linux", () => {
   it("runs commands and exposes the guest filesystem", async () => {
-    await using linux = await Linux.create();
+    await using linux = await Linux.create({ image: rootImage() });
     await linux.fs.writeFile("/tmp/greeting", new TextEncoder().encode("hello"));
     const result = await linux.run(["cat", "/tmp/greeting"]);
     assert.equal(result.status.success, true);
@@ -322,7 +323,7 @@ describe("Linux", () => {
   });
 
   it("bounds the stdin it buffers for a command that does not read", async () => {
-    await using linux = await Linux.create();
+    await using linux = await Linux.create({ image: rootImage() });
     const child = await linux.spawn(["sleep", "30"]);
     const writer = child.stdin.getWriter();
     const write = writer.write(new Uint8Array(4 * 1024 * 1024));
@@ -346,24 +347,36 @@ describe("Linux", () => {
   });
 
   it("flushes writes through a file handle left open at disposal", async () => {
-    const linux = await Linux.create({ disks: [{ source: data_disk, path: "/data" }] });
+    const linux = await Linux.create({
+      image: rootImage(),
+      disks: [{ source: data_disk, path: "/data" }],
+    });
     const file = await linux.fs.open("/data/open-handle", { write: true, create: true });
     await file.write(new TextEncoder().encode("still open"));
     await linux[Symbol.asyncDispose]();
     // The open file kept the disk from unmounting, so its journal needs
     // recovery, which read-only storage cannot have.
     await assert.rejects(
-      Linux.create({ disks: [{ source: data_disk, path: "/data", readOnly: true }] }),
+      Linux.create({
+        image: rootImage(),
+        disks: [{ source: data_disk, path: "/data", readOnly: true }],
+      }),
       (error) =>
         error instanceof GuestBootError &&
         /write access unavailable, cannot proceed/.test(error.kernelLog),
     );
-    await using reader = await Linux.create({ disks: [{ source: data_disk, path: "/data" }] });
+    await using reader = await Linux.create({
+      image: rootImage(),
+      disks: [{ source: data_disk, path: "/data" }],
+    });
     assert.equal(await reader.fs.readTextFile("/data/open-handle"), "still open");
   });
 
   it("flushes disks on disposal while commands hold every process slot", async () => {
-    const linux = await Linux.create({ disks: [{ source: data_disk, path: "/data" }] });
+    const linux = await Linux.create({
+      image: rootImage(),
+      disks: [{ source: data_disk, path: "/data" }],
+    });
     await linux.fs.writeFile("/data/slots", new TextEncoder().encode("flushed"));
     for (let i = 0; i < 8; i++) await linux.spawn(["sleep", "1000"], { cwd: "/data" });
     await linux[Symbol.asyncDispose]();
@@ -374,16 +387,32 @@ describe("Linux", () => {
     ]);
     assert.equal(closed, true);
     await using reader = await Linux.create({
+      image: rootImage(),
       disks: [{ source: data_disk, path: "/data", readOnly: true }],
     });
     assert.equal(await reader.fs.readTextFile("/data/slots"), "flushed");
   });
 
+  it("needs an image, so only lowland/image brings in the canonical one", async () => {
+    await assert.rejects(
+      Linux.create({} as LinuxOptions),
+      /needs an image, such as rootImage\(\) from lowland\/image/,
+    );
+    await assert.rejects(
+      Linux.create({ image: { ...rootImage(), path: "/data" } }),
+      /the image must be mounted at \/, not \/data/,
+    );
+  });
+
   it("rejects relative and duplicate guest paths", async () => {
     const source = new NodeFS(".");
-    await assert.rejects(Linux.create({ mounts: [{ source, path: "work" }] }), TypeError);
+    await assert.rejects(
+      Linux.create({ image: rootImage(), mounts: [{ source, path: "work" }] }),
+      /must be absolute/,
+    );
     await assert.rejects(
       Linux.create({
+        image: rootImage(),
         mounts: [
           { source, path: "/work" },
           { source, path: "/work" },
@@ -399,6 +428,7 @@ describe("Linux", () => {
     await mkdir(shared);
     {
       await using linux = await Linux.create({
+        image: rootImage(),
         disks: [{ source: bytes, path: "/data" }],
         mounts: [{ source: new NodeFS(shared), path: "/work" }],
       });
@@ -411,6 +441,7 @@ describe("Linux", () => {
     }
     assert.equal(await readFile(join(shared, "object"), "utf8"), "mount\n");
     await using reader = await Linux.create({
+      image: rootImage(),
       disks: [{ source: bytes, path: "/data", readOnly: true }],
     });
     assert.equal(await reader.fs.readTextFile("/data/object"), "disk\n");
@@ -433,7 +464,10 @@ describe("Linux", () => {
 
   it("mounts a disk without telling it apart from a root image", async () => {
     const root = await readFile(await ext4_root(scratch.path));
-    await using linux = await Linux.create({ disks: [{ source: root, path: "/data" }] });
+    await using linux = await Linux.create({
+      image: rootImage(),
+      disks: [{ source: root, path: "/data" }],
+    });
     await linux.fs.stat("/data/bin/busybox");
   });
 });

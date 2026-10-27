@@ -5,7 +5,7 @@ import {
   consoleDevice,
   entropyDevice,
   workerDevice,
-} from "@lowland/kernel";
+} from "lowland/machine";
 import { availableParallelism } from "node:os";
 import { Readable, Writable } from "node:stream";
 import { parseArgs } from "node:util";

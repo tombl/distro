@@ -10,9 +10,9 @@ order: 1
 A guest's root filesystem comes from an image attached to the machine as a block device. This
 page describes what an image must contain, and the three ways to get one:
 
-- `rootImage()` from `@lowland/image` is the ready-made image that ships with the package, as
+- `rootImage()` from `lowland/image` is the ready-made image that ships with the package, as
   the root of the guest agent's mount table. It also boots images you build.
-- `buildImage()` from `@lowland/image/build` builds an image file in Node.js. It is also
+- `buildImage()` from `lowland/image/build` builds an image file in Node.js. It is also
   available as the `lowland build` command.
 - `mkImage` is a Nix function that builds an image file from Nix packages.
 
@@ -34,7 +34,7 @@ as shown in [Your own software](/your-own-software/#building-an-image).
 
 ## The image contract
 
-The guest agent from `@lowland/guest` boots any image that meets these requirements:
+The guest agent from `lowland/guest` boots any image that meets these requirements:
 
 - The image is a filesystem the guest kernel can mount, such as EROFS or ext4, at `/` in the
   agent's mount table.
@@ -44,7 +44,7 @@ The guest agent from `@lowland/guest` boots any image that meets these requireme
 - Programs are WebAssembly binaries for 32-bit Linux, linked statically. Scripts with a `#!`
   line also run.
 
-When a mount fails, `bootMachine()` rejects with a `GuestBootError` from `@lowland/guest`. Its
+When a mount fails, `bootMachine()` rejects with a `GuestBootError` from `lowland/guest`. Its
 message names the step and the error, and its `kernelLog` holds the end of the guest kernel's
 log, which usually says why.
 
@@ -73,7 +73,7 @@ An init is optional. Without one, the guest runs only the programs you start fro
 ## `rootImage()`
 
 ```js
-import { rootImage } from "@lowland/image";
+import { rootImage } from "lowland/image";
 
 const guest = guestAgent({ mounts: [rootImage()] });
 await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
@@ -85,8 +85,9 @@ of machines.
 
 ### The bundled image
 
-Without a source, `rootImage()` attaches the image shipped inside `@lowland/image`. The image is
-EROFS and contains:
+Without a source, `rootImage()` attaches the image shipped inside the `lowland` package. Only
+`lowland/image` refers to it, so an application that imports `lowland/image` bundles it and
+other applications do not. The image is EROFS and contains:
 
 - BusyBox, which provides `/bin/sh` and the standard commands.
 - apk-tools, configured to install signed packages from the public repository,
@@ -135,7 +136,7 @@ http://localhost:5173/app.erofs did not return a disk image: got text/html, 116 
 ## `buildImage()`
 
 ```js
-import { buildImage } from "@lowland/image/build";
+import { buildImage } from "lowland/image/build";
 
 await buildImage({
   packages: ["busybox", "jq"],
@@ -144,7 +145,7 @@ await buildImage({
 });
 ```
 
-`buildImage()` boots a machine from a builder image inside `@lowland/image`, builds
+`buildImage()` boots a machine from a builder image inside the `lowland` package, builds
 the image in it, and writes it to `output`. It runs only in Node.js. Its options are:
 
 | Option     | Default          | Description                                                                                                                                                                                    |

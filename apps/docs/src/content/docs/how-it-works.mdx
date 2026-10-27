@@ -15,7 +15,7 @@ caveats exist.
 
 Linux supports many processor architectures. Lowland adds one more, `wasm`, to a fork of the
 kernel. The kernel is built for this architecture like any other and produces a single
-WebAssembly module, `vmlinux.wasm`, which ships in `@lowland/kernel`.
+WebAssembly module, `vmlinux.wasm`, which ships in the `lowland` package.
 
 Where a kernel for real hardware would use privileged instructions, this kernel calls
 functions that JavaScript provides as WebAssembly imports. For example, it calls an import to

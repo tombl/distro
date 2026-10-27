@@ -28,29 +28,17 @@ rec {
       fileset = lib.fileset.unions ([ manifests ] ++ map (path: root + "/${path}") paths);
     };
 
-  # Shell that puts Nix-built workspace packages where `pnpm build` and
-  # `pnpm artifacts` would leave them in a checkout.
+  # Shell that puts the Nix-built package where `pnpm build` and `pnpm
+  # artifacts` would leave it in a checkout: its JavaScript, and the assets
+  # given as { name, path } roles from `lowland.assets`.
   installBuilt =
     {
-      bytes ? null,
-      kernel ? null,
-      linux-guest ? null,
-      lowland-image ? null,
       lowland ? null,
+      assets ? [ ],
     }:
     lib.concatStringsSep "\n" (
-      lib.optional (bytes != null) "cp -rT ${bytes}/dist packages/bytes/dist"
-      ++ lib.optionals (kernel != null) [
-        "cp -rT ${kernel}/dist packages/kernel/dist"
-        "cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm"
-      ]
-      ++ lib.optionals (linux-guest != null) [
-        "cp -rT ${linux-guest}/dist packages/linux-guest/dist"
-        "cp ${linux-guest}/agent.cpio packages/linux-guest/agent.cpio"
-      ]
-      # The JavaScript only; callers that need the images pass them explicitly.
-      ++ lib.optional (lowland-image != null) "cp -rT ${lowland-image}/dist packages/image/dist"
-      ++ lib.optional (lowland != null) "cp -rT ${lowland}/dist packages/lowland/dist"
+      lib.optional (lowland != null) "cp -rT ${lowland}/dist packages/lowland/dist"
+      ++ map (asset: "install -Dm0644 ${asset.path} packages/lowland/assets/${asset.name}") assets
     );
 
   # A check that runs a package's own scripts against the source tree, the
@@ -113,6 +101,6 @@ rec {
     };
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-UBmVG32fH+WkhgCReeH96ks/K65vjQSfj9tECUDd6Y8=";
+    hash = "sha256-Fabhw6ZOO+uYSCuirs3/9GeWv8KsXCPjTtG7TyGFbg4=";
   };
 }

@@ -1,9 +1,9 @@
 # Browser tests
 
-This package boots the packaged `@lowland/guest` runtime in Playwright's
+This package boots the packaged `lowland` runtime in Playwright's
 Chromium, Firefox, and WebKit builds. The server supplies the COOP and COEP
-headers required by shared WebAssembly memory. The workspace packages come
-from their `dist/` builds, and the images the scenarios boot come from the
+headers required by shared WebAssembly memory. The `lowland` package comes
+from its `dist/` build and `assets/`, and the images the scenarios boot come from the
 test assets; the tests do not fetch anything else at runtime.
 
 ## Running

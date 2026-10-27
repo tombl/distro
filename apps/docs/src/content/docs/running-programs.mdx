@@ -133,9 +133,9 @@ that machine. Fresh machines mean one user's snippet cannot see another's files,
 is the boundary the [security model](/security-model/) relies on.
 
 ```js run
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent } from "@lowland/guest";
-import { rootImage } from "@lowland/image";
+import { bootMachine } from "lowland/machine";
+import { guestAgent } from "lowland/guest";
+import { rootImage } from "lowland/image";
 
 const image = rootImage();
 
@@ -217,7 +217,7 @@ background can keep it open. That is why the loop waits for `status`, then gives
 second to finish. `close()` hangs up the terminal, which ends `stdout` and discards anything the
 guest has not yet delivered.
 
-`consoleDevice(input, output)` from `@lowland/kernel` is the other way to get a terminal. It
+`consoleDevice(input, output)` from `lowland/machine` is the other way to get a terminal. It
 adds a console that the guest sees as `/dev/hvc0`, which shows kernel messages and suits an
 image whose `/init` starts a shell with `exec setsid cttyhack sh`.
 

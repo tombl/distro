@@ -1,7 +1,8 @@
 # The kernel is a build-platform artifact: a wasm blob and headers. The
-# JavaScript host library lives in the repository's @lowland/kernel workspace
-# package. This derivation uses explicit tools because kbuild drives its own
-# cross setup rather than the wasm stdenv.
+# JavaScript host library is the machine layer of the repository's lowland
+# workspace package, packages/lowland/src/machine. This derivation uses
+# explicit tools because kbuild drives its own cross setup rather than the
+# wasm stdenv.
 {
   pkgs,
   lib,

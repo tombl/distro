@@ -1,7 +1,7 @@
 import type { APIRoute } from "astro";
 
 import { getPublishedDocs } from "../lib/docs";
-import { referencePackages } from "../lib/reference-packages";
+import { referenceSections } from "../lib/reference-packages";
 
 export const GET: APIRoute = async ({ site }) => {
   const docs = await getPublishedDocs();
@@ -17,7 +17,7 @@ export const GET: APIRoute = async ({ site }) => {
       const url = new URL(`/${entry.id}.md`, site);
       return `- [${entry.data.title}](${url}): ${entry.data.description}`;
     });
-  const references = referencePackages.map((pkg) => {
+  const references = referenceSections.map((pkg) => {
     const url = new URL(`/reference/${pkg.slug}.md`, site);
     return `- [${pkg.name} reference](${url}): ${pkg.description}`;
   });

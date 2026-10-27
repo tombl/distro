@@ -1,6 +1,8 @@
 # JavaScript-first repository design
 
-Status: accepted
+Status: accepted. Its four packages later became one, `lowland`, with an entry
+point per layer (`lowland/machine`, `lowland/guest`, `lowland/image`); see
+`packages/lowland/README.md`.
 
 This document describes the intended package API, repository layout, artifact
 boundary, and development workflow. It is deliberately a design document, not

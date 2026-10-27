@@ -1,6 +1,6 @@
 import { getCollection } from "astro:content";
 
-import { referencePackages } from "./reference-packages";
+import { referenceSections } from "./reference-packages";
 
 export function getPublishedDocs() {
   return getCollection("docs", ({ data }) => !data.draft);
@@ -34,7 +34,7 @@ export async function getDocsSections(): Promise<{ heading: string; items: DocsI
     {
       heading: "Reference",
       items: [
-        ...referencePackages.map((pkg) => ({
+        ...referenceSections.map((pkg) => ({
           id: `reference:${pkg.slug}`,
           href: `/reference/${pkg.slug}/`,
           label: pkg.name,

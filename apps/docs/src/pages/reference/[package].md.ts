@@ -1,15 +1,15 @@
 import type { APIRoute } from "astro";
 
 import { generateReferenceMarkdown } from "../../lib/reference-docs";
-import { referencePackages, type ReferencePackage } from "../../lib/reference-packages";
+import { referenceSections, type ReferenceSection } from "../../lib/reference-packages";
 import { readPackageReadme } from "../../lib/reference-readme";
 
 interface Props {
-  pkg: ReferencePackage;
+  pkg: ReferenceSection;
 }
 
 export function getStaticPaths() {
-  return referencePackages.map((pkg) => ({
+  return referenceSections.map((pkg) => ({
     params: { package: pkg.slug },
     props: { pkg },
   }));

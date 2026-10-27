@@ -1,64 +1,25 @@
 {
-  bytes,
   pkgs,
   lib,
-  kernel,
-  linux-guest,
+  lowland,
   node-workspace,
   rootfs,
   test-assets,
 }:
 
 let
-  app = pkgs.stdenvNoCC.mkDerivation {
-    pname = "runner-app";
-    version = "0.0.0";
-    src = node-workspace.source [
-      "packages/bytes"
-      "packages/kernel"
-      # @lowland/guest is the built package, linked in below.
-      "packages/runner/src"
-      "scripts/pack-package.mjs"
-      "scripts/packages.mjs"
-      "tsconfig.base.json"
-    ];
-    env.CI = "true";
-    pnpmDeps = node-workspace.deps;
-    nativeBuildInputs = [
-      pkgs.nodejs_26
-      pkgs.pnpmConfigHook
-      node-workspace.pnpm
-    ];
-
-    buildPhase = ''
-      runHook preBuild
-
-      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -r ${kernel}/dist packages/kernel/dist
-      cp -r ${bytes}/dist packages/bytes/dist
-      rm packages/runner/node_modules/@lowland/guest
-      ln -s ${linux-guest.package} packages/runner/node_modules/@lowland/guest
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      runHook preInstall
-
-      mkdir -p $out/node_modules/@lowland/bytes $out/node_modules/@tombl
-      cp packages/runner/src/run.ts $out/run.ts
-      cp packages/runner/src/disk-worker.ts $out/disk-worker.ts
-      cp packages/runner/src/shares.ts $out/shares.ts
-      cp packages/runner/package.json $out/package.json
-      cp -RL ${bytes}/. $out/node_modules/@lowland/bytes/
-      cp -RL packages/runner/node_modules/@lowland/kernel $out/node_modules/@lowland/kernel
-      mkdir $out/node_modules/@lowland/guest
-      cp ${linux-guest.package}/package.json $out/node_modules/@lowland/guest/package.json
-      cp -r ${linux-guest.package}/dist $out/node_modules/@lowland/guest/dist
-
-      runHook postInstall
-    '';
-  };
+  # The runner's sources beside the compiled lowland package and the kernel,
+  # which is all of it the runner loads.
+  app = pkgs.runCommand "runner-app" { } ''
+    mkdir -p $out/node_modules/lowland/assets
+    cp ${../../../packages/runner/src/run.ts} $out/run.ts
+    cp ${../../../packages/runner/src/disk-worker.ts} $out/disk-worker.ts
+    cp ${../../../packages/runner/src/shares.ts} $out/shares.ts
+    cp ${../../../packages/runner/package.json} $out/package.json
+    cp ${../../../packages/lowland/package.json} $out/node_modules/lowland/package.json
+    cp -r ${lowland.dist}/dist $out/node_modules/lowland/dist
+    cp ${lowland.assets.kernel.path} $out/node_modules/lowland/assets/${lowland.assets.kernel.name}
+  '';
 
   package = pkgs.writeShellScriptBin "wasm-linux-runner" ''
     has_disk=0
@@ -81,8 +42,8 @@ let
     name = "linux-runner-integration-test";
     paths = [ "packages/runner" ];
     built = {
-      inherit bytes kernel;
-      linux-guest = linux-guest.package;
+      lowland = lowland.dist;
+      assets = [ lowland.assets.kernel ];
     };
     assets = test-assets.select [
       "boot.cpio"

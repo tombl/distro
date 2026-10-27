@@ -1,8 +1,6 @@
 {
-  bytes,
   stdenv,
   pkgs,
-  kernel,
 }:
 
 let
@@ -38,12 +36,12 @@ let
 
     buildPhase = ''
       runHook preBuild
-      mkdir -p node_modules/@lowland/bytes node_modules/@lowland/kernel
-      cp ${../../packages/linux-guest/src/abi.ts} abi.ts
-      cp -r ${bytes}/. node_modules/@lowland/bytes/
-      cp -r ${kernel}/. node_modules/@lowland/kernel/
-      echo '{"type":"module","dependencies":{"@lowland/bytes":"*","@lowland/kernel":"*"}}' > package.json
-      node gen-abi-check.ts ./abi.ts > abi-check.c
+      # abi.ts imports the bytes helpers beside it in the package source.
+      mkdir -p src/guest src/bytes
+      cp ${../../packages/lowland/src/guest/abi.ts} src/guest/abi.ts
+      cp ${../../packages/lowland/src/bytes/index.ts} src/bytes/index.ts
+      echo '{"type":"module"}' > package.json
+      node gen-abi-check.ts ./src/guest/abi.ts > abi-check.c
       $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
         -c abi-check.c -o abi-check.o
       runHook postBuild
