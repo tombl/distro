@@ -40,10 +40,12 @@ interface App {
   /** Node-only applications are bundled by esbuild for Node alone. */
   node?: boolean;
   /**
-   * A negative control: the check must fail for this application, which
-   * proves it can see an asset that should not be there.
+   * A negative control: assets the application drags in although `assets`
+   * leaves them out. The check must report each of them as included, which
+   * proves it sees an asset that should not be there, while the expected
+   * assets must still be present.
    */
-  leaks?: boolean;
+  leaks?: readonly Asset[];
 }
 
 const APPS: Record<string, App> = {
@@ -61,7 +63,7 @@ const APPS: Record<string, App> = {
     assets: ["kernel", "agent", "rootfs"],
   },
   "image/build": { entry: "build.js", assets: ["kernel", "agent", "builder"], node: true },
-  "negative control": { entry: "leak.js", assets: ["rootfs"], leaks: true },
+  "negative control": { entry: "leak.js", assets: ["rootfs"], leaks: ["kernel"] },
 };
 
 /** A name as a bundler may emit it: `rootfs.erofs` or `rootfs-<hash>.erofs`. */
@@ -146,7 +148,9 @@ for (const [name, app] of Object.entries(APPS)) {
     const outDir = join(output, `${bundler}-${app.entry.replace(/\.js$/, "")}`);
     await bundle(app, outDir);
     const result = await inspect(outDir);
-    const problems: string[] = [];
+    const missing: string[] = [];
+    const extra: string[] = [];
+    const included = new Set<Asset>();
     for (const asset of Object.keys(ASSETS) as Asset[]) {
       const expected = app.assets.includes(asset);
       const emitted = asset in result.emitted;
@@ -155,26 +159,33 @@ for (const [name, app] of Object.entries(APPS)) {
       const present = bundler === "vite" ? emitted && referenced : referenced;
       const any = emitted || referenced;
       if (expected && !present) {
-        problems.push(`${ASSETS[asset]} missing (emitted ${emitted}, referenced ${referenced})`);
+        missing.push(`${ASSETS[asset]} missing (emitted ${emitted}, referenced ${referenced})`);
       } else if (!expected && any) {
-        problems.push(`${ASSETS[asset]} included (emitted ${emitted}, referenced ${referenced})`);
+        included.add(asset);
+        extra.push(`${ASSETS[asset]} included (emitted ${emitted}, referenced ${referenced})`);
       }
     }
     // The kernel is useless without the CPU worker that runs it.
     const workers = app.assets.includes("kernel") ? 1 : 0;
     if (bundler === "vite" && result.workers !== workers) {
-      problems.push(`${result.workers} CPU worker chunks instead of ${workers}`);
+      extra.push(`${result.workers} CPU worker chunks instead of ${workers}`);
     }
     const assets = app.assets.map((asset) => ASSETS[asset]).join(", ") || "none";
     const emitted = Object.values(result.emitted).reduce((total, size) => total + size, 0);
-    // A negative control passes when the check catches its leak.
-    const ok = app.leaks ? problems.length > 0 : problems.length === 0;
+    // A negative control passes when the check reports each of its leaks and
+    // still finds every expected asset.
+    const problems = app.leaks
+      ? [
+          ...missing,
+          ...app.leaks
+            .filter((asset) => !included.has(asset))
+            .map((asset) => `the check missed the leaked ${ASSETS[asset]}`),
+        ]
+      : [...missing, ...extra];
     rows.push(
-      `| ${name} | ${bundler} | ${assets} | ${ok ? "ok" : "FAIL"} | ${mib(result.javascript)} | ${bundler === "vite" ? mib(emitted) : "-"} |`,
+      `| ${name} | ${bundler} | ${assets} | ${problems.length ? "FAIL" : "ok"} | ${mib(result.javascript)} | ${bundler === "vite" ? mib(emitted) : "-"} |`,
     );
-    if (app.leaks && !ok) failures.push(`${name} with ${bundler}: the check missed the leak`);
-    if (!app.leaks)
-      for (const problem of problems) failures.push(`${name} with ${bundler}: ${problem}`);
+    for (const problem of problems) failures.push(`${name} with ${bundler}: ${problem}`);
   }
 }
 
