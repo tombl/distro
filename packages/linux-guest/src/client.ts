@@ -104,7 +104,9 @@ export interface ExecOptions {
    * standard output goes, like `2>&1`, and an `FsFile` from `guest.fs.open`
    * connects that guest file, which the process shares with you, offset and
    * all. A stream whose descriptor is not a pipe has nothing behind it:
-   * `stdout` and `stderr` are empty, and writes to `stdin` reject.
+   * `stdout` and `stderr` are empty, writes to `stdin` reject, and closing
+   * `stdin` does nothing, neither closing the file nor ending the process's
+   * input.
    *
    * The process gets its own reference to a file, so you can close the
    * `FsFile` once `exec` resolves.

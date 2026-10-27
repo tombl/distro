@@ -227,7 +227,7 @@ export type ChildProcessInit = {
 const ended = () => new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
 
 // A stdin that is not a pipe has nothing behind the stream: closing it does
-// nothing, and writing is a mistake.
+// nothing, not even to a file given as stdin, and writing is a mistake.
 const unpiped_input = () =>
   new WritableStream<Uint8Array>({
     write() {
@@ -250,7 +250,7 @@ const unpiped_input = () =>
  *
  * With the `stdio` exec option, a stream whose descriptor is not `"pipe"`
  * has nothing behind it: `stdout` or `stderr` is empty, and `stdin` rejects
- * writes, though closing it still succeeds.
+ * writes, while closing it does nothing.
  */
 export class ChildProcess implements AsyncDisposable {
   /** Process ID in the guest. */
@@ -260,7 +260,9 @@ export class ChildProcess implements AsyncDisposable {
    * it to send EOF, which is how programs such as `cat` know to finish. A
    * terminal has no end of input, so closing a terminal process's stdin only
    * stops writes. Write `\x04`, the Ctrl-D a user would type, instead. If
-   * the process's stdin is not a pipe, writes reject with a `TypeError`.
+   * the process's stdin is not a pipe, writes reject with a `TypeError`, and
+   * closing it does nothing: an `FsFile` given as stdin stays open, and the
+   * process's input is unchanged.
    *
    * Writes are buffered on the host side, so filling stdin before reading
    * stdout does not deadlock, even once the guest's pipe is full. Once more

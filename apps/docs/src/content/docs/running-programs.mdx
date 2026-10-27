@@ -102,7 +102,8 @@ const result = await guest.run(["make"], { stdio: ["null", log, "stdout"] });
 
 The program shares the file's offset with you, and keeps its own reference to the file, so
 closing the `FsFile` afterwards is fine. A stream that is not a pipe has nothing behind it:
-`stdout` and `stderr` are empty, and writes to `stdin` reject.
+`stdout` and `stderr` are empty, and writes to `stdin` reject. Closing such a `stdin` does
+nothing: the file stays open, and the program's input is unchanged.
 
 ## Time limits, and what they cannot stop
 
