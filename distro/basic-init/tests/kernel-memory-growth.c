@@ -2,12 +2,15 @@
 
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <sys/mount.h>
 #include <unistd.h>
 
 #define CHUNK_SIZE (64 * 1024)
 #define FILE_SIZE (64 * 1024 * 1024)
+/* The sequential write pauses for the host after every step. */
+#define STEP_SIZE (1024 * 1024)
 
 struct file {
 	const char *path;
@@ -16,12 +19,20 @@ struct file {
 
 static pthread_barrier_t writers_ready;
 
+static void wait_for_host(const char *marker)
+{
+	puts(marker);
+	fflush(stdout);
+	if (getchar() == EOF)
+		test_fail("host closed console input");
+}
+
 static void fill_chunk(unsigned char *buffer, unsigned char seed, size_t chunk)
 {
 	memset(buffer, seed + chunk * 17, CHUNK_SIZE);
 }
 
-static void write_file(const struct file *file)
+static void write_file(const struct file *file, bool steps)
 {
 	unsigned char *buffer = malloc(CHUNK_SIZE);
 	int fd;
@@ -35,6 +46,8 @@ static void write_file(const struct file *file)
 		fill_chunk(buffer, file->seed, offset / CHUNK_SIZE);
 		if (write(fd, buffer, CHUNK_SIZE) != CHUNK_SIZE)
 			test_perror("writing tmpfs file");
+		if (steps && (offset + CHUNK_SIZE) % STEP_SIZE == 0)
+			wait_for_host("::kernel-memory::step");
 	}
 	if (close(fd) == -1)
 		test_perror("closing tmpfs file");
@@ -71,16 +84,8 @@ static void *write_file_thread(void *argument)
 
 	if (status != 0 && status != PTHREAD_BARRIER_SERIAL_THREAD)
 		test_fail("waiting for concurrent writers");
-	write_file(argument);
+	write_file(argument, false);
 	return NULL;
-}
-
-static void wait_for_host(const char *marker)
-{
-	puts(marker);
-	fflush(stdout);
-	if (getchar() == EOF)
-		test_fail("host closed console input");
 }
 
 int main(void)
@@ -96,7 +101,7 @@ int main(void)
 	if (mount("tmpfs", "/tmp", "tmpfs", 0, "size=256m") == -1)
 		test_perror("mounting tmpfs");
 
-	write_file(&sequential);
+	write_file(&sequential, true);
 	verify_file(&sequential);
 	wait_for_host("::kernel-memory::sequential");
 
