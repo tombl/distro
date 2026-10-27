@@ -1,0 +1,89 @@
+---
+title: What runs, and what doesn't
+description: The Linux behavior a guest does not have, the porting situations that run into it, and what to do instead.
+section: chapters
+order: 6
+---
+
+# What runs, and what doesn't
+
+Most programs compile for the guest and run unchanged. The ones that don't usually hit one of
+a few differences from Linux on real hardware. Each one follows from the platform: WebAssembly
+has no memory management unit, a program cannot be interrupted while it computes, and every
+program is one statically linked module. None of them is going to change, so the fixes below
+are changes to programs, not workarounds waiting for a release.
+
+The sections are named after what a program is trying to do.
+
+## Starting another program
+
+`fork()` and `vfork()` do not exist, and the C library does not declare them. A child process
+cannot get a copy of its parent's memory at the same addresses without an MMU.
+
+Use `posix_spawn()`, or `system()` and `popen()`, which use it. Most programs that fork only to
+call `exec()` straight away can switch with a small patch, and many already have a
+`posix_spawn()` path behind a configure check. The SDK answers autoconf's `fork` and `vfork`
+checks with "no", so those programs pick their fallback by themselves.
+
+## Running code in a child process
+
+When a child runs the parent's code rather than exec-ing, use `clone()` with a function for the
+child to start in. Without `CLONE_VM`, the child gets a private copy of the parent's memory,
+which is fork semantics. That works only while the parent has a single thread. In a
+multithreaded process, `clone()` without `CLONE_VM` fails with `EOPNOTSUPP`.
+
+## Servers that fork per connection, and daemons that double-fork
+
+Both rely on `fork()`. Most servers have a foreground or single-process mode, such as BusyBox
+`httpd -f`, and a threaded or event-driven mode for connections. Use those. Run daemons in the
+foreground with `exec()`, or from `/init`, rather than letting them detach.
+
+## Mapping memory
+
+There is no `mmap()`, `munmap()` or `mprotect()`, anonymous mappings included. A WebAssembly
+program has one linear memory, and `malloc()` grows it. Read files with `read()`. Code that maps
+files for speed usually has a fallback for platforms without `mmap()`, and the SDK's configure
+answers select it.
+
+Each process can grow its memory to 256 MiB by default.
+
+## Busy loops and spinners
+
+The kernel cannot interrupt WebAssembly that is running. A thread receives signals only when it
+makes a system call, and it keeps its virtual CPU until then. A loop that never makes one
+ignores `SIGKILL`, and with one CPU it stops every other task in the machine.
+
+This bites in two ways. Long computations cannot be interrupted, so a timeout does nothing until
+they finish. And spin-waits that wait for another thread to make progress, without yielding,
+can stall forever when the other thread needs the same CPU. Make such loops call
+`sched_yield()` or sleep, or give the machine more CPUs. For code you don't control, enforce
+deadlines by closing the machine, as in
+[Running programs](/running-programs/#time-limits-and-what-they-cannot-stop).
+
+## Loading code at runtime
+
+Programs are linked statically. There are no shared libraries and no `dlopen()`. Plugins have
+to be compiled in.
+
+## C++ exceptions
+
+C++ builds and runs, but exceptions do not work yet. A `throw` crashes the program even where a
+`catch` would handle it. Port code that does not use exceptions, or build with exceptions off.
+
+## Shell scripts
+
+`/bin/sh` is BusyBox. Its shell differs from Bash and from Debian's dash in the corners. If a
+script misbehaves, check it under `busybox sh` on a normal Linux host first. Bash is in the
+public repository as `bash`, for scripts that need it.
+
+## Large programs
+
+The kernel compiles a program's whole binary every time it starts. Startup time grows with
+binary size, and a program that runs many short-lived children pays it for each one. Prefer
+fewer, longer-lived processes where you can.
+
+## Things that do work
+
+To save you checking: POSIX threads, with each thread in its own worker. Signals and handlers,
+within the limit above. Pipes, Unix and TCP sockets, `poll()` and `epoll()`. Pseudo-terminals.
+`clone()` with `CLONE_VM`. ext4, ext2 and EROFS filesystems, tmpfs, and virtio-fs.

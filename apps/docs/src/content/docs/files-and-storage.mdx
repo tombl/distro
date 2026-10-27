@@ -1,0 +1,252 @@
+---
+title: Files and storage
+description: The root filesystem, moving files in and out, sharing host directories, and keeping data between runs.
+section: chapters
+order: 3
+---
+
+# Files and storage
+
+A guest's files live in one of three places: the root image and the memory layer above it,
+host directories you share with the guest, or disks you attach. This chapter covers each of
+them, and how to get data from JavaScript into the guest and back.
+
+## The root filesystem
+
+The root image from `rootImage()` is read-only, and the guest mounts a writable layer in
+memory on top of it. Programs can change any file, including in `/etc` and `/usr`, but every
+change is lost when the machine closes. Every boot starts from the same files.
+
+That suits the example service. Each snippet starts from a clean system, and nothing it does
+outlives its machine. It also means that one image file can back any number of machines at
+once.
+
+To keep the root filesystem's changes, boot from an ext4 image with
+`rootImage(file, { writable: true })`. The [Your own software](/your-own-software/) chapter
+covers building one. A writable image belongs to one machine at a time.
+
+## Moving files in and out
+
+`guest.fs` reads and writes files in the guest from JavaScript. Its methods look like those of
+`node:fs/promises`, and they are carried out as system calls by the guest agent. They therefore
+see exactly what programs in the guest see, with no cache in between, and they act as root.
+
+The example service now accepts a set of files with the snippet, and returns the files the
+snippet produced:
+
+```js
+await guest.fs.mkdir("/work");
+for (const [name, contents] of Object.entries(files)) {
+  await guest.fs.writeTextFile(`/work/${name}`, contents);
+}
+
+const process = await guest.exec(["sh", "-c", code], { cwd: "/work" });
+// ...wait for it as before...
+
+const outputs = {};
+for await (const entry of guest.fs.readDir("/work")) {
+  if (entry.isFile) outputs[entry.name] = await guest.fs.readTextFile(`/work/${entry.name}`);
+}
+```
+
+Failures reject with a `SystemError` whose `code` is the errno name, such as `"ENOENT"` or
+`"EISDIR"`.
+
+`writeFile()` also accepts a `ReadableStream`, so a download can go straight into the guest
+without being held in memory on the host:
+
+```js
+const response = await fetch("https://example.com/data.tar.gz");
+await guest.fs.writeFile("/work/data.tar.gz", response.body);
+```
+
+Each call is at least one round trip to the guest. For a large tree of small files, send one
+archive and unpack it inside the guest instead:
+
+```js
+const tar = await guest.exec(["tar", "-xz", "-C", "/work"]);
+await archive.pipeTo(tar.stdin); // a ReadableStream of a .tar.gz
+await tar.status;
+```
+
+The same works in reverse with `tar -c` and `tar.stdout`.
+
+## Sharing a host directory
+
+A shared directory gives the guest live access to files on the host, with no copying. It is a
+virtio-fs device backed by `NodeFS` in Node.js or `BrowserFS` in a browser, which the guest
+mounts by its tag:
+
+```js
+import { bootMachine, fileSystemDevice } from "@lowland/kernel";
+import { NodeFS } from "@lowland/guest/node";
+
+const shared = fileSystemDevice(new NodeFS("./project", { readOnly: true }), { tag: "project" });
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest, shared] });
+
+await guest.fs.mkdir("/project");
+await guest.mount("project", "/project", { type: "virtiofs" });
+```
+
+In a browser, `new BrowserFS(handle)` serves a `FileSystemDirectoryHandle`, such as a folder the
+user picked with `showDirectoryPicker()` or the origin private file system.
+
+Some behavior to know before you rely on it:
+
+- **Read-only belongs to the backend.** Mounting with `MS_RDONLY` does not stop the guest
+  kernel from sending writes to the device. Pass `readOnly: true` to the backend, and writes
+  fail with `EROFS`.
+- **Devices are fixed at boot.** Attach every directory you might share when the machine boots.
+  You can mount and unmount it later, but you cannot add a device.
+- **The guest caches metadata.** File attributes and name lookups are cached for one second.
+  Directory listings are always read fresh. If other host programs change files while the guest
+  runs, pass `cache: false` to `fileSystemDevice()`. File contents the guest has read can still
+  be cached.
+- **`BrowserFS` emulates POSIX.** The browser file system API has no permissions, ownership or
+  atomic rename. `BrowserFS` keeps modes, owners and timestamps in memory, so they reset when
+  you create a new `BrowserFS`. Rename copies and then deletes, so one that fails partway can
+  lose the old destination, leave a partial new one, or leave both names.
+  The [reference](/reference/guest/#BrowserFS) has the details.
+- **`NodeFS` confines paths, within limits.** It keeps the guest inside the shared directory,
+  but cannot guarantee that while another host process moves things around in it. Share a
+  directory that your application owns.
+
+## Keeping data between runs
+
+To keep data, attach a disk whose storage lives on the host. `blockDevice()` turns any object
+with a `capacity` and `read`, plus `write` for a writable disk, into a virtio block device. In
+Node.js that object can wrap a file. In a browser, it can wrap a file in the origin private file
+system (OPFS).
+
+### In a browser
+
+Fast access to an OPFS file is only available in a dedicated worker, through
+`createSyncAccessHandle()`. The worker serves the disk with `serveDevice()`, and the page
+attaches it with `workerDevice()`:
+
+```ts title="disk-worker.ts"
+import { blockDevice, type BlockStorage, serveDevice, serveDeviceError } from "@lowland/kernel";
+
+const capacity = 256 * 1024 * 1024;
+
+async function openStorage(): Promise<BlockStorage> {
+  const directory = await navigator.storage.getDirectory();
+  const file = await directory.getFileHandle("disk.img", { create: true });
+  const access = await file.createSyncAccessHandle();
+  if (access.getSize() === 0) access.truncate(capacity);
+
+  return {
+    capacity: access.getSize(),
+    read(offset, target) {
+      let done = 0;
+      while (done < target.byteLength) {
+        const n = access.read(target.subarray(done), { at: offset + done });
+        if (n === 0) break;
+        done += n;
+      }
+      return done;
+    },
+    write(offset, data) {
+      let done = 0;
+      while (done < data.byteLength) {
+        const n = access.write(data.subarray(done), { at: offset + done });
+        if (n === 0) break;
+        done += n;
+      }
+      return done;
+    },
+    flush() {
+      access.flush();
+    },
+    close() {
+      access.flush();
+      access.close();
+    },
+  };
+}
+
+try {
+  serveDevice(self, blockDevice(await openStorage()));
+} catch (error) {
+  serveDeviceError(self, error);
+}
+```
+
+```ts title="page.ts"
+const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), { type: "module" });
+const disk = await workerDevice(worker);
+disk.closed.finally(() => worker.terminate());
+
+const guest = guestAgent();
+await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest, disk] });
+```
+
+`read` and `write` receive views straight into guest memory, valid until the call returns, so
+data is never copied on the host. Loop until the whole view is done, because the guest treats a
+short transfer as an I/O error. If the worker calls `serveDeviceError()`, `workerDevice()`
+rejects with an `Error` of the same `name` and `message`.
+
+`truncate()` reserves the full capacity against the origin's storage quota at once, and a file
+that already exists keeps its size. Pick the capacity before the first run.
+
+### In Node.js
+
+No worker is needed. Wrap a `FileHandle` opened with `"r+"`:
+
+```js
+import { open } from "node:fs/promises";
+import { blockDevice } from "@lowland/kernel";
+
+const file = await open("disk.img", "r+");
+const { size } = await file.stat();
+const disk = blockDevice({
+  capacity: size,
+  async read(offset, target) {
+    const { bytesRead } = await file.read(target, 0, target.byteLength, offset);
+    return bytesRead;
+  },
+  async write(offset, data) {
+    const { bytesWritten } = await file.write(data, 0, data.byteLength, offset);
+    return bytesWritten;
+  },
+});
+```
+
+Create the file at its full size first, for example with `truncate()` from `node:fs/promises`.
+
+### Format and mount it
+
+The disk is an ordinary block device in the guest. With the plugins in the order above, the
+root image is `/dev/vda`, the guest agent's own disk is `/dev/vdb`, and yours is `/dev/vdc`. A
+new disk contains only zeros, so make a filesystem on first use:
+
+```js
+const probe = await guest.run(["blkid", "/dev/vdc"]);
+if (probe.stdout.byteLength === 0) {
+  await guest.run(["mkfs.ext2", "-L", "data", "/dev/vdc"]);
+}
+await guest.fs.mkdir("/data");
+await guest.mount("/dev/vdc", "/data", { type: "ext2" });
+```
+
+### Don't lose writes
+
+The guest kernel holds recent writes in its page cache and writes them out later. Closing the
+machine discards whatever has not been written yet, and can leave the filesystem inconsistent.
+Unmount the disk, or run `sync`, before closing:
+
+```js
+await guest.unmount("/data");
+machine.close();
+```
+
+A browser tab can close at any moment, so run `sync` after writes that matter, or mount with
+`-o sync` and accept slower writes. Ask for durable storage with `navigator.storage.persist()`,
+or the browser may evict the file under storage pressure.
+
+### One tab at a time
+
+Only one sync access handle can be open on an OPFS file. While one tab has the disk open,
+`createSyncAccessHandle()` in another throws a `NoModificationAllowedError`, which reaches the
+page as a rejection with that `name`. Tell the user the page is open elsewhere, or give each
+tab its own file.

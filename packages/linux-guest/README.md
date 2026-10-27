@@ -25,12 +25,12 @@ console.log(new TextDecoder().decode(result.stdout));
 
 The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
 `rootImage()` from `@lowland/image` attaches a small one with BusyBox and apk.
-[Build an image](https://docs.low.land/build-an-image/) explains how to make your own, which
+[Your own software](https://docs.low.land/your-own-software/) explains how to make your own, which
 `rootImage("app.erofs")` attaches in the same way. A missing or duplicate root makes
 `bootMachine()` reject with a `GuestBootError`.
 
 The same code runs in a browser. The page must be served with the cross-origin isolation
-headers described in [Set up a browser page](https://docs.low.land/set-up-a-browser-page/).
+headers described in [Hosting](https://docs.low.land/hosting/).
 
 ## Processes
 

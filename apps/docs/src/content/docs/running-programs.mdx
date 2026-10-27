@@ -1,0 +1,202 @@
+---
+title: Running programs
+description: Machines, the guest agent, run and exec, time limits, and terminals.
+section: chapters
+order: 2
+---
+
+# Running programs
+
+A machine is one Linux kernel with its own memory and workers. The guest agent is how your
+JavaScript gets work done inside it. This chapter covers both, and starts the example service:
+a function that takes a shell snippet from a user, runs it, and returns its output.
+
+## The machine
+
+```js
+const machine = await bootMachine({ cpus: 2, plugins: [rootImage(), guest] });
+```
+
+`cpus` is not a thread count. Every kernel task, including each thread of each program, runs in
+a worker of its own. A virtual CPU is a token those workers pass around, and only a worker that
+holds one runs. `cpus` therefore caps how many tasks run at the same time. One is enough for
+most uses. Raise it when several programs compute at once.
+
+Plugins are configured in the order you list them. Order matters for block devices: the first
+disk is `/dev/vda`, the next `/dev/vdb`, and so on. `args` appends to the kernel command line,
+if you need to.
+
+`machine.closed` settles when the machine stops. It resolves after `machine.close()`, or after
+the guest powers itself off, for example with `poweroff -f`. It rejects with a
+`MachinePanicError` if the kernel panics. `close()` stops every program at once. Nothing in the
+guest gets a chance to shut down cleanly, so flush anything that matters before you call it.
+The [Files and storage](/files-and-storage/) chapter covers what that means for disks.
+
+A machine is also disposable. `await using machine = ...` closes it at the end of the block,
+which is how the examples in this guide are written.
+
+## Run a program
+
+`guest.run()` starts a program, waits for it to exit, and returns its exit status and
+everything it wrote:
+
+```js
+const result = await guest.run(["ls", "-l", "/"]);
+result.status; // { success: true, code: 0, signal: null }
+result.stdout; // Uint8Array
+```
+
+The argv array goes to `execve()` as it is. There is no shell, so nothing is split, quoted or
+expanded, and the first element is looked up on `PATH`. Programs start in `/tmp`, as root, with
+`PATH=/bin:/usr/bin:/sbin:/usr/sbin` and `HOME=/root`. The `cwd` and `env` options change that.
+Variables in `env` are added to those defaults.
+
+A nonzero exit does not reject. Check `status.success`. `run()` rejects only when the program
+could not start, for example with a `SystemError` whose `code` is `"ENOENT"`.
+
+Use `run()` when the output is bounded. It keeps all of it in memory. For anything long-running
+or chatty, use `exec()`.
+
+## Stream with exec
+
+`guest.exec()` resolves once the program has started, with a process whose standard streams are
+web streams:
+
+```js
+const process = await guest.exec(["tr", "a-z", "A-Z"]);
+
+const output = new Response(process.stdout).text();
+
+const writer = process.stdin.getWriter();
+await writer.write(new TextEncoder().encode("shout\n"));
+await writer.close();
+
+console.log(await output); // "SHOUT\n"
+console.log(await process.status);
+```
+
+`write()` resolves once the bytes are queued on the host, but `close()` waits until the guest
+has read all of them. Start reading the output before you close standard input. Otherwise a
+program that fills its output pipe stops reading its input, and `close()` never resolves.
+
+Up to eight programs started by `run()` and `exec()` can be running at a time. Further calls
+wait for a slot instead of failing.
+
+## Time limits, and what they cannot stop
+
+Pass an `AbortSignal` to give a program a deadline. When it aborts, the program is killed and
+the call rejects with the abort reason:
+
+```js
+await guest.run(["sleep", "30"], { signal: AbortSignal.timeout(1000) });
+// rejects with a TimeoutError
+```
+
+`process.kill()` sends `SIGTERM` or a signal you name.
+
+Here Lowland differs from Linux on real hardware. The kernel cannot interrupt WebAssembly while
+it runs, so a program receives signals only when it makes a system call. A program stuck in a
+loop that makes no system calls ignores every signal, `SIGKILL` included, and keeps its CPU.
+With `cpus: 1`, nothing else in the machine runs until it makes one. The pending call does
+not reject either, because it waits for the program to be reaped first.
+
+If you run code you do not control, enforce the deadline by closing the machine. That always
+works.
+
+## The example: run a snippet
+
+The example service gets a fresh machine for each snippet and enforces its deadline by closing
+that machine. Fresh machines mean one user's snippet cannot see another's files, and a machine
+is the boundary the [security model](/security-model/) relies on.
+
+```js title="run-snippet.mjs"
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent } from "@lowland/guest";
+import { rootImage } from "@lowland/image";
+
+const image = rootImage();
+
+export async function runSnippet(code, { timeout = 5000 } = {}) {
+  const guest = guestAgent();
+  await using machine = await bootMachine({ cpus: 1, plugins: [image, guest] });
+
+  const deadline = setTimeout(() => machine.close(), timeout);
+  try {
+    const process = await guest.exec(["sh", "-c", code]);
+    await process.stdin.close();
+    const [stdout, stderr, status] = await Promise.all([
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+      process.status,
+    ]);
+    return { stdout, stderr, status };
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+console.log(await runSnippet("echo hello; uname -m"));
+```
+
+One `rootImage()` plugin can be passed to any number of machines. In a browser the image is
+downloaded once and shared, and in Node.js it is read from disk as each machine needs it. A
+guest agent belongs to exactly one machine, so each run creates a new one.
+
+If the deadline closes the machine, the pending calls reject with a `ProtocolError`, because
+the guest's connection closed mid-request. The service can catch that and report a timeout.
+
+## Terminals
+
+The guest agent does not need a terminal, but people like one. The `terminal` option runs a
+program on a pseudoterminal in the guest instead of on pipes. The program leads its own session
+with that terminal as its controlling terminal, so a shell gets job control, and the guest's line
+discipline handles echo, line editing, Ctrl+C and Ctrl+Z. Your page only moves bytes. Standard
+error arrives in `stdout`, as on any terminal.
+
+With [xterm.js](https://xtermjs.org/), starting a new shell whenever the last one exits:
+
+```ts
+import { Terminal } from "@xterm/xterm";
+
+const terminal = new Terminal();
+terminal.open(document.querySelector("#terminal")!);
+const encoder = new TextEncoder();
+
+for (;;) {
+  const shell = await guest.exec(["sh"], {
+    terminal: { rows: terminal.rows, columns: terminal.cols },
+    env: { TERM: "xterm-256color" },
+  });
+  const input = shell.stdin.getWriter();
+  const typing = terminal.onData((data) => void input.write(encoder.encode(data)));
+  const resizing = terminal.onResize(({ rows, cols }) => {
+    void shell.resize({ rows, columns: cols });
+  });
+  const output = shell.stdout.pipeTo(
+    new WritableStream({
+      write: (data) => new Promise<void>((resolve) => terminal.write(data, resolve)),
+    }),
+  );
+  await shell.status;
+  typing.dispose();
+  resizing.dispose();
+  await Promise.race([output, new Promise((resolve) => setTimeout(resolve, 1000))]);
+  await shell.close();
+}
+```
+
+Resolving each write only after xterm.js has drawn it applies backpressure. A guest that
+prints faster than the page can draw slows down, so output does not pile up in memory.
+`resize()` sends `SIGWINCH` to the foreground program.
+
+`stdout` only ends once every program has closed the terminal, and a job the shell left in the
+background can keep it open. That is why the loop waits for `status`, then gives the output a
+second to finish. `close()` hangs up the terminal, which ends `stdout` and discards anything the
+guest has not yet delivered.
+
+`consoleDevice(input, output)` from `@lowland/kernel` is the other way to get a terminal. It
+adds a console that the guest sees as `/dev/hvc0`, which shows kernel messages and suits an
+image whose `/init` starts a shell with `exec setsid cttyhack sh`.
+
+Kernel messages from early boot go nowhere unless you add `bootConsole(output)`. Add it when a
+machine fails before the guest agent is ready, which usually means the image is wrong.

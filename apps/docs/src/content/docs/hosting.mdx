@@ -1,0 +1,118 @@
+---
+title: Hosting
+description: Serving a page that boots machines, with or without a bundler, and what differs in Node.js.
+section: chapters
+order: 7
+---
+
+# Hosting
+
+A machine needs shared WebAssembly memory and a worker per task. Node.js always has both. A
+browser gives them only to pages that are cross-origin isolated, and only starts workers from
+the page's own origin. This chapter covers what that asks of your server and your build.
+
+## The headers
+
+Serve the page, and everything it loads, with:
+
+```http
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Check with `crossOriginIsolated` in the page's console. If it is `false`, `bootMachine()` fails
+when it creates shared memory. Look at the document's response headers in the network panel.
+
+The headers have a cost beyond Lowland. The page can no longer load cross-origin resources,
+such as images, scripts or iframes, unless their servers opt in with CORS or
+`Cross-Origin-Resource-Policy`. An image you serve from another origin needs
+`Access-Control-Allow-Origin`. The page also loses its `window.opener` relationship with
+cross-origin popups, which breaks some OAuth popup flows. If that matters, isolate only the
+part of the site that boots machines.
+
+Static hosts such as Cloudflare Pages and Netlify read headers from a `_headers` file:
+
+```text title="_headers"
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+```
+
+In a Vite project, put it in `public/` so the build copies it. Elsewhere, set the headers in
+the server configuration.
+
+## Bundlers
+
+The packages find their assets with `new URL(..., import.meta.url)`: the kernel's
+`vmlinux.wasm` and worker script, the guest agent's `agent.img`, and the image's
+`rootfs.erofs`. Bundlers that understand that pattern emit them as assets.
+
+Vite 8 needs only the headers, as in the [Quick start](/quick-start/#in-a-web-page). Vite 7's
+dev server breaks these URLs when it pre-bundles dependencies, and the machine fails to boot.
+Exclude the packages:
+
+```js
+optimizeDeps: { exclude: ["@lowland/kernel", "@lowland/guest", "@lowland/image"] },
+```
+
+With any other bundler, check that the build output contains those four files, and that the
+built page boots.
+
+## No bundler
+
+Serve `node_modules`, or a copy of it, from the page's origin and map the package names:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "@lowland/bytes": "/node_modules/@lowland/kernel/node_modules/@lowland/bytes/dist/index.js",
+      "@lowland/kernel": "/node_modules/@lowland/kernel/dist/index.js",
+      "@lowland/kernel/plugin": "/node_modules/@lowland/kernel/dist/plugin.js",
+      "@lowland/guest": "/node_modules/@lowland/guest/dist/index.js",
+      "@lowland/image": "/node_modules/@lowland/image/dist/index.js"
+    }
+  }
+</script>
+```
+
+npm installs `@lowland/bytes` inside the packages that depend on it, so the map points there.
+Don't map the packages to a CDN. The kernel starts workers from the script next to its own
+module, and a cross-origin worker fails with a `SecurityError` at boot.
+
+## Downloads
+
+In a browser, the default `rootImage()` downloads about 6.5 MB before the first boot. The kernel
+and the guest agent's image are fetched too. All of them are fetched once per page and shared
+by every machine on it, and ordinary HTTP caching applies to later visits.
+
+A custom image is a URL relative to the page. If it does not serve an image, `bootMachine()`
+rejects and names the source. A dev server that answers a mistyped path with its HTML page
+gives:
+
+```text
+http://localhost:5173/runner.erofs did not return a filesystem image: got text/html, 116 bytes
+```
+
+## Memory
+
+Each machine reserves its own kernel memory and grows it as needed, up to 4 GiB, and each guest
+process has a memory of its own. Browsers limit how much WebAssembly memory a tab can hold.
+Many machines in one tab, or a guest that allocates heavily, can run into that limit long
+before the device runs out of RAM. Close machines you are done with, so their memory is freed.
+
+## Node.js
+
+Node.js 22.3 or later works, and `await using` needs 24 or later. On 22, call `machine.close()`
+in a `finally` block instead.
+
+There are no headers and nothing to copy. The packages read their assets from `node_modules`,
+and workers are `worker_threads`. In Node.js, `rootImage()` reads a path, a `file:` URL or an
+open `FileHandle` from disk as the guest needs blocks, so a large image is never in memory
+whole. It does not close a `FileHandle` you pass, so close it after the machine closes.
+
+An open machine keeps the event loop alive. A script that never closes its machine never exits.
+
+Two features need host capabilities only Node.js has: `NodeFS` for host directories, from
+[Files and storage](/files-and-storage/#sharing-a-host-directory), and real TCP from
+[Networking](/networking/#in-nodejs).

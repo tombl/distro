@@ -1,0 +1,84 @@
+---
+title: Questions
+description: Short answers to what people ask first about Lowland, including how it compares to v86, JSLinux and WebContainers.
+section: questions
+order: 1
+---
+
+# Questions
+
+## Is it an emulator?
+
+No. The Linux kernel is compiled to WebAssembly, as it would be compiled for any other
+architecture, and guest programs are compiled to WebAssembly too. Your JavaScript engine runs
+both as native code. Nothing interprets x86 or RISC-V instructions.
+
+## How does it compare to v86, JSLinux and WebContainers?
+
+|                       | Lowland                         | v86                         | JSLinux                       | WebContainers                  |
+| --------------------- | ------------------------------- | --------------------------- | ----------------------------- | ------------------------------ |
+| What runs             | Linux, built for WebAssembly    | An emulated x86 PC          | An emulated x86 or RISC-V PC  | Node.js, reimplemented          |
+| Binaries              | Recompiled for wasm32           | Unmodified x86              | Unmodified x86 or RISC-V      | JavaScript and WebAssembly only |
+| Operating system      | Linux, with real syscalls       | Most x86 OSes               | Linux, Windows 2000 and more  | None, a virtual Node.js runtime |
+| `fork()` and `mmap()` | No                              | Yes                         | Yes                           | Not applicable                  |
+| Speed                 | Native WebAssembly              | JIT-translated x86          | Interpreted                   | Native JavaScript               |
+| Node.js host          | Yes                             | Yes                         | No                            | No                              |
+| License               | Open source                     | Open source                 | Open source (TinyEMU)         | Commercial use needs a license  |
+
+Choose an emulator when you must run binaries or an operating system you cannot recompile.
+Choose WebContainers when you only need Node.js tooling. Choose Lowland when you want real Linux
+semantics and can build your software for it.
+
+## Can I run my existing binaries, or a Docker image?
+
+No. Programs have to be compiled for 32-bit WebAssembly Linux. The public repository has a few
+dozen ported packages, and the SDK builds C and C++. See
+[Your own software](/your-own-software/).
+
+## Is it safe to run untrusted code?
+
+Inside one machine, assume no. Treat any WebAssembly a guest runs as able to run arbitrary
+machine code in its thread, and that thread can reach the whole kernel's memory. Users,
+namespaces and cgroups inside a machine are not a boundary. Give each tenant its own machine.
+[The security model](/security-model/) explains why.
+
+## Does it work in Node.js?
+
+Yes, Node.js 22.3 or later, and it can do more there: real TCP and host directories.
+
+## Which browsers?
+
+Current Chrome, Firefox and Safari, on pages served with the cross-origin isolation headers in
+[Hosting](/hosting/#the-headers).
+Safari does not support `await using` yet, so code that runs there calls `machine.close()` in
+a `finally` block.
+
+## Can guests reach the internet?
+
+Only if you attach a network and write the function that opens connections. In Node.js that can
+be real TCP. In a browser it is HTTP through `fetch()`, with the page's cross-origin rules. See
+[Networking](/networking/).
+
+## Can I run Python, or a shell, or Git?
+
+Yes. Python, Lua, QuickJS, Git, curl, SQLite, Vim and BusyBox are in the public repository.
+
+## Can it run Node.js inside the guest?
+
+No. Node.js has not been ported.
+
+## Does data survive a reload?
+
+Not by default. The root filesystem's changes live in memory. Attach a disk backed by OPFS or a
+host file to keep data. See [Files and storage](/files-and-storage/#keeping-data-between-runs).
+
+## How many machines can I run?
+
+As many as memory allows. Each machine has its own kernel memory and workers, and nothing is
+shared between them except read-only images.
+
+## Can I write my own virtual devices?
+
+Not arbitrary virtio devices. You can supply the backends of the ones that exist: storage for a
+block device, streams for a console, and a filesystem implementation, the `FS` interface from
+`@lowland/kernel`, for a shared directory.
