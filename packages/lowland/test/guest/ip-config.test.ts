@@ -2,6 +2,9 @@
 // without the agent, and the network's default adapters refuse what they
 // were not given.
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 import {
   bootConsole,
@@ -13,6 +16,7 @@ import {
   type NetworkAttachment,
 } from "../../src/machine/index.ts";
 import { guestAgent, type GuestAgent } from "../../src/guest/index.ts";
+import { nodeNetwork } from "../../src/node/index.ts";
 import { lifecycle_assets, root_mount } from "./assets.ts";
 import { closed_input, collect, connect_with_retry, console_output } from "./helpers.ts";
 
@@ -140,4 +144,29 @@ test("a network without adapters still carries connections into the guest", asyn
     assert.equal(decoder.decode(await received), "from the host\n");
     await server.status;
   });
+});
+
+test("nodeNetwork carries guest TCP to the host, by a name resolveDns answers", async () => {
+  const server = createServer((_request, response) => response.end("from the host\n"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const names: string[] = [];
+  using network = createNetwork({
+    ...nodeNetwork(),
+    async resolveDns(hostname) {
+      names.push(hostname);
+      return hostname === "host.lowland.test" ? ["192.0.2.1"] : [];
+    },
+  });
+  try {
+    await with_guest(network, async (guest) => {
+      const { code, output } = await sh(guest, `wget -qO- http://host.lowland.test:${port}/`);
+      assert.equal(code, 0, output);
+      assert.equal(output, "from the host\n");
+      assert(names.includes("host.lowland.test"));
+    });
+  } finally {
+    server.close();
+  }
 });

@@ -8,13 +8,10 @@ import {
 } from "../guest/index.ts";
 import { rootImage } from "../image/index.ts";
 import { createNetwork, type Network } from "../machine/index.ts";
-import { NodeFS } from "../node/index.ts";
+import { NodeFS, nodeNetwork } from "../node/index.ts";
 import { spawnSync } from "node:child_process";
-import { resolve4 } from "node:dns/promises";
-import { once } from "node:events";
 import { stat } from "node:fs/promises";
-import { createConnection, type Socket } from "node:net";
-import { Readable, Writable } from "node:stream";
+import { Readable } from "node:stream";
 import type { ReadStream, WriteStream } from "node:tty";
 import { parseArgs } from "node:util";
 import { Linux, type LinuxOptions } from "../linux.ts";
@@ -184,78 +181,6 @@ export function parseRunArgs(
     env,
     tty: values.tty,
   };
-}
-
-/**
- * @internal The bytes a socket receives, ending at the remote FIN while the
- * socket stays open for writing. Node's own `Duplex.toWeb()` waits for both
- * directions to close before Node 24.20 and 26.7.
- */
-export function socket_readable(socket: Socket): ReadableStream<Uint8Array> {
-  // Set once the stream is closed, errored, or cancelled, after which the
-  // socket's remaining events must not touch it.
-  let done = false;
-  return new ReadableStream<Uint8Array>(
-    {
-      start(controller) {
-        const finish = (error?: Error) => {
-          if (done) return;
-          done = true;
-          if (error) controller.error(error);
-          else controller.close();
-        };
-        socket.on("data", (chunk: Buffer) => {
-          if (done) return;
-          controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-          if ((controller.desiredSize ?? 0) <= 0) socket.pause();
-        });
-        socket.once("end", () => finish());
-        socket.once("error", (error) => finish(error));
-        socket.once("close", () => finish());
-      },
-      pull() {
-        socket.resume();
-      },
-      cancel() {
-        done = true;
-        socket.destroy();
-      },
-    },
-    { highWaterMark: 64 * 1024, size: (chunk) => chunk.byteLength },
-  );
-}
-
-/**
- * A network that reaches whatever the host can. Guest TCP connections and
- * DNS queries go out through the host's sockets and resolver, and the
- * gateway address reaches the host's loopback.
- */
-function host_network(): Network {
-  return createNetwork({
-    async connectTcp(session) {
-      session.signal.throwIfAborted();
-      // Half-open, so a peer that finishes sending still gets the rest of
-      // what the guest sends.
-      const socket = createConnection({
-        host: session.target.hostname,
-        port: session.target.port,
-        signal: session.signal,
-        allowHalfOpen: true,
-      });
-      try {
-        await once(socket, "connect");
-        await Promise.all([
-          session.readable.pipeTo(Writable.toWeb(socket) as WritableStream<Uint8Array>),
-          socket_readable(socket).pipeTo(session.writable),
-        ]);
-      } finally {
-        // An abort can win the race with the connection, which Node then
-        // still establishes.
-        socket.destroy();
-      }
-    },
-    resolveDns: resolve4,
-  });
 }
 
 /** The `Linux` options for parsed arguments, with host paths checked. */
@@ -526,7 +451,7 @@ export async function execute(
   argv: string[],
   { terminal, create = Linux.create }: ExecuteOptions = {},
 ): Promise<number> {
-  const network = parsed.network === "host" ? host_network() : undefined;
+  const network = parsed.network === "host" ? createNetwork(nodeNetwork()) : undefined;
   try {
     let linux: Linux;
     try {

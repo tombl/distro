@@ -54,13 +54,13 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit && tsc -p tsconfig.web.json && tsc -p test",
-    "test": "node --test --test-concurrency=1 test/machine/*.test.ts test/guest/*.test.ts test/image/*.test.ts test/*.test.ts",
+    "test": "node --test --test-concurrency=1 test/machine/*.test.ts test/node/*.test.ts test/guest/*.test.ts test/image/*.test.ts test/*.test.ts",
     "test:machine": "node --test test/machine/*.test.ts",
     "test:guest": "node --test --test-concurrency=1 test/guest/*.test.ts",
     "test:image": "node --test --test-concurrency=1 test/image/*.test.ts",
     "test:image:online": "node --test --test-concurrency=1 test/image/online/*.test.ts",
     "test:cli": "node --test --test-concurrency=1 test/*.test.ts",
-    "test:unit": "node --test test/machine/*.test.ts test/cli.test.ts"
+    "test:unit": "node --test test/machine/*.test.ts test/node/*.test.ts test/cli.test.ts"
   },
   "devDependencies": {
     "@types/node": "catalog:",

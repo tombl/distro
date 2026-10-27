@@ -160,7 +160,7 @@ let
 
       cd packages/lowland
       pnpm exec tsc -p test
-      node --test test/cli.test.ts
+      node --test test/cli.test.ts test/node/*.test.ts
 
       runHook postBuild
     '';

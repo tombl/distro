@@ -9,15 +9,11 @@ import {
   type Network,
 } from "../machine/index.ts";
 import { guestAgent } from "../guest/index.ts";
-import { NodeFS } from "../node/index.ts";
+import { NodeFS, nodeNetwork } from "../node/index.ts";
 import { randomUUID } from "node:crypto";
-import { resolve4 } from "node:dns/promises";
-import { once } from "node:events";
 import { chmod, cp, lstat, mkdtemp, open, readdir, realpath, rename, rm } from "node:fs/promises";
-import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
-import { Duplex } from "node:stream";
 
 /** The repository that package names are resolved from. */
 const REPOSITORY = "http://assets.low.land/apk/wasm32/Packages.adb";
@@ -181,32 +177,16 @@ async function erofs_size(handle: Awaited<ReturnType<typeof open>>) {
   return superblock.getUint32(36, true) * 2 ** superblock.getUint8(12);
 }
 
-function node_network() {
-  return createNetwork({
-    async connectTcp(session) {
-      const socket = createConnection({
-        host: session.target.hostname,
-        port: session.target.port,
-        signal: session.signal,
-      });
-      await once(socket, "connect");
-      const streams = Duplex.toWeb(socket);
-      await Promise.all([
-        session.readable.pipeTo(streams.writable as WritableStream<Uint8Array>),
-        (streams.readable as ReadableStream<Uint8Array>).pipeTo(session.writable),
-      ]);
-    },
-    resolveDns: resolve4,
-  });
-}
-
 /** @internal Where named packages come from: the public repository, or a test fixture. */
 export interface PackageRepository {
   url: string;
   network(): Network;
 }
 
-const PUBLIC_REPOSITORY: PackageRepository = { url: REPOSITORY, network: node_network };
+const PUBLIC_REPOSITORY: PackageRepository = {
+  url: REPOSITORY,
+  network: () => createNetwork(nodeNetwork()),
+};
 
 /**
  * Builds a filesystem image from apk packages and host files.
