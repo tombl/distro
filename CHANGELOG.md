@@ -35,7 +35,7 @@
   working directory (`-w`), CPUs and host networking, and giving interactive
   commands a guest terminal (`-t`). `npx lowland build` takes the same options
   as `buildImage()`.
-- `guest.exec(argv, { terminal })` runs a process on a guest pseudoterminal as
+- `guest.spawn(argv, { terminal })` runs a process on a guest pseudoterminal as
   a session leader with job control, and `resize()` changes the terminal's
   size. `{ stdio }` connects its standard input, output and error to pipes,
   `/dev/null`, standard output (`2>&1`), or guest files.
@@ -44,10 +44,19 @@
   `cause`, and holds the end of the kernel log, instead of panicking the
   kernel. An ext4 image whose journal needs recovery fails to mount from
   read-only storage in the kernel's own words.
-- `machine.close()` runs the new optional `MachinePlugin.closing()` hooks, in
-  reverse plugin order, before teardown. The guest agent uses it to sync
-  guest filesystems, so writes to a writable disk survive the close.
-  `guest.sync()` syncs on demand.
+- A machine's lifecycle is `shutdown()`, `reboot()` and `kill()`, with
+  `exited`, which never rejects, reporting `poweroff`, `kill`, `reboot` or a
+  `crash`; `await using` shuts down. `shutdown()` and `reboot()` ask the new
+  `MachinePlugin.power()` hooks, then press the kernel's power button. A
+  reboot restarts the same devices under a fresh kernel by default
+  (`reboot: "restart" | "exit"`), and every `booted` hook runs again. The
+  guest agent, as PID 1, ends every process, syncs and unmounts before it
+  powers off or reboots, so writes to a writable disk survive. There is no
+  `close()`. `guest.fs.sync()` syncs on demand.
+- `guest.run(argv, { input })` feeds a command its input. Commands run in `/`
+  by default, `CommandStatus.code` is `null` for a signal, and `exitCode()`
+  gives a shell's exit status. Guest syscalls and shared filesystems throw one
+  `SystemError`.
 - The vsock device accepts guest-initiated connections: `listen(port,
   handler)` serves a host port for as long as the handler runs.
 - The kernel mounts EROFS images compressed with deflate, LZMA or LZ4, and

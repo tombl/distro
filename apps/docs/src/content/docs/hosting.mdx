@@ -100,12 +100,12 @@ http://localhost:5173/runner.erofs did not return a filesystem image: got text/h
 Each machine reserves its own kernel memory and grows it as needed, up to 4 GiB, and each guest
 process has a memory of its own. Browsers limit how much WebAssembly memory a tab can hold.
 Many machines in one tab, or a guest that allocates heavily, can run into that limit long
-before the device runs out of RAM. Close machines you are done with, so their memory is freed.
+before the device runs out of RAM. Shut down machines you are done with, so their memory is freed.
 
 ## Node.js
 
-Node.js 22.3 or later works, and `await using` needs 24 or later. On 22, call `machine.close()`
-in a `finally` block instead.
+Node.js 22.3 or later works, and `await using` needs 24 or later. On 22, call
+`await machine.shutdown()` in a `finally` block instead.
 
 There are no headers and nothing to copy. The packages read their assets from `node_modules`,
 and workers are `worker_threads`. In Node.js, `rootImage()` reads a path, a `file:` URL or an

@@ -50,8 +50,8 @@ Yes, Node.js 22.3 or later, and it can do more there: real TCP and host director
 
 Current Chrome, Firefox and Safari, on pages served with the cross-origin isolation headers in
 [Hosting](/hosting/#the-headers).
-Safari does not support `await using` yet, so code that runs there calls `machine.close()` in
-a `finally` block.
+Safari does not support `await using` yet, so code that runs there calls
+`await machine.shutdown()` in a `finally` block.
 
 ## Can guests reach the internet?
 
