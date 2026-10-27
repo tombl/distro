@@ -113,7 +113,7 @@ flags:
 - `--format` is `erofs` (the default) or `ext4`.
 - `--compression` is `deflate` (the default), `lzma`, or `none`, and applies
   to EROFS only.
-- `--label` sets the filesystem label, `LOWLAND_ROOT` by default.
+- `--label` sets the filesystem label. There is none by default.
 - `--size` sets the image size, such as `64M`. It defaults to `256M`.
 - `-o`, `--output <file>` is the image file to write.
 

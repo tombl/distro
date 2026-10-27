@@ -3,7 +3,7 @@
 # @lowland/image/build boots the builder image and runs this with arguments it
 # has already validated. Host inputs are mounted at the --input directory.
 #
-#   lowland-build-image --format F --label L --input DIR [--compression C]
+#   lowland-build-image --format F --input DIR [--label L] [--compression C]
 #     [--repository URL] OPERATION...
 #
 # Named packages are installed first from the repository, which must sign
@@ -37,7 +37,10 @@ while [ $# -gt 0 ]; do
   *) break ;;
   esac
 done
-[ -n "$format" ] && [ -n "$label" ] && [ -n "$input" ] || fail "missing build options"
+[ -n "$format" ] && [ -n "$input" ] || fail "missing build options"
+# Labels are validated by the build helper: no spaces, so the flags split.
+label_flags=
+[ -z "$label" ] || label_flags="-L $label"
 # The mkfs.erofs flags mkImage uses for each compression.
 case "$compression" in
 deflate) compression_flags="-zdeflate,level=9 -C65536 -Eztailpacking" ;;
@@ -61,7 +64,8 @@ mkdir -p "$root"
 case "$format" in
 erofs) ;;
 ext4)
-  mke2fs -q -t ext4 -F -L "$label" -m 0 "$device"
+  # shellcheck disable=SC2086
+  mke2fs -q -t ext4 -F $label_flags -m 0 "$device"
   mount -t ext4 "$device" "$root"
   ;;
 *) fail "unsupported format: $format" ;;
@@ -194,7 +198,7 @@ erofs)
   # warning that it cannot be erased.
   # shellcheck disable=SC2086
   mkfs.erofs --quiet --all-root --all-time -T 0 \
-    -U 00000000-0000-0000-0000-000000000000 -L "$label" -x-1 $compression_flags \
+    -U 00000000-0000-0000-0000-000000000000 $label_flags -x-1 $compression_flags \
     "$device" "$root"
   ;;
 ext4) umount "$root" ;;

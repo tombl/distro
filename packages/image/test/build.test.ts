@@ -165,6 +165,17 @@ test("keeps setuid and setgid on copied files", async (t) => {
   assert.equal(await permissions("/usr/bin/setgid"), "2755");
 });
 
+test("labels an image only when asked", async (t) => {
+  // EROFS keeps its 16-byte volume name 64 bytes into its superblock.
+  const label = async (path: string) => {
+    const bytes = await readFile(path);
+    return decoder.decode(bytes.subarray(1024 + 64, 1024 + 80)).replace(/\0+$/, "");
+  };
+  assert.equal(await label(await build(t, { packages: [busybox_package] })), "");
+  const labeled = await build(t, { packages: [busybox_package], label: "DATA" });
+  assert.equal(await label(labeled), "DATA");
+});
+
 test("rejects unsupported compressions", async () => {
   await assert.rejects(
     buildImage({ packages: ["jq"], compression: "lz4" as "none", output: "unused" }),

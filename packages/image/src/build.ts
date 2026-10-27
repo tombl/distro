@@ -66,7 +66,7 @@ export interface BuildImageOptions {
    * this option.
    */
   compression?: ImageCompression;
-  /** The filesystem label. Defaults to `"LOWLAND_ROOT"`, the label the guest agent boots. */
+  /** The filesystem label. The image has none by default. */
   label?: string;
   /**
    * The image size in bytes, or with a `K`, `M`, or `G` suffix. Defaults to
@@ -244,8 +244,8 @@ export async function build_image(
       `unsupported image compression ${JSON.stringify(compression)}, expected one of: ${COMPRESSIONS.join(", ")}`,
     );
   }
-  const label = options.label ?? "LOWLAND_ROOT";
-  if (!/^[A-Za-z0-9._-]{1,15}$/.test(label)) {
+  const label = options.label;
+  if (label !== undefined && !/^[A-Za-z0-9._-]{1,15}$/.test(label)) {
     throw new TypeError(
       "image label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens",
     );
@@ -291,8 +291,7 @@ export async function build_image(
       format,
       "--compression",
       compression,
-      "--label",
-      label,
+      ...(label === undefined ? [] : ["--label", label]),
       "--input",
       "/tmp/input",
     ];

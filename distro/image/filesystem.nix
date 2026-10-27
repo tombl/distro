@@ -29,11 +29,15 @@ assert lib.assertMsg (builtins.elem compression [
   "none"
 ]) "mkImage compression must be deflate, lzma, or none, got ${compression}";
 assert lib.assertMsg (
-  builtins.isString label
-  && builtins.stringLength label <= 15
-  && builtins.match "[A-Za-z0-9._-]+" label != null
+  label == null
+  || (
+    builtins.isString label
+    && builtins.stringLength label <= 15
+    && builtins.match "[A-Za-z0-9._-]+" label != null
+  )
 ) "mkImage label must contain 1 to 15 ASCII letters, digits, dots, underscores, or hyphens";
 let
+  labelFlags = lib.optionalString (label != null) "-L ${lib.escapeShellArg label}";
   # 64 KiB physical clusters with tail packing; mkfs.erofs's own defaults
   # compress far worse. No lz4: the NOMMU kernel BUG()s mapping its buffers.
   compressionFlags =
@@ -62,12 +66,12 @@ let
       if format == "ext4" then
         ''
           truncate -s ${lib.escapeShellArg (toString size)} "$out"
-          mke2fs -q -t ext4 -d root -F -L ${lib.escapeShellArg label} -m 0 "$out"
+          mke2fs -q -t ext4 -d root -F ${labelFlags} -m 0 "$out"
         ''
       else
         ''
           mkfs.erofs --all-root --all-time \
-            -T 0 -U 00000000-0000-0000-0000-000000000000 -L ${lib.escapeShellArg label} -x-1 ${compressionFlags} "$out" root
+            -T 0 -U 00000000-0000-0000-0000-000000000000 ${labelFlags} -x-1 ${compressionFlags} "$out" root
         ''
     }
   '';
