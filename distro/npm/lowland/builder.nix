@@ -10,7 +10,6 @@
   e2fsprogs,
   erofs-utils,
   mkImage,
-  pkgs,
 }:
 
 mkImage {
@@ -29,8 +28,6 @@ mkImage {
       mode = "0755";
     };
     "/etc/apk/keys/site.rsa.pub" = ../../site/keys/site.rsa.pub;
-    "/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
-      nameserver 192.0.2.1
-    '';
   };
+  links."/etc/resolv.conf" = "../proc/net/pnp";
 }

@@ -68,6 +68,9 @@ test("the kernel configures a networked machine from ip=", async () => {
       [KERNEL_IP],
     );
     assert.equal(await guest.fs.readTextFile("/proc/net/pnp"), PNP);
+    // The image's resolv.conf is the kernel's.
+    assert.equal(await guest.fs.readLink("/etc/resolv.conf"), "../proc/net/pnp");
+    assert.equal(await guest.fs.readTextFile("/etc/resolv.conf"), PNP);
 
     const { code, output } = await sh(guest, "hostname; ifconfig eth0; ifconfig lo; route -n");
     assert.equal(code, 0, output);

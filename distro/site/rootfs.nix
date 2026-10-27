@@ -32,8 +32,6 @@ mkImage {
     "/etc/apk/repositories" = pkgs.writeText "site-apk-repositories" ''
       http://assets.low.land/apk/wasm32/Packages.adb
     '';
-    "/etc/resolv.conf" = pkgs.writeText "site-resolv.conf" ''
-      nameserver 192.0.2.1
-    '';
   };
+  links."/etc/resolv.conf" = "../proc/net/pnp";
 }

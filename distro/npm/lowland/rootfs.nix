@@ -24,8 +24,7 @@ mkImage {
     "/etc/apk/repositories" = pkgs.writeText "apk-repositories" ''
       http://assets.low.land/apk/wasm32/Packages.adb
     '';
-    "/etc/resolv.conf" = pkgs.writeText "resolv.conf" ''
-      nameserver 192.0.2.1
-    '';
   };
+  # The kernel writes the nameserver from ip= there.
+  links."/etc/resolv.conf" = "../proc/net/pnp";
 }
