@@ -15,6 +15,7 @@ import {
   U64LE,
   I32LE,
 } from "../../bytes/index.ts";
+import { SystemError } from "../error.ts";
 import { type Device, public_handle, VirtioDevice } from "./device.ts";
 import type { Virtqueue, VirtqueueBuffer } from "./queue.ts";
 
@@ -96,39 +97,6 @@ const DirentType = {
   symlink: 10,
   socket: 12,
 } as const;
-
-const Errno = {
-  EPERM: 1,
-  ENOENT: 2,
-  EIO: 5,
-  EBADF: 9,
-  EACCES: 13,
-  EEXIST: 17,
-  ENOTDIR: 20,
-  EISDIR: 21,
-  EINVAL: 22,
-  ENOSPC: 28,
-  EROFS: 30,
-  EPROTO: 71,
-  ENAMETOOLONG: 36,
-  ENOSYS: 38,
-  ENOTEMPTY: 39,
-  ELOOP: 40,
-  EOPNOTSUPP: 95,
-} as const;
-
-export type FSErrorCode = keyof typeof Errno;
-
-/** An expected filesystem failure which should be returned to the guest. */
-export class FSError extends Error {
-  readonly errno: number;
-
-  constructor(code: FSErrorCode, message: string = code) {
-    super(message);
-    this.name = "FSError";
-    this.errno = Errno[code];
-  }
-}
 
 export interface FSTimestamp {
   seconds: bigint;
@@ -483,7 +451,10 @@ type RequiresDurability<T> = T extends { write: AnyFn } | { create: AnyFn }
   ? { flush: AnyFn; fsync: AnyFn }
   : unknown;
 
-class UnsupportedOperation extends FSError {
+const EIO = 5;
+const EINVAL = 22;
+
+class UnsupportedOperation extends SystemError {
   constructor() {
     super("ENOSYS");
   }
@@ -523,14 +494,14 @@ function mode_type(mode: number): keyof typeof DirentType {
     case FileType.socket:
       return "socket";
     default:
-      throw new FSError("EIO", "filesystem returned an invalid mode");
+      throw new SystemError("EIO", "filesystem returned an invalid mode");
   }
 }
 
 function checked_number(value: bigint) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 0) {
-    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new SystemError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return number;
 }
@@ -543,10 +514,10 @@ function validate_name(name: string) {
     name.includes("/") ||
     name.includes("\0")
   ) {
-    throw new FSError("EINVAL", "invalid path component");
+    throw new SystemError("EINVAL", "invalid path component");
   }
   if (utf8_encoder.encode(name).byteLength > 255) {
-    throw new FSError("ENAMETOOLONG");
+    throw new SystemError("ENAMETOOLONG");
   }
   return name;
 }
@@ -777,7 +748,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
 
   function node_record(nodeid: bigint) {
     const record = records.get(nodeid);
-    if (!record) throw new FSError("ENOENT");
+    if (!record) throw new SystemError("ENOENT");
     return record;
   }
 
@@ -788,7 +759,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       (directory !== undefined && record.directory !== directory) ||
       (node !== undefined && record.node !== node)
     ) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     return record;
   }
@@ -868,7 +839,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
 
   async function lookup(parent: NodeRecord<TNode>, name: string) {
     const node = await filesystem.lookup(parent.node, validate_name(name));
-    if (!node) throw new FSError("ENOENT");
+    if (!node) throw new SystemError("ENOENT");
     const record = record_for_node(node, parent);
     record.lookups += 1n;
     return record;
@@ -882,7 +853,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       case FuseOpcode.INIT: {
         const init = body.struct(FuseInitIn);
         if (init.major !== 7) {
-          if (init.major < 7) throw new FSError("EPROTO");
+          if (init.major < 7) throw new SystemError("EPROTO");
           // A newer kernel retries with our major; only major and minor reply.
           payload.alloc(U32LE).value = 7;
           payload.alloc(U32LE).value = 45;
@@ -1087,7 +1058,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           Math.min(request.size, capacity - FuseOutHeader.size),
         );
         if (data.byteLength > request.size || data.byteLength > capacity - FuseOutHeader.size) {
-          throw new FSError("EIO", "filesystem returned too much data");
+          throw new SystemError("EIO", "filesystem returned too much data");
         }
         payload.append(data);
         break;
@@ -1104,7 +1075,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
           data,
         );
         if (!Number.isInteger(written) || written < 0 || written > request.size) {
-          throw new FSError("EIO", "filesystem returned an invalid write size");
+          throw new SystemError("EIO", "filesystem returned an invalid write size");
         }
         payload.alloc(FuseWriteOut).value = { size: written, padding: 0 };
         break;
@@ -1227,7 +1198,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         throw new UnsupportedOperation();
     }
     if (payload.length > capacity - FuseOutHeader.size) {
-      throw new FSError("EIO", "response exceeds the guest's response buffer");
+      throw new SystemError("EIO", "response exceeds the guest's response buffer");
     }
     return payload;
   }
@@ -1244,7 +1215,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         let saw_writable = false;
         for (const buffer of buffers) {
           if (!buffer.writable && saw_writable) {
-            throw new FSError("EINVAL", "readable descriptor follows response");
+            throw new SystemError("EINVAL", "readable descriptor follows response");
           }
           saw_writable ||= buffer.writable;
         }
@@ -1252,10 +1223,10 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         const header = body.struct(FuseInHeader);
         unique = header.unique;
         if (header.len !== request.byteLength || header.len < FuseInHeader.size) {
-          throw new FSError("EINVAL", "invalid FUSE request length");
+          throw new SystemError("EINVAL", "invalid FUSE request length");
         }
         if (capacity < minimum_response_capacity(header.opcode)) {
-          throw new FSError("EINVAL", "FUSE response buffer is too small");
+          throw new SystemError("EINVAL", "FUSE response buffer is too small");
         }
         const payload = await process(header, body, capacity);
         if (payload === undefined) {
@@ -1280,11 +1251,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
         // Malformed requests are EINVAL; RangeError comes from the Reader
         // bounds checks and is the same class of protocol error.
         const errno =
-          error instanceof FSError
-            ? error.errno
-            : error instanceof RangeError
-              ? Errno.EINVAL
-              : Errno.EIO;
+          error instanceof SystemError ? error.errno : error instanceof RangeError ? EINVAL : EIO;
         response.alloc(FuseOutHeader).value = {
           len: FuseOutHeader.size,
           error: -errno,

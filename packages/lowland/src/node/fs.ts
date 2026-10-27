@@ -5,10 +5,10 @@ import {
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,
-  FSError,
   type FSSetAttributes,
   type FSStat,
 } from "../machine/virtio/fs.ts";
+import { type ErrnoCode, SystemError } from "../machine/error.ts";
 import { constants, type BigIntStats, type Dirent } from "node:fs";
 import {
   access,
@@ -50,12 +50,12 @@ const known_errors = new Set([
 ]);
 
 function filesystem_error(error: unknown): never {
-  if (error instanceof FSError) throw error;
+  if (error instanceof SystemError) throw error;
   const code = (error as NodeJS.ErrnoException)?.code;
   if (code && known_errors.has(code)) {
-    throw new FSError(code as ConstructorParameters<typeof FSError>[0], (error as Error).message);
+    throw new SystemError(code as ErrnoCode, (error as Error).message);
   }
-  throw new FSError("EIO", error instanceof Error ? error.message : String(error));
+  throw new SystemError("EIO", error instanceof Error ? error.message : String(error));
 }
 
 async function node_call<T>(operation: Promise<T>): Promise<T> {
@@ -75,7 +75,7 @@ function valid_name(name: string) {
     name.includes("\0") ||
     name.includes(path.sep)
   ) {
-    throw new FSError("EINVAL", "invalid path component");
+    throw new SystemError("EINVAL", "invalid path component");
   }
   return name;
 }
@@ -106,7 +106,7 @@ function attributes(stats: BigIntStats): FSAttributes {
 function checked_offset(value: bigint) {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 0) {
-    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new SystemError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return result;
 }
@@ -140,7 +140,7 @@ const host_constants = constants as unknown as Record<string, number | undefined
 
 function translate_open_flags(flags: number) {
   if (!Number.isInteger(flags) || flags < 0 || flags > 0xffff_ffff) {
-    throw new FSError("EINVAL", "invalid Linux open flags");
+    throw new SystemError("EINVAL", "invalid Linux open flags");
   }
 
   let remaining = flags;
@@ -150,13 +150,13 @@ function translate_open_flags(flags: number) {
   if (access === linux_open.readonly) result = constants.O_RDONLY;
   else if (access === linux_open.writeonly) result = constants.O_WRONLY;
   else if (access === linux_open.readwrite) result = constants.O_RDWR;
-  else throw new FSError("EINVAL", "invalid Linux open access mode");
+  else throw new SystemError("EINVAL", "invalid Linux open access mode");
 
   const map = (linux: number, host: number | undefined, name: string) => {
     if (!(remaining & linux)) return;
     remaining &= ~linux;
     if (host === undefined) {
-      throw new FSError("EOPNOTSUPP", `${name} is not supported by this host`);
+      throw new SystemError("EOPNOTSUPP", `${name} is not supported by this host`);
     }
     result |= host;
   };
@@ -184,10 +184,10 @@ function translate_open_flags(flags: number) {
   remaining &= ~(linux_open.largeFile | linux_open.closeOnExec);
 
   if (remaining & (linux_open.path | linux_open.temporaryFile)) {
-    throw new FSError("EOPNOTSUPP", "unsupported Linux open mode");
+    throw new SystemError("EOPNOTSUPP", "unsupported Linux open mode");
   }
   if (remaining !== 0) {
-    throw new FSError("EINVAL", `unsupported Linux open flags 0x${remaining.toString(16)}`);
+    throw new SystemError("EINVAL", `unsupported Linux open flags 0x${remaining.toString(16)}`);
   }
   return result;
 }
@@ -277,7 +277,7 @@ export class NodeFS implements FS<Node, Handle> {
   }
 
   #writable() {
-    if (this.readOnly) throw new FSError("EROFS", "filesystem is read-only");
+    if (this.readOnly) throw new SystemError("EROFS", "filesystem is read-only");
   }
 
   #node(parts: string[]): Node {
@@ -295,10 +295,10 @@ export class NodeFS implements FS<Node, Handle> {
 
   #parts(node: Node) {
     if (!(node instanceof Node)) {
-      throw new FSError("EINVAL", "node belongs to another filesystem");
+      throw new SystemError("EINVAL", "node belongs to another filesystem");
     }
     if (!node.attached) {
-      throw new FSError("ENOENT", "filesystem node is no longer attached");
+      throw new SystemError("ENOENT", "filesystem node is no longer attached");
     }
     return node.parts;
   }
@@ -308,7 +308,7 @@ export class NodeFS implements FS<Node, Handle> {
     const result = path.resolve(root, ...parts);
     const relative = path.relative(root, result);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new FSError("EACCES", "path escapes the shared directory");
+      throw new SystemError("EACCES", "path escapes the shared directory");
     }
     return result;
   }
@@ -324,7 +324,7 @@ export class NodeFS implements FS<Node, Handle> {
     const actual_parent = await node_call(realpath(parent));
     const relative = path.relative(root, actual_parent);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new FSError("EACCES", "path escapes through a symbolic link");
+      throw new SystemError("EACCES", "path escapes through a symbolic link");
     }
     return result;
   }
@@ -354,7 +354,7 @@ export class NodeFS implements FS<Node, Handle> {
         await this.#stats(node);
         return node;
       } catch (error) {
-        if (error instanceof FSError && (error as { readonly errno: number }).errno === 2) {
+        if (error instanceof SystemError && (error as { readonly errno: number }).errno === 2) {
           this.#forget(parts);
           return undefined;
         }
@@ -394,7 +394,7 @@ export class NodeFS implements FS<Node, Handle> {
         if (file) await file.chmod(changes.mode & 0o7777);
         else {
           if ((await this.#stats(node)).isSymbolicLink()) {
-            throw new FSError("EOPNOTSUPP", "cannot change a symbolic link's mode");
+            throw new SystemError("EOPNOTSUPP", "cannot change a symbolic link's mode");
           }
           await chmod(target!, changes.mode & 0o7777);
         }
@@ -468,7 +468,7 @@ export class NodeFS implements FS<Node, Handle> {
 
   async read(_node: Node, handle: Handle, offset: bigint, length: number) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     const buffer = new Uint8Array(length);
     const { bytesRead } = await node_call(
@@ -480,7 +480,7 @@ export class NodeFS implements FS<Node, Handle> {
   async write(_node: Node, handle: Handle, offset: bigint, data: Uint8Array) {
     this.#writable();
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     const { bytesWritten } = await node_call(
       handle.file.write(data, 0, data.byteLength, checked_offset(offset)),
@@ -493,20 +493,20 @@ export class NodeFS implements FS<Node, Handle> {
   // virtiofsd's flush syncs nothing as well.
   async flush(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
   }
 
   async fsync(_node: Node, handle: Handle, dataOnly: boolean) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     await node_call(dataOnly ? handle.file.datasync() : handle.file.sync());
   }
 
   async release(_node: Node, handle: Handle) {
     if (!(handle instanceof Handle) || !handle.file) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     await node_call(handle.file.close());
   }
@@ -514,7 +514,7 @@ export class NodeFS implements FS<Node, Handle> {
   async opendir(node: Node) {
     return await this.#path_operation(async () => {
       const stats = await this.#stats(node);
-      if (!stats.isDirectory()) throw new FSError("ENOTDIR");
+      if (!stats.isDirectory()) throw new SystemError("ENOTDIR");
       return new Handle();
     });
   }
@@ -600,7 +600,7 @@ export class NodeFS implements FS<Node, Handle> {
   async access(node: Node, mask: number) {
     await this.#path_operation(async () => {
       if ((await this.#stats(node)).isSymbolicLink()) {
-        throw new FSError("ELOOP");
+        throw new SystemError("ELOOP");
       }
       await node_call(access(await this.#validated_path(this.#parts(node)), mask));
     });

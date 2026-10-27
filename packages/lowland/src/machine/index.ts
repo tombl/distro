@@ -31,6 +31,7 @@ export {
   type MachineSetup,
 } from "./plugin.ts";
 export type { Device } from "./virtio/device.ts";
+export { type ErrnoCode, SystemError } from "./error.ts";
 export { blockDevice, type BlockDeviceOptions, type BlockStorage } from "./virtio/block.ts";
 export {
   type DiskFileHandle,
@@ -47,8 +48,6 @@ export {
   type FSCreateContext,
   type FSDirectoryEntry,
   type FSDeviceOptions,
-  FSError,
-  type FSErrorCode,
   type FSSetAttributes,
   type FSStat,
   type FSTimestamp,

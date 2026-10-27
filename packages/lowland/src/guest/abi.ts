@@ -216,8 +216,8 @@ export const DT = dt.values;
 // Errno numbers.
 // include/uapi/asm-generic/errno-base.h and errno.h (the
 // guest musl <errno.h> forwards to them). Consumers branch on `E.*` for
-// control flow; SystemError below derives its human-readable code from this
-// same table, so the names can never drift from the checked numbers.
+// control flow. SystemError names the codes from a table of its own in
+// machine/error.ts, which a unit test checks against this one.
 // ---------------------------------------------------------------------------
 
 const e = scalar_group("E", {
@@ -253,10 +253,6 @@ const e = scalar_group("E", {
 
 /** Errno numbers, e.g. `E.NOENT === 2` (E2BIG is `E["2BIG"]`). */
 export const E = e.values;
-
-const errno_names = new Map<number, `E${keyof typeof E}`>(
-  Object.entries(E).map(([name, value]) => [value, `E${name as keyof typeof E}`]),
-);
 
 // ---------------------------------------------------------------------------
 // Signal numbers.
@@ -302,36 +298,10 @@ const winsize = define_struct(
 export const Winsize = winsize.Schema;
 
 // ---------------------------------------------------------------------------
-// Errors. These live beside the errno table so the code shown to humans is
-// derived from the same checked numbers the control flow uses.
+// Errors.
 // ---------------------------------------------------------------------------
 
-/**
- * A guest syscall failed. Carries the errno code.
- *
- * @example Handle a missing file
- * ```ts
- * try {
- *   await guest.fs.readTextFile("/tmp/missing");
- * } catch (error) {
- *   if (error instanceof SystemError && error.code === "ENOENT") {
- *     console.log("no such file");
- *   } else {
- *     throw error;
- *   }
- * }
- * ```
- */
-export class SystemError extends Error {
-  readonly code?: `E${keyof typeof E}`;
-
-  constructor(errno: number) {
-    const code = errno_names.get(errno);
-    super(code ?? `E${errno}`);
-    this.name = "SystemError";
-    this.code = code;
-  }
-}
+export { SystemError } from "../machine/error.ts";
 
 /** The wire contract was violated (truncated reply, bad handshake echo, a
  *  malformed kernel structure). Always poisons the session: both endpoints

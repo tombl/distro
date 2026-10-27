@@ -5,10 +5,10 @@ import {
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,
-  FSError,
   type FSSetAttributes,
   type FSTimestamp,
 } from "../machine/virtio/fs.ts";
+import { type ErrnoCode, SystemError } from "../machine/error.ts";
 
 const FileType = {
   directory: 0o040000,
@@ -46,13 +46,13 @@ function valid_name(name: string) {
     name.includes("/") ||
     name.includes("\0")
   ) {
-    throw new FSError("EINVAL", "invalid path component");
+    throw new SystemError("EINVAL", "invalid path component");
   }
   return name;
 }
 
 function opfs_error(error: unknown): never {
-  if (error instanceof FSError) throw error;
+  if (error instanceof SystemError) throw error;
   const name = error instanceof DOMException ? error.name : "";
   const code =
     {
@@ -63,10 +63,7 @@ function opfs_error(error: unknown): never {
       QuotaExceededError: "ENOSPC",
       TypeMismatchError: "EINVAL",
     }[name] ?? "EIO";
-  throw new FSError(
-    code as ConstructorParameters<typeof FSError>[0],
-    error instanceof Error ? error.message : String(error),
-  );
+  throw new SystemError(code as ErrnoCode, error instanceof Error ? error.message : String(error));
 }
 
 async function opfs_call<T>(operation: Promise<T>): Promise<T> {
@@ -80,7 +77,7 @@ async function opfs_call<T>(operation: Promise<T>): Promise<T> {
 function checked_offset(value: bigint) {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 0) {
-    throw new FSError("EINVAL", "offset exceeds JavaScript's integer range");
+    throw new SystemError("EINVAL", "offset exceeds JavaScript's integer range");
   }
   return result;
 }
@@ -163,10 +160,10 @@ export class BrowserFS implements FS<Node, Handle> {
 
   #as_node(node: Node) {
     if (!(node instanceof Node)) {
-      throw new FSError("EINVAL", "node belongs to another filesystem");
+      throw new SystemError("EINVAL", "node belongs to another filesystem");
     }
     if (!node.attached) {
-      throw new FSError("ENOENT", "filesystem node is no longer attached");
+      throw new SystemError("ENOENT", "filesystem node is no longer attached");
     }
     return node;
   }
@@ -174,7 +171,7 @@ export class BrowserFS implements FS<Node, Handle> {
   #directory(node: Node) {
     const result = this.#as_node(node);
     if (result.handle.kind !== "directory") {
-      throw new FSError("ENOTDIR");
+      throw new SystemError("ENOTDIR");
     }
     return result.handle as FileSystemDirectoryHandle;
   }
@@ -204,7 +201,7 @@ export class BrowserFS implements FS<Node, Handle> {
   #open_handle(node: Node, handle: Handle) {
     const current = this.#as_node(node);
     if (!(handle instanceof Handle) || handle.node !== current) {
-      throw new FSError("EBADF");
+      throw new SystemError("EBADF");
     }
     return current;
   }
@@ -312,7 +309,7 @@ export class BrowserFS implements FS<Node, Handle> {
       this.#as_node(current);
       if (changes.size !== undefined) {
         if (current.handle.kind !== "file") {
-          throw new FSError("EISDIR");
+          throw new SystemError("EISDIR");
         }
         const writable = await opfs_call(
           (current.handle as FileSystemFileHandle).createWritable({
@@ -349,7 +346,7 @@ export class BrowserFS implements FS<Node, Handle> {
   async open(node: Node, flags: number) {
     const current = this.#as_node(node);
     if (current.handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new SystemError("EISDIR");
     }
     if (flags & OpenFlags.TRUNCATE) {
       await this.setattr(current, { size: 0n });
@@ -368,10 +365,10 @@ export class BrowserFS implements FS<Node, Handle> {
     const existing = await this.#child(directory, name);
     if (existing) {
       if (flags & OpenFlags.EXCLUSIVE) {
-        throw new FSError("EEXIST");
+        throw new SystemError("EEXIST");
       }
       if (existing.kind !== "file") {
-        throw new FSError("EISDIR");
+        throw new SystemError("EISDIR");
       }
     }
     const file = existing ?? (await opfs_call(directory.getFileHandle(name, { create: true })));
@@ -388,7 +385,7 @@ export class BrowserFS implements FS<Node, Handle> {
   async read(node: Node, handle: Handle, offset: bigint, length: number) {
     const current = this.#open_handle(node, handle);
     if (current.handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new SystemError("EISDIR");
     }
     const file = await opfs_call((current.handle as FileSystemFileHandle).getFile());
     current.metadata.atime = now();
@@ -404,7 +401,7 @@ export class BrowserFS implements FS<Node, Handle> {
     return await this.#mutate(current, async () => {
       this.#open_handle(node, handle);
       if (current.handle.kind !== "file") {
-        throw new FSError("EISDIR");
+        throw new SystemError("EISDIR");
       }
       const writable = await opfs_call(
         (current.handle as FileSystemFileHandle).createWritable({
@@ -459,7 +456,7 @@ export class BrowserFS implements FS<Node, Handle> {
     name = valid_name(name);
     const parent_node = this.#as_node(parent);
     if (await this.#child(this.#directory(parent), name)) {
-      throw new FSError("EEXIST");
+      throw new SystemError("EEXIST");
     }
     const handle = await opfs_call(
       this.#directory(parent).getDirectoryHandle(name, { create: true }),
@@ -478,9 +475,9 @@ export class BrowserFS implements FS<Node, Handle> {
   async #unlink(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.#lookup(parent, name);
-    if (!child) throw new FSError("ENOENT");
+    if (!child) throw new SystemError("ENOENT");
     if (this.#as_node(child).handle.kind !== "file") {
-      throw new FSError("EISDIR");
+      throw new SystemError("EISDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
     this.#forget([...this.#as_node(parent).parts, name]);
@@ -493,9 +490,9 @@ export class BrowserFS implements FS<Node, Handle> {
   async #rmdir(parent: Node, name: string) {
     name = valid_name(name);
     const child = await this.#lookup(parent, name);
-    if (!child) throw new FSError("ENOENT");
+    if (!child) throw new SystemError("ENOENT");
     if (this.#as_node(child).handle.kind !== "directory") {
-      throw new FSError("ENOTDIR");
+      throw new SystemError("ENOTDIR");
     }
     await opfs_call(this.#directory(parent).removeEntry(name));
     this.#forget([...this.#as_node(parent).parts, name]);
@@ -533,7 +530,7 @@ export class BrowserFS implements FS<Node, Handle> {
     const new_parent = this.#as_node(newParent);
     if (old_parent === new_parent && oldName === newName) return;
     const source = await this.#lookup(old_parent, oldName);
-    if (!source) throw new FSError("ENOENT");
+    if (!source) throw new SystemError("ENOENT");
     const source_node = this.#as_node(source);
     const old_parts = [...old_parent.parts, oldName];
     const new_parts = [...new_parent.parts, newName];
@@ -541,7 +538,7 @@ export class BrowserFS implements FS<Node, Handle> {
       source_node.handle.kind === "directory" &&
       new_parts.slice(0, old_parts.length).join("/") === old_parts.join("/")
     ) {
-      throw new FSError("EINVAL", "cannot move a directory into itself");
+      throw new SystemError("EINVAL", "cannot move a directory into itself");
     }
 
     // Rename copies the source and then removes it, so a write landing on the
@@ -578,10 +575,10 @@ export class BrowserFS implements FS<Node, Handle> {
     if (existing) {
       const existing_node = this.#as_node(existing);
       if (source_node.handle.kind === "directory" && existing_node.handle.kind !== "directory") {
-        throw new FSError("ENOTDIR");
+        throw new SystemError("ENOTDIR");
       }
       if (source_node.handle.kind === "file" && existing_node.handle.kind !== "file") {
-        throw new FSError("EISDIR");
+        throw new SystemError("EISDIR");
       }
       // Linux applications routinely publish updates by renaming a temporary
       // file over its destination. The portable browser API cannot make that
@@ -626,9 +623,9 @@ export class BrowserFS implements FS<Node, Handle> {
       const relative = node.parts.slice(old_parts.length);
       let handle: FileSystemHandle = copied;
       for (const component of relative) {
-        if (handle.kind !== "directory") throw new FSError("EIO");
+        if (handle.kind !== "directory") throw new SystemError("EIO");
         const child = await this.#child(handle as FileSystemDirectoryHandle, component);
-        if (!child) throw new FSError("EIO");
+        if (!child) throw new SystemError("EIO");
         handle = child;
       }
       node.handle = handle;

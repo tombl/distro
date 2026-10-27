@@ -4,7 +4,7 @@ import {
   type FSAttributes,
   type FSCreateContext,
   type FSDirectoryEntry,
-  FSError,
+  SystemError,
   type FSSetAttributes,
   fileSystemDevice,
 } from "../../src/machine/index.ts";
@@ -56,7 +56,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 
   #directory(node: MemoryNode) {
     const result = this.#node(node);
-    if (result.kind !== "directory") throw new FSError("ENOTDIR");
+    if (result.kind !== "directory") throw new SystemError("ENOTDIR");
     return result;
   }
 
@@ -83,7 +83,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
       current.mode = (current.mode & 0o170000) | (changes.mode & 0o7777);
     }
     if (changes.size !== undefined) {
-      if (current.kind !== "file") throw new FSError("EISDIR");
+      if (current.kind !== "file") throw new SystemError("EISDIR");
       const size = Number(changes.size);
       const data = new Uint8Array(size);
       data.set(current.data.subarray(0, size));
@@ -94,13 +94,13 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 
   open(node: MemoryNode) {
     const current = this.#node(node);
-    if (current.kind !== "file") throw new FSError("EISDIR");
+    if (current.kind !== "file") throw new SystemError("EISDIR");
     return new MemoryHandle(current);
   }
 
   create(parent: MemoryNode, name: string, _flags: number, context: FSCreateContext) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new FSError("EEXIST");
+    if (directory.children.has(name)) throw new SystemError("EEXIST");
     const node = new MemoryNode("file", context.mode);
     directory.children.set(name, node);
     return { node, handle: new MemoryHandle(node) };
@@ -162,7 +162,7 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
 
   mkdir(parent: MemoryNode, name: string, context: FSCreateContext) {
     const directory = this.#directory(parent);
-    if (directory.children.has(name)) throw new FSError("EEXIST");
+    if (directory.children.has(name)) throw new SystemError("EEXIST");
     const node = new MemoryNode("directory", context.mode);
     directory.children.set(name, node);
     return node;
@@ -171,24 +171,24 @@ class MemoryFileSystem implements FS<MemoryNode, MemoryHandle> {
   unlink(parent: MemoryNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new FSError("ENOENT");
-    if (node.kind !== "file") throw new FSError("EISDIR");
+    if (!node) throw new SystemError("ENOENT");
+    if (node.kind !== "file") throw new SystemError("EISDIR");
     directory.children.delete(name);
   }
 
   rmdir(parent: MemoryNode, name: string) {
     const directory = this.#directory(parent);
     const node = directory.children.get(name);
-    if (!node) throw new FSError("ENOENT");
-    if (node.kind !== "directory") throw new FSError("ENOTDIR");
-    if (node.children.size !== 0) throw new FSError("ENOTEMPTY");
+    if (!node) throw new SystemError("ENOENT");
+    if (node.kind !== "directory") throw new SystemError("ENOTDIR");
+    if (node.children.size !== 0) throw new SystemError("ENOTEMPTY");
     directory.children.delete(name);
   }
 
   rename(oldParent: MemoryNode, oldName: string, newParent: MemoryNode, newName: string) {
     const old_directory = this.#directory(oldParent);
     const node = old_directory.children.get(oldName);
-    if (!node) throw new FSError("ENOENT");
+    if (!node) throw new SystemError("ENOENT");
     old_directory.children.delete(oldName);
     this.#directory(newParent).children.set(newName, node);
   }
