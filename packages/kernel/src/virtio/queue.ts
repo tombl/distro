@@ -34,9 +34,10 @@ interface Descriptor {
 /** One descriptor's view into the machine's memory. */
 export interface VirtqueueBuffer {
   /**
-   * The descriptor's bytes: a private copy, written back on release if
-   * writable. On a queue created with views it is guest memory itself, which
-   * the device must stop touching once it releases the chain.
+   * The descriptor's bytes: a private copy. A writable copy starts zeroed,
+   * not with the guest's contents, and release writes back only the bytes it
+   * reports as written. On a queue created with views it is guest memory
+   * itself, which the device must stop touching once it releases the chain.
    */
   readonly array: Uint8Array;
   /** Whether the guest driver allows the device to write to this buffer. */
@@ -58,7 +59,10 @@ export interface VirtqueueChain extends Iterable<VirtqueueBuffer> {
 export interface Virtqueue extends Iterable<VirtqueueChain> {}
 
 class Chain implements VirtqueueChain {
-  #buffers: Array<VirtqueueBuffer & { address?: number }>;
+  #buffers: VirtqueueBuffer[];
+  #writable: { address: number; offset: number; length: number }[] = [];
+  #writable_length = 0;
+  #scratch: ArrayBuffer | undefined;
   #release: (written: number, outputs: VirtqueueOutput[]) => void;
 
   constructor(
@@ -67,36 +71,74 @@ class Chain implements VirtqueueChain {
     views: boolean,
     release: (written: number, outputs: VirtqueueOutput[]) => void,
   ) {
-    // Copies share one allocation in chain order, so adjacent descriptors
-    // are adjacent views a device can hand to storage in one call.
-    const scratch = new ArrayBuffer(
-      views ? 0 : desc.reduce((total, descriptor) => total + descriptor.len, 0),
+    // Readable copies share one allocation in chain order, as do writable
+    // ones, so adjacent descriptors are adjacent views a device can hand to
+    // storage in one call.
+    const readable = new ArrayBuffer(
+      views
+        ? 0
+        : desc.reduce(
+            (total, descriptor) =>
+              descriptor.flags & DescriptorFlags.WRITE ? total : total + descriptor.len,
+            0,
+          ),
     );
-    let scratch_offset = 0;
+    let readable_offset = 0;
     this.#buffers = desc.map((descriptor) => {
       const address = Number(descriptor.addr);
-      const target = new Uint8Array(memory.buffer, address, descriptor.len);
       const writable = (descriptor.flags & DescriptorFlags.WRITE) !== 0;
       // A view is safe across awaits only because reset waits for the
       // device to finish with it. Otherwise device work that outlives the
       // queue generation works on a copy, written back only when release
       // proves the chain is still valid.
-      if (views) return { array: target, writable };
-      const copy = new Uint8Array(scratch, scratch_offset, descriptor.len);
-      scratch_offset += descriptor.len;
-      copy.set(target);
-      return writable ? { array: copy, writable, address } : { array: copy, writable };
+      if (views) {
+        return { array: new Uint8Array(memory.buffer, address, descriptor.len), writable };
+      }
+      if (writable) {
+        // The device never reads a writable buffer's guest contents, so its
+        // copy starts zeroed and is allocated only once the device touches
+        // it. A console posts 256 receive buffers of 64 KiB; copying them
+        // all in cost 16 MiB per kick.
+        const span = { address, offset: this.#writable_length, length: descriptor.len };
+        this.#writable.push(span);
+        this.#writable_length += descriptor.len;
+        let array: Uint8Array<ArrayBuffer> | undefined;
+        const chain = this;
+        return {
+          get array() {
+            return (array ??= new Uint8Array(chain.#allocate(), span.offset, span.length));
+          },
+          writable,
+        };
+      }
+      const copy = new Uint8Array(readable, readable_offset, descriptor.len);
+      readable_offset += descriptor.len;
+      copy.set(new Uint8Array(memory.buffer, address, descriptor.len));
+      return { array: copy, writable };
     });
     this.#release = release;
   }
 
+  #allocate() {
+    return (this.#scratch ??= new ArrayBuffer(this.#writable_length));
+  }
+
   release(written: number) {
-    this.#release(
-      written,
-      this.#buffers.flatMap(({ address, array }) =>
-        address === undefined ? [] : [{ address, data: array }],
-      ),
-    );
+    // The device reports how many bytes it wrote from the start of the
+    // writable buffers, and the driver may not rely on anything past them,
+    // so only those are written back.
+    const outputs: VirtqueueOutput[] = [];
+    const scratch = this.#scratch;
+    if (scratch) {
+      for (const { address, offset, length } of this.#writable) {
+        if (offset >= written) break;
+        outputs.push({
+          address,
+          data: new Uint8Array(scratch, offset, Math.min(length, written - offset)),
+        });
+      }
+    }
+    this.#release(written, outputs);
   }
 
   *[Symbol.iterator]() {
