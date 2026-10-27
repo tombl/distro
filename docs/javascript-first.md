@@ -329,11 +329,11 @@ There is one explicit bridge from Nix into the JavaScript workspace:
 pnpm artifacts
 ```
 
-It builds and copies all required native artifacts as regular ignored files to
-their owning packages: the kernel wasm, guest-agent EROFS, canonical image,
-and test images. It does not create store symlinks, provenance sidecars, or an
-alternative downloader. JavaScript commands fail early with this exact remedy
-when an artifact is absent.
+It builds and copies the native artifacts the packages ship as regular ignored
+files to their owning packages: the kernel wasm and the guest-agent EROFS. It
+does not create store symlinks, provenance sidecars, or an alternative
+downloader. Test images are not artifacts: tests read them from
+`$LOWLAND_TEST_ASSETS`, and build `.#test-assets` themselves when it is unset.
 
 Normal iteration is then conventional:
 
@@ -359,10 +359,12 @@ ordinary URLs. Early platform tests still boot a tiny test-specific EROFS image
 and inspect console assertions without the guest agent, so a guest regression
 cannot conceal a kernel or libc failure.
 
-Nix builds individual test assets and aggregates them into one link farm for
-`pnpm artifacts`; the simple command may materialize all assets. Nix checks run
-the same Node suites in reproducible environments rather than maintaining a
-parallel VM-test protocol.
+Nix builds individual test assets into one fixed layout, `.#test-assets`
+(`distro/npm/test-assets.nix`), and `scripts/test-assets.ts` is the only code
+that finds them. Each Nix check gets a link farm of just the assets it reads,
+and runs the package's own `pnpm check` and `pnpm test` against the source
+tree, Playwright suites included, rather than maintaining a parallel VM-test
+protocol.
 
 GitHub Actions remains split into jobs appropriate to caching and deployment,
 but each YAML job delegates its behavior to a locally runnable Nix app, for

@@ -164,11 +164,8 @@
                     echo "artifacts must be materialized from the repository root" >&2
                     exit 1
                   fi
-                  test_assets=${wasmpkgs.linux-guest.package.checks.tests.assets}
                   install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
-                  for asset in "$test_assets"/*; do
-                    install -Dm0644 "$asset" "packages/linux-guest/$(basename "$asset")"
-                  done
+                  install -Dm0644 ${wasmpkgs.linux-guest.agentDisk} packages/linux-guest/agent.img
                 '';
               }
             );

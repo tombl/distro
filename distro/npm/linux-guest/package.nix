@@ -1,57 +1,13 @@
 {
   agentDisk,
   bytes,
-  busybox,
-  ext4Root,
   pkgs,
-  rootfs,
-  wrongRoot,
   kernel,
   node-workspace,
-  stdenv,
-  vm-test,
+  test-assets,
 }:
 
 let
-  test-program =
-    name: source:
-    stdenv.mkDerivation {
-      pname = "linux-guest-${name}";
-      version = "0.0.0";
-      dontUnpack = true;
-      buildPhase = ''
-        $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \
-          -Wl,--fatal-warnings -o ${name} ${source}
-      '';
-      installPhase = ''
-        mkdir -p $out/bin
-        cp ${name} $out/bin/
-      '';
-    };
-  network-test = test-program "network-test" ../../guest-tests/network-test.c;
-  user-trap = test-program "user-trap" ../../guest-tests/user-trap.c;
-  getdents-inode = test-program "getdents-inode" ../../guest-tests/getdents-inode.c;
-
-  lifecycle-rootfs = vm-test.installedDisk {
-    name = "linux-guest-lifecycle";
-    init = ../../guest-tests/lifecycle-init.sh;
-    contents = [ busybox ];
-  };
-
-  # The directory layout tests/assets.ts consumes, via LINUX_GUEST_TEST_ASSETS
-  # or by building this attribute itself.
-  test-assets = pkgs.linkFarm "linux-guest-test-assets" {
-    "agent.img" = agentDisk;
-    "rootfs.ext4" = ext4Root;
-    "boot-initramfs.cpio" = vm-test.bootInitramfs;
-    "lifecycle-rootfs.erofs" = lifecycle-rootfs;
-    "rootfs.erofs" = rootfs;
-    "wrong-root.erofs" = wrongRoot;
-    "network-test" = "${network-test}/bin/network-test";
-    "user-trap" = "${user-trap}/bin/user-trap";
-    "getdents-inode" = "${getdents-inode}/bin/getdents-inode";
-  };
-
   package = pkgs.stdenvNoCC.mkDerivation {
     pname = "linux-guest";
     inherit ((builtins.fromJSON (builtins.readFile ../../../packages/linux-guest/package.json)))
@@ -60,7 +16,10 @@ let
     src = node-workspace.source [
       "packages/bytes"
       "packages/kernel"
-      "packages/linux-guest"
+      "packages/linux-guest/src"
+      "packages/linux-guest/tsconfig.json"
+      "packages/linux-guest/README.md"
+      "packages/linux-guest/LICENSE"
       "scripts/pack-package.mjs"
       "tsconfig.base.json"
     ];
@@ -75,11 +34,8 @@ let
     buildPhase = ''
       runHook preBuild
 
-      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -rT ${kernel}/dist packages/kernel/dist
-      cp -rT ${bytes}/dist packages/bytes/dist
+      ${node-workspace.installBuilt { inherit bytes kernel; }}
       cp ${agentDisk} packages/linux-guest/agent.img
-      pnpm --filter=@lowland/guest check
       pnpm --filter=@lowland/guest build
 
       runHook postBuild
@@ -96,49 +52,29 @@ let
     '';
   };
 
-  integration = pkgs.stdenvNoCC.mkDerivation {
-    pname = "linux-guest-integration-test";
-    version = "0.0.0";
-    passthru.ci.heavy = true;
-    src = node-workspace.source [
-      "packages/bytes"
-      "packages/kernel"
-      "packages/linux-guest"
-      "scripts/pack-package.mjs"
-      "tsconfig.base.json"
+  integration = node-workspace.mkTest {
+    name = "linux-guest-integration-test";
+    paths = [ "packages/linux-guest" ];
+    built = { inherit bytes kernel; };
+    assets = test-assets.select [
+      "agent.img"
+      "boot.cpio"
+      "getdents-inode"
+      "lifecycle.erofs"
+      "network-test"
+      "rootfs.erofs"
+      "rootfs.ext4"
+      "user-trap"
+      "wrong-root.erofs"
     ];
-    env.CI = "true";
-    pnpmDeps = node-workspace.deps;
-    nativeBuildInputs = [
-      pkgs.nodejs_26
-      pkgs.pnpmConfigHook
-      node-workspace.pnpm
-    ];
-
-    buildPhase = ''
-      runHook preBuild
-
-      cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-      cp -r ${kernel}/dist packages/kernel/dist
-      cp -r ${bytes}/dist packages/bytes/dist
+    command = ''
       cp ${agentDisk} packages/linux-guest/agent.img
-      pnpm --filter=@lowland/guest-tests check
-
-      LINUX_GUEST_TEST_ASSETS=${test-assets} \
-        timeout --kill-after=5 300 pnpm --filter=@lowland/guest-tests test
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      mkdir $out
+      pnpm --filter=@lowland/guest check
+      timeout --kill-after=5 300 pnpm --filter=@lowland/guest test
     '';
   };
 in
 package
 // {
-  checks.tests = {
-    assets = test-assets;
-    inherit integration;
-  };
+  checks.tests.integration = integration;
 }
