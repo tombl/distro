@@ -72,9 +72,8 @@ diff -r /tmp/tree /mnt || fail "the mounted image differs from the source tree"
   fail "running a program from the image root failed"
 umount /mnt || fail "unmounting the image failed"
 
-# The guest kernel is built without EROFS compression, so compressed images
-# are verified in userspace: fsck.erofs decompresses every extent and
-# extracts the tree for comparison.
+# fsck.erofs decompresses every extent in userspace and extracts the tree
+# for comparison. The compressed-mount check mounts compressed images.
 for algorithm in lzma deflate; do
   image="/tmp/$algorithm.img"
   start=$(now)

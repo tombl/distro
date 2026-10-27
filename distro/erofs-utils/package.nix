@@ -38,10 +38,8 @@ stdenv.mkDerivation (finalAttrs: {
   # Compressors come from the scope's static liblzma and zlib (zlib backs
   # -zdeflate). lz4 is not packaged and the zstd port ships only its CLI, so
   # those algorithms are left out; uncompressed output needs no library. The
-  # guest kernel mounts uncompressed images only (no CONFIG_EROFS_FS_ZIP), so
-  # compressed images are for other consumers. The workqueue is single-threaded
-  # here, libuuid is replaced by erofs-utils' built-in UUID code, and FUSE
-  # (erofsfuse) has no library in the scope.
+  # workqueue is single-threaded here, libuuid is replaced by erofs-utils'
+  # built-in UUID code, and FUSE (erofsfuse) has no library in the scope.
   configureFlags = [
     "--enable-lzma"
     "--with-zlib"
@@ -69,6 +67,61 @@ stdenv.mkDerivation (finalAttrs: {
           truncate -s 32M $out
         '')
       ];
+    };
+
+    # Mounts compressed images in the guest kernel and compares them with an
+    # uncompressed one. The guest erofs-utils has no LZ4 compressor, so the
+    # host's builds them. Big physical clusters decompress to several pages,
+    # and 256 KiB ones also span several pages of compressed data even with
+    # 64 KiB pages; both take LZ4 off its single-page path, which needs
+    # vmap() with an MMU and contiguous buffers without one.
+    compressed-mount = vm-test.installedTest {
+      name = "erofs-utils-compressed-mount";
+      init = ./compressed-mount-test.sh;
+      contents = [ busybox ];
+      # One global decompression buffer per CPU.
+      cpus = 2;
+      disks =
+        let
+          images =
+            pkgs.runCommand "erofs-utils-compressed-images"
+              {
+                nativeBuildInputs = [ pkgs.erofs-utils ];
+              }
+              ''
+                mkdir -p tree/nested $out
+                seq 1 500000 >tree/numbers
+                # Long runs decompress to megabytes from one physical cluster.
+                head -c 16777216 /dev/zero >tree/zeros
+                # Incompressible data is kept in uncompressed extents.
+                LC_ALL=C awk 'BEGIN {
+                  srand(1)
+                  for (i = 0; i < 262144; i++) printf "%c", int(rand() * 256)
+                }' >tree/random
+                printf 'hello\n' >tree/nested/hello
+                : >tree/empty
+                ln -s nested/hello tree/link
+
+                build() {
+                  mkfs.erofs "$@" --all-root -T0 -U clear -x-1 tree
+                }
+                build $out/plain.img
+                build -zlz4 $out/lz4.img
+                build -zlz4 -C262144 $out/lz4-pcluster.img
+                build -zlz4hc,12 -C65536 -Eztailpacking $out/lz4hc-tailpacking.img
+                build -zdeflate,level=9 -C65536 -Eztailpacking $out/deflate.img
+                build -zlzma -C65536 $out/lzma.img
+              '';
+        in
+        # The order the guest script expects, starting at /dev/vdb.
+        map (name: "${images}/${name}.img") [
+          "plain"
+          "lz4"
+          "lz4hc-tailpacking"
+          "deflate"
+          "lzma"
+          "lz4-pcluster"
+        ];
     };
   };
 })
