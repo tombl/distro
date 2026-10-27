@@ -1,6 +1,6 @@
 {
   "name": "@lowland/image",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The canonical Lowland system image and a builder for custom images.",
   "homepage": "https://docs.low.land/images/",
   "license": "MIT AND GPL-2.0-only AND GPL-2.0-or-later AND MPL-2.0",
