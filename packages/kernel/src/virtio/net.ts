@@ -52,7 +52,10 @@ export interface EthernetPort {
 
 /** A learning Ethernet switch, created by `ethernetNetwork`. */
 export interface EthernetNetwork {
-  /** Adds a port. Frames addressed to it arrive at `receive`. */
+  /**
+   * Adds a port. Frames addressed to it arrive at `receive`, which may return
+   * a promise to hold back unicast senders until it can take more.
+   */
   addPort(receive: (frame: Uint8Array) => void | PromiseLike<void>): EthernetPort;
   /** Closes every port. */
   close(): void;

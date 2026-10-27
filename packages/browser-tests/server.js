@@ -71,7 +71,7 @@ async function resolve(relative) {
       : join(directory, "site", relative);
   }
   if (assets.has(relative)) return testAsset(relative);
-  if (relative === "service-worker.js") return join(here, "../../apps/site/service-worker.js");
+  if (relative === "service-worker.js") return testAsset("site/service-worker.js");
   return join(here, relative);
 }
 

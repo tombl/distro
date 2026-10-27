@@ -30,7 +30,6 @@ export interface MachineDevices {
 export interface MachineSetup {
   readonly args: KernelArguments;
   readonly devices: MachineDevices;
-  readonly deviceTree: DeviceTreeBuilder;
   /**
    * Early kernel output. Consume this stream during configuration, before the
    * machine boots.
@@ -54,15 +53,6 @@ export interface MachinePlugin {
    * or the machine fails.
    */
   closing?(): void | Promise<void>;
-}
-
-/** Routes early kernel output to a writable stream before the machine boots. */
-export function bootConsole(output: WritableStream<Uint8Array>): MachinePlugin {
-  return {
-    configure(setup) {
-      void setup.bootConsole.pipeTo(output, { preventClose: true }).catch(() => {});
-    },
-  };
 }
 
 /** Routes early kernel output to a writable stream before the machine boots. */

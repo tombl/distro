@@ -24,28 +24,18 @@ export interface ConsoleDevice extends Device {
   resize(columns: number, rows: number): void;
 }
 
-/**
- * A virtio console: a byte pipe to a tty, visible in the guest as
- * `/dev/hvc0`.
- *
- * `input` is a `ReadableStream` of bytes sent to the tty, as from a keyboard.
- * `output` is a `WritableStream` of bytes from the tty for a terminal to
- * render. Either may be `null`: `consoleDevice(null, output)`
- * is a read-only console, such as a boot log.
- */
-export function consoleDevice(
-  input: ReadableStream<Uint8Array> | null,
-  output: WritableStream<Uint8Array> | null,
-): ConsoleDevice {
-  const reader = input?.getReader();
-  const writer = output?.getWriter();
-  const config_bytes = new Uint8Array(ConsoleConfig.size);
-  const config = new ConsoleConfig(config_bytes);
-  config.columns = 80;
-  config.rows = 24;
-  let pumping: Promise<void> | undefined;
-  let reader_cancellation: Promise<void> | undefined;
-  let writer_abortion: Promise<void> | undefined;
+class VirtioConsole extends VirtioDevice {
+  readonly #reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  readonly #writer: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  readonly #size: ConsoleConfig;
+  readonly #rx = new RxQueue();
+  // Linux exposes the legacy console receive queue before hvc0 is ready to
+  // consume it. Its first transmit kick proves that the console handoff has
+  // completed. Until then, input stays in the host stream.
+  #opened = Promise.withResolvers<void>();
+  #guest_ready = false;
+  #reader_cancellation: Promise<void> | undefined;
+  #writer_abortion: Promise<void> | undefined;
 
   constructor(input: ReadableStream<Uint8Array> | null, output: WritableStream<Uint8Array> | null) {
     const config = new Uint8Array(ConsoleConfig.size);

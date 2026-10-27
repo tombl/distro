@@ -15,13 +15,6 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# A newer push to a pull request supersedes its older runs. Pushes to main
-# are not cancelled, so each one is still checked, but deploy jobs skip
-# publishing when their commit is no longer the newest.
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   plan:
     name: Plan checks
@@ -279,23 +272,21 @@ jobs:
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
       github.event.pull_request.head.repo.full_name == 'tombl/distro')
     # Production publishes prune the apk repository against its live index, so
-    # they must not interleave. Previews stay independent. The group gives
-    # mutual exclusion, not ordering, so production steps also check that this
-    # run is still main's head. The default queue keeps one pending job, so an
-    # older run arriving late would cancel main's pending deploy and then skip
-    # itself; queue: max keeps every waiting job.
+    # they must not interleave; a newer push to a pull request replaces its
+    # preview instead. The group gives mutual exclusion, not ordering, so the
+    # deploy steps also check that this run is still its branch's or pull
+    # request's head. The default queue keeps one pending job, so an older run
+    # arriving late would cancel main's pending deploy and then skip itself;
+    # queue: max keeps every waiting job.
     concurrency:
-      group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.run_id) }}
-      cancel-in-progress: false
+      group: ${{ github.event_name == 'push' && 'deploy-site-production' || format('deploy-site-{0}', github.event.pull_request.number) }}
+      cancel-in-progress: ${{ github.event_name != 'push' }}
       queue: max
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       deployments: write
       pull-requests: read
-    concurrency:
-      group: deploy-site-${{ github.event.pull_request.number || github.ref }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
       - uses: nixbuild/nix-quick-install-action@v35
