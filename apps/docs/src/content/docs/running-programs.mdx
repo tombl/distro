@@ -109,7 +109,7 @@ The example service gets a fresh machine for each snippet and enforces its deadl
 that machine. Fresh machines mean one user's snippet cannot see another's files, and a machine
 is the boundary the [security model](/security-model/) relies on.
 
-```js title="run-snippet.mjs"
+```js run
 import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "@lowland/image";

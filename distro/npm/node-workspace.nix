@@ -113,6 +113,6 @@ rec {
     };
     inherit pnpm;
     fetcherVersion = 4;
-    hash = "sha256-ZTBTZg2PycKS8UBC/x6SIr1fgKUZtdArvTLqYuqLCO8=";
+    hash = "sha256-UBmVG32fH+WkhgCReeH96ks/K65vjQSfj9tECUDd6Y8=";
   };
 }
