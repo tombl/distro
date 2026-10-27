@@ -346,7 +346,11 @@ jobs:
     needs:
       - build
       - heavy-check
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') || github.event.pull_request.head.repo.full_name == 'tombl/distro'
+    # heavy-check is skipped when every heavy check is cached.
+    if: >-
+      !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
+      github.event.pull_request.head.repo.full_name == 'tombl/distro')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
