@@ -24,7 +24,7 @@ let
     checks.protocol =
       pkgs.runCommand "vm-test-protocol-check"
         {
-          nativeBuildInputs = [ pkgs.nodejs ];
+          nativeBuildInputs = [ pkgs.nodejs_26 ];
         }
         ''
           cp ${./protocol.js} protocol.js
@@ -56,7 +56,7 @@ let
     in
     pkgs.runCommand "vm-test-${name}"
       {
-        nativeBuildInputs = [ pkgs.nodejs ];
+        nativeBuildInputs = [ pkgs.nodejs_26 ];
         passthru.ci.heavy = heavy;
       }
       ''
