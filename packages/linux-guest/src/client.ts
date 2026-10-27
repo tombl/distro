@@ -177,6 +177,12 @@ export interface FileSystem {
   /** Truncates a file to `length` bytes, defaulting to empty. */
   truncate(path: string, length?: number): Promise<void>;
   /**
+   * Writes every filesystem's cached data to its device, like `sync(1)`.
+   * It needs no process, so it works even while commands hold every
+   * process slot.
+   */
+  sync(): Promise<void>;
+  /**
    * Opens a file for incremental or random-access I/O. The whole-file
    * methods above are simpler when you do not need either.
    *
@@ -635,6 +641,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
       chmod: client.chmod.bind(client),
       chown: client.chown.bind(client),
       truncate: client.truncate.bind(client),
+      sync: client.sync.bind(client),
       open: client.open.bind(client),
     },
     exec: client.exec.bind(client),
