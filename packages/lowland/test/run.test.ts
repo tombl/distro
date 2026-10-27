@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildImage } from "../src/image/build.ts";
-import { createNetwork, GuestBootError } from "../src/guest/index.ts";
+import { GuestBootError } from "../src/guest/index.ts";
+import { createNetwork } from "../src/machine/index.ts";
 import { NodeFS } from "../src/node/index.ts";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -445,6 +446,30 @@ describe("Linux", () => {
       disks: [{ source: bytes, path: "/data", readOnly: true }],
     });
     assert.equal(await reader.fs.readTextFile("/data/object"), "disk\n");
+  });
+
+  it("connects into a guest listener through linux.network", async () => {
+    // A network without adapters: nothing leaves it, but the host gets in.
+    using network = createNetwork();
+    await using linux = await Linux.create({ image: rootImage(), network });
+    assert.equal(linux.network?.address, "192.0.2.2");
+    // With its stdin at EOF, nc exits once the host closes.
+    const server = await linux.spawn(["sh", "-c", "nc -l -p 8080 </dev/null"]);
+    const received = new Response(server.stdout).text();
+    let connection;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        connection = await linux.network!.connect({ port: 8080 });
+        break;
+      } catch (error) {
+        if (attempt === 100) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    const writer = connection.writable.getWriter();
+    await writer.write(new TextEncoder().encode("from the host\n"));
+    await writer.close();
+    assert.equal(await received, "from the host\n");
   });
 
   it("leaves the caller's network untouched when the machine cannot boot", async () => {

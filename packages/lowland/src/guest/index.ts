@@ -26,20 +26,6 @@ export {
   SeekMode,
   type WriteFileOptions,
 } from "./file.ts";
-export { guestFetchHandler } from "./guest-fetch-handler.ts";
-export { hostFetchNetwork } from "./host-fetch-network.ts";
-export {
-  createNetwork,
-  type Network,
-  type NetworkAddress,
-  type NetworkAttachment,
-  type NetworkOptions,
-  type TcpConnection,
-  type TcpConnectOptions,
-  type TcpSession,
-  type UdpConnection,
-  type UdpConnectOptions,
-} from "./network.ts";
 export {
   ChildProcess,
   type CommandStatus,

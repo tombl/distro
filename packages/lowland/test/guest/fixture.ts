@@ -1,17 +1,14 @@
 import {
   bootMachine,
   consoleDevice,
+  createNetwork,
   entropyDevice,
   type Machine,
   type Device,
-} from "../../src/machine/index.ts";
-import {
-  createNetwork,
-  guestAgent,
-  type GuestAgent,
   type Network,
   type NetworkAttachment,
-} from "../../src/guest/index.ts";
+} from "../../src/machine/index.ts";
+import { guestAgent, type GuestAgent } from "../../src/guest/index.ts";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
 import { createConnection } from "node:net";
@@ -56,8 +53,8 @@ export function guest_test(
       async connectTcp(session) {
         const pipes = Promise.withResolvers<PromiseSettledResult<void>[]>();
         outbound.push({ target: session.target, signal: session.signal, pipes: pipes.promise });
-        // The `createNetwork` JSDoc recipe, verbatim apart from recording
-        // how each pipe settled.
+        // A plain Duplex.toWeb adapter that records how each pipe settled.
+        // nodeNetwork() from lowland/node has tests of its own.
         const socket = createConnection({
           host: session.target.hostname,
           port: session.target.port,
@@ -84,11 +81,11 @@ export function guest_test(
     const guests: TestGuest[] = [];
     async function spawn(extra_devices: readonly Device[] = []) {
       const agent = guestAgent({ mounts: [root_mount()] });
-      const attachment = network.attach(agent);
+      const attachment = network.attach();
       const machine = await bootMachine({
         cpus: 1,
-        // Put an agent-dependent plugin before the agent deliberately:
-        // readiness does not depend on plugin array order.
+        // Put the NIC before the agent deliberately: neither device
+        // discovery nor readiness depends on plugin array order.
         plugins: [
           attachment,
           agent,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // HTTP/1.1 message primitives shared by the fetch adapters. This is not a
 // general HTTP implementation: each adapter controls one end of its
 // conversation, so only the grammar a well-behaved peer produces is accepted.

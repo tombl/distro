@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  createNetwork,
   SystemError,
   type ChildProcess,
   type CommandStatus,
-  type Network,
   type TerminalSize,
 } from "../guest/index.ts";
 import { rootImage } from "../image/index.ts";
+import { createNetwork, type Network } from "../machine/index.ts";
 import { NodeFS } from "../node/index.ts";
 import { spawnSync } from "node:child_process";
 import { resolve4 } from "node:dns/promises";

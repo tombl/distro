@@ -1,4 +1,4 @@
-// Property tests over the pure HTTP layer in src/http.ts: round-trips and
+// Property tests over the pure HTTP layer in src/machine/network/http.ts: round-trips and
 // grammar-based generation cover far more byte sequences than hand-written
 // cases, and malformed inputs must reject rather than hang or crash.
 
@@ -15,7 +15,7 @@ import {
   parse_status_line,
   serialize_head,
   strip_hop_by_hop,
-} from "../../src/guest/http.ts";
+} from "../../src/machine/network/http.ts";
 import {
   chunked_frame,
   int,

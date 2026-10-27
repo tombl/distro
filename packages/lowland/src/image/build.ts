@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, bootMachine, type BlockStorage, entropyDevice } from "../machine/index.ts";
-import { createNetwork, guestAgent, type Network } from "../guest/index.ts";
+import {
+  blockDevice,
+  bootMachine,
+  type BlockStorage,
+  createNetwork,
+  entropyDevice,
+  type Network,
+} from "../machine/index.ts";
+import { guestAgent } from "../guest/index.ts";
 import { NodeFS } from "../node/index.ts";
 import { randomUUID } from "node:crypto";
 import { resolve4 } from "node:dns/promises";
@@ -347,7 +354,7 @@ export async function build_image(
           // The script writes to the machine's only writable block device.
           blockDevice(output_storage(handle, size)),
           entropyDevice(),
-          ...(network ? [network.attach(guest)] : []),
+          ...(network ? [network.attach()] : []),
         ],
       });
       const result = await guest.run(args);

@@ -20,6 +20,15 @@ case "$cmdline" in
   echo "lifecycle: powering off"
   exec /sbin/poweroff -f
   ;;
+*" lifecycle=network "*)
+  # The kernel configured the network from ip= before this ran.
+  echo "lifecycle: network"
+  echo "hostname: $(hostname)"
+  cat /proc/net/pnp
+  ifconfig eth0
+  route -n
+  exec /sbin/poweroff -f
+  ;;
 *" lifecycle=multi-cpu-panic "*)
   echo "lifecycle: starting work on multiple cpus"
   i=0

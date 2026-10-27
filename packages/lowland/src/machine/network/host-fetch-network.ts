@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Fetch-backed outbound HTTP. Guests speak plaintext HTTP/1; the adapter
 // intentionally translates it to HTTPS Fetch. The supplied callback owns all
 // platform routing and policy.
@@ -167,7 +169,7 @@ async function exchange(
  */
 export function hostFetchNetwork(options: {
   fetch(request: Request): Response | PromiseLike<Response>;
-}): NetworkOptions {
+}): Required<NetworkOptions> {
   return {
     resolveDns: () => Promise.resolve([PLACEHOLDER_ADDRESS]),
     connectTcp: (session) => exchange(session, options.fetch),

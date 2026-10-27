@@ -12,8 +12,13 @@
 <p id="status">booting…</p>
 <pre id="log"></pre>
 <script type="module">
-  import { createNetwork, guestAgent, guestFetchHandler } from "lowland/guest";
-  import { bootMachine, consoleDevice } from "lowland/machine";
+  import { guestAgent } from "lowland/guest";
+  import {
+    bootMachine,
+    consoleDevice,
+    createNetwork,
+    guestFetchHandler,
+  } from "lowland/machine";
   import { serveGuest } from "/client.js";
 
   const hubOrigin = "__HUB_ORIGIN__";
@@ -43,19 +48,15 @@
   // serveGuest comes up. busybox httpd serves on 8080; wait for it to bind so
   // the demo's first request doesn't race the server's startup.
   (async () => {
-    const network = createNetwork({
-      connectTcp() {
-        throw new Error("outbound TCP is unavailable in this test");
-      },
-      resolveDns: async () => [],
-    });
+    // Inbound only: the guest's own connections out are refused.
+    const network = createNetwork();
     const rootfs = await bytes("/rootfs.erofs");
     // The root is an entry in the agent's mount table, beneath a writable
     // layer in memory.
     const guest = guestAgent({
       mounts: [{ path: "/", source: rootfs, type: "erofs", mode: "overlay" }],
     });
-    const attachment = network.attach(guest);
+    const attachment = network.attach();
     await bootMachine({
       cpus: 1,
       plugins: [guest, boot_console, attachment],

@@ -21,8 +21,8 @@ import { createServer, type IncomingMessage } from "node:http";
 import net from "node:net";
 import { type Duplex } from "node:stream";
 import { test } from "node:test";
-import { hostFetchNetwork } from "../../src/guest/host-fetch-network.ts";
-import type { NetworkOptions, TcpSession } from "../../src/guest/index.ts";
+import { hostFetchNetwork } from "../../src/machine/network/host-fetch-network.ts";
+import type { NetworkOptions, TcpSession } from "../../src/machine/index.ts";
 import { build_request_corpus, type CorpusEntry } from "./fuzz.ts";
 import { collect } from "./helpers.ts";
 
@@ -35,7 +35,7 @@ const TIMEOUT_MS = 5000;
 
 // Fields the adapter removes before constructing the forwarded request; the
 // oracle parse is reduced the same way before comparison. Mirrors the list
-// in src/http.ts.
+// in src/machine/network/http.ts.
 const HOP_BY_HOP = [
   "connection",
   "keep-alive",
@@ -192,7 +192,7 @@ async function ours_parse(bytes: Uint8Array): Promise<OursParse> {
     signal: abort.signal,
   };
   let captured: { request: Request; body: Uint8Array } | undefined;
-  const options: NetworkOptions = hostFetchNetwork({
+  const options: Required<NetworkOptions> = hostFetchNetwork({
     fetch: async (request) => {
       const body = request.body
         ? new Uint8Array(await new Response(request.body).arrayBuffer())

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import {
   ByteReader,
   chunked_body,
