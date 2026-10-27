@@ -434,38 +434,59 @@ async function block_filesystems(guest: GuestAgent): Promise<string[]> {
 }
 
 /**
- * Mounts `device` on the directory `path` names beneath `root`, resolved with
- * `root` as `/`, so a symlink in an image never sends a mount outside it.
- * Records where the mount went, as a path, for {@link unwind_mounts}.
+ * One mount the default boot made, in the order it made them: a mount at
+ * `path`, or the mount it moved from `from` to `path`.
+ */
+interface MountRecord {
+  readonly path: string;
+  readonly from?: string;
+}
+
+/**
+ * Mounts on the directory `path` names beneath `root`, resolved with `root`
+ * as `/`, so a symlink in an image never sends a mount outside it. Records
+ * where the mount went, as a path, for {@link unwind_mounts}; `from` marks a
+ * move.
  */
 async function mount_in(
   guest: GuestAgent,
   client: GuestClientCapabilities,
-  mounted: string[],
+  mounted: MountRecord[],
   root: string,
   path: string,
   mount: (target: string) => Promise<void>,
+  from?: string,
 ) {
   const directory = await client.open_directory_in(root, path);
   try {
     const target = `/proc/self/fd/${directory.fd}`;
     const where = await guest.fs.readLink(target);
     await mount(target);
-    mounted.push(where);
+    mounted.push(from === undefined ? { path: where } : { path: where, from });
   } finally {
     await directory.close();
   }
 }
 
 /**
- * Leaves storage the failed boot mounted clean: unmounts it in reverse, or
- * remounts it read-only if it stays busy, then syncs. A writable ext4 left
- * mounted would need journal recovery before it could be mounted read-only.
- * Bounded, because it only tidies up after an error that is reported anyway.
+ * Leaves storage the failed boot mounted clean: undoes its mounts in
+ * reverse, unmounting each, or remounting it read-only if it stays busy, then
+ * syncs. A writable ext4 left mounted would need journal recovery before it
+ * could be mounted read-only. A move is undone by moving the mount back, so
+ * the paths recorded before it name their mounts again: a moved /dev hides
+ * whatever the table mounted beneath /sysroot/dev. /proc moved last, so it
+ * comes back first. Bounded, because it only tidies up after an error that is
+ * reported anyway.
  */
-async function unwind_mounts(guest: GuestAgent, mounted: readonly string[]) {
+async function unwind_mounts(guest: GuestAgent, mounted: readonly MountRecord[]) {
   const unwind = async () => {
-    for (const path of mounted.toReversed()) {
+    for (const { path, from } of mounted.toReversed()) {
+      if (from !== undefined) {
+        // switchRoot() may have deleted the initramfs's empty directory.
+        await make_directory(guest, from).catch(() => {});
+        await guest.mount(path, from, { flags: MountFlags.MOVE }).catch(() => {});
+        continue;
+      }
       try {
         await guest.unmount(path);
       } catch {
@@ -489,7 +510,7 @@ async function boot_mount_table(
   guest: GuestBoot,
   client: GuestClientCapabilities,
   mounts: readonly Mount[],
-  mounted: string[],
+  mounted: MountRecord[],
 ) {
   await step(client, "mounting /proc, /sys and /dev/pts", async () => {
     await make_directory(guest, "/proc");
@@ -552,7 +573,7 @@ async function boot_mount_table(
         mount.path === "/"
           ? make_directory(guest, "/sysroot")
               .then(() => mount_at("/sysroot"))
-              .then(() => void mounted.push("/sysroot"))
+              .then(() => void mounted.push({ path: "/sysroot" }))
           : mount_in(guest, client, mounted, prefix || "/", mount.path, mount_at);
 
       if (mode !== "overlay") {
@@ -563,10 +584,10 @@ async function boot_mount_table(
       const layers = `/run/lowland/m${index}`;
       await make_directory(guest, `${layers}/lower`);
       await attempt(`${layers}/lower`, MountFlags.RDONLY);
-      mounted.push(`${layers}/lower`);
+      mounted.push({ path: `${layers}/lower` });
       await make_directory(guest, `${layers}/rw`);
       await guest.mount("tmpfs", `${layers}/rw`, { type: "tmpfs", data: "mode=0755" });
-      mounted.push(`${layers}/rw`);
+      mounted.push({ path: `${layers}/rw` });
       await make_directory(guest, `${layers}/rw/upper`);
       await make_directory(guest, `${layers}/rw/work`);
       await place((target) =>
@@ -580,11 +601,16 @@ async function boot_mount_table(
   if (!root) return;
 
   await step(client, "moving /dev, /proc and /sys into /sysroot", async () => {
-    // /proc goes last: the others name their targets through it. Moved
-    // mounts are not recorded, because only the root's own unwinding matters.
+    // /proc goes last: the others name their targets through it.
     for (const name of ["dev", "sys", "proc"]) {
-      await mount_in(guest, client, [], "/sysroot", name, (target) =>
-        guest.mount(`/${name}`, target, { flags: MountFlags.MOVE }),
+      await mount_in(
+        guest,
+        client,
+        mounted,
+        "/sysroot",
+        name,
+        (target) => guest.mount(`/${name}`, target, { flags: MountFlags.MOVE }),
+        `/${name}`,
       );
     }
   });
@@ -698,7 +724,7 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       },
     };
     // What the default boot mounted, so a failure can leave it clean.
-    const mounted: string[] = [];
+    const mounted: MountRecord[] = [];
     try {
       if (options.boot) await options.boot(guest);
       else await boot_mount_table(guest, client, mounts, mounted);

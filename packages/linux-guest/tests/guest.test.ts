@@ -398,6 +398,46 @@ test("a failed boot leaves the storage it mounted clean", async () => {
   }
 });
 
+test("a boot that fails moving /sys leaves storage beneath /sysroot/dev clean", async () => {
+  // An image whose /sys is a regular file, so moving /sys in fails after
+  // /dev has moved and covered whatever the table mounted beneath it.
+  const image = new Uint8Array(ext4_rootfs);
+  {
+    const { agent: guest, machine } = await boot({
+      mounts: [root_mount(), { path: "/image", source: image, type: "ext4" }],
+    });
+    try {
+      await guest.fs.remove("/image/sys");
+      await guest.fs.writeTextFile("/image/sys", "not a directory\n");
+      await guest.unmount("/image");
+    } finally {
+      await close(machine);
+    }
+  }
+  assert.equal(needs_recovery(image), false);
+  const data = new Uint8Array(ext4_rootfs);
+  await assert.rejects(
+    boot({
+      mounts: [ext4_root_mount(image), { path: "/dev/data", source: data, type: "ext4" }],
+    }),
+    (error) =>
+      error instanceof GuestBootError &&
+      error.step === "moving /dev, /proc and /sys into /sysroot" &&
+      error.cause instanceof SystemError &&
+      error.cause.code === "ENOTDIR",
+  );
+  assert.equal(needs_recovery(data), false);
+  assert.equal(needs_recovery(image), false);
+  const { agent: reader, machine } = await boot({
+    mounts: [root_mount(), { path: "/data", source: data, type: "ext4", mode: "ro" }],
+  });
+  try {
+    assert.match(await reader.fs.readTextFile("/proc/mounts"), /^\/dev\/vd[a-z] \/data ext4 ro/m);
+  } finally {
+    await close(machine);
+  }
+});
+
 test("powering off unmounts every filesystem, however many there are", async () => {
   const data = new Uint8Array(ext4_rootfs);
   const { agent: guest, machine } = await boot({ mounts: [root_mount()] }, [
