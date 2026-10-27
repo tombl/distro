@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-27
+
 ### Added
 
 - `@lowland/kernel` runs an SMP Linux kernel compiled to WebAssembly and

@@ -1,6 +1,6 @@
 {
   "name": "lowland",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Linux machines in Node and browsers, as a JavaScript API and the lowland command line.",
   "homepage": "https://docs.low.land/",
   "license": "MIT",
