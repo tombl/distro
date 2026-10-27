@@ -902,12 +902,30 @@ static int mount_system_root(const struct system_root *root)
 	return 0;
 }
 
+/* Without a console the kernel starts PID 1 with no standard descriptors.
+ * Hold them open on /dev/null so later descriptors never take their place: a
+ * spawned child's stdio pipes allocated there would be clobbered by its own
+ * dup2 and close file actions. */
+static int reserve_standard_fds(void)
+{
+	int fd;
+
+	for (;;) {
+		fd = open("/dev/null", O_RDWR);
+		if (fd == -1)
+			return -1;
+		if (fd > 2)
+			return close(fd);
+	}
+}
+
 static int prepare_system_root(void)
 {
 	struct system_root root;
 
 	if (make_directory("/dev", 0755) ||
 	    mount_if_needed("devtmpfs", "/dev", "devtmpfs") ||
+	    reserve_standard_fds() ||
 	    make_directory("/dev/pts", 0755) ||
 	    mount_if_needed("devpts", "/dev/pts", "devpts") ||
 	    make_directory("/proc", 0555) ||
