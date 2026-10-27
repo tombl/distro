@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 import {
-  ethernetDevice,
   ethernetNetwork,
   type EthernetPort,
   type MacAddress,
+  restartable_ethernet_device,
 } from "../virtio/net.ts";
 import {
   machinePlugin,
@@ -1515,6 +1515,21 @@ export function createNetwork({
         const address = `192.0.2.${suffix}`;
         const ip = ipv4_number(address);
         const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
+        // Forgets the guest's connections, as when it reboots: its sockets
+        // are gone, so its host sessions are too.
+        const reset = (reason: string) => {
+          abort_tcp_flows(new Error(reason), configured);
+          for (const flow of udp_flows.values()) {
+            if (flow.guest === configured) {
+              flow.closed = true;
+              udp_flows.delete(flow.key);
+              flow.controller.close();
+            }
+          }
+          for (const [key, reassembly] of ip_reassemblies) {
+            if (reassembly.source === ip) discard_ip_reassembly(key);
+          }
+        };
         const configured: Attachment = {
           address,
           ip,
@@ -1524,23 +1539,16 @@ export function createNetwork({
             attached = false;
             attachments.delete(ip);
             if (!booted) taken_addresses.delete(suffix);
-            abort_tcp_flows(new Error("guest detached from network"), configured);
-            for (const flow of udp_flows.values()) {
-              if (flow.guest === configured) {
-                flow.closed = true;
-                udp_flows.delete(flow.key);
-                flow.controller.close();
-              }
-            }
-            for (const [key, reassembly] of ip_reassemblies) {
-              if (reassembly.source === ip) discard_ip_reassembly(key);
-            }
+            reset("guest detached from network");
           },
         };
         attachment = configured;
         attached = true;
         attachments.set(ip, configured);
-        const device = ethernetDevice(ethernet, { macAddress });
+        // A reboot keeps the address and the NIC.
+        const device = restartable_ethernet_device(ethernet, macAddress, () => {
+          if (attached) reset("guest rebooted");
+        });
         void device.closed.finally(() => configured.close()).catch(() => {});
         setup.devices.add(device);
         setup.args.add(kernel_ip_argument(address));

@@ -183,6 +183,46 @@ guest_test("outbound TCP", async (t, fixture) => {
     }
   });
 
+  await t.test("aborts the guest's sessions on a reboot and keeps its address", async () => {
+    const rebooted = await fixture.spawn();
+    const address = rebooted.network.address;
+    // One session the guest holds open, and one that closed gracefully but
+    // whose host side is still flushing.
+    const held = createServer((socket) => socket.on("error", () => {}));
+    const held_port = await listen(held);
+    const body = pattern_bytes(1256);
+    try {
+      await serve(body, async (url, port) => {
+        fixture.lingering.add(port);
+        const fetched = await rebooted.run(["sh", "-c", `wget -qO- ${url} | wc -c`]);
+        assert.equal(new TextDecoder().decode(fetched.stdout).trim(), String(body.byteLength));
+        const flushing = session_for(fixture, port);
+        await assert_graceful(flushing);
+        void rebooted.exec(["wget", "-qO-", `http://${fixture.network.gateway}:${held_port}/`]);
+        let open: OutboundSession | undefined;
+        for (let i = 0; i < 500 && !open; i++) {
+          open = fixture.outbound.findLast((session) => session.target.port === held_port);
+          if (!open) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.ok(open, "the guest did not connect");
+
+        await rebooted.machine.reboot();
+        for (const session of [open, flushing]) {
+          assert.equal(session.signal.aborted, true);
+          assert.match(String(session.signal.reason), /guest rebooted/);
+        }
+        assert.equal(rebooted.network.address, address);
+        // The rebooted guest has the same address and reaches the host again.
+        const again = await rebooted.run(["sh", "-c", `wget -qO- ${url} | wc -c`]);
+        assert.equal(new TextDecoder().decode(again.stdout).trim(), String(body.byteLength));
+        const ip = await rebooted.run(["sh", "-c", "ifconfig eth0"]);
+        assert.match(new TextDecoder().decode(ip.stdout), new RegExp(`inet addr:${address} `));
+      });
+    } finally {
+      held.close();
+    }
+  });
+
   // Last: it closes the network.
   await t.test("aborts a gracefully closed session when the network closes", async () => {
     const body = pattern_bytes(1256);

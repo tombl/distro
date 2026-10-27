@@ -194,10 +194,12 @@ class VirtioNic extends VirtioDevice {
    * keeps the frame.
    */
   readonly #waiting = new Set<() => void>();
+  readonly #on_restart: (() => void) | undefined;
 
-  constructor(network: EthernetNetwork, macAddress: MacAddress) {
+  constructor(network: EthernetNetwork, macAddress: MacAddress, on_restart?: () => void) {
     super({ id: 1, queues: 2, features: 1n << 5n, config: Uint8Array.from(macAddress) });
     this.#port = network.addPort((frame) => this.#receive(frame));
+    this.#on_restart = on_restart;
   }
 
   #receive(frame: Uint8Array): void | Promise<void> {
@@ -268,6 +270,12 @@ class VirtioNic extends VirtioDevice {
     this.#abandon_transmits();
   }
 
+  protected restart() {
+    // Frames for the previous boot have no one left to read them.
+    for (const { delivered } of this.#pending.splice(0)) delivered?.resolve();
+    this.#on_restart?.();
+  }
+
   #abandon_transmits() {
     for (const abandon of this.#waiting) abandon();
     this.#waiting.clear();
@@ -298,4 +306,16 @@ export function ethernetDevice(
     "invalid MAC address",
   );
   return public_handle(new VirtioNic(network, macAddress), { macAddress });
+}
+
+/**
+ * An `ethernetDevice` that calls `on_restart` when its machine reboots, for
+ * a network that has to forget the previous boot's connections.
+ */
+export function restartable_ethernet_device(
+  network: EthernetNetwork,
+  macAddress: MacAddress,
+  on_restart: () => void,
+): EthernetDevice {
+  return public_handle(new VirtioNic(network, macAddress, on_restart), { macAddress });
 }

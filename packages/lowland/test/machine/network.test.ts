@@ -7,7 +7,8 @@ import type { Machine } from "../../src/machine/index.ts";
 import { configure_machine, run_machine_booted } from "../../src/machine/plugin-internal.ts";
 import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import type { Device } from "../../src/machine/virtio/device.ts";
-import { close_device } from "./virtio-fixture.ts";
+import { device_of } from "../../src/machine/virtio/device.ts";
+import { attach_devices, close_device } from "./virtio-fixture.ts";
 
 function nics(devices: readonly Device[]) {
   return devices.filter((device) => "macAddress" in device);
@@ -169,4 +170,34 @@ test("a network runs out after 253 booted machines", async () => {
     configure_machine([], [network.attach()]),
     new Error("network has no guest addresses left"),
   );
+});
+
+test("a reboot forgets the guest's connections and keeps its address", async () => {
+  using network = createNetwork();
+  const attachment = network.attach();
+  const configured = await boot(attachment);
+  const [nic] = nics(configured.devices);
+  assert.ok(nic);
+  attach_devices({
+    memory: new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }),
+    devices: [nic],
+    trigger_irq() {},
+    on_error(error) {
+      throw error;
+    },
+  });
+  const channel = await attachment.connect({ port: 1, transport: "udp" });
+  const reader = channel.readable.getReader();
+  await device_of(nic).detach();
+  // The previous boot's flow ended, as its socket did.
+  assert.equal((await reader.read()).done, true);
+  await assert.rejects(
+    channel.writable.getWriter().write(new Uint8Array(1)),
+    /UDP connection is closed/,
+  );
+  // The address and the NIC stay, for the next boot.
+  assert.equal(attachment.address, "192.0.2.2");
+  const next = await attachment.connect({ port: 1, transport: "udp" });
+  next.close();
+  await Promise.all(configured.devices.map(close_device));
 });
