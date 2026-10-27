@@ -69,6 +69,13 @@ export interface MachinePlugin {
    * or the machine fails.
    */
   closing?(): void | Promise<void>;
+  /**
+   * PROTOTYPE (redesign phase 0 spike). Asked, in reverse plugin order, to
+   * start an orderly power-off or reboot. Returning true means this plugin
+   * started it, so no later plugin is asked and the kernel's power button is
+   * not pressed.
+   */
+  power?(action: "poweroff" | "reboot"): boolean | Promise<boolean>;
 }
 
 /** Routes early kernel output to a writable stream before the machine boots. */

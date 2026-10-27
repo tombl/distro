@@ -72,6 +72,14 @@ export class VirtioBus {
     };
   }
 
+  /** PROTOTYPE: detaches every device from a kernel that has gone, for a reboot. */
+  async detach(): Promise<void> {
+    for (const device of this.#devices) {
+      if (!device.detach) throw new Error("a device on this machine cannot be rebooted");
+    }
+    await Promise.all(this.#devices.map((device) => device.detach!()));
+  }
+
   /** Shuts every device down, rejecting with the first failure. */
   async close(): Promise<void> {
     const results = await Promise.allSettled(this.#devices.map((device) => device.shutdown()));

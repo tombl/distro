@@ -57,6 +57,11 @@ export interface BusDevice {
   readonly queues: number;
   readonly closed: Promise<void>;
   attach(context: VirtioConnectionContext): ConnectedVirtioDevice;
+  /**
+   * PROTOTYPE: forgets the kernel the device was attached to, as a device
+   * reset would, so a rebooted kernel can attach it again.
+   */
+  detach?(): Promise<void>;
   /** Idempotently stops the device and releases its backend. */
   shutdown(): Promise<void>;
 }
@@ -122,6 +127,7 @@ export abstract class VirtioDevice implements BusDevice {
   #config_pending = false;
   #views: boolean;
   #on_error: (error: unknown) => void = () => {};
+  #connection: ConnectedVirtioDevice | undefined;
 
   constructor({
     id,
@@ -237,9 +243,16 @@ export abstract class VirtioDevice implements BusDevice {
     return completion.promise;
   }
 
+  async detach(): Promise<void> {
+    const connection = this.#connection;
+    this.#connection = undefined;
+    this.#attached = undefined;
+    await connection?.reset();
+  }
+
   attach(context: VirtioConnectionContext): ConnectedVirtioDevice {
     assert(!this.#stopped, "cannot attach a closed virtio device");
-    assert(!this.#attached, "virtio device is already attached");
+    assert(!this.#attached && !this.#connection, "virtio device is already attached");
     this.#on_error = context.on_error;
     const queues: QueueState[] = [];
     const queue_state = (vq: number) =>
@@ -261,7 +274,7 @@ export abstract class VirtioDevice implements BusDevice {
       }
     };
 
-    return {
+    return (this.#connection = {
       set_features: (features) => {
         assert(
           features === this.features,
@@ -339,6 +352,6 @@ export abstract class VirtioDevice implements BusDevice {
         if (!this.#views) return Promise.resolve();
         return Promise.allSettled(this.#active).then(() => {});
       },
-    };
+    });
   }
 }

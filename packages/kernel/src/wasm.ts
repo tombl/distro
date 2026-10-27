@@ -8,6 +8,8 @@ export interface Instance extends WebAssembly.Instance {
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
+    /** PROTOTYPE: presses the power button; 1 powers off, 2 reboots. */
+    power_button?(action: number): number;
     // Linked directly into each user instance as linux.syscall, so a syscall
     // never passes through JS. The number, every argument slot and the result
     // are user words.
@@ -171,6 +173,7 @@ export type UserMemory = (typeof UserMemory)[keyof typeof UserMemory];
 export const MachineTerminationReason = {
   Clean: 0,
   Panic: 1,
+  Reboot: 2,
 } as const;
 
 /** Values for the kernel.terminate_machine guest/host ABI. */

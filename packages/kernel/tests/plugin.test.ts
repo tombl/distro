@@ -22,6 +22,10 @@ function machine_stub(): Machine {
   return {
     memory: {} as WebAssembly.Memory,
     closed,
+    exited: Promise.resolve({ reason: "kill" }),
+    shutdown: () => Promise.resolve({ reason: "kill" }),
+    reboot: () => Promise.resolve(),
+    kill() {},
     close() {},
     [Symbol.dispose]() {},
     [Symbol.asyncDispose]: () => closed,

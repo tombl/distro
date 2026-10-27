@@ -64,7 +64,18 @@ export interface BootMachineOptions {
    * the devices, kernel arguments, and initramfs archives.
    */
   plugins?: readonly MachinePluginInput[];
+  /**
+   * PROTOTYPE (redesign phase 0 spike). What a guest reboot does: boot the
+   * same devices again (the default, like QEMU), or end the machine with
+   * exit reason "reboot" (like QEMU's -no-reboot).
+   */
+  reboot?: "restart" | "exit";
 }
+
+/** PROTOTYPE: how a machine ended. */
+export type MachineExit =
+  | { reason: "poweroff" | "kill" | "reboot" }
+  | { reason: "crash"; error: unknown };
 
 /**
  * A booted Linux machine: one shared WebAssembly memory, one Web Worker per
@@ -87,6 +98,18 @@ export interface Machine extends Disposable, AsyncDisposable {
    * `closed` rejects with the hook's error.
    */
   close(): void;
+  /** PROTOTYPE: settles once the machine has ended, and never rejects. */
+  readonly exited: Promise<MachineExit>;
+  /**
+   * PROTOTYPE: presses the power button. Plugins' `power` hooks are asked in
+   * reverse order, then the kernel's own button, which runs the image's
+   * /sbin/poweroff. Kills the machine after the timeout.
+   */
+  shutdown(options?: { timeoutMs?: number }): Promise<MachineExit>;
+  /** PROTOTYPE: an orderly reboot, which resolves once booted again. */
+  reboot(options?: { timeoutMs?: number }): Promise<void>;
+  /** PROTOTYPE: pulls the plug. */
+  kill(): void;
 }
 
 export class MachinePanicError extends Error {
@@ -214,6 +237,11 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
   const { plugins } = configured;
   const bus = new VirtioBus(configured.devices);
   const workers = new Set<WorkerHandle>();
+  // PROTOTYPE: each boot is a generation; a rebooted machine ignores
+  // whatever the previous kernel's workers still post.
+  let generation = 0;
+  let exit: MachineExit | undefined;
+  const exited = Promise.withResolvers<MachineExit>();
   let closed = false;
   let failed = false;
   let finish_error: unknown;
@@ -262,6 +290,9 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
         }
       }
       boot_console_close();
+      exited.resolve(
+        failed ? { reason: "crash", error: finish_error } : (exit ?? { reason: "kill" }),
+      );
       if (failed) closed_promise.reject(finish_error);
       else closed_promise.resolve();
     })();
@@ -287,13 +318,61 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     );
   };
 
-  try {
-    const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
-    const pages = kernel_initial_pages(memory_type);
-    const { memory: wasm_memory, maximum_pages } = allocate_shared_memory(
-      pages,
-      KERNEL_MEMORY_MAXIMUM_PAGES,
+  // The imports must exist before instantiation returns the instance they
+  // call back into, but they only run once exports.boot() starts the kernel.
+  let instance: Instance | undefined;
+  let wasm_memory!: WebAssembly.Memory;
+  let machine!: Machine;
+  let rebooting = false;
+  let rebooted = Promise.withResolvers<void>();
+  void rebooted.promise.catch(() => {});
+
+  const kill = () => {
+    exit ??= { reason: "kill" };
+    void finish(true);
+  };
+
+  // PROTOTYPE: the same devices, a fresh kernel and memory, and every
+  // booted hook again.
+  const restart = () => {
+    if (closed || rebooting) return;
+    rebooting = true;
+    generation++;
+    void (async () => {
+      await Promise.all(Array.from(workers, (worker) => worker.terminate()));
+      workers.clear();
+      await bus.detach();
+      await boot_kernel();
+      await run_machine_booted(plugins, machine);
+    })().then(
+      () => {
+        rebooting = false;
+        const done = rebooted;
+        rebooted = Promise.withResolvers();
+        void rebooted.promise.catch(() => {});
+        done.resolve();
+      },
+      (error) => {
+        rebooting = false;
+        rebooted.reject(error);
+        void fail(error);
+      },
     );
+  };
+
+  const press = async (action: "poweroff" | "reboot") => {
+    for (const plugin of plugins.toReversed()) if (await plugin.power?.(action)) return;
+    const result = instance?.exports.power_button?.(action === "poweroff" ? 1 : 2);
+    if (result !== 0) throw new Error(`the kernel's power button is unavailable (${result})`);
+  };
+
+  const boot_kernel = async () => {
+    const { sections, vmlinux, initramfs, memory: memory_type } = await load_resources();
+    const boot_generation = generation;
+    const pages = kernel_initial_pages(memory_type);
+    const allocated = allocate_shared_memory(pages, KERNEL_MEMORY_MAXIMUM_PAGES);
+    const { maximum_pages } = allocated;
+    wasm_memory = allocated.memory;
     assert(wasm_memory.buffer.byteLength === pages * PAGE_SIZE);
 
     const devicetree: DeviceTreeNode = {
@@ -321,15 +400,12 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
 
     const generated_devicetree = generate_devicetree(devicetree);
 
-    // The imports must exist before instantiation returns the instance they
-    // call back into, but they only run once exports.boot() starts the kernel.
-    let instance: Instance | undefined;
-
     const start_worker = (name: string, init: InitMessage | ForwardedInitMessage) => {
-      if (closed) return;
+      if (closed || boot_generation !== generation) return;
       const worker = platform.spawn_worker(name, {
         on_message(raw) {
           const message = raw as WorkerMessage;
+          if (boot_generation !== generation) return;
           switch (message.type) {
             case "spawn_worker":
               try {
@@ -350,10 +426,19 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
             case "terminate_machine":
               switch (message.reason) {
                 case MachineTerminationReason.Clean:
+                  exit ??= { reason: "poweroff" };
                   void finish();
                   break;
                 case MachineTerminationReason.Panic:
                   void fail(new MachinePanicError());
+                  break;
+                case MachineTerminationReason.Reboot:
+                  if (options.reboot === "exit") {
+                    exit ??= { reason: "reboot" };
+                    void finish();
+                  } else {
+                    restart();
+                  }
                   break;
                 default:
                   void fail(new Error(`unknown machine termination reason: ${message.reason}`));
@@ -464,17 +549,49 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
 
     instance = (await WebAssembly.instantiate(vmlinux, imports)) as Instance;
     instance.exports.boot();
+  };
 
-    const machine: Machine = {
-      memory: wasm_memory,
-      closed: closed_promise.promise,
-      close,
-      [Symbol.dispose]: close,
-      async [Symbol.asyncDispose]() {
-        close();
-        await closed_promise.promise;
-      },
-    };
+  machine = {
+    get memory() {
+      return wasm_memory;
+    },
+    closed: closed_promise.promise,
+    exited: exited.promise,
+    close,
+    kill,
+    async shutdown({ timeoutMs = 30_000 } = {}) {
+      if (!closed) {
+        await press("poweroff").catch(kill);
+        const timer = setTimeout(kill, timeoutMs);
+        await exited.promise;
+        clearTimeout(timer);
+      }
+      return exited.promise;
+    },
+    async reboot({ timeoutMs = 30_000 } = {}) {
+      const next = rebooted.promise;
+      await press("reboot");
+      const timer = setTimeout(kill, timeoutMs);
+      try {
+        await Promise.race([
+          next,
+          exited.promise.then((ended) => {
+            throw new Error(`machine ended instead of rebooting: ${ended.reason}`);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    [Symbol.dispose]: close,
+    async [Symbol.asyncDispose]() {
+      close();
+      await closed_promise.promise;
+    },
+  };
+
+  try {
+    await boot_kernel();
     await run_machine_booted(plugins, machine);
     return machine;
   } catch (error) {
