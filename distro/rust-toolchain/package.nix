@@ -97,11 +97,12 @@ let
 
   # Registry dependencies of the std workspace, resolved by ./Cargo.lock. The
   # lock is the toolchain's own library/Cargo.lock with libc re-locked to the
-  # exact locally patched crates.io source; regenerate it when bumping rustc or
-  # libc:
+  # exact locally patched crates.io source (libcSrc, the in-tree patches applied
+  # to the release); regenerate it when bumping rustc or libc:
   #   cp -rL $(nix build --print-out-paths .#rust-toolchain.rustSrc)/library lib
+  #   libc=$(nix build --print-out-paths .#rust-toolchain.libcSrc)
   #   chmod -R u+w lib && cd lib
-  #   sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = '$PWD/../checkouts/libc' }|" Cargo.toml
+  #   sed -i "s|^\[patch.crates-io\]$|[patch.crates-io]\nlibc = { path = '$libc' }|" Cargo.toml
   #   cargo update -p libc && cp Cargo.lock ../distro/rust-toolchain/Cargo.lock
   vendoredDeps = pkgs.rustPlatform.importCargoLock { lockFile = ./Cargo.lock; };
 
