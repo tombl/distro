@@ -6,6 +6,7 @@ import { assert } from "./util.ts";
 import { read_wasm_memories } from "./wasm_binary.ts";
 import {
   allocate_shared_memory,
+  create_halt_error,
   HALT_KERNEL,
   type Imports,
   type Instance,
@@ -29,8 +30,10 @@ interface ExecImage {
 
 /*
  * Exec runs the new image in a successor worker, so that every worker hosts
- * one user memory for its whole life and ending the worker releases it. The
- * two halves synchronize through the successor's control array:
+ * one user memory for its whole life and ending the worker releases it. A
+ * CLONE_VM child's worker hosts its parent's memory, so its first exec swaps
+ * in the new memory in place instead (exec_prepare). The two halves of a
+ * handoff synchronize through the successor's control array:
  */
 /** Whether the successor may enter the kernel: one of the HANDOFF_ values. */
 const EXEC_HANDOFF = 0;
@@ -76,6 +79,9 @@ export type WorkerMessage =
   | { type: "trigger_irq"; irq: number }
   | { type: "worker_exit" };
 
+/** Thrown by user.unwind() to abandon the user stack, caught by user.call(). */
+const HALT_USER = create_halt_error("halt user");
+
 const unavailable = () => {
   throw new Error("not available on worker thread");
 };
@@ -98,7 +104,11 @@ function user_imports({
 }: {
   kernel_memory: WebAssembly.Memory;
   get_kernel_instance: () => Instance;
-  /** The one user image this worker hosts, if any. Exec replaces the worker. */
+  /**
+   * The user image this worker hosts, if any. Exec replaces the worker,
+   * except in a CLONE_VM child, whose worker hosts its parent's memory until
+   * it execs in place.
+   */
   context: UserContext | null;
 }): {
   context: UserContext | null;
@@ -115,6 +125,9 @@ function user_imports({
   let instance: WebAssembly.Instance | null = null;
   let pending_module_bytes: Uint8Array<ArrayBuffer> | null = null;
   let pending_image: ExecImage | null = null;
+  /** The image exec_prepare() made ready for an exec in place. */
+  let pending_context: UserContext | null = null;
+  let pending_instance: WebAssembly.Instance | null = null;
   let successor: Int32Array<SharedArrayBuffer> | null = null;
   // One slot per nested SA_SIGINFO callback; null means its trampoline has
   // not requested the active signal payload yet.
@@ -185,13 +198,39 @@ function user_imports({
     return true;
   }
 
-  let call_entry: () => void = () => {
+  function call_start(): void {
     assert(instance);
     const { _start } = instance.exports;
     assert(typeof _start === "function", "_start not found");
     _start();
     throw new Error("_start reached the end without exiting");
-  };
+  }
+  let call_entry = call_start;
+
+  function instantiate(context: UserContext): WebAssembly.Instance {
+    const kernel_instance = get_kernel_instance();
+    // Unset while the start function runs, during construction.
+    let created: WebAssembly.Instance | null = null;
+    created = new WebAssembly.Instance(context.module, {
+      env: { memory: context.memory },
+      linux: {
+        // A direct wasm-to-wasm link with no JS frame. The kernel calls
+        // user.unwind when an exec in place replaced this instance.
+        syscall: kernel_instance.exports.syscall,
+        get_thread_area: kernel_instance.exports.get_thread_area,
+        copy_siginfo: (to: UserWord) => {
+          const result = kernel_instance.exports.copy_siginfo(to);
+          // An image prepared for exec has no handler of its own yet: its
+          // start function must not report for the handler that is execing.
+          if (instance !== created) return result;
+          const current = siginfo_copy_results.length - 1;
+          if (current >= 0) siginfo_copy_results[current] = result;
+          return result;
+        },
+      },
+    });
+    return created;
+  }
 
   function release_successor(state: number) {
     if (!successor) return;
@@ -204,7 +243,7 @@ function user_imports({
   // (C++ throws, longjmp out of a signal handler) keep going; anything else
   // becomes a trap, so the guest cannot catch it and run on.
   function guest_safe(error: unknown): unknown {
-    if (error === HALT_KERNEL) return error;
+    if (error === HALT_USER || error === HALT_KERNEL) return error;
     if (error instanceof WebAssembly.Exception) return error;
     return uncatchable(error);
   }
@@ -226,23 +265,11 @@ function user_imports({
   }
 
   return {
-    context,
+    get context() {
+      return context;
+    },
     prepare() {
-      if (!context) return;
-      const kernel_instance = get_kernel_instance();
-      instance = new WebAssembly.Instance(context.module, {
-        env: { memory: context.memory },
-        linux: {
-          syscall: kernel_instance.exports.syscall,
-          get_thread_area: kernel_instance.exports.get_thread_area,
-          copy_siginfo: (to: UserWord) => {
-            const result = kernel_instance.exports.copy_siginfo(to);
-            const current = siginfo_copy_results.length - 1;
-            if (current >= 0) siginfo_copy_results[current] = result;
-            return result;
-          },
-        },
-      });
+      if (context) instance = instantiate(context);
     },
     take_exec_image() {
       const image = pending_image;
@@ -258,6 +285,8 @@ function user_imports({
       compile_begin(size) {
         pending_module_bytes = null;
         pending_image = null;
+        pending_context = null;
+        pending_instance = null;
         try {
           pending_module_bytes = new Uint8Array(size >>> 0);
           return 0;
@@ -318,14 +347,17 @@ function user_imports({
 
         if (maximum < minimum) return -12; // out of memory
 
-        // The successor allocates the memory, so that the worker that uses
-        // it is the only one that ever references it.
+        // The worker that uses the memory allocates it, so that it is the
+        // only one that ever references it: the successor, or this worker
+        // for an exec in place.
         pending_image = { module, minimum_pages: minimum, maximum_pages: maximum };
         return 0;
       },
       compile_abort() {
         pending_module_bytes = null;
         pending_image = null;
+        pending_context = null;
+        pending_instance = null;
         release_successor(HANDOFF_ABORT);
       },
       exec_handoff() {
@@ -335,13 +367,54 @@ function user_imports({
         quit();
         throw HALT_KERNEL;
       },
+      exec_prepare() {
+        const image = pending_image;
+        pending_image = null;
+        if (!image) return -22; // invalid argument
+        let next: UserContext;
+        try {
+          next = {
+            module: image.module,
+            ...allocate_shared_memory(image.minimum_pages, image.maximum_pages),
+          };
+        } catch {
+          return -12; // out of memory
+        }
+        // Instantiate now, so that a failure, such as a data segment past
+        // the memory, fails the exec rather than the task.
+        try {
+          pending_instance = instantiate(next);
+        } catch {
+          return -8; // exec format error
+        }
+        pending_context = next;
+        return 0;
+      },
+      exec_instantiate() {
+        assert(pending_context && pending_instance, "exec in place without a prepared image");
+        // Drop the parent's memory; its own worker keeps it alive.
+        context = pending_context;
+        instance = pending_instance;
+        pending_context = null;
+        pending_instance = null;
+        // An escape from the replaced image has nowhere to go.
+        escape = null;
+        call_entry = call_start;
+      },
+      unwind() {
+        // The kernel's syscall export calls this once an exec in place has
+        // replaced the instance whose frames are still beneath it.
+        throw HALT_USER;
+      },
       call() {
         try {
           call_entry();
         } catch (error) {
+          if (error === HALT_USER) return 1;
           if (error === HALT_KERNEL) throw error;
           console.error("error running user module:", error);
         }
+        return 0;
       },
       switch_entry(fn, arg) {
         // This is called if this thread was created by a clone call,
@@ -381,6 +454,7 @@ function user_imports({
       },
       call_siginfo_handler(trampoline, fn, sig) {
         siginfo_copy_results.push(null);
+        let halted = false;
         try {
           try {
             const f = user_function(trampoline, 2, "Invalid siginfo trampoline");
@@ -389,10 +463,15 @@ function user_imports({
             throw guest_safe(error);
           }
           return siginfo_copy_results.at(-1) ?? -22;
+        } catch (error) {
+          // After exec_handoff(), the successor owns the task: this worker
+          // must not run kernel code again.
+          halted = error === HALT_KERNEL;
+          throw error;
         } finally {
           // Non-local exits can unwind the kernel callback before its C cleanup.
           try {
-            get_kernel_instance().exports.clear_siginfo();
+            if (!halted) get_kernel_instance().exports.clear_siginfo();
           } finally {
             siginfo_copy_results.pop();
           }
