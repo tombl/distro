@@ -14,11 +14,13 @@ import {
 import { publish_virtqueue_completion, type VirtqueueCompletion } from "./queue.ts";
 
 /*
- * The queue protocol deliberately has no request IDs or acknowledgements.
- * Transport operations flow to the worker in MessagePort order. Completions
- * flow back in the other direction. The only cross-direction queue coordination
- * is the shared revocation array used by reset. Descriptor payloads are
- * transferred back, then committed to guest memory by the main thread.
+ * The queue protocol deliberately has no request IDs. Transport operations
+ * flow to the worker in MessagePort order. Completions flow back in the other
+ * direction. Cross-direction queue coordination is the shared revocation array
+ * used by reset, plus one acknowledgement per reset once the worker has
+ * finished with guest memory. Copied descriptor payloads are transferred back,
+ * then committed to guest memory by the main thread; a device with views
+ * writes guest memory in place from the worker.
  */
 
 interface SerializedError {

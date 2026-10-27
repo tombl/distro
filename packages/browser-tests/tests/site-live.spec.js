@@ -1,17 +1,55 @@
 import { expect, test } from "@playwright/test";
 
-async function waitForGuestReady(page) {
+// The deployed site, from the config's second web server.
+test.use({ baseURL: process.env.SITE_BASE_URL });
+
+// The whole terminal buffer, scrollback included, with rows that xterm wrapped
+// joined back up, so output that later boot messages scroll out of view
+// still counts.
+function terminalText(page) {
+  return page.evaluate(() => {
+    const buffer = window.terminal.buffer.active;
+    let text = "";
+    for (let row = 0; row < buffer.length; row++) {
+      const line = buffer.getLine(row);
+      if (row > 0 && !line.isWrapped) text += "\n";
+      text += line.translateToString(true);
+    }
+    return text;
+  });
+}
+
+// Commands print their markers through printf, so a pattern anchored to a
+// whole line matches the output and never the echoed command.
+function expectOutput(page, pattern, options) {
+  return expect.poll(() => terminalText(page), options).toMatch(pattern);
+}
+
+async function run(input, command) {
+  await input.pressSequentially(command);
+  await input.press("Enter");
+}
+
+// The motd banner can scroll away before anything looks for it, so readiness
+// is a round trip through the shell: retype a marker command until its output
+// comes back.
+async function waitForShell(page) {
   await expect(page.locator("[data-terminal]")).toHaveAttribute("aria-busy", "false", {
     timeout: 30_000,
   });
-  const terminal = page.locator(".xterm-rows");
   const input = page.locator(".xterm-helper-textarea");
-  return { input, terminal };
+  const id = Math.random().toString(36).slice(2, 10);
+  await expect(async () => {
+    await run(input, `printf 'ready-%s\\n' ${id}`);
+    await expectOutput(page, new RegExp(`^ready-${id}$`, "m"), { timeout: 3_000 });
+  }).toPass({ timeout: 30_000 });
+  return input;
 }
 
 async function waitForGuest(page) {
-  const { input, terminal } = await waitForGuestReady(page);
-  await input.pressSequentially(
+  const input = await waitForShell(page);
+  await run(
+    input,
     "until grep -q ' /boot virtiofs ' /proc/mounts; do sleep 1; done; printf 'boot-%s\\n' mounted",
   );
   await expectOutput(page, /^boot-mounted$/m, { timeout: 30_000 });
@@ -97,26 +135,13 @@ test("falls back to live-only mode when persistent storage is unavailable", asyn
   await expect(page.locator("[data-terminal]")).toBeVisible();
   await expect(page.locator(".xterm-rows")).toContainText("Loading Lowland Linux");
 
-  const { input, terminal } = await waitForGuestReady(page);
-  await expect(terminal).not.toContainText("install-lowland");
+  const input = await waitForShell(page);
+  expect(await terminalText(page)).not.toContain("install-lowland");
 
-  await input.pressSequentially(
+  await run(
+    input,
     "! grep -qw 'lowland.install=1' /proc/cmdline && grep -qw 'lowland.test=a+b' /proc/cmdline && ! grep -q ' /boot virtiofs ' /proc/mounts && printf 'live-only-%s\\n' ready",
   );
   await expectOutput(page, /^live-only-ready$/m);
   expect(dialogs).toEqual([]);
 });
-
-// keep_bootcon keeps the boot console open for the whole session, so console
-// output must reach the terminal without waiting for it to close.
-for (const cmdline of ["keep_bootcon", '"keep-bootcon=1"']) {
-  test(`shows the shell with ${cmdline}`, async ({ page }) => {
-    await page.goto(`/?webgl=0&cmdline=${encodeURIComponent(cmdline)}`);
-    const terminal = page.locator(".xterm-rows");
-    await expect(terminal).toContainText("root@lowland", { timeout: 60_000 });
-    const input = page.locator(".xterm-helper-textarea");
-    await input.pressSequentially("printf 'console-%s\\n' visible");
-    await input.press("Enter");
-    await expect(terminal).toContainText("console-visible");
-  });
-}

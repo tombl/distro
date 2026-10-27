@@ -137,7 +137,7 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
       scope = self;
     };
 
-    site = callPackage ./site { repository = bootstrapRepository; };
+    site = callPackage ./site { };
     docs = callPackage ../apps/docs { };
     bridge-site = callPackage ../packages/bridge-site { };
 

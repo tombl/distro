@@ -51,8 +51,8 @@ and do not go through a shell.
 `guest.fs` reads and writes files inside the machine. Files written from JavaScript are
 immediately visible to programs in the guest, and the reverse is also true.
 
-The root filesystem is read-only. Pass `"lowland.root.overlay=tmpfs"` in `args` to put a
-writable layer in memory on top of it.
+An EROFS root filesystem gets a writable layer in memory on top of it, so programs can change
+any file until the machine closes. An ext4 root filesystem is mounted read-write.
 
 ## Networking
 

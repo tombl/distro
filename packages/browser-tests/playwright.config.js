@@ -33,5 +33,6 @@ export default defineConfig({
     })),
     { name: "service-worker", use: { browserName: "chromium" }, testMatch: serviceWorker },
     { name: "site-live", use: { browserName: "chromium" }, testMatch: site },
+    { name: "site-live-firefox", use: { browserName: "firefox" }, testMatch: site },
   ],
 });

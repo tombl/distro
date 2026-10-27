@@ -15,20 +15,9 @@ The examples on this page assume a booted machine and its `guest`, set up as in 
 
 ## Where you can write
 
-The root filesystem is read-only. `/tmp` is writable and kept in memory, so its contents are
-lost when the machine closes. Writing anywhere else fails with a `SystemError` whose `code` is
-`"EROFS"`.
-
-To make the whole filesystem writable, boot with a writable layer in memory on top of the
-root filesystem:
-
-```ts
-await bootMachine({
-  cpus: 1,
-  args: ["lowland.root.overlay=tmpfs"],
-  plugins: [root, guest],
-});
-```
+Programs and `guest.fs` can write anywhere. With an EROFS root image, the changes are kept in a
+layer in memory on top of the image and are lost when the machine closes. With an ext4 root
+image, they are written to the image. `/tmp` is always kept in memory.
 
 ## Write and read files
 

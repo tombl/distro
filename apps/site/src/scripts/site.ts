@@ -4,11 +4,11 @@ import { Terminal } from "@xterm/xterm";
 import {
   blockDevice,
   bootMachine,
-  type BlockDeviceStorage,
+  type BlockStorage,
   consoleDevice,
   entropyDevice,
   fileSystemDevice,
-  type VirtioDevice,
+  type Device,
   workerDevice,
 } from "@lowland/kernel";
 import type { MachinePluginInput } from "@lowland/kernel/plugin";
@@ -109,6 +109,8 @@ const term = new Terminal({
   theme: terminalTheme(),
 });
 activeTerminal = term;
+// The browser tests read the whole buffer, scrollback included.
+Object.assign(window, { terminal: term });
 const termFit = new FitAddon();
 
 term.loadAddon(termFit);
@@ -162,7 +164,7 @@ const resizeConsole = () => ttyConsole.resize(term.cols, term.rows);
 term.onResize(resizeConsole);
 resizeConsole();
 
-async function openLiveDisk(): Promise<BlockDeviceStorage> {
+async function openLiveDisk(): Promise<BlockStorage> {
   const manifestResponse = await fetch("/rootfs.erofs.json");
   if (!manifestResponse.ok) {
     throw new Error(`failed to fetch rootfs manifest: ${manifestResponse.status}`);
@@ -236,7 +238,7 @@ async function openInstallDisk({
   directory,
   requireFilesystem,
   timeout,
-}: InstallDiskOptions): Promise<VirtioDevice | undefined> {
+}: InstallDiskOptions): Promise<Device | undefined> {
   const handle = await directory.getFileHandle("root.ext4", { create: true });
   const file = await handle.getFile();
   const magicOffset = 1024 + 56;
@@ -286,7 +288,7 @@ const disk: MachinePluginInput =
         }),
         "persistent disk already contains a filesystem",
       );
-let installDisk: VirtioDevice | undefined;
+let installDisk: Device | undefined;
 if (bootMode === "live" && persistentInstallSupported && opfs) {
   try {
     installDisk = await openInstallDisk({
@@ -303,7 +305,6 @@ const guest = guestAgent();
 const networkAttachment = network.attach(guest);
 
 const args: string[] = [];
-if (bootMode === "live") args.push("lowland.root.overlay=tmpfs");
 if (installDisk) args.push("lowland.install=1");
 if (cmdline) args.push(cmdline);
 

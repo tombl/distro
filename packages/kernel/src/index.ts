@@ -18,20 +18,10 @@ import {
 } from "./wasm.ts";
 import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.ts";
 
-export type { DeviceTreeNode } from "./devicetree.ts";
 export { bootConsole } from "./plugin.ts";
-export {
-  VirtioController,
-  type VirtioDevice,
-  type VirtioDeviceOptions,
-  type VirtioDriver,
-  type Virtqueue,
-  type VirtqueueBuffer,
-  type VirtqueueChain,
-  type VirtqueueHandler,
-} from "./virtio/core.ts";
-export { blockDevice, type BlockDeviceStorage } from "./virtio/block.ts";
-export { type Endpoint, serveDevice, workerDevice } from "./virtio/remote.ts";
+export type { Device } from "./virtio/device.ts";
+export { blockDevice, type BlockStorage } from "./virtio/block.ts";
+export { type Endpoint, serveDevice, serveDeviceError, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";
 export {
@@ -210,7 +200,8 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
     boot_console_close();
     throw error;
   }
-  const { devices, plugins } = configured;
+  const { plugins } = configured;
+  const bus = new VirtioBus(configured.devices);
   const workers = new Set<WorkerHandle>();
   let closed = false;
   let failed = false;
@@ -229,7 +220,18 @@ export async function bootMachine(options: BootMachineOptions): Promise<Machine>
       boot_console_controller.enqueue(new Uint8Array(message));
     }
   };
-  const finish = () => {
+  // A forced teardown stops waiting for device close, which waits for
+  // in-flight requests that may be stuck in host storage forever. It can be
+  // requested after an ordinary teardown has already started.
+  const force_requested = Promise.withResolvers<void>();
+  let forced = false;
+  // Idempotent: a device request that settles after a forced teardown can
+  // still reach fail(), which must then be a no-op.
+  const finish = (force = false) => {
+    if (force && !forced) {
+      forced = true;
+      force_requested.resolve();
+    }
     if (finish_promise) return finish_promise;
     closed = true;
     finish_promise = (async () => {

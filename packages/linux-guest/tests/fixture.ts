@@ -82,10 +82,7 @@ export function guest_test(
       resolveDns: resolve4,
     });
     const guests: TestGuest[] = [];
-    async function spawn(
-      extra_devices: readonly VirtioDevice[] = [],
-      options: { cmdline?: string } = {},
-    ) {
+    async function spawn(extra_devices: readonly Device[] = []) {
       const agent = guestAgent();
       const attachment = network.attach(agent);
       const machine = await bootMachine({
