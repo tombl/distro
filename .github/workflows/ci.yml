@@ -437,11 +437,13 @@ jobs:
             version=$(jq --raw-output .version "$directory/package.json")
           fi
 
-          # Before a release commit, preview the notes from [Unreleased].
-          if grep --quiet "^## \[$version\] - " CHANGELOG.md; then
-            node scripts/release-notes.mjs "$version" > release-notes.md
+          # Off a tag, preview the pending changes in [Unreleased]. With none
+          # (a release commit), show the version's own section.
+          if [[ $GITHUB_REF != refs/tags/v* ]] &&
+            node scripts/release-notes.mjs "$version" --unreleased > release-notes.md 2>/dev/null; then
+            :
           else
-            node scripts/release-notes.mjs "$version" --unreleased > release-notes.md
+            node scripts/release-notes.mjs "$version" > release-notes.md
           fi
           node scripts/publish.mjs "$version" npm-packages --dry-run
 
