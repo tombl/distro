@@ -36,6 +36,9 @@ const BlockDeviceStatus = {
   UNSUPP: 2,
 } as const;
 
+// The device ID is NUL-padded ASCII, unterminated when it fills all 20 bytes.
+const ID_BYTES = 20;
+
 type MaybePromise<T> = T | Promise<T>;
 
 /**
@@ -68,6 +71,27 @@ export interface BlockStorage {
   close?(): MaybePromise<void>;
   /** Total size in bytes. */
   capacity: number;
+}
+
+/** Options for {@link blockDevice}. */
+export interface BlockDeviceOptions {
+  /**
+   * The disk's serial number, which the guest reads from
+   * `/sys/block/vdX/serial`. It identifies the disk regardless of the order
+   * the guest discovered its devices in. At most 20 printable ASCII
+   * characters. Defaults to empty.
+   */
+  serial?: string;
+}
+
+function encode_serial(serial: string) {
+  assert(
+    /^[\x20-\x7e]*$/.test(serial) && serial.length <= ID_BYTES,
+    "block device serial must be at most 20 printable ASCII characters",
+  );
+  const id = new Uint8Array(ID_BYTES);
+  id.set(new TextEncoder().encode(serial));
+  return id;
 }
 
 /** Merges segments that are adjacent in memory into single views. */
@@ -122,8 +146,9 @@ class BlockDevice extends VirtioDevice {
   readonly #writes = new Set<Promise<number>>();
   /** The advertised capacity in bytes: whole sectors only. */
   readonly #capacity: bigint;
+  readonly #id: Uint8Array;
 
-  constructor(storage: BlockStorage) {
+  constructor(storage: BlockStorage, options: BlockDeviceOptions) {
     const config = new Uint8Array(BlockDeviceConfig.size);
     const fields = new BlockDeviceConfig(config);
     const sectors = BigInt(Math.floor(storage.capacity / 512));
@@ -136,6 +161,7 @@ class BlockDevice extends VirtioDevice {
     super({ id: 2, queues: 1, features, config, views: true });
     this.#storage = storage;
     this.#capacity = sectors * 512n;
+    this.#id = encode_serial(options.serial ?? "");
   }
 
   protected kick(_vq: number, queue: Virtqueue) {
@@ -231,8 +257,19 @@ class BlockDevice extends VirtioDevice {
         await storage.flush();
         break;
       }
-      case BlockDeviceRequestType.GET_ID:
+      case BlockDeviceRequestType.GET_ID: {
+        assert(
+          data.every((desc) => desc.writable),
+          "data must be writable when GET_ID",
+        );
+        // The guest's buffer is not zeroed, so write the padding too.
+        for (const segment of segments) {
+          const piece = this.#id.subarray(n, n + segment.byteLength);
+          segment.set(piece);
+          n += piece.byteLength;
+        }
         break;
+      }
       default:
         console.error("unknown request type", request.type);
         result = BlockDeviceStatus.UNSUPP;
@@ -252,21 +289,24 @@ class BlockDevice extends VirtioDevice {
  *
  * @example Serve a read-only root filesystem image
  * ```ts
- * blockDevice({
- *   capacity: rootfs.byteLength,
- *   read(offset, target) {
- *     const source = rootfs.subarray(offset, offset + target.byteLength);
- *     target.set(source);
- *     return source.byteLength;
+ * blockDevice(
+ *   {
+ *     capacity: rootfs.byteLength,
+ *     read(offset, target) {
+ *       const source = rootfs.subarray(offset, offset + target.byteLength);
+ *       target.set(source);
+ *       return source.byteLength;
+ *     },
  *   },
- * })
+ *   { serial: "root" },
+ * )
  * ```
  */
-export function blockDevice(storage: BlockStorage): Device {
+export function blockDevice(storage: BlockStorage, options: BlockDeviceOptions = {}): Device {
   // Byte offsets up to the capacity must be exact JavaScript numbers.
   assert(
     storage.capacity >= 0 && storage.capacity <= Number.MAX_SAFE_INTEGER,
     "block storage capacity must be a safe integer number of bytes",
   );
-  return public_handle(new BlockDevice(storage), {});
+  return public_handle(new BlockDevice(storage, options), {});
 }
