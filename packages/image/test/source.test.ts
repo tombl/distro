@@ -25,6 +25,7 @@ async function configure(plugin: MachinePlugin) {
   const setup: MachineSetup = {
     args: { add() {} },
     devices: { add: (...added) => devices.push(...added) },
+    initramfs: { add() {} },
     bootConsole: new ReadableStream(),
   };
   await plugin.configure(setup);

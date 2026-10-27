@@ -335,8 +335,12 @@ async function runInstalledSystem(path, cpus) {
 
   const machine = await bootMachine({
     cpus,
-    plugins: [bootConsole(outputStream()), root, consoleDevice(input, outputStream())],
-    initcpio,
+    plugins: [
+      bootConsole(outputStream()),
+      { configure: (setup) => setup.initramfs.add(initcpio) },
+      root,
+      consoleDevice(input, outputStream()),
+    ],
   });
   void machine.closed.then(
     () => reject(new Error("machine closed before scheduler handoff test completed")),
