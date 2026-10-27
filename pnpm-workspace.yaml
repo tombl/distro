@@ -2,6 +2,7 @@ packages:
   - packages/bytes
   - packages/bridge-site
   - packages/kernel
+  - packages/image
   - packages/browser-tests
   - packages/linux-guest
   - packages/runner
