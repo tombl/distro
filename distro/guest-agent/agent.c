@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <mntent.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
@@ -1103,46 +1104,38 @@ static int64_t monotonic_ms(void)
 }
 
 /* Unmounts the mount table in reverse order, remounting read-only whatever
- * stays busy and always the root: umount -a -r. */
+ * stays busy and always the root: umount -a -r. Every entry counts: the table
+ * is read whole before anything is unmounted, however long it is. */
 static void unmount_all(void)
 {
-	char *targets[256];
-	size_t count = 0;
-	char line[4096];
-	FILE *mounts = fopen("/proc/self/mounts", "re");
+	char **targets = NULL;
+	size_t count = 0, capacity = 0;
+	struct mntent *entry;
+	FILE *mounts = setmntent("/proc/self/mounts", "re");
 
 	if (!mounts) {
 		perror("linux-guest-agent: reading mounts");
 		return;
 	}
-	while (count < sizeof(targets) / sizeof(targets[0]) &&
-	       fgets(line, sizeof(line), mounts)) {
-		char target[4096];
-		char *in, *out;
+	/* getmntent undoes the octal escapes, such as \040 for a space. */
+	while ((entry = getmntent(mounts))) {
+		if (count == capacity) {
+			size_t grown = capacity ? capacity * 2 : 64;
+			char **resized = realloc(targets, grown * sizeof(*targets));
 
-		if (sscanf(line, "%*s %4095s", target) != 1)
-			continue;
-		/* Undo the octal escapes (\040 for a space) of /proc/self/mounts. */
-		for (in = out = target; *in; out++) {
-			if (in[0] == '\\' && in[1] >= '0' && in[1] <= '7' &&
-			    in[2] >= '0' && in[2] <= '7' && in[3] >= '0' &&
-			    in[3] <= '7') {
-				*out = (char)((in[1] - '0') << 6 | (in[2] - '0') << 3 |
-					      (in[3] - '0'));
-				in += 4;
-			} else {
-				*out = *in++;
-			}
+			if (!resized)
+				break;
+			targets = resized;
+			capacity = grown;
 		}
-		*out = 0;
-		targets[count++] = strdup(target);
+		targets[count] = strdup(entry->mnt_dir);
+		if (targets[count])
+			count++;
 	}
-	fclose(mounts);
+	endmntent(mounts);
 	while (count--) {
 		char *target = targets[count];
 
-		if (!target)
-			continue;
 		if (strcmp(target, "/") && !umount2(target, 0)) {
 			free(target);
 			continue;
@@ -1154,6 +1147,7 @@ static void unmount_all(void)
 				target, strerror(errno));
 		free(target);
 	}
+	free(targets);
 }
 
 /* BusyBox init's shutdown sequence: SIGTERM to everything, a grace period,

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { blockDevice, bootMachine, type BlockStorage } from "@lowland/kernel";
+import { blockDevice, bootMachine, diskStorage, type BlockStorage } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import {
   guestAgent,
@@ -32,6 +32,22 @@ async function close(machine: Awaited<ReturnType<typeof bootMachine>>) {
 /** A disk with nothing on it. */
 function blank_disk(size = 1024 * 1024) {
   return new Uint8Array(size);
+}
+
+/** A plugin that attaches each of `disks` with its serial, as another integration would. */
+function other_disks(...disks: { serial: string; bytes?: Uint8Array }[]): MachinePlugin {
+  return {
+    async configure(setup) {
+      for (const { serial, bytes = blank_disk(64 * 1024) } of disks) {
+        setup.devices.add(blockDevice(await diskStorage(bytes, { writable: true }), { serial }));
+      }
+    },
+  };
+}
+
+/** Whether an ext4 image's journal needs recovery: EXT4_FEATURE_INCOMPAT_RECOVER. */
+function needs_recovery(disk: Uint8Array) {
+  return (new DataView(disk.buffer, disk.byteOffset + 1024).getUint32(0x60, true) & 0x4) !== 0;
 }
 
 /** Boots a writable ext4 root, writes to it, and closes without unmounting. */
@@ -321,6 +337,43 @@ test("fails to mount a dirty ext4 journal on read-only storage", async () => {
     assert.equal(await guest.fs.readTextFile("/unclean-write-test"), "journaled\n");
   } finally {
     await close(machine);
+  }
+});
+
+test("powering off unmounts every filesystem, however many there are", async () => {
+  const data = new Uint8Array(ext4_rootfs);
+  const { agent: guest, machine } = await boot({ mounts: [root_mount()] }, [
+    other_disks({ serial: "data", bytes: data }),
+  ]);
+  try {
+    const device = await guest.disk("data");
+    // The data disk comes last, after more mounts than a fixed-size table
+    // would hold.
+    const result = await guest.run([
+      "sh",
+      "-c",
+      `for i in $(seq 300); do mkdir -p /t/$i && mount -t tmpfs t /t/$i || exit 1; done
+       mkdir /data && mount -t ext4 ${device} /data && echo kept > /data/marker && grep -c . /proc/mounts`,
+    ]);
+    assert.equal(result.status.success, true, new TextDecoder().decode(result.stderr));
+    assert.ok(Number(new TextDecoder().decode(result.stdout)) > 300);
+    assert.equal(needs_recovery(data), true);
+    // BusyBox poweroff's signal. It ends this session, so the kill may not
+    // get to report back.
+    await guest.run(["kill", "-USR2", "1"]).catch(() => {});
+    await machine.closed;
+  } catch (error) {
+    await close(machine);
+    throw error;
+  }
+  assert.equal(needs_recovery(data), false);
+  const { agent: reader, machine: second } = await boot({
+    mounts: [root_mount(), { path: "/data", source: data, type: "ext4", mode: "ro" }],
+  });
+  try {
+    assert.equal(await reader.fs.readTextFile("/data/marker"), "kept\n");
+  } finally {
+    await close(second);
   }
 });
 
