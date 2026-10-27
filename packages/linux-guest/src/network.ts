@@ -1578,3 +1578,27 @@ function attach_guest(network: Network, agent: GuestAgent): NetworkAttachment {
   };
   return guest_network;
 }
+
+/**
+ * PROTOTYPE (redesign phase 0 spike, risk c): attaches a NIC that the kernel
+ * configures itself from `ip=`, before /init runs, with no agent involved.
+ */
+export function attach_with_kernel_ip(network: Network): {
+  address: string;
+  plugin: MachinePlugin;
+  argument: string;
+} {
+  const attachment = (network as InternalNetwork)[do_attach_guest]();
+  const argument = `ip=${attachment.address}::${network.gateway}:255.255.255.0:lowland:eth0:off:${network.gateway}`;
+  void attachment.device.closed.finally(() => attachment.close()).catch(() => {});
+  return {
+    address: attachment.address,
+    argument,
+    plugin: {
+      configure(setup) {
+        setup.devices.add(attachment.device);
+        setup.args.add(argument);
+      },
+    },
+  };
+}
