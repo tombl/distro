@@ -183,8 +183,10 @@ rm -f "$root/var/log/apk.log"
 
 # Like the canonical image, the result installs from the public repository.
 # This is written after the install so offline builds never consult it. Its
-# nameserver is the one the kernel writes to /proc/net/pnp from ip=.
+# nameserver is the one the kernel writes to /proc/net/pnp from ip=. The link
+# replaces a resolv.conf a package installed, and a --file still replaces it.
 echo http://assets.low.land/apk/wasm32/Packages.adb >"$root/etc/apk/repositories"
+rm -f "$root/etc/resolv.conf"
 ln -s ../proc/net/pnp "$root/etc/resolv.conf"
 
 contents "$@"

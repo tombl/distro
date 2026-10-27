@@ -167,6 +167,13 @@ let
     installPhase = "touch $out";
   };
 
+  # A package that installs its own /etc/resolv.conf, which the build
+  # helper's default link has to replace.
+  resolver = pkgs.runCommand "lowland-test-resolver-0" { } ''
+    mkdir -p $out/etc
+    echo "nameserver 203.0.113.53" >$out/etc/resolv.conf
+  '';
+
   # mkImage's passthru carries the APKs it would install; reading them does
   # not build the image itself.
   testPackages = lib.listToAttrs (
@@ -176,11 +183,13 @@ let
         packages = [
           busybox
           jq
+          resolver
         ];
       }).packages
   );
   busyboxPackage = testPackages.busybox;
   jqPackage = testPackages.jq;
+  resolverPackage = testPackages.lowland-test-resolver;
 
   # A repository index that nothing signs, which the build helper must refuse
   # even when local packages are installed without signature checks.
@@ -202,6 +211,7 @@ let
   imageAssets = pkgs.linkFarm "lowland-image-test-assets" {
     "busybox.apk" = "${busyboxPackage}/${busyboxPackage.filename}";
     "jq.apk" = "${jqPackage}/${jqPackage.filename}";
+    "resolver.apk" = "${resolverPackage}/${resolverPackage.filename}";
     "rootfs.ext4" = canonicalExt4;
     "unsigned-repository" = unsignedRepository;
   };
