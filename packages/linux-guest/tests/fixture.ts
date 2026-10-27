@@ -17,7 +17,7 @@ import { once } from "node:events";
 import { createConnection } from "node:net";
 import { Duplex } from "node:stream";
 import { test, type TestContext } from "node:test";
-import { network_test, root_device, user_trap } from "./assets.ts";
+import { network_test, root_mount, user_trap } from "./assets.ts";
 import { closed_input, console_output } from "./helpers.ts";
 
 /** One `connectTcp` invocation, observed from the host. */
@@ -83,15 +83,13 @@ export function guest_test(
     });
     const guests: TestGuest[] = [];
     async function spawn(extra_devices: readonly Device[] = []) {
-      const agent = guestAgent();
+      const agent = guestAgent({ mounts: [root_mount()] });
       const attachment = network.attach(agent);
       const machine = await bootMachine({
         cpus: 1,
-        // Put both a system disk and an agent-dependent plugin before the
-        // agent deliberately. Neither device discovery nor readiness depends
-        // on plugin array order.
+        // Put an agent-dependent plugin before the agent deliberately:
+        // readiness does not depend on plugin array order.
         plugins: [
-          root_device(),
           attachment,
           agent,
           consoleDevice(closed_input(), console_output()),

@@ -46,7 +46,7 @@ rec {
       ]
       ++ lib.optionals (linux-guest != null) [
         "cp -rT ${linux-guest}/dist packages/linux-guest/dist"
-        "cp ${linux-guest}/agent.img packages/linux-guest/agent.img"
+        "cp ${linux-guest}/agent.cpio packages/linux-guest/agent.cpio"
       ]
       # The JavaScript only; callers that need the images pass them explicitly.
       ++ lib.optional (lowland-image != null) "cp -rT ${lowland-image}/dist packages/image/dist"

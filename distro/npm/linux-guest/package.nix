@@ -1,5 +1,5 @@
 {
-  agentDisk,
+  agentInitramfs,
   bytes,
   pkgs,
   kernel,
@@ -36,7 +36,7 @@ let
       runHook preBuild
 
       ${node-workspace.installBuilt { inherit bytes kernel; }}
-      cp ${agentDisk} packages/linux-guest/agent.img
+      cp ${agentInitramfs} packages/linux-guest/agent.cpio
       pnpm --filter=@lowland/guest build
 
       runHook postBuild
@@ -58,7 +58,6 @@ let
     paths = [ "packages/linux-guest" ];
     built = { inherit bytes kernel; };
     assets = test-assets.select [
-      "agent.img"
       "boot.cpio"
       "getdents-inode"
       "lifecycle.erofs"
@@ -66,10 +65,9 @@ let
       "rootfs.erofs"
       "rootfs.ext4"
       "user-trap"
-      "wrong-root.erofs"
     ];
     command = ''
-      cp ${agentDisk} packages/linux-guest/agent.img
+      cp ${agentInitramfs} packages/linux-guest/agent.cpio
       pnpm --filter=@lowland/guest check
       timeout --kill-after=5 300 pnpm --filter=@lowland/guest test
     '';

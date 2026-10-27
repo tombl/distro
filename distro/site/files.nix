@@ -29,7 +29,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -r ${kernel}/dist packages/kernel/dist
     cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
     cp -r ${linux-guest.package}/dist packages/linux-guest/dist
-    cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
+    cp ${linux-guest.package}/agent.cpio packages/linux-guest/agent.cpio
 
     pnpm --filter=@lowland/site check
     pnpm --filter=@lowland/site build

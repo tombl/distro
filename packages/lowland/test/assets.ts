@@ -28,7 +28,7 @@ const directory = process.env.LOWLAND_TEST_ASSETS ?? (await build());
 /** A local BusyBox package with no dependencies. */
 export const busybox_package = join(directory, "busybox.apk");
 
-/** Copies the writable ext4 system labeled LOWLAND_ROOT into `scratch`. */
+/** Copies the writable ext4 test system into `scratch`. */
 export async function ext4_root(scratch: string) {
   const path = join(scratch, "root.ext4");
   await copyFile(join(directory, "rootfs.ext4"), path);

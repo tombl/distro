@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "../src/index.ts";
-import { root_device } from "./assets.ts";
+import { root_mount } from "./assets.ts";
 import { collect } from "./helpers.ts";
 
 // A fork waits for its child's worker to copy its memory, and an exec waits
@@ -16,12 +16,18 @@ test(
   "forks and execs wait for queued workers without holding the cpu",
   { timeout: 120_000 },
   async () => {
-    const agent = guestAgent();
-    const machine = await bootMachine({ cpus: 1, plugins: [root_device(), agent] });
+    const agent = guestAgent({ mounts: [root_mount()] });
+    const machine = await bootMachine({ cpus: 1, plugins: [agent] });
     let debug: ReturnType<typeof setInterval> | undefined;
     try {
       const warm = await agent.exec(["true"]);
       assert.deepEqual(await warm.status, { success: true, code: 0, signal: null });
+      // The warm-up's worker can outlive its reaped process by a moment.
+      // Count only the workers that stay.
+      for (let live = -1; live !== worker_queue.live;) {
+        live = worker_queue.live;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
       // The shell, a sleep, and one more fit. /bin/true's child takes the last
       // slot, so its exec successor queues until the sleep exits, which needs

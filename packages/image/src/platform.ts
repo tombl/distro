@@ -4,104 +4,34 @@
 // presence of process.getBuiltinModule, so bundlers only ever see the web path
 // and never try to resolve Node builtins.
 
-import type { BlockStorage } from "@lowland/kernel";
-import { check_image, check_writable, HEADER_OFFSET, HEADER_SIZE } from "./validate.ts";
-
-/**
- * The parts of a Node `FileHandle` that an image needs.
- *
- * `write()` and `datasync()` are only called for writable images.
- */
-export interface ImageFileHandle {
-  read(
-    buffer: Uint8Array,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesRead: number }>;
-  write(
-    buffer: Uint8Array,
-    offset: number,
-    length: number,
-    position: number,
-  ): Promise<{ bytesWritten: number }>;
-  stat(): Promise<{ size: number }>;
-  datasync(): Promise<void>;
-}
-
 interface Platform {
-  /** Resolves a string source to a path in Node or a URL in browsers. */
-  resolve(source: string): string | URL;
-  /** Opens a file path as block storage. */
-  open_path(path: string | URL, writable: boolean): Promise<BlockStorage>;
+  /**
+   * Reads `length` bytes at `offset` of a file, and its size, now. Returns
+   * `undefined` where files cannot be read synchronously.
+   */
+  read_header(
+    path: string | URL,
+    offset: number,
+    length: number,
+  ): { header: Uint8Array; size: number } | undefined;
 }
 
 const web: Platform = {
-  resolve(source) {
-    return new URL(source, globalThis.location?.href);
-  },
-  open_path(path) {
-    return Promise.reject(new Error(`cannot open ${path}: files are only available in Node`));
-  },
+  read_header: () => undefined,
 };
 
-/**
- * @internal Wraps an open file, named `name` in errors, in block storage,
- * validating it with one small read.
- */
-export async function file_storage(
-  name: string,
-  handle: ImageFileHandle,
-  writable: boolean,
-): Promise<BlockStorage> {
-  async function read(offset: number, target: Uint8Array) {
-    let total = 0;
-    while (total < target.byteLength) {
-      const { bytesRead } = await handle.read(
-        target,
-        total,
-        target.byteLength - total,
-        offset + total,
-      );
-      if (bytesRead === 0) break;
-      total += bytesRead;
-    }
-    return total;
-  }
-
-  const { size } = await handle.stat();
-  const header = new Uint8Array(HEADER_SIZE);
-  const length = size < HEADER_OFFSET + HEADER_SIZE ? 0 : await read(HEADER_OFFSET, header);
-  const filesystem = check_image(`${name} is not`, header.subarray(0, length), size);
-  if (writable) check_writable(name, filesystem);
-
-  const storage: BlockStorage = { capacity: size, read };
-  if (writable) {
-    storage.write = async (offset, data) => {
-      let total = 0;
-      while (total < data.byteLength) {
-        const { bytesWritten } = await handle.write(
-          data,
-          total,
-          data.byteLength - total,
-          offset + total,
-        );
-        if (bytesWritten === 0) break;
-        total += bytesWritten;
-      }
-      return total;
-    };
-    storage.flush = () => handle.datasync();
-  }
-  return storage;
-}
-
 interface GetBuiltinModule {
-  (id: "node:fs/promises"): {
-    open(
-      path: string | URL,
-      flags: "r" | "r+",
-    ): Promise<ImageFileHandle & { close(): Promise<void> }>;
+  (id: "node:fs"): {
+    openSync(path: string | URL, flags: "r"): number;
+    fstatSync(fd: number): { size: number };
+    readSync(
+      fd: number,
+      buffer: Uint8Array,
+      offset: number,
+      length: number,
+      position: number,
+    ): number;
+    closeSync(fd: number): void;
   };
 }
 
@@ -109,22 +39,23 @@ interface NodeProcess {
   getBuiltinModule?: GetBuiltinModule;
 }
 
-// Node reads files on demand, so a machine only pages in the blocks the guest
-// touches.
 function node(getBuiltinModule: GetBuiltinModule): Platform {
-  const { open } = getBuiltinModule("node:fs/promises");
+  const { openSync, fstatSync, readSync, closeSync } = getBuiltinModule("node:fs");
   return {
-    resolve: (source) => source,
-    async open_path(path, writable) {
-      const handle = await open(path, writable ? "r+" : "r");
+    read_header(path, offset, length) {
+      const fd = openSync(path, "r");
       try {
-        const name = path instanceof URL ? decodeURIComponent(path.pathname) : path;
-        const storage = await file_storage(name, handle, writable);
-        storage.close = () => handle.close();
-        return storage;
-      } catch (error) {
-        await handle.close();
-        throw error;
+        const { size } = fstatSync(fd);
+        const header = new Uint8Array(length);
+        let read = 0;
+        while (read < length) {
+          const n = readSync(fd, header, read, length - read, offset + read);
+          if (n === 0) break;
+          read += n;
+        }
+        return { header: header.subarray(0, read), size };
+      } finally {
+        closeSync(fd);
       }
     },
   };

@@ -35,10 +35,8 @@ let
 
   assets = {
     # The guest image, kernel boot pieces and guest-side programs.
-    "agent.img" = linux-guest.agentDisk;
     "rootfs.erofs" = linux-guest.rootfs;
     "rootfs.ext4" = linux-guest.ext4Root;
-    "wrong-root.erofs" = linux-guest.wrongRoot;
     "boot.cpio" = vm-test.bootInitramfs;
     "lifecycle.erofs" = vm-test.installedDisk {
       name = "linux-guest-lifecycle";

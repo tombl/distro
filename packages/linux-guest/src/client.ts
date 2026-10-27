@@ -18,10 +18,12 @@ import {
   mount,
   openat,
   read,
+  read_kernel_log,
   readlinkat,
   renameat,
   spawn,
   spawn_terminal,
+  switch_root,
   symlinkat,
   sync,
   unlinkat,
@@ -265,6 +267,14 @@ export interface GuestClientCapabilities {
   readonly exec: Exec;
   readonly mount: Mount;
   readonly unmount: Unmount;
+  /**
+   * Asks PID 1 to enter /sysroot, then start `init` there if given, and
+   * ends the session: PID 1 switches between sessions, and the next call
+   * connects a new one.
+   */
+  switch_root(init?: { argv: readonly string[]; env: readonly string[] }): Promise<void>;
+  /** The end of the kernel log, as text. */
+  kernel_log(): Promise<string>;
 }
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
@@ -341,6 +351,19 @@ class GuestClient {
 
   async sync() {
     await sync(await this.#connect());
+  }
+
+  async switch_root(init?: { argv: readonly string[]; env: readonly string[] }) {
+    const pending = this.#connect();
+    const session = await pending;
+    await switch_root(session, init && { ...init, cwd: "/" });
+    if (this.#session === pending) this.#session = null;
+    session.close();
+  }
+
+  async kernel_log() {
+    const log = await read_kernel_log(await this.#connect(), 4096);
+    return new TextDecoder().decode(log);
   }
 
   async mount(source: string | null, target: string, options: MountOptions = {}) {
@@ -623,6 +646,8 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
   return {
     ping: client.ping.bind(client),
     sync: client.sync.bind(client),
+    switch_root: client.switch_root.bind(client),
+    kernel_log: client.kernel_log.bind(client),
     fs: {
       readFile: client.readFile.bind(client),
       readTextFile: client.readTextFile.bind(client),

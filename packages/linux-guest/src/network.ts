@@ -623,11 +623,11 @@ function dns_response(query: Uint8Array, addresses: readonly string[]) {
  *   resolveDns: resolve4,
  * });
  *
- * const agent = guestAgent();
+ * const agent = guestAgent({ mounts: [root] });
  * const attachment = network.attach(agent);
  * const machine = await bootMachine({
  *   cpus: 1,
- *   plugins: [agent, root, attachment],
+ *   plugins: [agent, attachment],
  * });
  * // Guests can now reach whatever the host process can:
  * const process = await agent.exec(["wget", "-qO-", "http://example.com"]);

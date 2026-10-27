@@ -2,75 +2,31 @@ import { readFile } from "node:fs/promises";
 import { blockDevice } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { testAsset } from "../../../scripts/test-assets.ts";
+import type { Mount } from "../src/index.ts";
 
 async function asset(name: string) {
   return readFile(await testAsset(name));
 }
 
-export const agent_disk = await asset("agent.img");
+/** The package's own agent initramfs. */
+export const agent_initramfs = await readFile(new URL("../agent.cpio", import.meta.url));
 export const rootfs = await asset("rootfs.erofs");
 export const ext4_rootfs = await asset("rootfs.ext4");
-export const wrong_rootfs = await asset("wrong-root.erofs");
 
-export function root_device() {
-  return blockDevice({
-    capacity: rootfs.byteLength,
-    read(offset, target) {
-      const source = rootfs.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-  });
+/** The test system, an EROFS image, as the root beneath a writable overlay. */
+export function root_mount(): Mount {
+  return { path: "/", source: rootfs, type: "erofs", mode: "overlay" };
 }
 
-/** A writable ext4 system disk; pass the same `disk` to reattach its storage. */
-export function ext4_root_device(disk = new Uint8Array(ext4_rootfs)) {
-  return blockDevice({
-    capacity: disk.byteLength,
-    read(offset, target) {
-      const source = disk.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-    write(offset, data) {
-      disk.set(data, offset);
-      return data.byteLength;
-    },
-    flush() {},
-  });
-}
-
-export function readonly_ext4_root_device(disk: Uint8Array = ext4_rootfs) {
-  return blockDevice({
-    capacity: disk.byteLength,
-    read(offset, target) {
-      const source = disk.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-  });
-}
-
-export function agent_device() {
-  return blockDevice({
-    capacity: agent_disk.byteLength,
-    read(offset, target) {
-      const source = agent_disk.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-  });
-}
-
-export function wrong_root_device() {
-  return blockDevice({
-    capacity: wrong_rootfs.byteLength,
-    read(offset, target) {
-      const source = wrong_rootfs.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-  });
+/**
+ * The test system as an ext4 root, writable by default. Pass the same `disk`
+ * to boot its storage again: a writable disk is changed in place.
+ */
+export function ext4_root_mount(
+  disk: Uint8Array = new Uint8Array(ext4_rootfs),
+  mode: Mount["mode"] = "rw",
+): Mount {
+  return { path: "/", source: disk, type: "ext4", mode };
 }
 
 /** A static guest executable that exercises the guest-side network stack. */
@@ -84,6 +40,9 @@ export const getdents_inode = await asset("getdents-inode");
 
 const lifecycle_rootfs = await asset("lifecycle.erofs");
 const boot_initramfs = await asset("boot.cpio");
+
+/** BusyBox in an initramfs, for machines that never leave theirs. */
+export const busybox_initramfs = boot_initramfs;
 
 export const lifecycle_assets = {
   /** The busybox initramfs that mounts /dev/vda and switches into it. */

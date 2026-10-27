@@ -14,7 +14,7 @@ import {
 } from "../src/index.ts";
 import { hostFetchNetwork } from "../src/host-fetch-network.ts";
 import { ByteReader } from "../src/http.ts";
-import { root_device } from "./assets.ts";
+import { root_mount } from "./assets.ts";
 import { closed_input, collect, console_output, pattern_bytes } from "./helpers.ts";
 
 const decoder = new TextDecoder();
@@ -41,17 +41,11 @@ type NetworkedAgent = GuestAgent & { readonly network: NetworkAttachment };
 
 async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) => Promise<void>) {
   const network = createNetwork(options);
-  const agent = guestAgent();
+  const agent = guestAgent({ mounts: [root_mount()] });
   const attachment = network.attach(agent);
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [
-      root_device(),
-      agent,
-      consoleDevice(closed_input(), console_output()),
-      entropyDevice(),
-      attachment,
-    ],
+    plugins: [agent, consoleDevice(closed_input(), console_output()), entropyDevice(), attachment],
   });
   const guest = Object.assign(agent, { network: attachment });
   try {

@@ -5,43 +5,30 @@ import { open, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { bootMachine, type Device } from "@lowland/kernel";
-import type { MachinePlugin } from "@lowland/kernel/plugin";
-import { guestAgent } from "@lowland/guest";
+import { bootMachine } from "@lowland/kernel";
+import { guestAgent, type Mount } from "@lowland/guest";
 import { rootImage } from "../src/index.ts";
 import { canonical_image, scratch_directory, writable_ext4_copy } from "./assets.ts";
 
 const decoder = new TextDecoder();
 const success = { success: true, code: 0, signal: null };
 
-async function boot(image: MachinePlugin) {
-  const guest = guestAgent();
-  const machine = await bootMachine({ cpus: 1, plugins: [image, guest] });
+async function boot(root: Mount) {
+  const guest = guestAgent({ mounts: [root] });
+  const machine = await bootMachine({ cpus: 1, plugins: [guest] });
   return { guest, machine };
 }
 
-// blockDevice() advertises VIRTIO_BLK_F_RO when its storage has no write
-// callback. The transport that carries the feature bits is private to
-// @lowland/kernel, so find it among the device's symbol properties.
-const VIRTIO_BLK_F_RO = 1n << 5n;
+function erofs_bytes(size = 4096) {
+  const bytes = new Uint8Array(size);
+  new DataView(bytes.buffer).setUint32(1024, 0xe0f5e1e2, true);
+  return bytes;
+}
 
-async function read_only(image: MachinePlugin) {
-  const devices: Device[] = [];
-  await image.configure({
-    args: { add() {} },
-    devices: { add: (...added) => devices.push(...added) },
-    initramfs: { add() {} },
-    bootConsole: new ReadableStream(),
-  });
-  assert.equal(devices.length, 1);
-  const device = devices[0] as unknown as Record<symbol, unknown>;
-  const transport = Object.getOwnPropertySymbols(device)
-    .map((symbol) => device[symbol] as { features?: unknown; shutdown?(): Promise<void> })
-    .find((value) => typeof value?.features === "bigint");
-  assert.ok(transport);
-  // Closing the device releases a file opened from a path.
-  await transport.shutdown!();
-  return ((transport.features as bigint) & VIRTIO_BLK_F_RO) !== 0n;
+function ext4_bytes(size = 4096) {
+  const bytes = new Uint8Array(size);
+  new DataView(bytes.buffer).setUint16(1024 + 56, 0xef53, true);
+  return bytes;
 }
 
 test("boots the root image with the guest agent", async (t) => {
@@ -66,6 +53,34 @@ test("boots the root image with the guest agent", async (t) => {
     await guest.fs.stat("/etc/apk/keys/site.rsa.pub");
     await guest.fs.stat("/etc/ssl/cert.pem");
   });
+
+  await t.test("mounts it beneath a writable overlay", async () => {
+    await guest.fs.writeTextFile("/root/marker", "written\n");
+    assert.match(await guest.fs.readTextFile("/proc/mounts"), /^overlay \/ overlay rw/m);
+  });
+});
+
+test("is the root of a mount table, beneath an overlay", () => {
+  assert.deepEqual(rootImage(), {
+    path: "/",
+    source: new URL("../rootfs.erofs", import.meta.resolve("../src/index.ts")),
+    type: "erofs",
+    mode: "overlay",
+  });
+  const blob = new Blob([erofs_bytes()]);
+  assert.deepEqual(rootImage(blob), { path: "/", source: blob, mode: "overlay" });
+});
+
+test("reads the filesystem of bytes and paths now", async () => {
+  assert.equal(rootImage(erofs_bytes()).type, "erofs");
+  assert.equal(rootImage(ext4_bytes().buffer).type, "ext4");
+  assert.equal(rootImage(canonical_image).type, "erofs");
+  assert.equal(rootImage(pathToFileURL(canonical_image)).type, "erofs");
+  // Fetched images are read when the machine boots, and the guest tries
+  // each filesystem.
+  assert.equal(rootImage(new URL("https://example.com/app.ext4")).type, undefined);
+  await using handle = await open(canonical_image, "r");
+  assert.equal(rootImage(handle).type, undefined);
 });
 
 test("boots an image from a path", async () => {
@@ -85,6 +100,7 @@ test("boots an image from a file handle", async () => {
   const { guest, machine } = await boot(rootImage(handle));
   await using _ = machine;
   assert.deepEqual((await guest.run(["true"])).status, success);
+  assert.match(await guest.fs.readTextFile("/proc/mounts"), /^overlay \/ overlay rw/m);
 });
 
 test("boots an image from bytes", async () => {
@@ -93,63 +109,27 @@ test("boots an image from bytes", async () => {
   assert.deepEqual((await guest.run(["true"])).status, success);
 });
 
-test("keeps writes to a writable ext4 path across reboots", async () => {
+test("never writes to the image", async () => {
   await using directory = await scratch_directory();
   const path = await writable_ext4_copy(directory.path);
-  const image = rootImage(path, { writable: true });
-
-  {
-    const { guest, machine } = await boot(image);
-    await using _ = machine;
-    await guest.fs.writeTextFile("/root/marker", "persisted\n");
-    assert.deepEqual((await guest.run(["sync"])).status, success);
-  }
-
-  const { guest, machine } = await boot(image);
-  await using _ = machine;
-  assert.equal(await guest.fs.readTextFile("/root/marker"), "persisted\n");
-});
-
-test("modifies writable bytes in place", async () => {
-  await using directory = await scratch_directory();
-  const bytes = await readFile(await writable_ext4_copy(directory.path));
-  const before = Buffer.from(bytes);
-  {
-    const { guest, machine } = await boot(rootImage(bytes, { writable: true }));
-    await using _ = machine;
-    await guest.fs.writeTextFile("/root/marker", "persisted\n");
-    assert.deepEqual((await guest.run(["sync"])).status, success);
-  }
-  assert.notDeepEqual(bytes, before);
-});
-
-test("attaches read-only images as read-only devices", async () => {
-  await using directory = await scratch_directory();
-  const path = await writable_ext4_copy(directory.path);
-  const bytes = await readFile(path);
-  assert.equal(await read_only(rootImage(path)), true);
-  assert.equal(await read_only(rootImage(bytes)), true);
-  assert.equal(await read_only(rootImage(path, { writable: true })), false);
-  assert.equal(await read_only(rootImage(bytes, { writable: true })), false);
-});
-
-test("rejects a writable URL", () => {
-  assert.throws(
-    () => rootImage(new URL("https://example.com/app.ext4"), { writable: true }),
-    /writable image needs a file path, file handle, or bytes/,
-  );
-});
-
-test("rejects a writable EROFS path when it boots", async () => {
-  await using directory = await scratch_directory();
-  const path = join(directory.path, "root.erofs");
-  await writeFile(path, await readFile(canonical_image));
   const before = await readFile(path);
-  await assert.rejects(
-    () => boot(rootImage(path, { writable: true })),
-    new Error(`${path}: EROFS images are read-only; writable has no effect`),
-  );
+  {
+    const { guest, machine } = await boot(rootImage(path));
+    await using _ = machine;
+    assert.equal(rootImage(path).type, "ext4");
+    await guest.fs.writeTextFile("/root/marker", "discarded\n");
+    assert.deepEqual((await guest.run(["sync"])).status, success);
+  }
   assert.ok(before.equals(await readFile(path)));
+});
+
+test("rejects bytes without a superblock", () => {
+  assert.throws(
+    () => rootImage(new Uint8Array(4096)),
+    new Error(
+      "the image bytes are not a filesystem image: got 4096 bytes with no EROFS or ext4 superblock",
+    ),
+  );
 });
 
 test("rejects a file that is not a filesystem image", async () => {
@@ -158,8 +138,8 @@ test("rejects a file that is not a filesystem image", async () => {
   const page =
     "<!doctype html><html><head><title>app</title></head><body>not an image</body></html>\n";
   await writeFile(path, page);
-  await assert.rejects(
-    () => boot(rootImage(path)),
+  assert.throws(
+    () => rootImage(path),
     new Error(`${path} is not a filesystem image: got ${page.length} bytes`),
   );
 });
@@ -167,20 +147,14 @@ test("rejects a file that is not a filesystem image", async () => {
 // Linux lists a process's open files in /proc/self/fd.
 const open_files = async () => (await readdir("/proc/self/fd")).length;
 
-function ext4_bytes(size: number) {
-  const bytes = new Uint8Array(size);
-  new DataView(bytes.buffer).setUint16(1024 + 56, 0xef53, true);
-  return bytes;
-}
-
 test("rejects a file that is not whole sectors without leaking it", async () => {
   await using directory = await scratch_directory();
   const path = join(directory.path, "partial.ext4");
   await writeFile(path, ext4_bytes(4097));
   const before = await open_files();
   for (let i = 0; i < 10; i++) {
-    await assert.rejects(
-      () => boot(rootImage(path)),
+    assert.throws(
+      () => rootImage(path),
       new Error(
         `${path} is not a filesystem image: got 4097 bytes, which is not a multiple of 512`,
       ),
@@ -189,23 +163,6 @@ test("rejects a file that is not whole sectors without leaking it", async () => 
   assert.equal(await open_files(), before);
 });
 
-test("closes a file whose device the machine refuses", async () => {
-  const before = await open_files();
-  for (let i = 0; i < 10; i++) {
-    await assert.rejects(
-      async () =>
-        await rootImage(canonical_image).configure({
-          args: { add() {} },
-          devices: {
-            add() {
-              throw new Error("refused");
-            },
-          },
-          initramfs: { add() {} },
-          bootConsole: new ReadableStream(),
-        }),
-      new Error("refused"),
-    );
-  }
-  assert.equal(await open_files(), before);
+test("rejects a missing file now", () => {
+  assert.throws(() => rootImage("/no/such/image.erofs"), { code: "ENOENT" });
 });

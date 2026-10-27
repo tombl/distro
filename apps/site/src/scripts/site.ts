@@ -2,7 +2,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import {
-  blockDevice,
   bootMachine,
   type BlockStorage,
   consoleDevice,
@@ -12,7 +11,14 @@ import {
   workerDevice,
 } from "@lowland/kernel";
 import type { MachinePluginInput } from "@lowland/kernel/plugin";
-import { createNetwork, guestAgent, guestFetchHandler, hostFetchNetwork } from "@lowland/guest";
+import {
+  createNetwork,
+  guestAgent,
+  guestFetchHandler,
+  hostFetchNetwork,
+  MountFlags,
+  type GuestBoot,
+} from "@lowland/guest";
 import { BrowserFS } from "@lowland/guest/browser";
 import { serveGuest } from "@lowland/bridge-site/client";
 
@@ -50,7 +56,9 @@ if ("serviceWorker" in navigator) {
       await new Promise(() => {});
     }
   } else if (bootMode === "live" || !navigator.serviceWorker.controller) {
-    await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+    await navigator.serviceWorker.register("/service-worker.js", {
+      scope: "/",
+    });
   }
 }
 
@@ -182,7 +190,9 @@ async function openLiveDisk(): Promise<BlockStorage> {
         (async () => {
           const start = index * chunkSize;
           const end = Math.min(start + chunkSize, size);
-          const response = await fetch(url, { headers: { Range: `bytes=${start}-${end - 1}` } });
+          const response = await fetch(url, {
+            headers: { Range: `bytes=${start}-${end - 1}` },
+          });
           if (response.status === 200) {
             whole = new Uint8Array(await response.arrayBuffer());
             if (whole.byteLength !== size) throw new Error("rootfs has the wrong size");
@@ -231,12 +241,14 @@ async function openLiveDisk(): Promise<BlockStorage> {
 type InstallDiskOptions = {
   directory: FileSystemDirectoryHandle;
   requireFilesystem: boolean;
+  serial: string;
   timeout?: number;
 };
 
 async function openInstallDisk({
   directory,
   requireFilesystem,
+  serial,
   timeout,
 }: InstallDiskOptions): Promise<Device | undefined> {
   const handle = await directory.getFileHandle("root.ext4", { create: true });
@@ -249,11 +261,14 @@ async function openInstallDisk({
   }
   if (!requireFilesystem && hasFilesystem) return undefined;
 
-  const worker = new Worker(new URL("./opfs-disk-worker.ts", import.meta.url), { type: "module" });
+  const worker = new Worker(new URL("./opfs-disk-worker.ts", import.meta.url), {
+    type: "module",
+  });
   const devicePromise = workerDevice(worker);
   worker.postMessage({
     handle,
     capacity: file.size === 0 ? 64 * 1024 * 1024 : undefined,
+    serial,
   });
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -277,14 +292,38 @@ function requireValue<T>(value: T | undefined, message: string): T {
   return value;
 }
 
+/**
+ * Boots the installed system, whose ext4 root lives in a worker that owns the
+ * persistent file, so it is a device rather than a mount table source.
+ */
+async function bootInstalled(guest: GuestBoot) {
+  for (const [type, path] of [
+    ["proc", "/proc"],
+    ["sysfs", "/sys"],
+    ["devpts", "/dev/pts"],
+  ]) {
+    await guest.fs.mkdir(path, { recursive: true });
+    await guest.mount(type, path, { type });
+  }
+  await guest.fs.mkdir("/sysroot");
+  await guest.mount(await guest.disk("root"), "/sysroot", { type: "ext4" });
+  for (const name of ["dev", "proc", "sys"]) {
+    await guest.mount(`/${name}`, `/sysroot/${name}`, {
+      flags: MountFlags.MOVE,
+    });
+  }
+  await guest.switchRoot();
+}
+
 const network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
-const disk: MachinePluginInput =
+const installedRoot: Device | undefined =
   bootMode === "live"
-    ? blockDevice(await openLiveDisk())
+    ? undefined
     : requireValue(
         await openInstallDisk({
           directory: requireValue(opfs, "persistent storage is unavailable"),
           requireFilesystem: true,
+          serial: "root",
         }),
         "persistent disk already contains a filesystem",
       );
@@ -294,6 +333,7 @@ if (bootMode === "live" && persistentInstallSupported && opfs) {
     installDisk = await openInstallDisk({
       directory: opfs,
       requireFilesystem: false,
+      serial: "install",
       timeout: 2000,
     });
   } catch (error) {
@@ -301,7 +341,22 @@ if (bootMode === "live" && persistentInstallSupported && opfs) {
   }
 }
 const bootDirectory = opfs ? await opfs.getDirectoryHandle("boot", { create: true }) : undefined;
-const guest = guestAgent();
+// The live system boots the published image beneath a temporary overlay. The
+// image's /init prints the welcome and runs the console shell, and its exit
+// powers the machine off.
+const guest = installedRoot
+  ? guestAgent({ boot: bootInstalled, init: ["/init"] })
+  : guestAgent({
+      mounts: [
+        {
+          path: "/",
+          source: await openLiveDisk(),
+          type: "erofs",
+          mode: "overlay",
+        },
+      ],
+      init: ["/init"],
+    });
 const networkAttachment = network.attach(guest);
 
 const args: string[] = [];
@@ -312,9 +367,14 @@ const plugins: MachinePluginInput[] = [guest, ttyConsole];
 if (installDisk) plugins.push(installDisk);
 plugins.push(entropyDevice());
 if (bootDirectory) {
-  plugins.push(fileSystemDevice(new BrowserFS(bootDirectory), { tag: "boot", cache: false }));
+  plugins.push(
+    fileSystemDevice(new BrowserFS(bootDirectory), {
+      tag: "boot",
+      cache: false,
+    }),
+  );
 }
-plugins.push(disk);
+if (installedRoot) plugins.push(installedRoot);
 plugins.push(networkAttachment);
 
 await bootMachine({

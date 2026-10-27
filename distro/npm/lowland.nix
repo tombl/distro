@@ -18,7 +18,7 @@ let
     cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
     cp -rT ${kernel}/dist packages/kernel/dist
     cp -rT ${bytes}/dist packages/bytes/dist
-    cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
+    cp ${linux-guest.package}/agent.cpio packages/linux-guest/agent.cpio
     cp -rT ${linux-guest.package}/dist packages/linux-guest/dist
     cp -rT ${lowland-image.package}/dist packages/image/dist
     cp ${lowland-image.builderImage} packages/image/builder.erofs

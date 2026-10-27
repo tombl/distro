@@ -10,7 +10,7 @@
     "directory": "packages/linux-guest"
   },
   "files": [
-    "agent.img",
+    "agent.cpio",
     "dist"
   ],
   "type": "module",

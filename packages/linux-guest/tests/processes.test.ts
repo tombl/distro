@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
 import { bootConsole, bootMachine, vsockDevice } from "@lowland/kernel";
+import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { test } from "node:test";
 import { O } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
 import { guestAgent, SystemError, type GuestAgent } from "../src/index.ts";
-import { getpid, kill, openat, read, reap, spawn, spawn_terminal } from "../src/syscalls.ts";
-import { agent_device, root_device } from "./assets.ts";
+import {
+  getpid,
+  kill,
+  mkdirat,
+  mount,
+  openat,
+  read,
+  reap,
+  spawn,
+  spawn_terminal,
+} from "../src/syscalls.ts";
+import { agent_initramfs, busybox_initramfs, root_mount } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
 import { collect, console_output, pattern_bytes } from "./helpers.ts";
 
@@ -207,10 +218,10 @@ guest_test("processes", async (t, fixture) => {
 // Without a console the kernel starts the agent with no stdio descriptors, so
 // child stdio pipes must not be allocated in their place.
 test("guest without a console", async (t) => {
-  const guest = guestAgent();
+  const guest = guestAgent({ mounts: [root_mount()] });
   const machine = await bootMachine({
     cpus: 1,
-    plugins: [bootConsole(console_output()), root_device(), guest],
+    plugins: [bootConsole(console_output()), guest],
   });
   try {
     await t.test("streams stdin, stdout, and stderr separately", async () => {
@@ -242,13 +253,17 @@ test("guest without a console", async (t) => {
 
 guest_test("session teardown", async (t) => {
   await t.test("cleans resources before accepting a fresh session", async () => {
+    // The agent alone on an initramfs with BusyBox, driven over raw
+    // sessions: no boot, no switch_root.
     const vsock = vsockDevice();
-    const root = root_device();
-    const machine = await bootMachine({
-      cpus: 1,
-      args: ["root=PARTLABEL=LOWLAND_AGENT", "rootfstype=erofs", "ro", "rootwait", "init=/init"],
-      plugins: [agent_device(), root, vsock],
-    });
+    const agent_only: MachinePlugin = {
+      configure(setup) {
+        setup.devices.add(vsock);
+        setup.initramfs.add(busybox_initramfs);
+        setup.initramfs.add(agent_initramfs);
+      },
+    };
+    const machine = await bootMachine({ cpus: 1, plugins: [agent_only] });
     try {
       let first: GuestSession | undefined;
       const deadline = Date.now() + 30_000;
@@ -259,6 +274,10 @@ guest_test("session teardown", async (t) => {
           if (Date.now() >= deadline) throw error;
         }
       }
+
+      // Terminals need devpts, which only a boot would have mounted.
+      await mkdirat(first, "/dev/pts", 0o755);
+      await mount(first, "devpts", "/dev/pts", "devpts", 0, null);
 
       const fifoPath = "/tmp/session-teardown-fifo";
       const created = await spawn(first, ["mkfifo", fifoPath], "/tmp", [
@@ -332,8 +351,8 @@ guest_test("session teardown", async (t) => {
 // Without a console device the agent starts with no standard descriptors.
 // Pipes must not take their numbers, or spawn errors are misreported.
 test("reports failed spawns in a machine without a console", async () => {
-  const agent = guestAgent();
-  const machine = await bootMachine({ cpus: 1, plugins: [root_device(), agent] });
+  const agent = guestAgent({ mounts: [root_mount()] });
+  const machine = await bootMachine({ cpus: 1, plugins: [agent] });
   try {
     for (const [argv, code] of [
       [["/no/such"], "ENOENT"],

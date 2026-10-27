@@ -48,11 +48,9 @@ async function build(t: TestContext, options: Omit<BuildImageOptions, "output">)
 }
 
 async function boot(t: TestContext, path: string, writable = false) {
-  const guest = guestAgent();
-  const machine = await bootMachine({
-    cpus: 1,
-    plugins: [rootImage(path, { writable }), guest],
-  });
+  const root = writable ? { path: "/", source: path, type: "ext4" } : rootImage(path);
+  const guest = guestAgent({ mounts: [root] });
+  const machine = await bootMachine({ cpus: 1, plugins: [guest] });
   t.after(() => machine[Symbol.asyncDispose]());
   return guest;
 }

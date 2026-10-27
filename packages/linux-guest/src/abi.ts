@@ -1,4 +1,4 @@
-// Guest ABI schema (protocol v4).
+// Guest ABI schema (protocol v5).
 //
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
@@ -108,6 +108,7 @@ const nr = scalar_group("__NR_", {
   ioctl: 29,
   kill: 129,
   getpid: 172,
+  syslog: 116,
 });
 
 /** asm-generic syscall numbers, e.g. `NR.openat === 56`. */
@@ -148,6 +149,7 @@ export const AT = at.values;
 const mount_flags = scalar_group("MS_", {
   RDONLY: 1,
   BIND: 4096,
+  MOVE: 8192,
   REC: 16384,
 });
 
@@ -213,6 +215,7 @@ const e = scalar_group("E", {
   BUSY: 16,
   EXIST: 17,
   XDEV: 18,
+  NODEV: 19,
   NOTDIR: 20,
   ISDIR: 21,
   INVAL: 22,

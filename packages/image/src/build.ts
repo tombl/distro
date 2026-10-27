@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import {
-  blockDevice,
-  bootMachine,
-  type BlockStorage,
-  entropyDevice,
-  fileSystemDevice,
-} from "@lowland/kernel";
+import { blockDevice, bootMachine, type BlockStorage, entropyDevice } from "@lowland/kernel";
 import { createNetwork, guestAgent, type Network } from "@lowland/guest";
 import { NodeFS } from "@lowland/guest/node";
 import { randomUUID } from "node:crypto";
@@ -17,7 +11,6 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { Duplex } from "node:stream";
-import { rootImage } from "./index.ts";
 
 /** The repository that package names are resolved from. */
 const REPOSITORY = "http://assets.low.land/apk/wasm32/Packages.adb";
@@ -213,8 +206,8 @@ const PUBLIC_REPOSITORY: PackageRepository = { url: REPOSITORY, network: node_ne
  *
  * The build runs in a Lowland machine that boots a builder image shipped in
  * this package. It formats the output, installs the packages, copies the
- * files, creates the links, and adds the directories the guest agent needs.
- * The result boots with `@lowland/guest` when it keeps the default label.
+ * files, creates the links, and adds the standard mount points. Boot the
+ * result with `rootImage()`, or mount it with `@lowland/guest`.
  * The machine uses the host network only when a package is named rather than
  * given as a local file. Named packages must be signed by the public
  * repository, while local package files are trusted as given. The output is
@@ -333,22 +326,31 @@ export async function build_image(
 
     handle = await open(temporary, "wx+");
     await handle.truncate(size);
-    const guest = guestAgent();
+    const guest = guestAgent({
+      mounts: [
+        {
+          path: "/",
+          source: new URL("../builder.erofs", import.meta.url),
+          type: "erofs",
+          mode: "overlay",
+        },
+        // The build stages EROFS trees in memory, as the builder expects.
+        { path: "/tmp", type: "tmpfs", options: "mode=1777" },
+        { path: "/tmp/input", source: new NodeFS(input, { readOnly: true }), mode: "ro" },
+      ],
+    });
     const network = remote ? repository.network() : undefined;
     try {
       await using machine = await bootMachine({
         cpus: 1,
         plugins: [
-          rootImage(new URL("../builder.erofs", import.meta.url)),
-          blockDevice(output_storage(handle, size)),
-          fileSystemDevice(new NodeFS(input, { readOnly: true }), { tag: "input" }),
-          entropyDevice(),
           guest,
+          // The script writes to the machine's only writable block device.
+          blockDevice(output_storage(handle, size)),
+          entropyDevice(),
           ...(network ? [network.attach(guest)] : []),
         ],
       });
-      await guest.fs.mkdir("/tmp/input");
-      await guest.mount("input", "/tmp/input", { type: "virtiofs" });
       const result = await guest.run(args);
       if (!result.status.success) {
         const decoder = new TextDecoder();

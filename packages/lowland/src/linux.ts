@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-import {
-  bootMachine,
-  entropyDevice,
-  fileSystemDevice,
-  type FS,
-  type Machine,
-} from "@lowland/kernel";
+import { bootMachine, entropyDevice, type FS, type Machine } from "@lowland/kernel";
 import { machinePlugin, type MachinePlugin, type MachinePluginInput } from "@lowland/kernel/plugin";
 import {
   guestAgent,
-  MountFlags,
   type ChildProcess,
   type ExecOptions,
   type FileSystem,
   type GuestAgent,
+  type Mount,
   type Network,
   type NetworkAttachment,
   type RunResult,
@@ -24,19 +18,17 @@ import { rootImage, type ImageSource } from "@lowland/image";
 /** A disk image attached to a machine and mounted at a guest path. */
 export interface DiskOptions {
   /**
-   * An EROFS or ext4 image, as any source `rootImage()` accepts: a file path
-   * in Node, a URL, a file handle, bytes, a blob, or a response. A writable
+   * A filesystem image, as any source `rootImage()` accepts: a file path in
+   * Node, a URL, a file handle, bytes, a blob, or a response. A writable
    * disk needs a path, a file handle, or bytes.
-   *
-   * The disk must not be labeled `LOWLAND_ROOT`, the root image label: the
-   * guest agent would find two roots, so the machine fails to boot.
    */
   source: ImageSource;
   /** The absolute guest path to mount the disk at. */
   path: string;
   /**
    * Attaches the disk read-only. Defaults to `false`, so writes to an ext4
-   * disk persist in its source. EROFS disks must be read-only.
+   * disk persist in its source. The kernel mounts an EROFS disk read-only
+   * either way.
    */
   readOnly?: boolean;
 }
@@ -99,25 +91,11 @@ function check_guest_path(kind: string, path: string) {
   }
 }
 
-/** The filesystem on a guest block device, read from its superblock. */
-async function disk_filesystem(guest: GuestAgent, device: string): Promise<"erofs" | "ext4"> {
-  const header = new Uint8Array(2048);
-  const file = await guest.fs.open(device);
-  let length = 0;
-  try {
-    while (length < header.byteLength) {
-      const read = await file.read(header.subarray(length));
-      if (!read) break;
-      length += read;
-    }
-  } finally {
-    await file.close();
-  }
-  const view = new DataView(header.buffer, 0, length);
-  if (length >= 1028 && view.getUint32(1024, true) === 0xe0f5e1e2) return "erofs";
-  if (length >= 1082 && view.getUint16(1024 + 56, true) === 0xef53) return "ext4";
-  throw new Error(`${device} contains neither an EROFS nor an ext4 filesystem`);
-}
+// Scratch space in memory, whatever the root is.
+const DEFAULT_MOUNTS: readonly Mount[] = [
+  { path: "/run", type: "tmpfs", options: "mode=0755" },
+  { path: "/tmp", type: "tmpfs", options: "mode=1777" },
+];
 
 /**
  * A Linux machine with the canonical kernel, guest agent, and an image.
@@ -167,19 +145,22 @@ export class Linux implements AsyncDisposable {
       }
     }
 
-    // The disks configure first, so disk i is device-tree node virtio<i>
-    // and can be found in the guest without relying on probe order.
-    const disk_plugins = disks.map((disk) => rootImage(disk.source, { writable: !disk.readOnly }));
-    const devices: MachinePlugin = {
-      async configure(setup) {
-        for (const plugin of disk_plugins) await plugin.configure(setup);
-        for (const [index, mount] of mounts.entries()) {
-          setup.devices.add(fileSystemDevice(mount.source, { tag: `lowland-mount-${index}` }));
-        }
-      },
-    };
-
-    const guest = guestAgent();
+    const guest = guestAgent({
+      mounts: [
+        rootImage(options.image),
+        ...DEFAULT_MOUNTS,
+        ...disks.map((disk): Mount => ({
+          path: disk.path,
+          source: disk.source,
+          mode: disk.readOnly ? "ro" : "rw",
+        })),
+        ...mounts.map((mount): Mount => ({
+          path: mount.path,
+          source: mount.source,
+          mode: mount.readOnly ? "ro" : "rw",
+        })),
+      ],
+    });
     // Attaching allocates the guest's address and NIC, which only a machine
     // that configures the NIC releases. Attach while configuring, so a boot
     // that fails before then leaves the caller's network untouched.
@@ -198,48 +179,18 @@ export class Linux implements AsyncDisposable {
     const machine = await bootMachine({
       cpus: options.cpus ?? 1,
       plugins: [
-        devices,
-        rootImage(options.image),
-        entropyDevice(),
         guest,
+        entropyDevice(),
         ...(options.network ? [attach_network] : []),
         ...(options.plugins ?? []),
       ],
     });
-
-    try {
-      const devices_by_node = new Map<string, string>();
-      for await (const entry of guest.fs.readDir("/sys/block")) {
-        const target = await guest.fs.realPath(`/sys/block/${entry.name}`);
-        const node = /\/platform\/(virtio\d+)\//.exec(target)?.[1];
-        if (node) devices_by_node.set(node, `/dev/${entry.name}`);
-      }
-      const disk_paths: string[] = [];
-      for (const [index, disk] of disks.entries()) {
-        const device = devices_by_node.get(`virtio${index}`);
-        if (!device) throw new Error(`the guest did not find the disk for ${disk.path}`);
-        const type = await disk_filesystem(guest, device);
-        await guest.fs.mkdir(disk.path, { recursive: true });
-        await guest.mount(device, disk.path, {
-          type,
-          flags: disk.readOnly ? MountFlags.RDONLY : 0,
-          // A read-only ext4 disk must not replay its journal into the file.
-          data: disk.readOnly && type === "ext4" ? "noload" : undefined,
-        });
-        disk_paths.push(disk.path);
-      }
-      for (const [index, mount] of mounts.entries()) {
-        await guest.fs.mkdir(mount.path, { recursive: true });
-        await guest.mount(`lowland-mount-${index}`, mount.path, {
-          type: "virtiofs",
-          flags: mount.readOnly ? MountFlags.RDONLY : 0,
-        });
-      }
-      return new Linux(machine, guest, network, disk_paths);
-    } catch (error) {
-      await Promise.resolve(machine[Symbol.asyncDispose]()).catch(() => {});
-      throw error;
-    }
+    return new Linux(
+      machine,
+      guest,
+      network,
+      disks.map((disk) => disk.path),
+    );
   }
 
   /** File operations in the guest. */
