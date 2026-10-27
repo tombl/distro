@@ -13,6 +13,8 @@ import {
   type GuestAgentOptions,
   type Mount,
 } from "../src/index.ts";
+import { E, NR } from "../src/abi.ts";
+import { GuestSession, type Lane } from "../src/conn.ts";
 import { NodeFS } from "../src/node.ts";
 import { ext4_root_mount, ext4_rootfs, root_mount, rootfs } from "./assets.ts";
 import { guest_test } from "./fixture.ts";
@@ -398,24 +400,29 @@ test("a failed boot leaves the storage it mounted clean", async () => {
   }
 });
 
-test("a boot that fails moving /sys leaves storage beneath /sysroot/dev clean", async () => {
-  // An image whose /sys is a regular file, so moving /sys in fails after
-  // /dev has moved and covered whatever the table mounted beneath it.
+/**
+ * The ext4 test system with a regular file at /sys, so a boot that mounts it
+ * as its root fails moving /sys in, after /dev has moved and covered
+ * whatever the table mounted beneath it.
+ */
+async function image_without_sys_directory() {
   const image = new Uint8Array(ext4_rootfs);
-  {
-    const { agent: guest, machine } = await boot({
-      mounts: [root_mount(), { path: "/image", source: image, type: "ext4" }],
-    });
-    try {
-      await guest.fs.remove("/image/sys");
-      await guest.fs.writeTextFile("/image/sys", "not a directory\n");
-      await guest.unmount("/image");
-    } finally {
-      await close(machine);
-    }
+  const { agent: guest, machine } = await boot({
+    mounts: [root_mount(), { path: "/image", source: image, type: "ext4" }],
+  });
+  try {
+    await guest.fs.remove("/image/sys");
+    await guest.fs.writeTextFile("/image/sys", "not a directory\n");
+    await guest.unmount("/image");
+  } finally {
+    await close(machine);
   }
   assert.equal(needs_recovery(image), false);
-  const data = new Uint8Array(ext4_rootfs);
+  return image;
+}
+
+/** Boots `image` with a writable `data` disk at /dev/data, and expects the move of /sys to fail. */
+async function fail_moving_sys(image: Uint8Array, data: Uint8Array) {
   await assert.rejects(
     boot({
       mounts: [ext4_root_mount(image), { path: "/dev/data", source: data, type: "ext4" }],
@@ -426,8 +433,10 @@ test("a boot that fails moving /sys leaves storage beneath /sysroot/dev clean", 
       error.cause instanceof SystemError &&
       error.cause.code === "ENOTDIR",
   );
-  assert.equal(needs_recovery(data), false);
-  assert.equal(needs_recovery(image), false);
+}
+
+/** Mounts `data` read-only, which a journal that needs recovery would refuse. */
+async function assert_mounts_read_only(data: Uint8Array) {
   const { agent: reader, machine } = await boot({
     mounts: [root_mount(), { path: "/data", source: data, type: "ext4", mode: "ro" }],
   });
@@ -436,6 +445,56 @@ test("a boot that fails moving /sys leaves storage beneath /sysroot/dev clean", 
   } finally {
     await close(machine);
   }
+}
+
+test("a boot that fails moving /sys leaves storage beneath /sysroot/dev clean", async () => {
+  const image = await image_without_sys_directory();
+  const data = new Uint8Array(ext4_rootfs);
+  await fail_moving_sys(image, data);
+  assert.equal(needs_recovery(data), false);
+  assert.equal(needs_recovery(image), false);
+  await assert_mounts_read_only(data);
+});
+
+test("a move that cannot be undone is detached, so what it covers is unwound", async (t) => {
+  const image = await image_without_sys_directory();
+  const data = new Uint8Array(ext4_rootfs);
+  // Answer the unwind's move of /sysroot/dev back to /dev with EIO, as the
+  // guest would, without sending it: a mount(2) request whose in-blobs are
+  // exactly those two paths, after the 59-byte syscall request header.
+  const original = GuestSession.prototype.exchange;
+  let injected = 0;
+  t.mock.method(GuestSession.prototype, "exchange", function <
+    T,
+  >(this: GuestSession, fn: (lane: Lane) => Promise<T>): Promise<T> {
+    return original.call<GuestSession, [(lane: Lane) => Promise<T>], Promise<T>>(this, (lane) => {
+      let fail = false;
+      return fn({
+        async write(bytes) {
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          fail =
+            bytes[0] === 1 &&
+            view.getUint32(1, true) === NR.mount &&
+            new TextDecoder().decode(bytes.subarray(59)) === "/sysroot/dev\0/dev\0";
+          if (!fail) return lane.write(bytes);
+          injected++;
+        },
+        async read(length) {
+          if (!fail) return lane.read(length);
+          const head = new Uint8Array(12);
+          new DataView(head.buffer).setBigInt64(0, -1n, true);
+          new DataView(head.buffer).setUint32(8, E.IO, true);
+          return head.subarray(0, length);
+        },
+      });
+    });
+  });
+  await fail_moving_sys(image, data);
+  assert.equal(injected, 1);
+  assert.equal(needs_recovery(data), false);
+  assert.equal(needs_recovery(image), false);
+  t.mock.restoreAll();
+  await assert_mounts_read_only(data);
 });
 
 test("powering off unmounts every filesystem, however many there are", async () => {

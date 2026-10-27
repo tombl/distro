@@ -13,7 +13,7 @@ import {
   type MachinePluginProvider,
   type MachineSetup,
 } from "@lowland/kernel/plugin";
-import { E, MountFlags, SystemError } from "./abi.ts";
+import { E, MountFlags, SystemError, UnmountFlags } from "./abi.ts";
 import {
   create_guest_client,
   type Exec,
@@ -475,7 +475,7 @@ async function mount_in(
  * could be mounted read-only. A move is undone by moving the mount back, so
  * the paths recorded before it name their mounts again: a moved /dev hides
  * whatever the table mounted beneath /sysroot/dev. /proc moved last, so it
- * comes back first. Bounded, because it only tidies up after an error that is
+ * comes back first. A move that cannot be undone is detached instead. Bounded, because it only tidies up after an error that is
  * reported anyway.
  */
 async function unwind_mounts(guest: GuestAgent, mounted: readonly MountRecord[]) {
@@ -484,7 +484,13 @@ async function unwind_mounts(guest: GuestAgent, mounted: readonly MountRecord[])
       if (from !== undefined) {
         // switchRoot() may have deleted the initramfs's empty directory.
         await make_directory(guest, from).catch(() => {});
-        await guest.mount(path, from, { flags: MountFlags.MOVE }).catch(() => {});
+        try {
+          await guest.mount(path, from, { flags: MountFlags.MOVE });
+        } catch {
+          // Still covering what the table mounted beneath it: detach it
+          // lazily instead, so those mounts are reachable again.
+          await guest.unmount(path, { flags: UnmountFlags.DETACH }).catch(() => {});
+        }
         continue;
       }
       try {
