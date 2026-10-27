@@ -130,10 +130,36 @@ export function openFlags(options: OpenOptions = {}): number {
  * are serialized. The file is an async disposable: `await using` closes it
  * when the block ends.
  */
+let pin_descriptor: <T>(file: FsFile, use: (fd: GuestFd) => Promise<T>) => Promise<T>;
+
+/** @internal Runs `use` with the file's descriptor, holding off the file's
+ *  close, but not its other operations, until `use` settles. Pins are
+ *  shared, so holding several files at once cannot deadlock. */
+export function with_file_descriptor<T>(
+  file: FsFile,
+  use: (fd: GuestFd) => Promise<T>,
+): Promise<T> {
+  return pin_descriptor(file, use);
+}
+
 export class FsFile implements AsyncDisposable {
+  static {
+    pin_descriptor = async (file, use) => {
+      if (file.#closed) throw new TypeError("file is closed");
+      file.#pins++;
+      try {
+        return await use(file.#fd);
+      } finally {
+        if (--file.#pins === 0) file.#unpinned?.resolve();
+      }
+    };
+  }
+
   #tail = Promise.resolve<void>(undefined);
   #closed = false;
   #close?: Promise<void>;
+  #pins = 0;
+  #unpinned?: PromiseWithResolvers<void>;
   readonly #fd: GuestFd;
 
   /** The file as a byte stream, read from the current offset to the end. */
@@ -231,7 +257,13 @@ export class FsFile implements AsyncDisposable {
   /** Closes the file. Also called when an `await using` scope ends. */
   close(): Promise<void> {
     this.#closed = true;
-    return (this.#close ??= this.#tail.then(() => this.#fd.close()));
+    return (this.#close ??= this.#tail.then(async () => {
+      while (this.#pins > 0) {
+        this.#unpinned = Promise.withResolvers();
+        await this.#unpinned.promise;
+      }
+      await this.#fd.close();
+    }));
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

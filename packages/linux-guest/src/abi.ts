@@ -1,4 +1,4 @@
-// Guest ABI schema (protocol v5).
+// Guest ABI schema (protocol v6).
 //
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
@@ -90,6 +90,7 @@ const nr = scalar_group("__NR_", {
   mount: 40,
   openat: 56,
   close: 57,
+  pipe2: 59,
   read: 63,
   write: 64,
   llseek: 62, // __NR3264_lseek -> sys_llseek on ILP32
@@ -127,6 +128,7 @@ const o = scalar_group("O_", {
   RDWR: 0o2, // 2
   CREAT: 0o100, // 64
   EXCL: 0o200, // 128
+  NOCTTY: 0o400, // 256
   TRUNC: 0o1000, // 512
   APPEND: 0o2000, // 1024
   NONBLOCK: 0o4000, // 2048
@@ -283,6 +285,10 @@ export const SIG = sig.values;
 const tioc = scalar_group("TIOC", {
   SWINSZ: 0x5414,
   VHANGUP: 0x5437,
+  SPTLCK: 0x40045431, // _IOW('T', 0x31, int)
+  // _IOR('T', 0x30, unsigned int) is 0x80045430, which the check compares as
+  // the guest's 32-bit long.
+  GPTN: 0x80045430 | 0,
 });
 
 /** Terminal ioctl requests, e.g. `TIOC.SWINSZ === 0x5414`. */

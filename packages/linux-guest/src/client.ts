@@ -23,8 +23,6 @@ import {
   read_kernel_log,
   readlinkat,
   renameat,
-  spawn,
-  spawn_terminal,
   switch_root,
   symlinkat,
   sync,
@@ -42,7 +40,14 @@ import {
   statToInfo,
   type WriteFileOptions,
 } from "./file.ts";
-import { ChildProcess, type TerminalSize } from "./process.ts";
+import {
+  ChildProcess,
+  spawn_stdio,
+  spawn_terminal,
+  type Stdio,
+  type StdioSpec,
+  type TerminalSize,
+} from "./process.ts";
 
 /** Data that can be written to a guest file: bytes, a `Blob`, or a stream of bytes. */
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
@@ -87,8 +92,61 @@ export interface ExecOptions {
    * const input = shell.stdin.getWriter();
    * await input.write(new TextEncoder().encode("tty\n"));
    * ```
+   *
+   * A terminal is shorthand for standard descriptors of its own, so it
+   * cannot be combined with `stdio`.
    */
   terminal?: boolean | TerminalSize;
+  /**
+   * What the process's standard input, output, and error are connected to.
+   * Each defaults to `"pipe"`, a pipe to the matching `ChildProcess` stream.
+   * `"null"` is `/dev/null`, `"stdout"` sends standard error wherever
+   * standard output goes, like `2>&1`, and an `FsFile` from `guest.fs.open`
+   * connects that guest file, which the process shares with you, offset and
+   * all. A stream whose descriptor is not a pipe has nothing behind it:
+   * `stdout` and `stderr` are empty, writes to `stdin` reject, and closing
+   * `stdin` does nothing, neither closing the file nor ending the process's
+   * input.
+   *
+   * The process gets its own reference to a file, so you can close the
+   * `FsFile` once `exec` resolves.
+   *
+   * @example Collect errors with the output, with no input
+   * ```ts
+   * const build = await guest.run(["make"], { stdio: ["null", "pipe", "stdout"] });
+   * console.log(new TextDecoder().decode(build.stdout));
+   * ```
+   *
+   * @example Redirect a command to and from guest files
+   * ```ts
+   * await using input = await guest.fs.open("/tmp/in.txt");
+   * await using output = await guest.fs.open("/tmp/out.txt", {
+   *   write: true,
+   *   create: true,
+   *   truncate: true,
+   * });
+   * const sorted = await guest.exec(["sort"], { stdio: [input, output, "pipe"] });
+   * await sorted.status;
+   * ```
+   */
+  stdio?: readonly [Exclude<StdioSpec, "stdout">, Exclude<StdioSpec, "stdout">, StdioSpec];
+}
+
+const PIPES: Stdio = ["pipe", "pipe", "pipe"];
+
+function stdio_of(options: ExecOptions): Stdio {
+  const { stdio } = options;
+  if (stdio === undefined) return PIPES;
+  if (options.terminal) throw new TypeError("exec cannot combine `terminal` and `stdio`");
+  if (!Array.isArray(stdio) || stdio.length !== 3) {
+    throw new TypeError("exec `stdio` must have three entries");
+  }
+  stdio.forEach((spec: unknown, fd) => {
+    if (spec === "pipe" || spec === "null" || spec instanceof FsFile) return;
+    if (spec === "stdout" && fd === 2) return;
+    throw new TypeError(`exec \`stdio[${fd}]\` cannot be ${String(spec)}`);
+  });
+  return stdio;
 }
 
 /**
@@ -459,7 +517,7 @@ class GuestClient {
   async writeFile(path: string, data: FileData, options: WriteFileOptions = {}) {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
-    let flags = O.WRONLY;
+    let flags = O.WRONLY | O.CLOEXEC;
     if (options.create ?? true) flags |= O.CREAT;
     if (options.createNew) flags |= O.CREAT | O.EXCL;
     if (options.append) flags |= O.APPEND;
@@ -596,8 +654,8 @@ class GuestClient {
     if (dst && dst.dev === src.dev && dst.ino === src.ino) {
       throw new SystemError(E.INVAL);
     }
-    await using src_fd = await openat(session, from, O.RDONLY, 0);
-    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT, 0o666);
+    await using src_fd = await openat(session, from, O.RDONLY | O.CLOEXEC, 0);
+    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT | O.CLOEXEC, 0o666);
     await ftruncate64(dst_fd, 0n);
     for (;;) {
       const data = await read(src_fd, CHUNK);
@@ -633,13 +691,14 @@ class GuestClient {
 
   async truncate(path: string, length = 0) {
     const session = await this.#connect();
-    await using fd = await openat(session, path, O.WRONLY, 0);
+    await using fd = await openat(session, path, O.WRONLY | O.CLOEXEC, 0);
     await ftruncate64(fd, BigInt(length));
   }
 
   async open(path: string, options: OpenOptions = {}) {
     const session = await this.#connect();
-    return new FsFile(await openat(session, path, openFlags(options), options.mode ?? 0o666));
+    const flags = openFlags(options) | O.CLOEXEC;
+    return new FsFile(await openat(session, path, flags, options.mode ?? 0o666));
   }
 
   #acquire_process_slot(): Promise<() => void> {
@@ -660,6 +719,7 @@ class GuestClient {
 
   async exec(argv: readonly string[], options: ExecOptions = {}) {
     if (!argv.length) throw new TypeError("exec argv must not be empty");
+    const stdio = stdio_of(options);
     options.signal?.throwIfAborted();
     const session = await this.#connect();
     options.signal?.throwIfAborted();
@@ -676,7 +736,7 @@ class GuestClient {
       const terminal = options.terminal === true ? { rows: 24, columns: 80 } : options.terminal;
       const spawned = terminal
         ? await spawn_terminal(session, argv, cwd, env, terminal)
-        : await spawn(session, argv, cwd, env);
+        : await spawn_stdio(session, argv, cwd, env, stdio);
       return new ChildProcess({
         session,
         ...spawned,

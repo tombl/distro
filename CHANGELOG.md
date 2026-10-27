@@ -37,7 +37,8 @@
   as `buildImage()`.
 - `guest.exec(argv, { terminal })` runs a process on a guest pseudoterminal as
   a session leader with job control, and `resize()` changes the terminal's
-  size.
+  size. `{ stdio }` connects its standard input, output and error to pipes,
+  `/dev/null`, standard output (`2>&1`), or guest files.
 - A guest whose boot fails makes `bootMachine()` reject with a
   `GuestBootError` that names the step, carries the system call's error as its
   `cause`, and holds the end of the kernel log, instead of panicking the

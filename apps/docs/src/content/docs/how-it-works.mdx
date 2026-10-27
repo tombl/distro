@@ -71,7 +71,8 @@ your process. Your process opens these connections and the agent accepts them. O
 connection lasts as long as the session, and further connections carry requests. A request
 asks the agent to make one system call, to start a program, or to wait for a program to exit.
 Higher-level operations, such as `guest.fs.readFile()`, are made of these requests on the host
-side.
+side. That includes a program's pipes and terminal: your process makes them with system calls,
+and the agent hands them to `posix_spawn()` as the program starts.
 
 ## Running a program
 

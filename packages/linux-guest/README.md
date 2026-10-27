@@ -58,6 +58,17 @@ headers described in [Hosting](https://docs.low.land/hosting/).
 returns the running process with streaming standard input and output. Both take an argv array
 and do not go through a shell.
 
+By default the program's standard input, output, and error are pipes to the process's `stdin`,
+`stdout`, and `stderr` streams. The `stdio` option connects each one elsewhere: `"null"` for
+`/dev/null`, `"stdout"` to send standard error wherever standard output goes (`2>&1`), or an
+`FsFile` from `guest.fs.open()` to read or write a guest file directly. A stream with no pipe
+behind it is empty.
+
+```ts
+await using log = await guest.fs.open("/tmp/build.log", { write: true, create: true, truncate: true });
+const build = await guest.run(["make"], { stdio: ["null", log, "stdout"] });
+```
+
 With the `terminal` option, `guest.exec()` runs the program on a guest pseudoterminal instead
 of pipes, so an interactive shell gets job control and Ctrl-C written to `stdin` signals its
 foreground job. Standard error shares `stdout`, and `resize()` changes the window size.

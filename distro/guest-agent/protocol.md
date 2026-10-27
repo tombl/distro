@@ -1,4 +1,4 @@
-# Guest agent protocol, version 5
+# Guest agent protocol, version 6
 
 The guest agent is a dumb syscall executor. It knows nothing about paths,
 stat layouts, directories, or flags — every operation-specific decision
@@ -6,7 +6,9 @@ lives in the host library (`packages/linux-guest`), which composes injected
 syscalls. Process lifecycle (`spawn`/`reap`) is the only domain knowledge
 the agent owns, because it is the process's parent and must be, and as
 PID 1 it enters the root the host prepared (`switch_root`). It knows no
-filesystems: the host mounts everything with ordinary syscalls.
+filesystems: the host mounts everything with ordinary syscalls. It makes no
+descriptors for a process either: the host makes pipes and terminals with
+ordinary syscalls and names them in the spawn's file actions.
 
 This file is the frozen contract between `agent.c` and the host library.
 Both sides implement it exactly; neither side extends it unilaterally. All
@@ -15,7 +17,7 @@ integers are little-endian; there is no alignment padding.
 ## Transport
 
 Two vsock ports, both handshaking with 8 bytes
-`{ magic u32 = 0x584e4c54, version u16 = 5, reserved u16 = 0 }` sent by the
+`{ magic u32 = 0x584e4c54, version u16 = 6, reserved u16 = 0 }` sent by the
 host and echoed verbatim by the agent (the echo doubles as the readiness
 signal).
 
@@ -56,29 +58,51 @@ follow — for `read`, `getdents64`, ...). The agent executes via libc
 arguments on this ILP32 target are split host-side (the syscall table in
 `packages/linux-guest/src/syscalls.ts` owns the hi/lo order per syscall).
 
-**Spawn (kind 2):** `{ len u32 }` then a `len`-byte payload
-`{ argc u32 } argc × string, string cwd, { envc u32 } envc × string` where
-string = `{ len u32, bytes }`, no NUL, len ≤ 4096; argc 1..256, envc ≤ 256,
-each env entry contains '='. The length prefix exists so an unparseable
-payload is already consumed and can get an `EINVAL` reply without desyncing
-the lane. The agent creates three `O_CLOEXEC` pipes, searches the supplied
-`PATH`, and `posix_spawn`s the child with the pipe ends on fds 0/1/2 and
-`addchdir_np(cwd)`, and tracks it
-in a fixed table (16 entries; `EAGAIN` when full — the host's process cap
-makes this unreachable). Success reply body:
-`{ pid u32, stdin_fd u32, stdout_fd u32, stderr_fd u32 }`. From here stdio
-is plain injected `read`/`write`/`close` on those fds and signals are plain
-injected `kill`. Every spawned command starts with the default `SIGPIPE`
-disposition, which the agent itself ignores.
+**Spawn (kind 2):** `posix_spawn`, serialized. `{ len u32 }` then a
+`len`-byte payload: a command, `{ flags u32 }`, `{ count u32 }`, and `count`
+file actions.
 
-**Terminal spawn (kind 4):** as spawn, but the payload starts with
-`{ rows u16, columns u16 }`. Instead of pipes, the agent opens a
-pseudoterminal master (`O_CLOEXEC`), sets its window size, and spawns the
-child with `POSIX_SPAWN_SETSID` and the subsidiary opened by name on fd 0
-and duplicated onto 1 and 2, so it leads a new session with the terminal as
-its controlling terminal. Success reply body: `{ pid u32, terminal_fd u32 }`.
-The host resizes with injected `ioctl(TIOCSWINSZ)` on the master, and once
-the master reads `EIO` every holder of the subsidiary has closed it.
+- A *command* is `{ argc u32 } argc × string, string cwd, { envc u32 } envc ×
+  string`, where string = `{ len u32, bytes }`, no NUL, len ≤ 4096; argc
+  1..256, envc ≤ 256, each env entry contains '='.
+- *Flags*: 1 is `POSIX_SPAWN_SETSID`, so the process leads a new session; 2
+  is `POSIX_SPAWN_SETSIGDEF` for every signal, so it does not inherit the
+  agent's ignored `SIGPIPE`. Other bits are `EINVAL`.
+- *File actions*, at most 64, each `{ op u32 }` and its operands:
+  - op 1, `dup2`: `{ fd u32, newfd u32 }`;
+  - op 2, `open`: `{ newfd u32, oflag u32, mode u32, string path }`;
+  - op 3, `close`: `{ fd u32 }`.
+
+The process changes to `cwd`, then runs the file actions in order, so a
+relative `open` path names what a shell redirection would. Descriptors are
+numbers in the session process's table. Every descriptor the host holds there
+is close-on-exec, and `dup2` clears that flag on `newfd`, so the process
+inherits exactly what its file actions put in place. The file actions run
+once, and then the same child searches the request's `PATH` for an `argv[0]`
+without a slash, as `execvpe` does: an entry that fails with `ENOENT` or
+`ENOTDIR` moves on to the next, so a script whose interpreter is missing does
+not end the search, and finding nothing is `EACCES` if any entry was, else
+`ENOENT`. A malformed action list is `EINVAL` wherever it goes wrong. A
+`dup2` or `close` of a negative descriptor fails the spawn with `EBADF`, and
+a bad descriptor or path at run time with the errno the action failed with,
+both indistinguishable from the `exec`'s own errors. The agent tracks the process in a fixed table (16 entries; `EAGAIN`
+when full — the host's process cap makes this unreachable). Success reply
+body: `{ pid u32 }`. From here stdio is plain injected `read`/`write`/`close`
+on the host's descriptors, and signals are plain injected `kill`.
+
+The host makes what the actions name:
+
+- a pipe with `pipe2(O_CLOEXEC)`, passing the process's end by `dup2` and
+  closing it once the spawn returns;
+- a terminal with `openat("/dev/ptmx", O_RDWR | O_NOCTTY | O_CLOEXEC)`,
+  `ioctl(TIOCSPTLCK)` to unlock it, `ioctl(TIOCGPTN)` for its number `N`,
+  and `ioctl(TIOCSWINSZ)` to size it. The process spawns with `setsid` and
+  opens `/dev/pts/N` on fd 0, then duplicates it onto 1 and 2: a session
+  leader that opens a terminal without `O_NOCTTY` gets it as its controlling
+  terminal. The host resizes with `TIOCSWINSZ` on the master, and once the
+  master reads `EIO` every holder of the subsidiary has closed it;
+- `/dev/null` with an `open` action, and a file it already holds open with
+  `dup2`.
 
 **Reap (kind 3):** `{ pid u32 }`. Blocking `waitpid`; frees the table
 entry; success reply body `{ status u32 }` (raw wait status — the host owns
@@ -86,8 +110,8 @@ the WIFEXITED bit math). The host reaps every spawn exactly once, including
 on the abort path. Reaping an untracked pid is `ECHILD` from the kernel.
 
 **Switch root (kind 5):** `{ len u32 }` then, when `len` is nonzero, a
-spawn payload (as kind 2, `len` ≤ 32 KiB) naming the init that PID 1 starts
-in the new root. The session validates first and replies an errno on
+command (as in kind 2, `len` ≤ 32 KiB) naming the init that PID 1 starts in
+the new root. The session validates first and replies an errno on
 failure: `/sysroot` must be a directory on a different filesystem from `/`
 (`EINVAL`), `/sysroot/dev`, `/sysroot/proc`, and `/sysroot/sys` must exist
 and be mount points (`ENOENT`, `EINVAL`), an unparseable init is `EINVAL`,

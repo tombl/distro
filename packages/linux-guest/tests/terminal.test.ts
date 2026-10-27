@@ -74,6 +74,21 @@ guest_test("terminal processes", async (t, fixture) => {
     assert.deepEqual(status, { success: true, code: 0, signal: null });
   });
 
+  await t.test("leads a session with the terminal as its controlling terminal", async () => {
+    // Opening /dev/tty needs a controlling terminal; field 6 of stat is the
+    // session, and field 7 the controlling terminal's device.
+    const result = await guest.run(
+      [
+        "sh",
+        "-c",
+        'set -- $(cat /proc/$$/stat); [ "$1" = "$6" ] && [ "$7" != 0 ] && exec 3</dev/tty && echo controlling',
+      ],
+      { terminal: true },
+    );
+    assert.deepEqual(result.status, { success: true, code: 0, signal: null });
+    assert.equal(new TextDecoder().decode(result.stdout), "controlling\r\n");
+  });
+
   await t.test("reports exit codes and ends output when the terminal closes", async () => {
     const child = await guest.exec(["sh", "-c", "echo bye; exit 7"], { terminal: true });
     const output = collect(child.stdout);
