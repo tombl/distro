@@ -39,6 +39,11 @@ interface App {
   assets: readonly Asset[];
   /** Node-only applications are bundled by esbuild for Node alone. */
   node?: boolean;
+  /**
+   * A negative control: the check must fail for this application, which
+   * proves it can see an asset that should not be there.
+   */
+  leaks?: boolean;
 }
 
 const APPS: Record<string, App> = {
@@ -49,11 +54,14 @@ const APPS: Record<string, App> = {
   machine: { entry: "machine.js", assets: ["kernel"] },
   guest: { entry: "guest.js", assets: ["agent"] },
   browser: { entry: "browser.js", assets: [] },
+  image: { entry: "image.js", assets: ["rootfs"] },
+  node: { entry: "node.js", assets: [], node: true },
   "machine + guest + image": {
     entry: "machine-guest-image.js",
     assets: ["kernel", "agent", "rootfs"],
   },
   "image/build": { entry: "build.js", assets: ["kernel", "agent", "builder"], node: true },
+  "negative control": { entry: "leak.js", assets: ["rootfs"], leaks: true },
 };
 
 /** A name as a bundler may emit it: `rootfs.erofs` or `rootfs-<hash>.erofs`. */
@@ -153,15 +161,20 @@ for (const [name, app] of Object.entries(APPS)) {
       }
     }
     // The kernel is useless without the CPU worker that runs it.
-    if (bundler === "vite" && app.assets.includes("kernel") && result.workers !== 1) {
-      problems.push(`${result.workers} CPU worker chunks instead of 1`);
+    const workers = app.assets.includes("kernel") ? 1 : 0;
+    if (bundler === "vite" && result.workers !== workers) {
+      problems.push(`${result.workers} CPU worker chunks instead of ${workers}`);
     }
     const assets = app.assets.map((asset) => ASSETS[asset]).join(", ") || "none";
     const emitted = Object.values(result.emitted).reduce((total, size) => total + size, 0);
+    // A negative control passes when the check catches its leak.
+    const ok = app.leaks ? problems.length > 0 : problems.length === 0;
     rows.push(
-      `| ${name} | ${bundler} | ${assets} | ${problems.length ? "FAIL" : "ok"} | ${mib(result.javascript)} | ${bundler === "vite" ? mib(emitted) : "-"} |`,
+      `| ${name} | ${bundler} | ${assets} | ${ok ? "ok" : "FAIL"} | ${mib(result.javascript)} | ${bundler === "vite" ? mib(emitted) : "-"} |`,
     );
-    for (const problem of problems) failures.push(`${name} with ${bundler}: ${problem}`);
+    if (app.leaks && !ok) failures.push(`${name} with ${bundler}: the check missed the leak`);
+    if (!app.leaks)
+      for (const problem of problems) failures.push(`${name} with ${bundler}: ${problem}`);
   }
 }
 
