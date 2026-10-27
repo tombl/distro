@@ -184,6 +184,14 @@ guest_test("processes", async (t, fixture) => {
       });
     });
 
+    await t.test("passes a process only its standard descriptors", async () => {
+      // Open files, pipes, and lanes are all close-on-exec on the agent's
+      // side, so ls sees fds 0-2 and the directory it opened.
+      await using held = await guest.fs.open(`${directory}/large.bin`);
+      const result = await guest.run(["ls", "/proc/self/fd"]);
+      assert.equal(new TextDecoder().decode(result.stdout), "0\n1\n2\n3\n");
+    });
+
     await t.test("reaps adopted orphan processes", async () => {
       const pid_file = `${directory}/orphan.pid`;
       const orphaned = await guest.exec([

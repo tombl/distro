@@ -459,7 +459,7 @@ class GuestClient {
   async writeFile(path: string, data: FileData, options: WriteFileOptions = {}) {
     const session = await this.#connect();
     options.signal?.throwIfAborted();
-    let flags = O.WRONLY;
+    let flags = O.WRONLY | O.CLOEXEC;
     if (options.create ?? true) flags |= O.CREAT;
     if (options.createNew) flags |= O.CREAT | O.EXCL;
     if (options.append) flags |= O.APPEND;
@@ -596,8 +596,8 @@ class GuestClient {
     if (dst && dst.dev === src.dev && dst.ino === src.ino) {
       throw new SystemError(E.INVAL);
     }
-    await using src_fd = await openat(session, from, O.RDONLY, 0);
-    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT, 0o666);
+    await using src_fd = await openat(session, from, O.RDONLY | O.CLOEXEC, 0);
+    await using dst_fd = await openat(session, to, O.WRONLY | O.CREAT | O.CLOEXEC, 0o666);
     await ftruncate64(dst_fd, 0n);
     for (;;) {
       const data = await read(src_fd, CHUNK);
@@ -633,13 +633,14 @@ class GuestClient {
 
   async truncate(path: string, length = 0) {
     const session = await this.#connect();
-    await using fd = await openat(session, path, O.WRONLY, 0);
+    await using fd = await openat(session, path, O.WRONLY | O.CLOEXEC, 0);
     await ftruncate64(fd, BigInt(length));
   }
 
   async open(path: string, options: OpenOptions = {}) {
     const session = await this.#connect();
-    return new FsFile(await openat(session, path, openFlags(options), options.mode ?? 0o666));
+    const flags = openFlags(options) | O.CLOEXEC;
+    return new FsFile(await openat(session, path, flags, options.mode ?? 0o666));
   }
 
   #acquire_process_slot(): Promise<() => void> {
