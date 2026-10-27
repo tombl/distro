@@ -16,18 +16,10 @@
 }:
 
 let
-  # The UAPI headers are fixed-output so that kernel bumps which leave them
-  # untouched do not change the store path of, and so rebuild, the whole
-  # userland. When a bump does change them, the build fails with a hash
-  # mismatch that names the new value to paste here.
-  headers = pkgs.stdenvNoCC.mkDerivation {
+  installHeaders = {
     pname = "linux-headers";
     version = "0.0.0";
     inherit src;
-
-    outputHashMode = "recursive";
-    outputHashAlgo = "sha256";
-    outputHash = "sha256-pBKb2mM3XTh9QYXqZHg0bxrC4XqCRrMxWkXl9eGkbyY=";
 
     dontFixup = true;
 
@@ -46,13 +38,47 @@ let
 
     installPhase = "runHook preInstall; runHook postInstall";
   };
+
+  # The UAPI headers are fixed-output so that kernel bumps which leave them
+  # untouched do not change the store path of, and so rebuild, the whole
+  # userland. Nix never rebuilds a fixed-output path it already has, though,
+  # so a bump that changes them would quietly keep the old headers. The
+  # headers check below builds them from the pinned source and fails, naming
+  # the new hash to paste here, when they differ.
+  headers = pkgs.stdenvNoCC.mkDerivation (
+    installHeaders
+    // {
+      outputHashMode = "recursive";
+      outputHashAlgo = "sha256";
+      outputHash = "sha256-pBKb2mM3XTh9QYXqZHg0bxrC4XqCRrMxWkXl9eGkbyY=";
+    }
+  );
+
+  headersFromSource = pkgs.stdenvNoCC.mkDerivation installHeaders;
+
+  headersCheck =
+    pkgs.runCommand "linux-headers-check"
+      {
+        nativeBuildInputs = [ pkgs.nix ];
+      }
+      ''
+        if ! diff -r ${headers} ${headersFromSource} >/dev/null; then
+          echo "the pinned kernel's UAPI headers differ from distro/linux's fixed-output headers;" >&2
+          echo "set its outputHash to $(nix-hash --type sha256 --sri ${headersFromSource})" >&2
+          exit 1
+        fi
+        mkdir $out
+      '';
 in
 pkgs.stdenvNoCC.mkDerivation {
   pname = "linux";
   version = "0.0.0";
   inherit src;
 
-  passthru = { inherit headers; };
+  passthru = {
+    inherit headers;
+    checks.headers = headersCheck;
+  };
 
   # The output is wasm: nixpkgs' fixup would strip nothing.
   dontFixup = true;
