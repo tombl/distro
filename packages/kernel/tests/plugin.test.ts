@@ -201,7 +201,7 @@ test("initramfs archives larger than the limit fail before allocating", async ()
         },
       ],
     ),
-    RangeError,
+    { name: "RangeError", message: /more than the \d+-byte limit/ },
   );
 });
 
