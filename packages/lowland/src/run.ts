@@ -6,20 +6,24 @@ import {
   type ChildProcess,
   type CommandStatus,
   type Network,
+  type TerminalSize,
 } from "@lowland/guest";
 import { NodeFS } from "@lowland/guest/node";
+import { spawnSync } from "node:child_process";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
 import { open, stat } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
+import type { ReadStream, WriteStream } from "node:tty";
 import { parseArgs } from "node:util";
 import { Linux, type LinuxOptions } from "./linux.ts";
 import { EXIT_FAILURE, UsageError } from "./usage.ts";
 
 export const runUsage = `Usage: lowland run [options] [--] [command...]
 
-Run a command in a fresh Linux machine. With no command, start a shell.
+Run a command in a fresh Linux machine. With no command, start a shell, on a
+terminal when stdin is one.
 
 Options:
       --image <path>             Boot this root image instead of the canonical one
@@ -29,10 +33,16 @@ Options:
   -e, --env <name[=value]>       Set an environment variable, or pass one through (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
       --network <none|host>      Connect the machine to the host's network (default: none)
+  -t, --tty                      Run the command on a terminal; stdin must be one
   -h, --help                     Show help
 
 The root image is never modified: changes to it last only as long as the
 machine. Writes persist only to ext4 disks and shared directories.
+
+When stdin is a terminal and no command is given, or with --tty, the command
+runs on a guest terminal the size of the host's, with job control, and keys
+such as Ctrl-C and Ctrl-Z go to it rather than to lowland. Otherwise its
+standard I/O are pipes.
 
 The command's exit status becomes lowland's. lowland itself exits 125 when it
 fails, such as for an argument error or when the machine cannot run, 126 when
@@ -111,6 +121,8 @@ export interface RunArguments {
   command: string[];
   cwd: string;
   env: Record<string, string>;
+  /** `-t`: run the command on a terminal even when one is given. */
+  tty: boolean;
 }
 
 /** Parses `lowland run` arguments, or returns `undefined` for `--help`. */
@@ -141,6 +153,7 @@ export function parseRunArgs(
         env: { type: "string", short: "e", multiple: true, default: [] },
         cpus: { type: "string" },
         network: { type: "string", default: "none" },
+        tty: { type: "boolean", short: "t", default: false },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -171,6 +184,7 @@ export function parseRunArgs(
     command,
     cwd: values.cwd,
     env,
+    tty: values.tty,
   };
 }
 
@@ -315,9 +329,60 @@ export function exitCode(status: CommandStatus): number {
   return 128 + (number ?? 0);
 }
 
-async function spawn(linux: Linux, run: RunArguments, argv: string[]) {
+/** The host terminal a guest terminal follows. */
+export interface HostTerminal {
+  /** The terminal's input, put in raw mode while the command runs. */
+  input: ReadStream;
+  /** The terminal's display, whose size the guest terminal takes. */
+  output?: WriteStream;
+}
+
+/** The host's terminal, if stdin is one. */
+function host_terminal(): HostTerminal | undefined {
+  if (!process.stdin.isTTY) return undefined;
+  // The size of a terminal is read from its display, which may be stderr
+  // when stdout is redirected.
+  const output = [process.stdout, process.stderr].find((stream) => stream.isTTY);
+  return { input: process.stdin, output };
+}
+
+/**
+ * Turns off the host terminal's output processing, which Node's raw mode
+ * leaves on. The guest terminal has processed the output already, so the
+ * host's own ONLCR would turn each bare LF a full-screen program sends to
+ * move the cursor down into CR LF. Leaving raw mode restores it along with
+ * the other modes Node saved.
+ */
+function disable_output_processing(input: ReadStream) {
+  // Node types a tty.ReadStream as a socket, without its descriptor.
+  const { fd } = input as { fd?: unknown };
+  if (process.platform === "win32" || typeof fd !== "number") return;
+  const result = spawnSync("stty", ["-opost"], { stdio: [fd, "ignore", "pipe"] });
+  if (result.error || result.status !== 0) {
+    const reason = result.error?.message ?? (result.stderr.toString().trim() || "stty failed");
+    throw new Error(`cannot turn off the terminal's output processing: ${reason}`);
+  }
+}
+
+function window_size(terminal: HostTerminal): TerminalSize {
+  const { rows = 24, columns = 80 } = terminal.output ?? {};
+  return { rows, columns };
+}
+
+async function spawn(
+  linux: Linux,
+  run: RunArguments,
+  argv: string[],
+  terminal: HostTerminal | undefined,
+) {
   try {
-    return await linux.spawn(argv, { cwd: run.cwd, env: run.env });
+    if (!terminal) return await linux.spawn(argv, { cwd: run.cwd, env: run.env });
+    // Like docker run -t, which sets TERM for a terminal it allocates.
+    return await linux.spawn(argv, {
+      cwd: run.cwd,
+      env: { TERM: "xterm", ...run.env },
+      terminal: window_size(terminal),
+    });
   } catch (error) {
     // Like a shell: 127 when the command does not exist, and 126 when it
     // exists but cannot be executed.
@@ -361,14 +426,15 @@ const IDLE = Symbol("idle");
 /**
  * Copies a guest stream to a host stream until it ends, until the host
  * reader goes away, or until it stays idle for OUTPUT_GRACE_MS after
- * `exited` settles. Rejects only when the host stream fails for another
- * reason, such as a full disk.
+ * `exited` settles. Resolves to whether the host reader went away, and
+ * rejects only when the host stream fails for another reason, such as a full
+ * disk.
  */
 async function forward_output(
   source: ReadableStream<Uint8Array>,
   target: NodeJS.WriteStream,
   exited: Promise<unknown>,
-) {
+): Promise<boolean> {
   const reader = source.getReader();
   // Each read arms its own idle timer once the command has exited, so a busy
   // stream never accumulates timers or promise reactions.
@@ -396,12 +462,12 @@ async function forward_output(
   try {
     for (;;) {
       const result = await read();
-      if (result === IDLE || result.done) return;
+      if (result === IDLE || result.done) return false;
       try {
         await write_host(target, result.value);
       } catch (error) {
         // A host reader that went away is a broken pipe for the command too.
-        if ((error as NodeJS.ErrnoException).code === "EPIPE") return;
+        if ((error as NodeJS.ErrnoException).code === "EPIPE") return true;
         throw error;
       }
     }
@@ -411,40 +477,70 @@ async function forward_output(
   }
 }
 
-/** Connects the host's standard I/O to a guest process and waits for it. */
-async function attach(child: ChildProcess) {
-  const forward = (signal: "SIGINT" | "SIGTERM") => () => void child.kill(signal).catch(() => {});
-  const on_interrupt = forward("SIGINT");
-  const on_terminate = forward("SIGTERM");
-  process.on("SIGINT", on_interrupt);
-  process.on("SIGTERM", on_terminate);
-
+/**
+ * Connects the host's standard I/O to a guest process and waits for it. A
+ * process on a guest terminal gets the host terminal, which is in raw mode
+ * until the process exits, so keys like Ctrl-C reach the guest's line
+ * discipline instead of signalling lowland.
+ */
+async function attach(child: ChildProcess, terminal: HostTerminal | undefined) {
+  // On a terminal, a hangup of the host's goes to the guest's too, and its
+  // session leader decides what to do, as with the other signals.
+  const signals = terminal
+    ? (["SIGINT", "SIGTERM", "SIGHUP"] as const)
+    : (["SIGINT", "SIGTERM"] as const);
+  const forwards = signals.map(
+    (signal) => [signal, () => void child.kill(signal).catch(() => {})] as const,
+  );
+  const on_resize = () => void child.resize(window_size(terminal!)).catch(() => {});
+  const input = terminal?.input ?? process.stdin;
   // stdin stops being read once the process exits, even if it never ends.
   // The pipe is aborted without cancelling its source: destroying
   // process.stdin would close descriptor 0, which the next file opened
   // during cleanup would then reuse. It is never awaited, because a write
   // to an exited command can stay pending until the machine shuts down.
   const stop_input = new AbortController();
-  const stdin = Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>;
-  void stdin
-    .pipeTo(child.stdin, { signal: stop_input.signal, preventCancel: true })
-    .catch(() => {});
-
-  const output = Promise.all([
-    forward_output(child.stdout, process.stdout, child.status),
-    forward_output(child.stderr, process.stderr, child.status),
-  ]);
-  // Output that cannot be delivered ends the run, so the command must not
-  // keep it waiting.
-  output.catch(() => void child.kill("SIGKILL").catch(() => {}));
+  let raw = false;
   try {
+    for (const [signal, forward] of forwards) process.on(signal, forward);
+    terminal?.output?.on("resize", on_resize);
+    if (terminal) {
+      terminal.input.setRawMode(true);
+      raw = true;
+      disable_output_processing(terminal.input);
+      // The window may have changed size since the terminal was created.
+      on_resize();
+    }
+
+    const stdin = Readable.toWeb(input) as ReadableStream<Uint8Array>;
+    void stdin
+      .pipeTo(child.stdin, { signal: stop_input.signal, preventCancel: true })
+      .catch(() => {});
+
+    // A terminal's stderr is empty: its output, standard error included, is
+    // all on stdout.
+    const output = Promise.all([
+      forward_output(child.stdout, process.stdout, child.status).then((broken) => {
+        // A pipe passes a reader that went away on to the writer as EPIPE,
+        // but a terminal stays open for its input, so its writer would block
+        // instead. Hang it up, as closing a terminal emulator would.
+        if (broken && terminal) void child.close().catch(() => {});
+      }),
+      terminal ? undefined : forward_output(child.stderr, process.stderr, child.status),
+    ]);
+    // Output that cannot be delivered ends the run, so the command must not
+    // keep it waiting.
+    output.catch(() => void child.kill("SIGKILL").catch(() => {}));
     const [status] = await Promise.all([child.status, output]);
     return exitCode(status);
   } finally {
-    process.off("SIGINT", on_interrupt);
-    process.off("SIGTERM", on_terminate);
+    // Before anything else, so lowland's own messages, and whatever runs
+    // after it, find the terminal as it was.
+    if (raw) terminal!.input.setRawMode(false);
+    terminal?.output?.off("resize", on_resize);
+    for (const [signal, forward] of forwards) process.off(signal, forward);
     stop_input.abort();
-    process.stdin.pause();
+    input.pause();
   }
 }
 
@@ -452,15 +548,22 @@ function report(error: unknown) {
   process.stderr.write(`lowland run: ${error instanceof Error ? error.message : error}\n`);
 }
 
+/** How `execute()` runs a command. */
+export interface ExecuteOptions {
+  /** Runs the command on a guest terminal attached to this host terminal. */
+  terminal?: HostTerminal;
+  /** Creates the machine. Defaults to `Linux.create`. */
+  create?: (options: LinuxOptions) => Promise<Linux>;
+}
+
 /**
- * Runs a parsed command in a machine from `create` and returns the exit
- * status. Every failure of lowland or the machine, disposal included, exits
- * 125.
+ * Runs a parsed command in a machine and returns the exit status. Every
+ * failure of lowland or the machine, disposal included, exits 125.
  */
 export async function execute(
   parsed: RunArguments,
   argv: string[],
-  create: (options: LinuxOptions) => Promise<Linux> = Linux.create,
+  { terminal, create = Linux.create }: ExecuteOptions = {},
 ): Promise<number> {
   const network = parsed.network === "host" ? host_network() : undefined;
   try {
@@ -473,8 +576,8 @@ export async function execute(
     }
     let code: number;
     try {
-      const child = await spawn(linux, parsed, argv);
-      code = typeof child === "number" ? child : await attach(child);
+      const child = await spawn(linux, parsed, argv, terminal);
+      code = typeof child === "number" ? child : await attach(child, terminal);
     } catch (error) {
       report(error);
       code = EXIT_FAILURE;
@@ -492,17 +595,10 @@ export async function execute(
 }
 
 /**
- * The command `lowland run` starts when it is given none: a shell,
- * interactive when stdin is a terminal.
- *
- * The guest has no PTY yet, so the shell runs over pipes like any command,
- * without job control or window resizing. This is the seam for a guest PTY:
- * once `@lowland/guest` can start a process on one, a terminal gets a shell
- * on a PTY from here, attached in raw mode rather than through `attach()`.
+ * The command `lowland run` starts when it is given none: a shell. On a
+ * terminal it is interactive because its stdin is a terminal too.
  */
-export function shellCommand(terminal: boolean): string[] {
-  return terminal ? ["sh", "-i"] : ["sh"];
-}
+const SHELL = ["sh"];
 
 /** Runs `lowland run` and returns the exit status. */
 export async function run(args: string[]): Promise<number> {
@@ -511,7 +607,11 @@ export async function run(args: string[]): Promise<number> {
     process.stdout.write(runUsage);
     return 0;
   }
-  const argv = parsed.command.length ? parsed.command : shellCommand(!!process.stdin.isTTY);
+  const host = host_terminal();
+  // Like docker run -it, a terminal needs one to read keys from.
+  if (parsed.tty && !host) throw new Error("--tty needs stdin to be a terminal");
+  const terminal = parsed.tty || !parsed.command.length ? host : undefined;
+  const argv = parsed.command.length ? parsed.command : SHELL;
   capture_output_errors();
-  return execute(parsed, argv);
+  return execute(parsed, argv, { terminal });
 }
