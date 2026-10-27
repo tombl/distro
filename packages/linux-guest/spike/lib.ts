@@ -6,6 +6,7 @@ import { vsockDevice, type VsockDevice } from "@lowland/kernel";
 import type { MachinePlugin } from "@lowland/kernel/plugin";
 import { AT, E, O, parse_dirents, SystemError } from "../src/abi.ts";
 import { GuestSession } from "../src/conn.ts";
+import { create_guest_client } from "../src/client.ts";
 import {
   getdents64,
   mkdirat,
@@ -274,4 +275,53 @@ export async function hostBoot(
   mark("switch_root validated");
   session.close();
   return { boot: session, trace };
+}
+
+/**
+ * PROTOTYPE: the initramfs agent as a whole machine plugin. Every boot
+ * (reboots included) realizes `mounts` and switches root, and the power hook
+ * sends PID 1 BusyBox init's signal over a lane.
+ */
+export function spikeGuest(mounts: readonly SpikeMount[], binary = AGENT_BINARY) {
+  const agent = initramfsAgent(binary);
+  let client: ReturnType<typeof create_guest_client> | undefined;
+  let boots = 0;
+  const plugin: MachinePlugin = {
+    configure: agent.plugin.configure,
+    async booted() {
+      if (mounts.length) await hostBoot(agent.vsock, mounts);
+      client = create_guest_client(agent.vsock);
+      boots++;
+    },
+    async power(action) {
+      // PID 1 serves one session at a time, so this must use the session
+      // the client already holds.
+      if (!client) return false;
+      await client.signal(1, action === "poweroff" ? SIG.USR2 : SIG.TERM);
+      return true;
+    },
+  };
+  const sh = async (command: string) => {
+    if (!client) throw new Error("not booted");
+    const child = await client.exec(["sh", "-c", command], { cwd: "/" });
+    const [status, stdout, stderr] = await Promise.all([
+      child.status,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.stdin.close(),
+    ]);
+    return { status, output: `${stdout}${stderr}` };
+  };
+  return {
+    plugin,
+    vsock: agent.vsock,
+    sh,
+    get client() {
+      if (!client) throw new Error("not booted");
+      return client;
+    },
+    get boots() {
+      return boots;
+    },
+  };
 }

@@ -14,6 +14,7 @@ import {
   getdents64,
   getpid,
   type GuestFd,
+  kill,
   mkdirat,
   mount,
   openat,
@@ -265,6 +266,10 @@ export interface GuestClientCapabilities {
   readonly exec: Exec;
   readonly mount: Mount;
   readonly unmount: Unmount;
+  /** PROTOTYPE (redesign phase 0 spike): kill(2) over this session's lanes. */
+  signal(pid: number, signal: number): Promise<void>;
+  /** PROTOTYPE: this session, for raw lane syscalls. */
+  session(): Promise<GuestSession>;
 }
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
@@ -333,6 +338,14 @@ class GuestClient {
       this.#session = attempt;
     }
     return this.#session;
+  }
+
+  async signal(pid: number, signal: number) {
+    await kill(await this.#connect(), pid, signal);
+  }
+
+  session() {
+    return this.#connect();
   }
 
   async ping(timeoutMs = 5000) {
@@ -647,5 +660,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
     exec: client.exec.bind(client),
     mount: client.mount.bind(client),
     unmount: client.unmount.bind(client),
+    signal: client.signal.bind(client),
+    session: client.session.bind(client),
   };
 }
