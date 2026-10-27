@@ -187,14 +187,11 @@
                 name = "materialize-artifacts";
                 runtimeInputs = [ pkgs.coreutils ];
                 text = ''
-                  if [[ ! -f package.json || ! -d packages/kernel ]]; then
+                  if [[ ! -f package.json || ! -d packages/lowland ]]; then
                     echo "artifacts must be materialized from the repository root" >&2
                     exit 1
                   fi
-                  install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
-                  install -Dm0644 ${wasmpkgs.lowland-image.rootfs} packages/image/rootfs.erofs
-                  install -Dm0644 ${wasmpkgs.lowland-image.builderImage} packages/image/builder.erofs
-                  install -Dm0644 ${wasmpkgs.linux-guest.agentInitramfs} packages/linux-guest/agent.cpio
+                  ${wasmpkgs.node-workspace.installBuilt { assets = lib.attrValues wasmpkgs.lowland.assets; }}
                 '';
               }
             );

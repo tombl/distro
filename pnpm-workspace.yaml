@@ -1,5 +1,6 @@
 packages:
   - packages/bridge-site
+  - packages/bundle-check
   - packages/lowland
   - packages/browser-tests
   - packages/runner

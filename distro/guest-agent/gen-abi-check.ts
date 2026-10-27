@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 // Emit a C translation unit of _Static_asserts from the host ABI schema.
 //
 // Standalone Node.js script, no third-party dependencies. Given the path to
-// packages/linux-guest/src/abi.ts as its single argument, it dynamic-imports
+// packages/lowland/src/guest/abi.ts as its single argument, it dynamic-imports
 // the schema and prints one _Static_assert per ABI fact to stdout. The
 // guest-agent build compiles the result with `$CC -c` (it is never run):
 // every assert mirrors a value the host library depends on, so any drift

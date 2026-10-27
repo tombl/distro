@@ -5,7 +5,8 @@
     "artifacts": "nix run .#artifacts",
     "npm-packages": "nix build .#npm-packages --out-link result-packages",
     "release": "node scripts/release.mjs",
-    "typecheck": "pnpm --filter=lowland build && pnpm --recursive check"
+    "typecheck": "pnpm --filter=lowland build && pnpm --recursive check",
+    "bundle-check": "pnpm --filter=lowland build && pnpm --filter=@lowland/bundle-check test"
   },
   "packageManager": "pnpm@11.13.1"
 }

@@ -1,4 +1,4 @@
-# The canonical system image shipped by @lowland/image: the minimum userspace
+# The canonical system image that lowland/image attaches: the minimum userspace
 # that can install everything else from the public repository.
 {
   apk-tools,

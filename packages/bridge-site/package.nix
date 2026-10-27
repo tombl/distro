@@ -1,8 +1,6 @@
 {
-  bytes,
   lib,
-  linux-guest,
-  kernel,
+  lowland,
   pkgs,
   playwright,
   test-assets,
@@ -16,8 +14,11 @@ let
       package = "@lowland/bridge-site";
       directory = "packages/bridge-site";
       built = {
-        inherit bytes kernel;
-        linux-guest = linux-guest.package;
+        lowland = lowland.dist;
+        assets = [
+          lowland.assets.kernel
+          lowland.assets.agent
+        ];
       };
       assets = test-assets.select [ "rootfs.erofs" ];
       inherit project;

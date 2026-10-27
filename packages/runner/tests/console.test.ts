@@ -1,4 +1,4 @@
-import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
+import { blockDevice, bootMachine, consoleDevice } from "lowland/machine";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";

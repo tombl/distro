@@ -2,7 +2,7 @@
   basic-init,
   busybox,
   lib,
-  linux-guest,
+  lowland,
   pkgs,
   repository,
   runner,
@@ -35,8 +35,8 @@ let
 
   assets = {
     # The guest image, kernel boot pieces and guest-side programs.
-    "rootfs.erofs" = linux-guest.rootfs;
-    "rootfs.ext4" = linux-guest.ext4Root;
+    "rootfs.erofs" = lowland.testImages.rootfs;
+    "rootfs.ext4" = lowland.testImages.ext4Root;
     "boot.cpio" = vm-test.bootInitramfs;
     "lifecycle.erofs" = vm-test.installedDisk {
       name = "linux-guest-lifecycle";

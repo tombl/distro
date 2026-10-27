@@ -46,8 +46,6 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     llvm-runtimes = callPackage ./llvm-runtimes/package.nix { };
     llvm-toolchain = callPackage ./llvm-toolchain/package.nix { };
     linux = callPackage ./linux/package.nix { };
-    bytes = callPackage ./npm/bytes.nix { };
-    kernel = callPackage ./npm/kernel.nix { };
     musl = callPackage ./musl/package.nix { };
     sysroot-base = callPackage ./sysroot-base/package.nix { };
     sysroot = callPackage ./sysroot/package.nix { };
@@ -162,9 +160,8 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     kselftests = callPackage ./kselftests/package.nix { };
     node-workspace = callPackage ./npm/node-workspace.nix { };
     playwright = callPackage ./npm/playwright.nix { };
-    linux-guest = callPackage ./npm/linux-guest { };
-    lowland-image = callPackage ./npm/image { };
-    lowland = callPackage ./npm/lowland.nix { };
+    # The lowland npm package, its parts, and the assets it ships.
+    lowland = callPackage ./npm/lowland { };
     # The archives a release publishes to npm, one per published package.
     npm-packages = callPackage ./npm/packages.nix { };
     runner = callPackage ./npm/runner { };

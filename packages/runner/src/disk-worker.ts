@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import { blockDevice, serveDevice } from "@lowland/kernel";
+import { blockDevice, serveDevice } from "lowland/machine";
 import {
   closeSync,
   fstatSync,

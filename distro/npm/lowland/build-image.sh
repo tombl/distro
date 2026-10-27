@@ -1,6 +1,6 @@
 #!/bin/busybox sh
 # Builds a system image onto the machine's only writable virtio block device.
-# @lowland/image/build boots the builder image and runs this with arguments it
+# lowland/image/build boots the builder image and runs this with arguments it
 # has already validated. Host inputs are mounted at the --input directory.
 #
 #   lowland-build-image --format F --input DIR [--label L] [--compression C]

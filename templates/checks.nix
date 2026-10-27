@@ -36,9 +36,8 @@ let
       ''
         cp ${./port/boot.mjs} boot.mjs
         cp ${./port/package.json} package.json
-        mkdir -p node_modules/@lowland
-        cp -r ${wasmpkgs.kernel} node_modules/@lowland/kernel
-        cp -r ${wasmpkgs.linux-guest.package} node_modules/@lowland/guest
+        mkdir -p node_modules
+        cp -r ${wasmpkgs.lowland.package} node_modules/lowland
         timeout --kill-after=5 300 node boot.mjs ${port.packages.${system}.image} > output
         cat output
         grep -qx 'Hello from Linux on wasm!' output

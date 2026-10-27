@@ -1,8 +1,6 @@
 {
   bootMode,
-  bytes,
-  kernel,
-  linux-guest,
+  lowland,
   node-workspace,
   pkgs,
 }:
@@ -25,11 +23,13 @@ pkgs.stdenvNoCC.mkDerivation {
   buildPhase = ''
     runHook preBuild
 
-    cp -r ${bytes}/dist packages/bytes/dist
-    cp -r ${kernel}/dist packages/kernel/dist
-    cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
-    cp -r ${linux-guest.package}/dist packages/linux-guest/dist
-    cp ${linux-guest.package}/agent.cpio packages/linux-guest/agent.cpio
+    ${node-workspace.installBuilt {
+      lowland = lowland.dist;
+      assets = [
+        lowland.assets.kernel
+        lowland.assets.agent
+      ];
+    }}
 
     pnpm --filter=@lowland/site check
     pnpm --filter=@lowland/site build

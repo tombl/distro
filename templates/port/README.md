@@ -34,14 +34,12 @@ npm install
 node boot.mjs result
 ```
 
-Until `@lowland/kernel` and `@lowland/guest` have a release on npm, the
-registry only holds empty placeholders. Install the packages from the distro
-flake instead:
+Until `lowland` has a release on npm, the registry only holds an empty
+placeholder. Install the package from the distro flake instead:
 
 ```sh
-kernel=$(nix build --no-link --print-out-paths github:tombl/distro#kernel)
-guest=$(nix build --no-link --print-out-paths github:tombl/distro#linux-guest)
-npm install "$kernel/package.tgz" "$guest/package.tgz"
+lowland=$(nix build --no-link --print-out-paths github:tombl/distro#lowland)
+npm install "$lowland/package.tgz"
 ```
 
 The script attaches the image as a block device, boots a machine with the

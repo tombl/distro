@@ -1,5 +1,5 @@
-import { bootMachine } from "@lowland/kernel";
-import { guestAgent } from "@lowland/guest";
+import { bootMachine } from "lowland/machine";
+import { guestAgent } from "lowland/guest";
 
 const guest = guestAgent({
   mounts: [{ path: "/", source: process.argv[2] ?? "result", type: "erofs", mode: "overlay" }],

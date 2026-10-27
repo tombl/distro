@@ -1,8 +1,8 @@
-# The builder image shipped by @lowland/image/build. It is only booted by the
+# The builder image shipped for lowland/image/build. It is only booted by the
 # build helper, which runs lowland-build-image inside it, so it contains just
 # the tools that script uses. Rebuild it with
-# `nix build .#lowland-image.builderImage` and copy the result to
-# packages/image/builder.erofs, or run `pnpm artifacts`.
+# `nix build .#lowland.builderImage` and copy the result to
+# packages/lowland/assets/builder.erofs, or run `pnpm artifacts`.
 {
   apk-tools,
   busybox,
