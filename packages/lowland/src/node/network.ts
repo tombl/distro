@@ -74,18 +74,24 @@ export function nodeNetwork(): Required<NetworkOptions> {
       const socket = createConnection({
         host: session.target.hostname,
         port: session.target.port,
-        signal: session.signal,
         allowHalfOpen: true,
       });
+      // An abort destroys the socket whenever it comes. The network errors
+      // a live flow's streams as it aborts, but a flow that has finished
+      // can still be flushing to a peer that stopped reading, and only the
+      // socket's destruction ends that write.
+      const abort = () => socket.destroy();
+      session.signal.addEventListener("abort", abort, { once: true });
       try {
-        await once(socket, "connect");
+        await once(socket, "connect", { signal: session.signal });
         await Promise.all([
           session.readable.pipeTo(Writable.toWeb(socket) as WritableStream<Uint8Array>),
           socket_readable(socket).pipeTo(session.writable),
         ]);
       } finally {
-        // An abort can win the race with the connection, which Node then
-        // still establishes.
+        session.signal.removeEventListener("abort", abort);
+        // However the session ended. An abort can win the race with the
+        // connection, which Node then still establishes.
         socket.destroy();
       }
     },
