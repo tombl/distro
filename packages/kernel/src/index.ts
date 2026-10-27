@@ -21,6 +21,12 @@ import type { ForwardedInitMessage, InitMessage, WorkerMessage } from "./worker.
 export { bootConsole } from "./plugin.ts";
 export type { Device } from "./virtio/device.ts";
 export { blockDevice, type BlockDeviceOptions, type BlockStorage } from "./virtio/block.ts";
+export {
+  type DiskFileHandle,
+  type DiskSource,
+  diskStorage,
+  type DiskStorageOptions,
+} from "./disk.ts";
 export { type Endpoint, serveDevice, serveDeviceError, workerDevice } from "./virtio/remote.ts";
 export { type ConsoleDevice, consoleDevice } from "./virtio/console.ts";
 export { entropyDevice } from "./virtio/entropy.ts";

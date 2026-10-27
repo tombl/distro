@@ -16,6 +16,9 @@
   read-only EROFS root with BusyBox, apk-tools and CA certificates, set up for
   the published apk repository. `rootImage(source)` attaches a custom EROFS or
   ext4 image from a path, URL, `FileHandle`, bytes, `Blob` or `Response`.
+- `@lowland/kernel`'s `diskStorage(source, { writable })` opens a path, URL,
+  `FileHandle`, bytes, `Blob`, `Response` or `BlockStorage` as block storage,
+  rejecting only HTML error pages and partial sectors.
 - `buildImage()` from `@lowland/image/build` builds custom images in Node from
   apk packages, host files and symlinks, in a builder machine shipped with the
   package. Images are compressed with deflate by default; `compression`
