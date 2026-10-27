@@ -377,6 +377,46 @@ test("powering off unmounts every filesystem, however many there are", async () 
   }
 });
 
+test("finds disks by their exact serials", async () => {
+  const { agent: guest, machine } = await boot({ mounts: [root_mount()] }, [
+    other_disks(
+      { serial: "data disk" },
+      { serial: "data disk " },
+      { serial: " data disk" },
+      { serial: "twin" },
+      { serial: "twin" },
+    ),
+  ]);
+  try {
+    const devices = await Promise.all(
+      ["data disk", "data disk ", " data disk"].map((serial) => guest.disk(serial)),
+    );
+    assert.equal(new Set(devices).size, 3);
+    // The kernel reports the serial as it is: spaces kept, no newline.
+    const name = devices[1]!.slice("/dev/".length);
+    assert.equal(await guest.fs.readTextFile(`/sys/block/${name}/serial`), "data disk ");
+    await assert.rejects(guest.disk("twin"), /more than one disk has the serial "twin"/);
+    await assert.rejects(
+      guest.disk("data"),
+      (error) => error instanceof SystemError && error.code === "ENODEV",
+    );
+  } finally {
+    await close(machine);
+  }
+});
+
+test("rejects a mount table disk whose serial another disk shares", async () => {
+  await assert.rejects(
+    boot({ mounts: [root_mount(), { path: "/data", source: blank_disk(), type: "ext4" }] }, [
+      other_disks({ serial: "m1" }),
+    ]),
+    (error) =>
+      error instanceof GuestBootError &&
+      error.step === "mounting m1 (1048576 bytes) at /data" &&
+      /more than one disk has the serial "m1"/.test(error.message),
+  );
+});
+
 test("runs a custom boot", async () => {
   const steps: string[] = [];
   const { agent: guest, machine } = await boot({

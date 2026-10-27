@@ -163,8 +163,10 @@ export interface GuestAgent extends MachinePluginProvider {
   /**
    * The guest device node of the block device with this serial, such as
    * `/dev/vdb`. The mount table's disks have the serials `m0`, `m1`, and so
-   * on, after their index in `mounts`. Needs sysfs at `/sys`. Rejects with a
-   * `SystemError` whose code is `"ENODEV"` if no disk has the serial.
+   * on, after their index in `mounts`. The serial must match exactly, spaces
+   * included. Needs sysfs at `/sys`. Rejects with a `SystemError` whose code
+   * is `"ENODEV"` if no disk has the serial, and with an `Error` if more than
+   * one does.
    */
   disk(serial: string): Promise<string>;
 }
@@ -385,21 +387,37 @@ async function make_directory(guest: GuestAgent, path: string) {
   }
 }
 
-/** Every block device that has a serial, by serial. */
-async function find_disks(guest: GuestAgent): Promise<Map<string, string>> {
-  const disks = new Map<string, string>();
+/**
+ * Every block device that has a serial, by serial. A serial is compared
+ * exactly: virtio-blk's sysfs attribute is the ID up to its first NUL, with
+ * no newline, and printable spaces are part of it.
+ */
+async function find_disks(guest: GuestAgent): Promise<Map<string, string[]>> {
+  const disks = new Map<string, string[]>();
   for await (const entry of guest.fs.readDir("/sys/block")) {
     let serial: string;
     try {
-      serial = (await guest.fs.readTextFile(`/sys/block/${entry.name}/serial`)).trim();
+      serial = await guest.fs.readTextFile(`/sys/block/${entry.name}/serial`);
     } catch (error) {
       // Only virtio block devices have a serial.
       if (error instanceof SystemError && error.code === "ENOENT") continue;
       throw error;
     }
-    if (serial && !disks.has(serial)) disks.set(serial, `/dev/${entry.name}`);
+    if (serial) disks.set(serial, [...(disks.get(serial) ?? []), `/dev/${entry.name}`]);
   }
   return disks;
+}
+
+/** The one device with `serial` among `disks`. */
+function disk_with_serial(disks: Map<string, string[]>, serial: string): string {
+  const devices = disks.get(serial) ?? [];
+  if (devices.length > 1) {
+    throw new Error(
+      `more than one disk has the serial ${JSON.stringify(serial)}: ${devices.join(", ")}`,
+    );
+  }
+  if (!devices[0]) throw new SystemError(E.NODEV);
+  return devices[0];
 }
 
 /** The filesystems the guest kernel can mount from a block device, as BusyBox `mount` reads them. */
@@ -431,7 +449,7 @@ async function boot_mount_table(
   );
   const disks = has_disks
     ? await step(client, "finding the disks", () => find_disks(guest))
-    : new Map<string, string>();
+    : new Map<string, string[]>();
   let filesystems: Promise<string[]> | undefined;
 
   const root = mounts.find((mount) => mount.path === "/");
@@ -451,9 +469,7 @@ async function boot_mount_table(
         device = `m${index}`;
         type ??= "virtiofs";
       } else {
-        const found = disks.get(`m${index}`);
-        if (!found) throw new SystemError(E.NODEV);
-        device = found;
+        device = disk_with_serial(disks, `m${index}`);
       }
       const target = `${prefix}${mount.path === "/" ? "" : mount.path}` || "/";
       const mode = mount.mode ?? "rw";
@@ -688,9 +704,7 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       return { status, stdout, stderr };
     },
     async disk(serial) {
-      const device = (await find_disks(agent)).get(serial);
-      if (!device) throw new SystemError(E.NODEV);
-      return device;
+      return disk_with_serial(await find_disks(agent), serial);
     },
     [machinePlugin]() {
       return plugin;
