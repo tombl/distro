@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Thomas Stokes <git@tombl.dev>
+Date: Sun, 25 Oct 2026 15:38:47 +0800
+Subject: [PATCH] Use 8-byte va_arg slots on wasm64 Linux
+
+wasm64 Linux follows other LP64 Linux targets with word-sized variadic
+slots, matching clang and the backend for wasm64-*-linux in the
+tombl/llvm-project fork. musl reads long-sized words from the variadic
+arguments of fcntl, ioctl, prctl and syscall whatever the caller passed,
+so 4-byte packing breaks them. Other wasm targets keep 4-byte slots.
+---
+ compiler/rustc_codegen_llvm/src/va_arg.rs | 18 +++++++++++++++++-
+ 1 file changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/compiler/rustc_codegen_llvm/src/va_arg.rs b/compiler/rustc_codegen_llvm/src/va_arg.rs
+index a64452db..34b4cd4d 100644
+--- a/compiler/rustc_codegen_llvm/src/va_arg.rs
++++ b/compiler/rustc_codegen_llvm/src/va_arg.rs
+@@ -9,7 +9,7 @@
+ use rustc_middle::bug;
+ use rustc_middle::ty::Ty;
+ use rustc_middle::ty::layout::{HasTyCtxt, LayoutOf, TyAndLayout};
+-use rustc_target::spec::{Arch, Env, LlvmAbi, RustcAbi};
++use rustc_target::spec::{Arch, Env, LlvmAbi, Os, RustcAbi};
+ 
+ use crate::builder::Builder;
+ use crate::llvm::Value;
+@@ -1180,6 +1180,22 @@ pub(super) fn emit_va_arg<'ll, 'tcx>(
+             AllowHigherAlign::Yes,
+             ForceRightAdjust::No,
+         ),
++        // wasm64 Linux uses 8-byte variadic slots like other LP64 Linux
++        // targets: musl reads `long`-sized words from the variadic arguments
++        // of fcntl, ioctl, prctl and syscall regardless of the caller's type.
++        Arch::Wasm64 if target.os == Os::Linux => emit_ptr_va_arg(
++            bx,
++            addr,
++            target_ty,
++            if layout.is_aggregate() || layout.is_zst() || layout.is_1zst() {
++                PassMode::Indirect
++            } else {
++                PassMode::Direct
++            },
++            SlotSize::Bytes8,
++            AllowHigherAlign::Yes,
++            ForceRightAdjust::No,
++        ),
+         Arch::Wasm32 | Arch::Wasm64 => emit_ptr_va_arg(
+             bx,
+             addr,
