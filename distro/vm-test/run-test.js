@@ -111,12 +111,23 @@ function observeMemoryGrowth(stage) {
 
 function consoleOutput({ failWhenClosed }) {
   const decoder = new LineDecoder();
+  // The guest's terminal ends lines with CRLF, and a Nix build log takes the
+  // carriage return as a return to the start of the line, which blanks every
+  // console line, failure reasons included. Echo LF line endings instead.
+  let carriageReturn = false;
   return new WritableStream({
     write(chunk) {
-      process.stdout.write(chunk);
+      const echoed = [];
+      for (const byte of chunk) {
+        if (carriageReturn && byte !== 0x0a) echoed.push(0x0d);
+        carriageReturn = byte === 0x0d;
+        if (!carriageReturn) echoed.push(byte);
+      }
+      process.stdout.write(Uint8Array.from(echoed));
       for (const line of decoder.write(chunk)) consumeLine(line);
     },
     close() {
+      if (carriageReturn) process.stdout.write("\r");
       for (const line of decoder.close()) consumeLine(line);
       if (failWhenClosed) {
         finish({
