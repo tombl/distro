@@ -31,8 +31,10 @@ floods broadcasts like a hardware one, so guests on the same network can use any
 Ethernet between themselves. All of them run in the same process as the switch.
 
 A network is the subnet `192.0.2.0/24`, a range reserved for documentation, so it does not
-collide with real networks. Attachments get `192.0.2.2`, `192.0.2.3` and so on, in order, and
-addresses are not reused. `attachment.address` reports the address. There is no DHCP: the
+collide with real networks. A machine takes the lowest free address, `192.0.2.2`, `192.0.2.3`
+and so on, when it configures its attachment, and `attachment.address` reports it from then on.
+A machine that fails before it has booted gives its address back, but an address that a machine
+booted with is not reused. There is no DHCP: the
 attachment adds the kernel argument `ip=`, and the kernel itself configures `lo`, `eth0`, the
 default route and the hostname `lowland` before `/init` runs. So the network needs no guest
 agent and nothing from the image. The kernel lists the nameserver in `/proc/net/pnp`, which

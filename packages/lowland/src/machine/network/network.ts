@@ -253,12 +253,16 @@ export interface Network extends Disposable {
    */
   readonly gateway: string;
   /**
-   * Gives a machine the next address on this network. The attachment is a
-   * machine plugin: it adds a virtio-net NIC, which the guest sees as `eth0`,
-   * and the kernel argument `ip=`, with which the kernel itself configures
-   * `lo`, `eth0`, the default route through the gateway, the hostname
-   * `lowland` and the nameserver in `/proc/net/pnp`, before `/init` runs. So
-   * the network needs nothing from the guest's userspace.
+   * Puts a machine on this network. The attachment is a machine plugin: when
+   * a machine configures it, it takes the lowest free address and adds a
+   * virtio-net NIC, which the guest sees as `eth0`, and the kernel argument
+   * `ip=`, with which the kernel itself configures `lo`, `eth0`, the default
+   * route through the gateway, the hostname `lowland` and the nameserver in
+   * `/proc/net/pnp`, before `/init` runs. So the network needs nothing from
+   * the guest's userspace.
+   *
+   * If the machine fails before it has booted, its address is free again.
+   * An address that a machine has booted with is never handed out again.
    *
    * An attachment belongs to one machine, and a machine takes one network
    * attachment, because `ip=` configures one interface: configuring a second
@@ -302,7 +306,11 @@ export interface Network extends Disposable {
  * there. Pass it to `bootMachine()` with the machine's other plugins.
  */
 export interface NetworkAttachment extends MachinePluginProvider {
-  /** The guest's address on the network, e.g. `"192.0.2.2"`. */
+  /**
+   * The guest's address on the network, e.g. `"192.0.2.2"`. A machine
+   * assigns it when it configures the attachment, so reading it before then
+   * throws.
+   */
   readonly address: string;
   /** Connects to a port on this guest by calling `network.connect` with its address. */
   connect(options: Omit<TcpConnectOptions, "hostname">): Promise<TcpConnection>;
@@ -637,7 +645,9 @@ export function createNetwork({
   const tcp_sessions = new Set<TcpFlow>();
   const udp_flows = new Map<string, UdpFlow>();
   const ip_reassemblies = new Map<string, IpReassembly>();
-  let next_address = 2;
+  // Host parts of addresses that an attachment holds, or that a machine
+  // booted with and so are never handed out again.
+  const taken_addresses = new Set<number>();
   let next_port = 49152;
   let ip_identifier = 0;
   let closed = false;
@@ -1470,42 +1480,29 @@ export function createNetwork({
     });
   }
 
+  function take_address() {
+    for (let suffix = 2; suffix <= 254; suffix++) {
+      if (taken_addresses.has(suffix)) continue;
+      taken_addresses.add(suffix);
+      return suffix;
+    }
+    throw new Error("network has no guest addresses left");
+  }
+
   function attach(): NetworkAttachment {
     if (closed) throw new Error("network is closed");
-    if (next_address > 254) throw new Error("network has no guest addresses left");
-    const suffix = next_address++;
-    const address = `192.0.2.${suffix}`;
-    const ip = ipv4_number(address);
-    const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
-    // Joined to the switch only once a machine configures the NIC, so an
-    // attachment that never reaches a machine holds nothing but its address.
+    // The address is taken when a machine configures the attachment, and
+    // given back if that machine fails before it has booted, so failed boots
+    // do not use the network's addresses up.
+    let attachment: Attachment | undefined;
     let attached = false;
-    const attachment: Attachment = {
-      address,
-      ip,
-      macAddress,
-      close() {
-        if (!attached) return;
-        attached = false;
-        attachments.delete(ip);
-        abort_tcp_flows(new Error("guest detached from network"), attachment);
-        for (const flow of udp_flows.values()) {
-          if (flow.guest === attachment) {
-            flow.closed = true;
-            udp_flows.delete(flow.key);
-            flow.controller.close();
-          }
-        }
-        for (const [key, reassembly] of ip_reassemblies) {
-          if (reassembly.source === ip) discard_ip_reassembly(key);
-        }
-      },
-    };
-    let configured = false;
+    let booted = false;
     const plugin: MachinePlugin = {
       configure(setup) {
-        if (configured) {
-          throw new Error(`network attachment ${address} is already attached to a machine`);
+        if (attachment) {
+          throw new Error(
+            `network attachment ${attachment.address} is already attached to a machine`,
+          );
         }
         if (networked_machines.has(setup)) {
           throw new Error(
@@ -1513,14 +1510,43 @@ export function createNetwork({
           );
         }
         if (closed) throw new Error("network is closed");
-        configured = true;
+        const suffix = take_address();
         networked_machines.add(setup);
-        const device = ethernetDevice(ethernet, { macAddress });
+        const address = `192.0.2.${suffix}`;
+        const ip = ipv4_number(address);
+        const macAddress: MacAddress = [0x02, 0, 0, 0, 0, suffix];
+        const configured: Attachment = {
+          address,
+          ip,
+          macAddress,
+          close() {
+            if (!attached) return;
+            attached = false;
+            attachments.delete(ip);
+            if (!booted) taken_addresses.delete(suffix);
+            abort_tcp_flows(new Error("guest detached from network"), configured);
+            for (const flow of udp_flows.values()) {
+              if (flow.guest === configured) {
+                flow.closed = true;
+                udp_flows.delete(flow.key);
+                flow.controller.close();
+              }
+            }
+            for (const [key, reassembly] of ip_reassemblies) {
+              if (reassembly.source === ip) discard_ip_reassembly(key);
+            }
+          },
+        };
+        attachment = configured;
         attached = true;
-        attachments.set(ip, attachment);
-        void device.closed.finally(() => attachment.close()).catch(() => {});
+        attachments.set(ip, configured);
+        const device = ethernetDevice(ethernet, { macAddress });
+        void device.closed.finally(() => configured.close()).catch(() => {});
         setup.devices.add(device);
         setup.args.add(kernel_ip_argument(address));
+      },
+      booted() {
+        booted = true;
       },
     };
 
@@ -1529,12 +1555,24 @@ export function createNetwork({
     function connect(
       options: Omit<TcpConnectOptions, "hostname"> | Omit<UdpConnectOptions, "hostname">,
     ) {
-      if (options.transport === "udp") return connect_udp({ ...options, hostname: address });
-      return connect_tcp({ ...options, hostname: address });
+      // Once detached, the address may belong to another machine.
+      if (!attached) {
+        return Promise.reject(
+          new Error(`${attachment?.address ?? "the attachment"} is not attached to this network`),
+        );
+      }
+      const hostname = attachment!.address;
+      if (options.transport === "udp") return connect_udp({ ...options, hostname });
+      return connect_tcp({ ...options, hostname });
     }
 
     return {
-      address,
+      get address() {
+        if (!attachment) {
+          throw new Error("a network attachment has no address until a machine configures it");
+        }
+        return attachment.address;
+      },
       connect,
       [machinePlugin]() {
         return plugin;

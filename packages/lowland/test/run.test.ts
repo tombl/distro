@@ -473,18 +473,25 @@ describe("Linux", () => {
   });
 
   it("leaves the caller's network untouched when the machine cannot boot", async () => {
-    using network = createNetwork({
-      connectTcp: () => Promise.reject(new Error("unused")),
-      resolveDns: () => Promise.resolve([]),
-    });
-    await assert.rejects(
-      Linux.create({ image: join(scratch.path, "missing.erofs"), network }),
-      /ENOENT/,
-    );
+    using network = createNetwork();
+    // Failing before the network's plugin configures, and after it.
+    const failing = { configure: () => Promise.reject(new Error("a later plugin failed")) };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await assert.rejects(
+        Linux.create({ image: join(scratch.path, "missing.erofs"), network }),
+        /ENOENT/,
+      );
+      await assert.rejects(
+        Linux.create({ image: rootImage(), network, plugins: [failing] }),
+        /a later plugin failed/,
+      );
+    }
     await assert.rejects(
       network.connect({ hostname: "192.0.2.2", port: 1, transport: "udp" }),
       /not attached/,
     );
+    await using linux = await Linux.create({ image: rootImage(), network });
+    assert.equal(linux.network?.address, "192.0.2.2");
   });
 
   it("mounts a disk without telling it apart from a root image", async () => {
