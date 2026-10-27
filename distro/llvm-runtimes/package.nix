@@ -6,8 +6,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "llvm-project";
-    rev = "9aaceb42fef4f924a00126e0d66140d01482921c";
-    hash = "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=";
+    rev = "ddf026705cc567e8119866b0403fec2b034b6d97";
+    hash = "sha256-QeLr6mblVN3ch8/F7cqP9Sk4m+vjvRKWAVQvVPIE9Uo=";
   },
   llvm-toolchain-unwrapped,
   sysroot-base,
@@ -36,7 +36,7 @@ let
     "-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF"
     "-DCMAKE_SKIP_BUILD_RPATH=ON"
     "-DCMAKE_SKIP_INSTALL_RPATH=ON"
-    "-DLLVM_ENABLE_RUNTIMES=compiler-rt;libcxx;libcxxabi"
+    "-DLLVM_ENABLE_RUNTIMES=compiler-rt;libunwind;libcxx;libcxxabi"
     "-DLLVM_DEFAULT_TARGET_TRIPLE=${platform.targetTriple}"
     "-DLLVM_BUILTIN_TARGETS=${platform.targetTriple}"
     "-DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON"
@@ -58,7 +58,18 @@ let
     "-DLIBCXX_USE_COMPILER_RT=ON"
     "-DLIBCXXABI_ENABLE_SHARED=OFF"
     "-DLIBCXXABI_USE_COMPILER_RT=ON"
-    "-DLIBCXXABI_USE_LLVM_UNWINDER=OFF"
+    # On wasm libunwind is only Unwind-wasm.c: the personality-call glue and
+    # _Unwind_RaiseException as a wasm `throw`. Folding it into libc++abi.a
+    # keeps the driver's -lc++ -lc++abi link line sufficient.
+    "-DLIBCXXABI_USE_LLVM_UNWINDER=ON"
+    "-DLIBCXXABI_ENABLE_STATIC_UNWINDER=ON"
+    "-DLIBCXXABI_STATICALLY_LINK_UNWINDER_IN_STATIC_LIBRARY=ON"
+    "-DLIBUNWIND_ENABLE_SHARED=OFF"
+    # libunwind's config.h treats any non-ELF, non-Mach-O target as Windows
+    # and spells exports __declspec(dllexport). Hiding symbols skips that
+    # branch, and visibility is meaningless in a static-only wasm link.
+    "-DLIBUNWIND_HIDE_SYMBOLS=ON"
+    "-DLIBUNWIND_USE_COMPILER_RT=ON"
   ];
 in
 

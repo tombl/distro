@@ -5,8 +5,8 @@
   src ? pkgs.fetchFromGitHub {
     owner = "tombl";
     repo = "llvm-project";
-    rev = "9aaceb42fef4f924a00126e0d66140d01482921c";
-    hash = "sha256-UXfcTGqVJsIVQHDSSF2tcRuM7zysJycaEsmCmlepVVM=";
+    rev = "ddf026705cc567e8119866b0403fec2b034b6d97";
+    hash = "sha256-QeLr6mblVN3ch8/F7cqP9Sk4m+vjvRKWAVQvVPIE9Uo=";
   },
 }:
 
