@@ -72,6 +72,14 @@ export class VirtioBus {
     };
   }
 
+  /**
+   * Detaches every device from a kernel that has gone, as a reset would, so
+   * that the next boot can attach them again.
+   */
+  async detach(): Promise<void> {
+    await Promise.all(this.#devices.map((device) => device.detach()));
+  }
+
   /** Shuts every device down, rejecting with the first failure. */
   async close(): Promise<void> {
     const results = await Promise.allSettled(this.#devices.map((device) => device.shutdown()));

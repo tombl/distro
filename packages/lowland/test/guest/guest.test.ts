@@ -8,6 +8,7 @@ import {
   bootMachine,
   diskStorage,
   type BlockStorage,
+  type MachineExit,
 } from "../../src/machine/index.ts";
 import type { MachinePlugin } from "../../src/machine/plugin.ts";
 import {
@@ -32,8 +33,7 @@ async function boot(options: GuestAgentOptions, plugins: readonly MachinePlugin[
 }
 
 async function close(machine: Awaited<ReturnType<typeof bootMachine>>) {
-  machine.close();
-  await machine.closed;
+  await machine.shutdown({ timeoutMs: 10_000 });
 }
 
 /** A disk with nothing on it. */
@@ -523,7 +523,7 @@ test("powering off unmounts every filesystem, however many there are", async () 
     // BusyBox poweroff's signal. It ends this session, so the kill may not
     // get to report back.
     await guest.run(["kill", "-USR2", "1"]).catch(() => {});
-    await machine.closed;
+    assert.deepEqual(await machine.exited, { reason: "poweroff" });
   } catch (error) {
     await close(machine);
     throw error;
@@ -653,7 +653,7 @@ test("init runs as PID 1's child, and its exit powers off cleanly", async () => 
     // The init's exit is the machine's power-off, which also ends this
     // session, so the kill may not get to report back.
     await guest.run(["kill", pid]).catch(() => {});
-    await machine.closed;
+    assert.deepEqual(await machine.exited, { reason: "poweroff" });
   } catch (error) {
     await close(machine);
     throw error;
@@ -677,21 +677,21 @@ test("reports an init that cannot start", async () => {
   );
 });
 
-test("closing before the agent is ready does not wait for it", async () => {
-  let machine_closed: Promise<void> | undefined;
-  const closer: MachinePlugin = {
+test("a machine killed before the agent is ready does not wait for it", async () => {
+  let machine_exited: Promise<MachineExit> | undefined;
+  const killer: MachinePlugin = {
     configure() {},
     booted(machine) {
-      machine_closed = machine.closed;
-      setTimeout(() => machine.close(), 0);
+      machine_exited = machine.exited;
+      setTimeout(() => machine.kill(), 0);
     },
   };
   await assert.rejects(
-    bootMachine({ cpus: 1, plugins: [closer, guestAgent({ mounts: [ext4_root_mount()] })] }),
-    /machine closed before guest agent became ready/,
+    bootMachine({ cpus: 1, plugins: [killer, guestAgent({ mounts: [ext4_root_mount()] })] }),
+    /machine ended \(kill\) before guest agent became ready/,
   );
-  assert(machine_closed);
-  await machine_closed;
+  assert(machine_exited);
+  assert.deepEqual(await machine_exited, { reason: "kill" });
 });
 
 async function read_back(disk: Uint8Array<ArrayBuffer>) {
@@ -703,12 +703,12 @@ async function read_back(disk: Uint8Array<ArrayBuffer>) {
   }
 }
 
-test("closing the machine keeps writes to an ext4 root", async (t) => {
-  await t.test("with close()", async () => {
+test("shutting the machine down keeps writes to an ext4 root", async (t) => {
+  await t.test("with shutdown()", async () => {
     const disk = new Uint8Array(ext4_rootfs);
     const { agent: guest, machine } = await boot({ mounts: [ext4_root_mount(disk)] });
     await guest.fs.writeTextFile("/close-sync-test", "closed\n");
-    await close(machine);
+    assert.deepEqual(await machine.shutdown(), { reason: "poweroff" });
     assert.equal(await read_back(disk), "closed\n");
   });
 
@@ -722,23 +722,23 @@ test("closing the machine keeps writes to an ext4 root", async (t) => {
     assert.equal(await read_back(disk), "disposed\n");
   });
 
-  await t.test("from a closing hook listed after the agent", async () => {
+  await t.test("from a power hook listed after the agent", async () => {
     const disk = new Uint8Array(ext4_rootfs);
     const guest = guestAgent({ mounts: [ext4_root_mount(disk)] });
     const late_writer: MachinePlugin = {
       configure() {},
-      async closing() {
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      async power() {
         await guest.fs.writeTextFile("/close-sync-test", "late\n");
+        return false;
       },
     };
     const machine = await bootMachine({ cpus: 1, plugins: [guest, late_writer] });
-    await close(machine);
+    assert.deepEqual(await machine.shutdown(), { reason: "poweroff" });
     assert.equal(await read_back(disk), "late\n");
   });
 });
 
-test("a sync stuck in host storage forces teardown", async () => {
+test("a shutdown stuck in host storage ends in a kill", async () => {
   const disk = new Uint8Array(ext4_rootfs);
   const stuck = Promise.withResolvers<void>();
   let hang = false;
@@ -758,15 +758,16 @@ test("a sync stuck in host storage forces teardown", async () => {
     },
   };
   const root: Mount = { path: "/", source: storage, type: "ext4" };
-  const guest = guestAgent({ mounts: [root], syncTimeoutMs: 1000 });
+  const guest = guestAgent({ mounts: [root] });
   const machine = await bootMachine({ cpus: 1, plugins: [guest] });
   await guest.fs.writeTextFile("/close-sync-test", "stuck\n");
   hang = true;
-  machine.close();
-  await assert.rejects(machine.closed, /did not sync its filesystems/);
+  const started = performance.now();
+  assert.deepEqual(await machine.shutdown({ timeoutMs: 1000 }), { reason: "kill" });
+  assert.ok(performance.now() - started < 5000);
 
   // The abandoned flush failing later reaches the finished machine as a no-op.
   stuck.reject(new Error("late flush failure"));
   await new Promise((resolve) => setTimeout(resolve, 100));
-  await assert.rejects(machine.closed, /did not sync its filesystems/);
+  assert.deepEqual(await machine.exited, { reason: "kill" });
 });

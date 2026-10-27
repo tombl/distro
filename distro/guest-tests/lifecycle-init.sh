@@ -20,6 +20,22 @@ case "$cmdline" in
   echo "lifecycle: powering off"
   exec /sbin/poweroff -f
   ;;
+*" lifecycle=power "*)
+  # An init without the agent: BusyBox's poweroff, halt and reboot signal
+  # PID 1 with USR2, USR1 and TERM, as the kernel's power button does by
+  # running /sbin/poweroff or /sbin/reboot.
+  trap 'echo "lifecycle: powering off"; exec /sbin/poweroff -f' USR1 USR2
+  trap 'echo "lifecycle: rebooting"; exec /sbin/reboot -f' TERM
+  echo "lifecycle: waiting for power"
+  while :; do
+    sleep 1000 &
+    wait $!
+  done
+  ;;
+*" lifecycle=reboot "*)
+  echo "lifecycle: rebooting"
+  exec /sbin/reboot -f
+  ;;
 *" lifecycle=network "*)
   # The kernel configured the network from ip= before this ran.
   echo "lifecycle: network"

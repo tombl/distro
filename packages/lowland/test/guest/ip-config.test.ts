@@ -45,8 +45,8 @@ async function with_guest(
   try {
     await fn(agent, attachment);
   } finally {
-    machine.close();
-    await machine.closed;
+    machine.kill();
+    await machine.exited;
   }
 }
 
@@ -112,7 +112,7 @@ test("an agent-less machine's network is configured before its init runs", async
       network.attach(),
     ],
   });
-  await machine.closed;
+  await machine.exited;
   assert.match(output, /^lifecycle: network\r?$/m);
   assert.match(output, /^hostname: lowland\r?$/m);
   assert.match(output, /^nameserver 192\.0\.2\.1\r?$/m);

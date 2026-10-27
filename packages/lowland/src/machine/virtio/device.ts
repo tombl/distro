@@ -57,6 +57,12 @@ export interface BusDevice {
   readonly queues: number;
   readonly closed: Promise<void>;
   attach(context: VirtioConnectionContext): ConnectedVirtioDevice;
+  /**
+   * Resets the device and forgets the kernel it was attached to, which has
+   * gone, so that a rebooted kernel can attach it again. Host state, such
+   * as storage, survives.
+   */
+  detach(): Promise<void>;
   /** Idempotently stops the device and releases its backend. */
   shutdown(): Promise<void>;
 }
@@ -122,6 +128,7 @@ export abstract class VirtioDevice implements BusDevice {
   #config_pending = false;
   #views: boolean;
   #on_error: (error: unknown) => void = () => {};
+  #connection: ConnectedVirtioDevice | undefined;
 
   constructor({
     id,
@@ -157,6 +164,12 @@ export abstract class VirtioDevice implements BusDevice {
 
   /** The guest reset the device: drop guest-owned state, keep host state. */
   protected reset(): void {}
+
+  /**
+   * The machine rebooted: the kernel the device was attached to has gone,
+   * after its reset. Drop whatever belongs to that boot.
+   */
+  protected restart(): void | PromiseLike<void> {}
 
   /** Synchronously starts whatever cancellation in-flight kicks need to settle. */
   protected stop(): void {}
@@ -237,9 +250,18 @@ export abstract class VirtioDevice implements BusDevice {
     return completion.promise;
   }
 
+  async detach(): Promise<void> {
+    const connection = this.#connection;
+    if (!connection) return;
+    this.#connection = undefined;
+    this.#attached = undefined;
+    await connection.reset();
+    if (!this.#stopped) await this.restart();
+  }
+
   attach(context: VirtioConnectionContext): ConnectedVirtioDevice {
     assert(!this.#stopped, "cannot attach a closed virtio device");
-    assert(!this.#attached, "virtio device is already attached");
+    assert(!this.#connection, "virtio device is already attached");
     this.#on_error = context.on_error;
     const queues: QueueState[] = [];
     const queue_state = (vq: number) =>
@@ -261,7 +283,7 @@ export abstract class VirtioDevice implements BusDevice {
       }
     };
 
-    return {
+    return (this.#connection = {
       set_features: (features) => {
         assert(
           features === this.features,
@@ -339,6 +361,6 @@ export abstract class VirtioDevice implements BusDevice {
         if (!this.#views) return Promise.resolve();
         return Promise.allSettled(this.#active).then(() => {});
       },
-    };
+    });
   }
 }

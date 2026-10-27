@@ -44,8 +44,8 @@ test("console preserves input queued before boot", { timeout: 45_000 }, async (t
       consoleDevice(input, output_sink(output)),
     ],
   });
-  t.after(() => machine.close());
+  t.after(() => machine.kill());
 
-  await machine.closed;
+  assert.deepEqual(await machine.exited, { reason: "poweroff" });
   assert.match(output.text, /console-input: queued before boot/, output.text);
 });

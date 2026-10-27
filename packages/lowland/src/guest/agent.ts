@@ -43,16 +43,11 @@ function load_agent_initramfs() {
 
 async function wait_for_guest(client: GuestClientCapabilities, machine: Machine) {
   let machine_ended = false;
-  const ended = machine.closed.then(
-    () => {
-      machine_ended = true;
-      throw new Error("machine closed before guest agent became ready");
-    },
-    (error) => {
-      machine_ended = true;
-      throw error;
-    },
-  );
+  const ended = machine.exited.then((exit) => {
+    machine_ended = true;
+    if (exit.reason === "crash") throw exit.error;
+    throw new Error(`machine ended (${exit.reason}) before guest agent became ready`);
+  });
 
   const deadline = performance.now() + 30_000;
   let failure: unknown;
@@ -67,21 +62,6 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
   } while (performance.now() < deadline);
   throw new Error("guest agent did not become ready", { cause: failure });
-}
-
-async function sync_before_close(client: GuestClientCapabilities, timeoutMs: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("guest did not sync its filesystems before close")),
-      timeoutMs,
-    );
-  });
-  try {
-    await Promise.race([client.sync(), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {
@@ -212,11 +192,6 @@ export interface GuestAgentOptions {
    * `boot` that calls `switchRoot()`.
    */
   init?: readonly string[];
-  /**
-   * How long `machine.close()` waits for the guest to sync its filesystems
-   * before forcing teardown. Defaults to 30 000 ms.
-   */
-  syncTimeoutMs?: number;
 }
 
 /**
@@ -652,10 +627,9 @@ async function delete_initramfs(guest: GuestAgent) {
  * the root, or it runs `options.boot`. `bootMachine()` resolves once the
  * guest has booted. A failed step rejects with a {@link GuestBootError}.
  *
- * `machine.close()` first syncs the guest's filesystems through a ready
- * agent, waiting at most `syncTimeoutMs`; if that fails, teardown is forced
- * and `machine.closed` rejects. Closing before the agent is ready skips the
- * sync.
+ * The agent is the guest's PID 1. On `machine.shutdown()` or a guest's
+ * `poweroff`, it ends every process, syncs and unmounts the filesystems,
+ * then powers off; `reboot` does the same, then reboots.
  *
  * @example Boot the canonical image beneath a writable overlay
  * ```ts
@@ -685,7 +659,6 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       throw new TypeError("init needs a mount at / or a boot that calls switchRoot()");
     }
   }
-  const sync_timeout = options.syncTimeoutMs ?? 30_000;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
   let configured = false;
@@ -785,11 +758,6 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
     },
     async booted(machine) {
       await wait(machine);
-    },
-    async closing() {
-      // Readiness has its own deadline; waiting for it here would leave close
-      // unbounded, and an agent that never answered has written nothing.
-      if (is_ready) await sync_before_close(client, sync_timeout);
     },
   };
 

@@ -324,9 +324,9 @@ guest_test("virtio-fs", async (_t, fixture) => {
   backend.destroyGate = new Promise((resolve) => {
     finishDestroy = resolve;
   });
-  guest.machine.close();
+  void guest.machine.shutdown({ timeoutMs: 10_000 });
   let closed = false;
-  void guest.machine.closed.then(() => {
+  void guest.machine.exited.then(() => {
     closed = true;
   });
   try {
@@ -338,8 +338,8 @@ guest_test("virtio-fs", async (_t, fixture) => {
   } finally {
     finishDestroy();
   }
-  await guest.machine.closed;
-  guest.machine.close();
+  assert.deepEqual(await guest.machine.exited, { reason: "poweroff" });
+  guest.machine.kill();
   assert.equal(backend.destroys, 1);
   void holdingMovedDirectory;
   void held;

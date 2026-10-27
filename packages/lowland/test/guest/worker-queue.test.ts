@@ -56,8 +56,8 @@ test(
       clearInterval(debug);
       worker_queue.limit = Infinity;
       drain_worker_queue();
-      machine.close();
-      await machine.closed;
+      machine.kill();
+      await machine.exited;
     }
   },
 );

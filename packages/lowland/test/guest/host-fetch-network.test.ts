@@ -53,8 +53,8 @@ async function with_guest(options: NetworkOptions, fn: (guest: NetworkedAgent) =
     await fn(guest);
   } finally {
     network.close();
-    machine.close();
-    await machine.closed;
+    machine.kill();
+    await machine.exited;
   }
 }
 

@@ -107,15 +107,3 @@ export async function run_machine_booted(
 ): Promise<void> {
   for (const plugin of plugins) await plugin.booted?.(machine);
 }
-
-export async function run_machine_closing(plugins: readonly MachinePlugin[]): Promise<void> {
-  let failure: { error: unknown } | undefined;
-  for (const plugin of plugins.toReversed()) {
-    try {
-      await plugin.closing?.();
-    } catch (error) {
-      failure ??= { error };
-    }
-  }
-  if (failure) throw failure.error;
-}

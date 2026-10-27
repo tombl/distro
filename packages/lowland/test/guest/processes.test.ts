@@ -367,8 +367,8 @@ test("guest without a console", async (t) => {
 
     await t.test("rejects missing programs", () => assert_missing_program(guest));
   } finally {
-    machine.close();
-    await machine.closed;
+    machine.kill();
+    await machine.exited;
   }
 });
 
@@ -465,8 +465,8 @@ guest_test("session teardown", async (t) => {
         second.close();
       }
     } finally {
-      machine.close();
-      await machine.closed;
+      machine.kill();
+      await machine.exited;
     }
   });
 });
@@ -618,8 +618,8 @@ test("agent protocol", async (t) => {
       }
     });
   } finally {
-    machine.close();
-    await machine.closed;
+    machine.kill();
+    await machine.exited;
   }
 });
 
@@ -642,7 +642,7 @@ test("reports failed spawns in a machine without a console", async () => {
       assert.deepEqual(result.status, { success: true, code: 0, signal: null });
     }
   } finally {
-    machine.close();
-    await machine.closed;
+    machine.kill();
+    await machine.exited;
   }
 });

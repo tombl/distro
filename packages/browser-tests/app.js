@@ -56,8 +56,8 @@ async function withGuest(scenario, options) {
   try {
     return await scenario(agent);
   } finally {
-    machine.close();
-    await machine.closed;
+    const exit = await machine.shutdown({ timeoutMs: 10_000 });
+    if (exit.reason !== "poweroff") throw new Error(`machine did not power off: ${exit.reason}`);
   }
 }
 
@@ -276,8 +276,8 @@ globalThis.closeRemoteMemoryLifecycle = async () => {
   if (!lifecycleGuest) return;
   const { machine } = lifecycleGuest;
   lifecycleGuest = undefined;
-  machine.close();
-  await machine.closed;
+  machine.kill();
+  await machine.exited;
 };
 
 async function fetchBytes(path) {
@@ -335,16 +335,19 @@ async function runInstalledSystem(path, cpus) {
       consoleDevice(input, outputStream()),
     ],
   });
-  void machine.closed.then(
-    () => reject(new Error("machine closed before scheduler handoff test completed")),
-    reject,
+  void machine.exited.then((exit) =>
+    reject(
+      exit.reason === "crash"
+        ? exit.error
+        : new Error(`machine ended (${exit.reason}) before the test completed`),
+    ),
   );
 
   try {
     await completed;
   } finally {
-    machine.close();
-    await machine.closed.catch(() => {});
+    machine.kill();
+    await machine.exited;
   }
 }
 

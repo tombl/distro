@@ -2,6 +2,7 @@ import {
   bootConsole,
   bootMachine,
   consoleDevice,
+  type MachineExit,
   MachinePanicError,
 } from "../../src/machine/index.ts";
 import type { MachinePlugin } from "../../src/machine/plugin.ts";
@@ -40,23 +41,25 @@ async function run_machine(mode: string) {
 test("guest lifecycle terminates the host", async (t) => {
   await t.test("resolves after poweroff", async () => {
     const { machine } = await run_machine("poweroff");
-    await machine.closed;
+    assert.deepEqual(await machine.exited, { reason: "poweroff" });
   });
 
   await t.test("rejects after a panic with diagnostics visible", async () => {
     const { machine, output } = await run_machine("panic");
-    await assert.rejects(machine.closed, MachinePanicError);
+    const exit = await machine.exited;
+    assert.equal(exit.reason, "crash");
+    assert.ok(exit.reason === "crash" && exit.error instanceof MachinePanicError);
     assert.match(output.text, /Kernel panic - not syncing/);
   });
 });
 
-test("a booted hook failure closes the machine before bootMachine rejects", async () => {
+test("a booted hook failure ends the machine before bootMachine rejects", async () => {
   const failure = new Error("booted hook failed");
-  let machine_closed: Promise<void> | undefined;
+  let machine_exited: Promise<MachineExit> | undefined;
   const plugin: MachinePlugin = {
     configure() {},
     booted(machine) {
-      machine_closed = machine.closed;
+      machine_exited = machine.exited;
       throw failure;
     },
   };
@@ -68,6 +71,6 @@ test("a booted hook failure closes the machine before bootMachine rejects", asyn
     }),
     (error) => error === failure,
   );
-  assert(machine_closed);
-  await machine_closed;
+  assert(machine_exited);
+  assert.deepEqual(await machine_exited, { reason: "crash", error: failure });
 });

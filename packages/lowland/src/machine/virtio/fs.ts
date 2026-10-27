@@ -806,36 +806,62 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
     collect_record(handle.node);
   }
 
-  function finalize() {
-    if (finalize_promise) return finalize_promise;
-    finalize_promise = (async () => {
-      let failed = false;
-      let first_error: unknown;
-      for (const [fh, handle] of handles) {
-        try {
-          if (handle.directory) {
-            await filesystem.releasedir?.(handle.node.node, handle.handle);
-          } else {
-            await filesystem.release?.(handle.node.node, handle.handle);
-          }
-        } catch (error) {
-          if (!failed) {
-            failed = true;
-            first_error = error;
-          }
-        } finally {
-          remove_handle(fh, handle);
-        }
-      }
+  // Ends the guest's FUSE session: releases every handle it left open and
+  // forgets its lookups, since the next session starts again from INIT. The
+  // guest's DESTROY does this, and so does a reboot, which sends none.
+  // Session ends run one at a time: a kill can close the device while a
+  // reboot's end is still releasing handles.
+  let session_ends: Promise<void> = Promise.resolve();
+  function end_session() {
+    const ending = session_ends.then(release_session);
+    session_ends = ending.catch(() => {});
+    return ending;
+  }
+
+  async function release_session() {
+    let failed = false;
+    let first_error: unknown;
+    for (const [fh, handle] of handles) {
       try {
-        await filesystem.destroy?.();
+        if (handle.directory) {
+          await filesystem.releasedir?.(handle.node.node, handle.handle);
+        } else {
+          await filesystem.release?.(handle.node.node, handle.handle);
+        }
       } catch (error) {
         if (!failed) {
           failed = true;
           first_error = error;
         }
+      } finally {
+        remove_handle(fh, handle);
       }
-      if (failed) throw first_error;
+    }
+    for (const record of records.values()) {
+      if (record === root) continue;
+      records.delete(record.id);
+      by_node.delete(record.node);
+    }
+    root.children = 0;
+    if (failed) throw first_error;
+  }
+
+  // Ends the last session and destroys the filesystem, once, when the
+  // device closes.
+  function finalize() {
+    finalize_promise ??= (async () => {
+      let failure: { error: unknown } | undefined;
+      try {
+        await end_session();
+      } catch (error) {
+        failure = { error };
+      }
+      try {
+        await filesystem.destroy?.();
+      } catch (error) {
+        failure ??= { error };
+      }
+      if (failure) throw failure.error;
     })();
     return finalize_promise;
   }
@@ -1195,7 +1221,7 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
       case FuseOpcode.INTERRUPT:
         return undefined;
       case FuseOpcode.DESTROY:
-        await finalize();
+        await end_session();
         break;
       default:
         throw new UnsupportedOperation();
@@ -1270,16 +1296,18 @@ export function fileSystemDevice<TNode extends object, THandle, T extends FS<TNo
     }
   }
 
-  return public_handle(new FileSystemDevice(config, notify, finalize), {});
+  return public_handle(new FileSystemDevice(config, notify, end_session, finalize), {});
 }
 
 class FileSystemDevice extends VirtioDevice {
   readonly #notify: (queue: Virtqueue) => Promise<void>;
+  readonly #end_session: () => Promise<void>;
   readonly #finalize: () => Promise<void>;
 
   constructor(
     config: Uint8Array,
     notify: (queue: Virtqueue) => Promise<void>,
+    end_session: () => Promise<void>,
     finalize: () => Promise<void>,
   ) {
     // 26 is the virtio-fs device ID: a high-priority queue and one request queue.
@@ -1288,11 +1316,17 @@ class FileSystemDevice extends VirtioDevice {
     // filesystem sees them, so it never holds guest memory.
     super({ id: 26, queues: 2, config, views: true });
     this.#notify = notify;
+    this.#end_session = end_session;
     this.#finalize = finalize;
   }
 
   protected kick(_vq: number, queue: Virtqueue) {
     return this.#notify(queue);
+  }
+
+  // A reboot ends the guest's session without a DESTROY.
+  protected restart() {
+    return this.#end_session();
   }
 
   protected close() {

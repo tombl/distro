@@ -8,6 +8,13 @@ export interface Instance extends WebAssembly.Instance {
     __indirect_function_table: WebAssembly.Table;
     boot(): void;
     trigger_irq(irq: number): void;
+    /**
+     * Presses the power button: `PowerButton.PowerOff` runs `/sbin/poweroff`
+     * and `PowerButton.Reboot` runs `/sbin/reboot`, forcing the transition if
+     * the command cannot run. Returns 0, or -EAGAIN before the button is
+     * registered, -EBUSY once a press or a shutdown is under way, or -EINVAL.
+     */
+    power_button(action: PowerButton): number;
     // Linked directly into each user instance as linux.syscall, so a syscall
     // never passes through JS. The number, every argument slot and the result
     // are user words.
@@ -171,11 +178,20 @@ export type UserMemory = (typeof UserMemory)[keyof typeof UserMemory];
 export const MachineTerminationReason = {
   Clean: 0,
   Panic: 1,
+  Reboot: 2,
 } as const;
 
 /** Values for the kernel.terminate_machine guest/host ABI. */
 export type MachineTerminationReason =
   (typeof MachineTerminationReason)[keyof typeof MachineTerminationReason];
+
+/** Actions for the kernel's power_button export. */
+export const PowerButton = {
+  PowerOff: 1,
+  Reboot: 2,
+} as const;
+
+export type PowerButton = (typeof PowerButton)[keyof typeof PowerButton];
 
 export interface Imports {
   env: { memory: WebAssembly.Memory };

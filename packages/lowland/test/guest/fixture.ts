@@ -112,8 +112,8 @@ export function guest_test(
       });
     } finally {
       network.close();
-      for (const guest of guests) guest.machine.close();
-      await Promise.all(guests.map((guest) => guest.machine.closed));
+      for (const guest of guests) guest.machine.kill();
+      await Promise.all(guests.map((guest) => guest.machine.exited));
     }
   });
 }

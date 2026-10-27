@@ -57,18 +57,20 @@ export interface MachineSetup {
 export interface MachinePlugin {
   /** Contributes configuration before the machine is booted. */
   configure(setup: MachineSetup): void | Promise<void>;
-  /** Runs after boot; `bootMachine()` does not resolve until this hook does. */
+  /**
+   * Runs after every boot, reboots included. `bootMachine()` does not
+   * resolve until this hook does, nor `machine.reboot()`.
+   */
   booted?(machine: Machine): void | Promise<void>;
   /**
-   * Runs when `machine.close()` is called, before workers and devices are torn
-   * down. Hooks run one at a time in reverse plugin order, so a plugin can
-   * still use the plugins listed before it. Every hook runs even if one
-   * rejects; the first rejection makes `machine.closed` reject and forces
-   * teardown (see {@link Machine.close}). There is no general timeout, so a
-   * hook must bound its own work. Hooks do not run when the guest powers off
-   * or the machine fails.
+   * Asked by `machine.shutdown()` and `machine.reboot()`, in reverse plugin
+   * order, to start an orderly power-off or reboot, such as by signalling
+   * the guest's init. Resolve `true` once this plugin has started it: no
+   * later plugin is asked, and the machine waits for the guest. Resolve
+   * `false`, or reject, if it has started nothing, and the next plugin is
+   * asked, then the kernel's power button.
    */
-  closing?(): void | Promise<void>;
+  power?(action: "poweroff" | "reboot"): boolean | Promise<boolean>;
 }
 
 /** Routes early kernel output to a writable stream before the machine boots. */

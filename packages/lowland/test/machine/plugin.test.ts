@@ -3,11 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bootMachine, type Machine } from "../../src/machine/index.ts";
-import {
-  configure_machine,
-  run_machine_booted,
-  run_machine_closing,
-} from "../../src/machine/plugin-internal.ts";
+import { configure_machine, run_machine_booted } from "../../src/machine/plugin-internal.ts";
 import {
   bootConsole,
   machinePlugin,
@@ -18,13 +14,14 @@ import { public_handle } from "../../src/machine/virtio/device.ts";
 import { close_device, TestDevice } from "./virtio-fixture.ts";
 
 function machine_stub(): Machine {
-  const closed = Promise.resolve();
+  const exited = Promise.resolve({ reason: "kill" } as const);
   return {
     memory: {} as WebAssembly.Memory,
-    closed,
-    close() {},
-    [Symbol.dispose]() {},
-    [Symbol.asyncDispose]: () => closed,
+    exited,
+    shutdown: () => exited,
+    reboot: () => Promise.resolve(),
+    kill() {},
+    [Symbol.asyncDispose]: async () => {},
   };
 }
 
@@ -275,56 +272,4 @@ test("booted hooks finish in plugin order", async () => {
   first.resolve();
   await booted;
   assert.deepEqual(calls, ["first started", "first finished", "second"]);
-});
-
-test("every closing hook runs and the first failure is reported", async () => {
-  const first_failure = new Error("last plugin failed");
-  let earliest_ran = false;
-  const plugins: MachinePlugin[] = [
-    {
-      configure() {},
-      closing() {
-        earliest_ran = true;
-        throw new Error("first plugin failed");
-      },
-    },
-    { configure() {} },
-    {
-      configure() {},
-      async closing() {
-        throw first_failure;
-      },
-    },
-  ];
-
-  await assert.rejects(run_machine_closing(plugins), (error) => error === first_failure);
-  assert(earliest_ran);
-});
-
-test("closing hooks run one at a time in reverse plugin order", async () => {
-  const calls: string[] = [];
-  const last = Promise.withResolvers<void>();
-  const plugins: MachinePlugin[] = [
-    {
-      configure() {},
-      closing() {
-        calls.push("first");
-      },
-    },
-    {
-      configure() {},
-      async closing() {
-        calls.push("last started");
-        await last.promise;
-        calls.push("last finished");
-      },
-    },
-  ];
-
-  const closing = run_machine_closing(plugins);
-  await Promise.resolve();
-  assert.deepEqual(calls, ["last started"]);
-  last.resolve();
-  await closing;
-  assert.deepEqual(calls, ["last started", "last finished", "first"]);
 });
