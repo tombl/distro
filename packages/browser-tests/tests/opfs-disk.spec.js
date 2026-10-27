@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./opfs.js";
 
 test("persists a virtio block device through an OPFS worker", async ({ page }) => {
   page.on("console", (message) => console.log(`[browser] ${message.text()}`));
@@ -36,7 +36,9 @@ test("reports an OPFS disk that is already open with the browser's error", async
   const result = await page.evaluate(() => globalThis.opfsWorkerDiskLocked());
 
   expect(result.rejected).toBe(true);
-  expect(result.name).toBe("NoModificationAllowedError");
+  // The spec's name for a file another handle holds; WebKit since build 2370
+  // (Playwright 1.64) says InvalidStateError.
+  expect(["NoModificationAllowedError", "InvalidStateError"]).toContain(result.name);
   expect(result.message).not.toBe("");
   expect(result.message).not.toMatch(/^Uncaught/);
 });
