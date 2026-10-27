@@ -35,8 +35,8 @@ test("builds an image from the public repository and a local package", async (t)
     output,
   });
 
-  const guest = guestAgent();
-  const machine = await bootMachine({ cpus: 1, plugins: [rootImage(output), guest] });
+  const guest = guestAgent({ mounts: [rootImage(output)] });
+  const machine = await bootMachine({ cpus: 1, plugins: [guest] });
   t.after(() => machine[Symbol.asyncDispose]());
   const result = await guest.run(["/usr/local/bin/answer"]);
   assert.deepEqual(result.status, { success: true, code: 0, signal: null });

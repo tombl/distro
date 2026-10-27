@@ -194,7 +194,7 @@
                   install -Dm0644 ${wasmpkgs.linux}/vmlinux.wasm packages/kernel/vmlinux.wasm
                   install -Dm0644 ${wasmpkgs.lowland-image.rootfs} packages/image/rootfs.erofs
                   install -Dm0644 ${wasmpkgs.lowland-image.builderImage} packages/image/builder.erofs
-                  install -Dm0644 ${wasmpkgs.linux-guest.agentDisk} packages/linux-guest/agent.img
+                  install -Dm0644 ${wasmpkgs.linux-guest.agentInitramfs} packages/linux-guest/agent.cpio
                 '';
               }
             );

@@ -6,7 +6,7 @@ This repository builds the userspace and opinionated SDK for WebAssembly Linux. 
 
 `@lowland/kernel`, published from this repository, owns the raw kernel-to-JavaScript ABI, Web Worker lifecycle, virtio transport, and core devices. The compiled kernel remains sourced from the Linux repository. The package remains useful without this distro and exposes devices as the extension point.
 
-The guest package owns the guest agent and its host client, the supported root filesystem contract, and the APIs for running commands and moving data across the guest boundary. `guestAgent()` is a kernel plugin provider rather than another machine constructor: it contributes the GPT-wrapped agent EROFS, vsock transport, boot arguments, and readiness hook while retaining the bound guest capabilities on the returned object. The GPT partition label makes the agent disk independent of virtio device ordering using the kernel's standard `PARTLABEL` root lookup. Applications compose it with ordinary kernel plugins and call the kernel's sole `bootMachine()` function.
+The guest package owns the guest agent and its host client, the supported root filesystem contract, and the APIs for running commands and moving data across the guest boundary. `guestAgent()` is a kernel plugin provider rather than another machine constructor: it contributes the agent as an initramfs, its vsock transport, a device for each source in its mount table, and the hook that boots the guest, while retaining the bound guest capabilities on the returned object. Mount table disks carry virtio serials, so the boot is independent of virtio device ordering. Applications compose it with ordinary kernel plugins and call the kernel's sole `bootMachine()` function.
 
 ## Userspace
 

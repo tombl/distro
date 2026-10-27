@@ -2,7 +2,7 @@
 
 // Both supported filesystems keep their superblock 1024 bytes into the image.
 // A source without one is usually an error page served in place of an asset,
-// such as a dev server's HTML fallback, so reject it before the kernel sees it.
+// such as a dev server's HTML fallback, so reject it before the guest sees it.
 
 /** @internal The offset of the superblock bytes that identify an image. */
 export const HEADER_OFFSET = 1024;
@@ -70,14 +70,4 @@ export function check_image(
 /** @internal Validates a whole image held in memory. */
 export function check_bytes(subject: string, bytes: Uint8Array, content_type?: string | null) {
   return check_image(subject, header_of(bytes), bytes.byteLength, content_type);
-}
-
-/**
- * @internal Throws if `writable` was asked of an EROFS image, which the
- * kernel only ever mounts read-only.
- */
-export function check_writable(name: string, filesystem: Filesystem | undefined) {
-  if (filesystem === "erofs") {
-    throw new Error(`${name}: EROFS images are read-only; writable has no effect`);
-  }
 }

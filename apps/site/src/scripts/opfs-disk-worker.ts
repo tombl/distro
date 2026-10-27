@@ -5,6 +5,7 @@ import { blockDevice, serveDevice, serveDeviceError } from "@lowland/kernel";
 type Configuration = {
   handle: FileSystemFileHandle;
   capacity?: number;
+  serial?: string;
 };
 
 const configuration = await new Promise<Configuration>((resolve) =>
@@ -39,37 +40,42 @@ try {
 
   serveDevice(
     self,
-    blockDevice({
-      capacity,
-      read(offset, target) {
-        let read = 0;
-        while (read < target.byteLength) {
-          const n = access.read(target.subarray(read), { at: offset + read });
-          if (n === 0) break;
-          read += n;
-        }
-        return read;
-      },
-      write(offset, data) {
-        let written = 0;
-        while (written < data.byteLength) {
-          const n = access.write(data.subarray(written), { at: offset + written });
-          if (n === 0) break;
-          written += n;
-        }
-        return written;
-      },
-      flush() {
-        access.flush();
-      },
-      close() {
-        try {
+    blockDevice(
+      {
+        capacity,
+        read(offset, target) {
+          let read = 0;
+          while (read < target.byteLength) {
+            const n = access.read(target.subarray(read), { at: offset + read });
+            if (n === 0) break;
+            read += n;
+          }
+          return read;
+        },
+        write(offset, data) {
+          let written = 0;
+          while (written < data.byteLength) {
+            const n = access.write(data.subarray(written), {
+              at: offset + written,
+            });
+            if (n === 0) break;
+            written += n;
+          }
+          return written;
+        },
+        flush() {
           access.flush();
-        } finally {
-          access.close();
-        }
+        },
+        close() {
+          try {
+            access.flush();
+          } finally {
+            access.close();
+          }
+        },
       },
-    }),
+      { serial: configuration.serial },
+    ),
   );
 } catch (error) {
   serveDeviceError(self, error);

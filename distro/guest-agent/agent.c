@@ -1,17 +1,21 @@
-/* Guest agent (protocol v4): a dumb syscall executor.
+/* Guest agent (protocol v5): a dumb syscall executor, and PID 1.
  *
- * The host opens one connection to the session port plus up to `max_lanes`
- * lanes on the lane port. A lane carries strictly serial request/reply
- * exchanges served by a dedicated thread created when the lane connects, so
- * there is no request queue, no reply multiplexing, and no shared write path:
- * message sizes are fully determined by the request, and the kernel does all
- * the scheduling.
+ * The kernel runs the agent as /init from its initramfs. The host opens one
+ * connection to the session port plus up to `max_lanes` lanes on the lane
+ * port. A lane carries strictly serial request/reply exchanges served by a
+ * dedicated thread created when the lane connects, so there is no request
+ * queue, no reply multiplexing, and no shared write path: message sizes are
+ * fully determined by the request, and the kernel does all the scheduling.
  *
  * The session connection carries no requests. Its only job is to be a death
  * signal that cannot be stuck behind a blocked syscall. Each session runs in
  * its own process, so EOF tears down its threads and descriptors atomically;
  * that process's parent, a per-session keeper, then kills and reaps the
  * remaining descendants before PID 1 accepts the next session.
+ *
+ * The agent knows no filesystems. The host mounts everything with ordinary
+ * syscalls, and a switch_root request has PID 1 enter /sysroot between two
+ * sessions, then start and supervise the host's init.
  *
  * See distro/guest-agent/protocol.md for the frozen contract.
  */
@@ -21,6 +25,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <mntent.h>
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
@@ -37,10 +42,10 @@
 #include <sys/reboot.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <dirent.h>
+#include <time.h>
 #include <linux/vm_sockets.h>
 #include <unistd.h>
 
@@ -48,14 +53,18 @@ enum {
 	session_port = 1024,
 	lane_port = 1025,
 	protocol_magic = 0x584e4c54,
-	protocol_version = 4,
+	protocol_version = 5,
 	max_lanes = 64,
 	max_blob = 128 * 1024,
 	max_spawn_payload = 4 * 1024 * 1024,
+	/* Fits an empty pipe on any page size, so handing it to PID 1 never
+	 * blocks. */
+	max_init_payload = 32 * 1024,
 	max_string = 4096,
 	max_arguments = 256,
 	max_environment = 256,
 	process_capacity = 16,
+	shutdown_grace_ms = 3000,
 };
 
 enum request_kind {
@@ -63,7 +72,12 @@ enum request_kind {
 	req_spawn = 2,
 	req_reap = 3,
 	req_spawn_terminal = 4,
+	req_switch_root = 5,
 };
+
+/* A session worker's exit status, passed on by its keeper: the host asked
+ * PID 1 to enter /sysroot once the session has ended. */
+enum { session_exit_switch_root = 3 };
 
 enum arg_kind {
 	arg_scalar = 0,
@@ -85,10 +99,20 @@ static struct {
 	pthread_mutex_t mutex;
 	pthread_cond_t changed;
 	int active_lanes;
+	/* Where a validated switch_root request sends its init to PID 1. */
+	int init_pipe;
+	bool switch_root_requested;
 } session = {
 	.mutex = PTHREAD_MUTEX_INITIALIZER,
 	.changed = PTHREAD_COND_INITIALIZER,
+	.init_pipe = -1,
 };
+
+/* PID 1's state. Sessions are clones of PID 1, so they see a copy as of the
+ * moment their session started. */
+static bool root_switched;
+static pid_t init_pid;
+static sigset_t original_mask;
 
 static uint16_t load_u16(const uint8_t *p)
 {
@@ -158,7 +182,7 @@ static int write_all(int fd, const void *buffer, size_t length)
 	return 0;
 }
 
-/* { ret i64, errno u32 }: the uniform reply head for all three requests. */
+/* { ret i64, errno u32 }: the uniform reply head for every request. */
 static int write_reply(int fd, int64_t ret, uint32_t err)
 {
 	uint8_t head[12];
@@ -166,6 +190,26 @@ static int write_reply(int fd, int64_t ret, uint32_t err)
 	store_u64(head, (uint64_t)ret);
 	store_u32(head + 8, err);
 	return write_all(fd, head, sizeof(head));
+}
+
+/* Reads a { len u32 } prefixed payload of at most `max` bytes. Returns NULL
+ * when the lane can no longer be trusted. */
+static uint8_t *read_payload(int fd, uint32_t max, uint32_t *length)
+{
+	uint8_t len_bytes[4];
+	uint8_t *payload;
+
+	if (read_all(fd, len_bytes, sizeof(len_bytes)))
+		return NULL;
+	*length = load_u32(len_bytes);
+	if (*length > max)
+		return NULL;
+	payload = malloc(*length ? *length : 1);
+	if (payload && read_all(fd, payload, *length)) {
+		free(payload);
+		return NULL;
+	}
+	return payload;
 }
 
 struct cursor {
@@ -209,6 +253,64 @@ static char *cursor_string(struct cursor *cursor)
 	string[length] = 0;
 	cursor->offset += length;
 	return string;
+}
+
+/* A command to start: what a spawn payload describes. */
+struct command {
+	uint32_t argc, envc;
+	char **argv;
+	char *cwd;
+	char **envp;
+};
+
+static void free_command(struct command *command)
+{
+	uint32_t i;
+
+	if (command->argv)
+		for (i = 0; i < command->argc; i++)
+			free(command->argv[i]);
+	if (command->envp)
+		for (i = 0; i < command->envc; i++)
+			free(command->envp[i]);
+	free(command->argv);
+	free(command->envp);
+	free(command->cwd);
+	*command = (struct command){ 0 };
+}
+
+/* Parses { argc u32 } argc x string, string cwd, { envc u32 } envc x string
+ * to the end of the cursor. False means the payload is invalid; free the
+ * command either way. */
+static bool parse_command(struct cursor *cur, struct command *command)
+{
+	uint32_t i;
+
+	*command = (struct command){ 0 };
+	if (!cursor_u32(cur, &command->argc) || command->argc < 1 ||
+	    command->argc > max_arguments)
+		return false;
+	command->argv = calloc((size_t)command->argc + 1, sizeof(char *));
+	if (!command->argv)
+		return false;
+	for (i = 0; i < command->argc; i++) {
+		command->argv[i] = cursor_string(cur);
+		if (!command->argv[i])
+			return false;
+	}
+	command->cwd = cursor_string(cur);
+	if (!command->cwd || !cursor_u32(cur, &command->envc) ||
+	    command->envc > max_environment)
+		return false;
+	command->envp = calloc((size_t)command->envc + 1, sizeof(char *));
+	if (!command->envp)
+		return false;
+	for (i = 0; i < command->envc; i++) {
+		command->envp[i] = cursor_string(cur);
+		if (!command->envp[i] || !strchr(command->envp[i], '='))
+			return false;
+	}
+	return cur->offset == cur->length;
 }
 
 /* Syscall request body: { nr u32, arg_kinds u8[6], arg_values u64[6] } then
@@ -299,9 +401,10 @@ static void close_fd(int *fd)
 	}
 }
 
-/* PID 1 owns every child, including descendants orphaned by commands. Keep
- * waitpid in exactly one thread so adopted children are discarded without
- * racing status delivery for children registered by the host protocol. */
+/* The session worker owns every child, including descendants orphaned by
+ * commands. Keep waitpid in exactly one thread so adopted children are
+ * discarded without racing status delivery for children registered by the
+ * host protocol. */
 static void *reap_children(void *unused)
 {
 	(void)unused;
@@ -428,13 +531,10 @@ static int open_terminal(int *master, char *name, size_t name_size,
  * desyncing the lane. */
 static int serve_spawn(int fd, bool terminal)
 {
-	uint8_t len_bytes[4];
-	uint8_t *payload = NULL;
+	uint8_t *payload;
 	struct cursor cur;
-	uint32_t len, argc = 0, envc = 0, i;
-	char **argv = NULL;
-	char **envp = NULL;
-	char *cwd = NULL;
+	uint32_t len, i;
+	struct command command = { 0 };
 	int in[2] = { -1, -1 };
 	int out[2] = { -1, -1 };
 	int err[2] = { -1, -1 };
@@ -451,42 +551,14 @@ static int serve_spawn(int fd, bool terminal)
 	uint8_t body[16];
 	int rc = -1;
 
-	if (read_all(fd, len_bytes, sizeof(len_bytes)))
-		return -1;
-	len = load_u32(len_bytes);
-	if (len > max_spawn_payload)
-		return -1;
-	payload = malloc(len ? len : 1);
+	payload = read_payload(fd, max_spawn_payload, &len);
 	if (!payload)
 		return -1;
-	if (read_all(fd, payload, len))
-		goto out;
 	cur = (struct cursor){ payload, len, 0 };
 
 	if (terminal && (!cursor_u16(&cur, &rows) || !cursor_u16(&cur, &columns)))
 		goto invalid;
-	if (!cursor_u32(&cur, &argc) || argc < 1 || argc > max_arguments)
-		goto invalid;
-	argv = calloc((size_t)argc + 1, sizeof(char *));
-	if (!argv)
-		goto invalid;
-	for (i = 0; i < argc; i++) {
-		argv[i] = cursor_string(&cur);
-		if (!argv[i])
-			goto invalid;
-	}
-	cwd = cursor_string(&cur);
-	if (!cwd || !cursor_u32(&cur, &envc) || envc > max_environment)
-		goto invalid;
-	envp = calloc((size_t)envc + 1, sizeof(char *));
-	if (!envp)
-		goto invalid;
-	for (i = 0; i < envc; i++) {
-		envp[i] = cursor_string(&cur);
-		if (!envp[i] || !strchr(envp[i], '='))
-			goto invalid;
-	}
-	if (cur.offset != cur.length)
+	if (!parse_command(&cur, &command))
 		goto invalid;
 
 	pthread_mutex_lock(&children_mutex);
@@ -548,11 +620,13 @@ static int serve_spawn(int fd, bool terminal)
 		    (spawn_errno = posix_spawn_file_actions_addclose(&actions, err[0])))
 			goto spawn_failed;
 	}
-	if ((spawn_errno = posix_spawn_file_actions_addchdir_np(&actions, cwd)))
+	if ((spawn_errno = posix_spawn_file_actions_addchdir_np(&actions,
+								command.cwd)))
 		goto spawn_failed;
 	/* Publish the pid before the sole reaper can classify a fast exit. */
 	pthread_mutex_lock(&children_mutex);
-	spawn_errno = spawn_with_path(&pid, &actions, &attributes, argv, envp);
+	spawn_errno = spawn_with_path(&pid, &actions, &attributes, command.argv,
+				      command.envp);
 	if (!spawn_errno) {
 		children[slot].pid = pid;
 		pthread_cond_broadcast(&children_changed);
@@ -586,8 +660,7 @@ spawn_failed:
 	 * directory is incompatible with the mounted system root. Keep this narrow
 	 * diagnostic on the guest console so an embedder can repair its image. */
 	fprintf(stderr, "linux-guest-agent: spawning %s in %s: %s\n",
-		argv && argv[0] ? argv[0] : "(invalid)", cwd ? cwd : "(invalid)",
-		strerror(spawn_errno));
+		command.argv[0], command.cwd, strerror(spawn_errno));
 	if (have_actions)
 		posix_spawn_file_actions_destroy(&actions);
 	if (have_attributes)
@@ -609,15 +682,7 @@ spawn_failed:
 invalid:
 	rc = write_reply(fd, -1, EINVAL);
 out:
-	if (argv)
-		for (i = 0; i < argc; i++)
-			free(argv[i]);
-	if (envp)
-		for (i = 0; i < envc; i++)
-			free(envp[i]);
-	free(argv);
-	free(envp);
-	free(cwd);
+	free_command(&command);
 	free(payload);
 	return rc;
 }
@@ -655,6 +720,72 @@ static int serve_reap(int fd)
 	return write_all(fd, body, sizeof(body));
 }
 
+/* Checks that /sysroot can become the root: a directory on another
+ * filesystem than / whose dev, proc and sys are mount points. Returns an
+ * errno value. */
+static int check_sysroot(void)
+{
+	static const char *const required[] = { "/sysroot/dev", "/sysroot/proc",
+						"/sysroot/sys" };
+	struct stat root, sysroot, mount_point;
+	size_t i;
+
+	if (stat("/", &root) == -1 || stat("/sysroot", &sysroot) == -1)
+		return errno;
+	if (!S_ISDIR(sysroot.st_mode))
+		return ENOTDIR;
+	if (sysroot.st_dev == root.st_dev)
+		return EINVAL;
+	for (i = 0; i < sizeof(required) / sizeof(required[0]); i++) {
+		if (stat(required[i], &mount_point) == -1)
+			return errno;
+		if (mount_point.st_dev == sysroot.st_dev)
+			return EINVAL;
+	}
+	return 0;
+}
+
+/* Switch root request body: { len u32 } then, when len is nonzero, a spawn
+ * payload naming the init that PID 1 starts in the new root. The session
+ * validates /sysroot and hands the init to PID 1, which enters /sysroot once
+ * the host has ended this session. PID 1 switches root once per boot. */
+static int serve_switch_root(int fd)
+{
+	uint8_t *payload;
+	uint8_t len_bytes[4];
+	struct command init = { 0 };
+	struct cursor cur;
+	uint32_t len;
+	int error = 0;
+
+	payload = read_payload(fd, max_init_payload, &len);
+	if (!payload)
+		return -1;
+	cur = (struct cursor){ payload, len, 0 };
+	if (len && !parse_command(&cur, &init))
+		error = EINVAL;
+	if (len)
+		free_command(&init);
+	if (!error && root_switched)
+		error = EBUSY;
+	if (!error)
+		error = check_sysroot();
+	if (!error) {
+		pthread_mutex_lock(&session.mutex);
+		store_u32(len_bytes, len);
+		if (session.switch_root_requested)
+			error = EBUSY;
+		else if (write_all(session.init_pipe, len_bytes, sizeof(len_bytes)) ||
+			 write_all(session.init_pipe, payload, len))
+			error = errno;
+		else
+			session.switch_root_requested = true;
+		pthread_mutex_unlock(&session.mutex);
+	}
+	free(payload);
+	return error ? write_reply(fd, -1, error) : write_reply(fd, 0, 0);
+}
+
 /* Handshake: 8 bytes { magic u32, version u16, reserved u16 }, echoed. */
 static int handshake(int fd)
 {
@@ -687,6 +818,10 @@ static void serve_lane(int fd)
 			break;
 		case req_reap:
 			if (serve_reap(fd))
+				return;
+			break;
+		case req_switch_root:
+			if (serve_switch_root(fd))
 				return;
 			break;
 		default:
@@ -792,6 +927,9 @@ static _Alignas(16) char session_stack[session_stack_size];
 struct session_worker_args {
 	int fd;
 	int session_listener;
+	/* The read and write ends of the pipe that carries a switch_root
+	 * request's init to PID 1. */
+	int init_pipe[2];
 };
 
 static int session_worker(void *opaque)
@@ -801,6 +939,7 @@ static int session_worker(void *opaque)
 	pthread_t reaper;
 	int lane_listener, rc;
 
+	session.init_pipe = args->init_pipe[1];
 	/* Adopt descendants orphaned by commands so the session's reaper can
 	 * collect them while the session is still alive. */
 	if (prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
@@ -819,7 +958,10 @@ static int session_worker(void *opaque)
 	if (handshake(args->fd))
 		_exit(0);
 	rc = serve_session(args->fd, lane_listener, &worker_attr);
-	_exit(rc ? 1 : 0);
+	pthread_mutex_lock(&session.mutex);
+	if (!rc && session.switch_root_requested)
+		rc = session_exit_switch_root;
+	_exit(rc == -1 ? 1 : rc);
 }
 
 static pid_t parent_pid(const char *pid)
@@ -848,23 +990,35 @@ static pid_t parent_pid(const char *pid)
 
 /* SIGKILLs every process this subreaper has adopted until none remain. A
  * killed process's own children are adopted here in turn, so the loop covers
- * the whole subtree whatever sessions and process groups commands created. */
+ * the whole subtree whatever sessions and process groups commands created.
+ *
+ * Only one session runs at a time, so until PID 1 supervises an init every
+ * process but PID 1 and this keeper descends from this session: kill(-1)
+ * finds them all. That also covers a boot session, which moves /proc into
+ * /sysroot before it ends. With an init, the session's own descendants are
+ * found through /proc instead. */
 static int kill_descendants(void)
 {
 	pid_t self = getpid();
 
 	for (;;) {
-		DIR *proc = opendir("/proc");
-		struct dirent *entry;
 		pid_t waited;
 
-		if (!proc)
-			return -1;
-		while ((entry = readdir(proc)))
-			if (entry->d_name[0] >= '1' && entry->d_name[0] <= '9' &&
-			    parent_pid(entry->d_name) == self)
-				kill((pid_t)atoi(entry->d_name), SIGKILL);
-		closedir(proc);
+		if (!init_pid) {
+			kill(-1, SIGKILL);
+		} else {
+			DIR *proc = opendir("/proc");
+			struct dirent *entry;
+
+			if (!proc)
+				return -1;
+			while ((entry = readdir(proc)))
+				if (entry->d_name[0] >= '1' &&
+				    entry->d_name[0] <= '9' &&
+				    parent_pid(entry->d_name) == self)
+					kill((pid_t)atoi(entry->d_name), SIGKILL);
+			closedir(proc);
+		}
 		do
 			waited = waitpid(-1, NULL, 0);
 		while (waited == -1 && errno == EINTR);
@@ -886,177 +1040,32 @@ static int session_keeper(void *opaque)
 	pid_t worker, waited;
 	int status;
 
+	/* PID 1's signal handling is its own: a session dies of SIGTERM like
+	 * any other process, and its commands start with nothing blocked. */
+	signal(SIGCHLD, SIG_DFL);
+	signal(SIGTERM, SIG_DFL);
+	signal(SIGUSR1, SIG_DFL);
+	signal(SIGUSR2, SIG_DFL);
+	sigprocmask(SIG_SETMASK, &original_mask, NULL);
 	/* Keep the session out of PID 1's process group, so no signal aimed at
 	 * /init's group reaches it. */
 	if (setpgid(0, 0) == -1 || prctl(PR_SET_CHILD_SUBREAPER, 1) == -1)
 		_exit(1);
 	close(args->session_listener);
 	args->session_listener = -1;
+	close(args->init_pipe[0]);
 	worker = clone(session_worker, session_stack + session_stack_size,
 		       SIGCHLD, args);
 	if (worker == -1)
 		_exit(1);
 	close(args->fd);
+	close(args->init_pipe[1]);
 	do
 		waited = waitpid(worker, &status, 0);
 	while (waited == -1 && errno == EINTR);
 	if (waited == -1 || kill_descendants())
 		_exit(1);
 	_exit(WIFEXITED(status) ? WEXITSTATUS(status) : 1);
-}
-
-static int mount_if_needed(const char *source, const char *target,
-			   const char *type)
-{
-	if (mount(source, target, type, 0, NULL) == -1 && errno != EBUSY)
-		return -1;
-	return 0;
-}
-
-enum {
-	erofs_super_offset = 1024,
-	erofs_volume_name_offset = 64,
-	erofs_probe_size = 80,
-	erofs_magic = 0xe0f5e1e2,
-	ext4_super_offset = 1024,
-	ext4_magic_offset = 56,
-	ext4_volume_name_offset = 120,
-	ext4_probe_size = 136,
-	ext4_magic = 0xef53,
-};
-
-enum root_filesystem {
-	root_filesystem_none,
-	root_filesystem_erofs,
-	root_filesystem_ext4,
-};
-
-struct system_root {
-	char device[32];
-	enum root_filesystem filesystem;
-};
-
-static enum root_filesystem probe_system_root(const char *device)
-{
-	static const uint8_t label[16] = "LOWLAND_ROOT";
-	uint8_t super[ext4_probe_size];
-	ssize_t length;
-	int fd;
-
-	fd = open(device, O_RDONLY | O_CLOEXEC);
-	if (fd == -1)
-		return false;
-	do
-		length = pread(fd, super, sizeof(super), erofs_super_offset);
-	while (length == -1 && errno == EINTR);
-	close(fd);
-	if (length < (ssize_t)erofs_probe_size)
-		return root_filesystem_none;
-	if (load_u32(super) == erofs_magic &&
-	    !memcmp(super + erofs_volume_name_offset, label, sizeof(label)))
-		return root_filesystem_erofs;
-	if (length >= (ssize_t)ext4_probe_size &&
-	    load_u16(super + ext4_magic_offset) == ext4_magic &&
-	    !memcmp(super + ext4_volume_name_offset, label, sizeof(label)))
-		return root_filesystem_ext4;
-	return root_filesystem_none;
-}
-
-static int find_system_root(struct system_root *root)
-{
-	int attempt;
-
-	for (attempt = 0; attempt < 100; attempt++) {
-		struct system_root found = { 0 };
-		int roots = 0;
-		char suffix;
-
-		for (suffix = 'a'; suffix <= 'z'; suffix++) {
-			char device[sizeof(root->device)];
-			enum root_filesystem filesystem;
-			int length = snprintf(device, sizeof(device), "/dev/vd%c",
-					      suffix);
-
-			if (length < 0 || (size_t)length >= sizeof(device)) {
-				errno = ENAMETOOLONG;
-				return -1;
-			}
-			filesystem = probe_system_root(device);
-			if (filesystem == root_filesystem_none)
-				continue;
-			found.filesystem = filesystem;
-			memcpy(found.device, device, sizeof(found.device));
-			roots++;
-		}
-		if (roots > 1) {
-			errno = EEXIST;
-			return -1;
-		}
-		if (roots == 1) {
-			*root = found;
-			return 0;
-		}
-		usleep(100000);
-	}
-	errno = ENODEV;
-	return -1;
-}
-
-static int make_directory(const char *path, mode_t mode)
-{
-	if (mkdir(path, mode) == -1 && errno != EEXIST)
-		return -1;
-	return 0;
-}
-
-static int root_read_only(const struct system_root *root, bool *read_only)
-{
-	int fd, error, value = 0;
-
-	if (root->filesystem == root_filesystem_erofs) {
-		*read_only = true;
-		return 0;
-	}
-	fd = open(root->device, O_RDONLY | O_CLOEXEC);
-	if (fd == -1)
-		return -1;
-	error = ioctl(fd, BLKROGET, &value);
-	close(fd);
-	*read_only = value;
-	return error == -1 ? -1 : 0;
-}
-
-/* A writable ext4 root is persistent and mounts read-write directly. A
- * read-only root, either EROFS or a filesystem on a read-only block device,
- * always sits beneath a temporary OverlayFS upper layer: the system then
- * behaves like a normal writable root for the lifetime of a boot.
- *
- * An ext4 image that was last mounted read-write and never unmounted still
- * needs journal recovery, and ext4 refuses to replay a journal on a read-only
- * device. The lower layer is never written, so mount it with norecovery: the
- * root is then the filesystem as of its last journal checkpoint, and changes
- * that were only committed to the journal are not visible. */
-static int mount_system_root(const struct system_root *root)
-{
-	bool ext4 = root->filesystem == root_filesystem_ext4;
-	const char *type = ext4 ? "ext4" : "erofs";
-	bool read_only;
-
-	if (root_read_only(root, &read_only))
-		return -1;
-	if (!read_only)
-		return mount(root->device, "/mnt", type, 0, NULL);
-	if (make_directory("/lower", 0755) ||
-	    make_directory("/overlay", 0755) ||
-	    mount(root->device, "/lower", type, MS_RDONLY,
-		  ext4 ? "norecovery" : NULL) == -1 ||
-	    mount("tmpfs", "/overlay", "tmpfs", 0, NULL) == -1 ||
-	    make_directory("/overlay/upper", 0755) ||
-	    make_directory("/overlay/work", 0755) ||
-	    mount("overlay", "/mnt", "overlay", 0,
-		  "lowerdir=/lower,upperdir=/overlay/upper,workdir=/overlay/work") == -1)
-		return -1;
-	return 0;
 }
 
 /* Without a console the kernel starts PID 1 with no standard descriptors.
@@ -1076,43 +1085,204 @@ static int reserve_standard_fds(void)
 	}
 }
 
-static int prepare_system_root(void)
+/* The only boot step in C: every other mount is the host's. */
+static int mount_dev(void)
 {
-	struct system_root root;
-
-	if (make_directory("/dev", 0755) ||
-	    mount_if_needed("devtmpfs", "/dev", "devtmpfs") ||
-	    reserve_standard_fds() ||
-	    make_directory("/dev/pts", 0755) ||
-	    mount_if_needed("devpts", "/dev/pts", "devpts") ||
-	    make_directory("/proc", 0555) ||
-	    mount_if_needed("proc", "/proc", "proc") ||
-	    make_directory("/sys", 0555) ||
-	    mount_if_needed("sysfs", "/sys", "sysfs"))
+	if ((mkdir("/dev", 0755) == -1 && errno != EEXIST) ||
+	    (mount("devtmpfs", "/dev", "devtmpfs", 0, NULL) == -1 &&
+	     errno != EBUSY))
 		return -1;
+	return reserve_standard_fds();
+}
 
-	if (find_system_root(&root)) {
-		if (errno == EEXIST)
-			fprintf(stderr, "linux-guest-agent: multiple filesystems are labeled LOWLAND_ROOT\n");
-		else
-			fprintf(stderr, "linux-guest-agent: no supported filesystem is labeled LOWLAND_ROOT\n");
-		return -1;
+static int64_t monotonic_ms(void)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+/* Unmounts the mount table in reverse order, remounting read-only whatever
+ * stays busy and always the root: umount -a -r. Every entry counts: the table
+ * is read whole before anything is unmounted, however long it is. */
+static void unmount_all(void)
+{
+	char **targets = NULL;
+	size_t count = 0, capacity = 0;
+	struct mntent *entry;
+	FILE *mounts = setmntent("/proc/self/mounts", "re");
+
+	if (!mounts) {
+		perror("linux-guest-agent: reading mounts");
+		return;
 	}
-	if (mount_system_root(&root) ||
-	    mount("tmpfs", "/mnt/run", "tmpfs", 0, NULL) == -1 ||
-	    mount("tmpfs", "/mnt/tmp", "tmpfs", 0, NULL) == -1 ||
-	    chmod("/mnt/tmp", 01777) == -1)
-		return -1;
+	/* getmntent undoes the octal escapes, such as \040 for a space. */
+	while ((entry = getmntent(mounts))) {
+		if (count == capacity) {
+			size_t grown = capacity ? capacity * 2 : 64;
+			char **resized = realloc(targets, grown * sizeof(*targets));
 
-	if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1 ||
-	    mount("/dev", "/mnt/dev", NULL, MS_MOVE, NULL) == -1 ||
-	    mount("/proc", "/mnt/proc", NULL, MS_MOVE, NULL) == -1 ||
-	    mount("/sys", "/mnt/sys", NULL, MS_MOVE, NULL) == -1 ||
-	    chdir("/mnt") == -1 ||
-	    syscall(SYS_pivot_root, ".", "mnt") == -1 ||
-	    chdir("/") == -1 || umount2("/mnt", MNT_DETACH) == -1)
+			if (!resized)
+				break;
+			targets = resized;
+			capacity = grown;
+		}
+		targets[count] = strdup(entry->mnt_dir);
+		if (targets[count])
+			count++;
+	}
+	endmntent(mounts);
+	while (count--) {
+		char *target = targets[count];
+
+		if (strcmp(target, "/") && !umount2(target, 0)) {
+			free(target);
+			continue;
+		}
+		if (mount(NULL, target, NULL, MS_REMOUNT | MS_RDONLY, NULL) == -1 &&
+		    errno != EINVAL && errno != EACCES)
+			fprintf(stderr,
+				"linux-guest-agent: remounting %s read-only: %s\n",
+				target, strerror(errno));
+		free(target);
+	}
+	free(targets);
+}
+
+/* BusyBox init's shutdown sequence: SIGTERM to everything, a grace period,
+ * SIGKILL, then the filesystems, then the kernel. Every process descends
+ * from PID 1, so once it has no children left nothing else is running. */
+static void __attribute__((noreturn)) shut_down(int command)
+{
+	int64_t deadline = monotonic_ms() + shutdown_grace_ms;
+	sigset_t child;
+
+	fprintf(stderr, "linux-guest-agent: %s\n",
+		command == RB_AUTOBOOT ? "rebooting" : "powering off");
+	sigemptyset(&child);
+	sigaddset(&child, SIGCHLD);
+	kill(-1, SIGTERM);
+	for (;;) {
+		struct timespec timeout;
+		int64_t left;
+		pid_t pid;
+
+		while ((pid = waitpid(-1, NULL, WNOHANG)) > 0)
+			;
+		left = deadline - monotonic_ms();
+		if ((pid == -1 && errno == ECHILD) || left <= 0)
+			break;
+		timeout.tv_sec = left / 1000;
+		timeout.tv_nsec = left % 1000 * 1000000;
+		sigtimedwait(&child, NULL, &timeout);
+	}
+	kill(-1, SIGKILL);
+	while (waitpid(-1, NULL, 0) > 0)
+		;
+	sync();
+	unmount_all();
+	sync();
+	reboot(command);
+	perror("linux-guest-agent: reboot");
+	abort();
+}
+
+/* Enters /sysroot: switch_root's step, with nothing left that saw the old
+ * root, because that ended with the session that asked for it. */
+static int switch_root(void)
+{
+	if (chdir("/sysroot") == -1 ||
+	    mount(".", "/", NULL, MS_MOVE, NULL) == -1 || chroot(".") == -1 ||
+	    chdir("/") == -1)
 		return -1;
 	return 0;
+}
+
+/* Starts the host's init the way the kernel would: default signal
+ * dispositions, nothing blocked, and PID 1's console. It stays in PID 1's
+ * session without leading a process group, as the kernel's /init does, so
+ * an init that runs setsid(1) does so itself rather than in a forked child,
+ * whose parent's exit would power the machine off. Returns an errno value. */
+static int start_init(struct command *init)
+{
+	posix_spawn_file_actions_t actions;
+	posix_spawnattr_t attributes;
+	sigset_t all;
+	int error;
+
+	if ((error = posix_spawn_file_actions_init(&actions)))
+		return error;
+	if ((error = posix_spawnattr_init(&attributes))) {
+		posix_spawn_file_actions_destroy(&actions);
+		return error;
+	}
+	sigfillset(&all);
+	if (!(error = posix_spawn_file_actions_addchdir_np(&actions, init->cwd)) &&
+	    !(error = posix_spawnattr_setsigdefault(&attributes, &all)) &&
+	    !(error = posix_spawnattr_setsigmask(&attributes, &original_mask)) &&
+	    !(error = posix_spawnattr_setflags(
+		      &attributes, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)))
+		error = spawn_with_path(&init_pid, &actions, &attributes,
+					init->argv, init->envp);
+	posix_spawn_file_actions_destroy(&actions);
+	posix_spawnattr_destroy(&attributes);
+	return error;
+}
+
+/* Runs after the boot session that asked for it has ended. A failure here
+ * cannot be replied to, so PID 1 says why on its console and powers off. */
+static void enter_system_root(int init_pipe)
+{
+	static uint8_t request[4 + max_init_payload];
+	struct command init;
+	struct cursor cur;
+	size_t length = 0;
+	uint32_t init_length;
+	int error;
+
+	for (;;) {
+		ssize_t n = read(init_pipe, request + length,
+				 sizeof(request) - length);
+
+		if (n > 0)
+			length += n;
+		else if (n == 0 || errno != EINTR)
+			break;
+	}
+	if (length < 4 || (init_length = load_u32(request)) != length - 4) {
+		fprintf(stderr, "linux-guest-agent: lost the init to start; powering off\n");
+		shut_down(RB_POWER_OFF);
+	}
+	if (switch_root()) {
+		fprintf(stderr, "linux-guest-agent: entering /sysroot: %s; powering off\n",
+			strerror(errno));
+		shut_down(RB_POWER_OFF);
+	}
+	root_switched = true;
+	if (!init_length)
+		return;
+	cur = (struct cursor){ request + 4, init_length, 0 };
+	if (!parse_command(&cur, &init))
+		error = EINVAL;
+	else
+		error = start_init(&init);
+	if (error) {
+		fprintf(stderr, "linux-guest-agent: starting %s: %s; powering off\n",
+			init.argv && init.argv[0] ? init.argv[0] : "init",
+			strerror(error));
+		shut_down(RB_POWER_OFF);
+	}
+	free_command(&init);
+}
+
+static volatile sig_atomic_t power_request;
+
+/* BusyBox init's power signals, which its poweroff, reboot and halt
+ * commands send to PID 1. Halt powers off: there is no console to halt on. */
+static void power_signal(int signal)
+{
+	power_request = signal == SIGTERM ? RB_AUTOBOOT : RB_POWER_OFF;
 }
 
 static void child_exited(int signal)
@@ -1120,77 +1290,61 @@ static void child_exited(int signal)
 	(void)signal;
 }
 
-static void check_system_init(pid_t pid)
+/* Collects PID 1's exited children: the session keeper, the init, and
+ * orphans the init's processes left. Returns the keeper's status once it
+ * has exited, or -1 while it runs. */
+static int reap(pid_t keeper)
 {
-	pid_t waited;
-	int status;
+	int keeper_status = -1;
 
-	if (!pid)
-		return;
-	do
-		waited = waitpid(pid, &status, WNOHANG);
-	while (waited == -1 && errno == EINTR);
-	if (!waited)
-		return;
-	if (waited == -1) {
-		perror("linux-guest-agent: waiting for system init");
-		abort();
-	}
-	fprintf(stderr, "linux-guest-agent: system init exited; powering off\n");
-	/* The kernel's power-off path does not write back the page cache. */
-	sync();
-	if (reboot(RB_POWER_OFF) == -1) {
-		perror("linux-guest-agent: powering off");
-		abort();
-	}
-	abort();
-}
+	for (;;) {
+		int status;
+		pid_t pid = waitpid(-1, &status, WNOHANG);
 
-static int start_system_init(pid_t *pid)
-{
-	char *const argv[] = { "/init", NULL };
-	char *const envp[] = {
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		NULL,
-	};
-	int error;
-
-	*pid = 0;
-	if (access("/init", X_OK) == -1)
-		return errno == ENOENT ? 0 : -1;
-	error = posix_spawn(pid, "/init", NULL, NULL, argv, envp);
-	if (error) {
-		errno = error;
-		return -1;
+		if (pid <= 0)
+			return keeper_status;
+		if (pid == keeper) {
+			keeper_status = status;
+		} else if (pid == init_pid) {
+			fprintf(stderr, "linux-guest-agent: init exited; powering off\n");
+			shut_down(RB_POWER_OFF);
+		}
 	}
-	return 0;
 }
 
 int main(void)
 {
 	struct sigaction child_action = { .sa_handler = child_exited };
-	pid_t system_init;
+	struct sigaction power_action = { .sa_handler = power_signal };
+	sigset_t handled;
 	int session_listener;
+	pid_t keeper = 0;
+	int init_pipe = -1;
 
+	/* A supervisor pthread would share PID 1's address space. The wasm
+	 * kernel refuses to snapshot an address space with another user, so that
+	 * would make every later clone of a session keeper fail with EOPNOTSUPP.
+	 * Keep PID 1 single-threaded: it blocks the signals it handles and waits
+	 * for them only in ppoll, so none can arrive between a check and a
+	 * blocking call. PID 1 receives only signals it has a handler for. */
 	signal(SIGPIPE, SIG_IGN);
+	sigemptyset(&handled);
+	sigaddset(&handled, SIGCHLD);
+	sigaddset(&handled, SIGTERM);
+	sigaddset(&handled, SIGUSR1);
+	sigaddset(&handled, SIGUSR2);
+	sigprocmask(SIG_BLOCK, &handled, &original_mask);
 	sigemptyset(&child_action.sa_mask);
-	if (sigaction(SIGCHLD, &child_action, NULL) == -1) {
-		perror("linux-guest-agent: installing SIGCHLD handler");
+	sigemptyset(&power_action.sa_mask);
+	if (sigaction(SIGCHLD, &child_action, NULL) == -1 ||
+	    sigaction(SIGTERM, &power_action, NULL) == -1 ||
+	    sigaction(SIGUSR1, &power_action, NULL) == -1 ||
+	    sigaction(SIGUSR2, &power_action, NULL) == -1) {
+		perror("linux-guest-agent: installing signal handlers");
 		return 1;
 	}
-	/* /proc remains load-bearing after the root transition: the host's
-	 * realPath and FsFile.stat go through /proc/self/fd/N. */
-	if (prepare_system_root()) {
-		perror("linux-guest-agent: preparing system root");
-		return 1;
-	}
-	/* A supervisor pthread would share PID 1's address space. The wasm kernel
-	 * refuses to snapshot an address space with another user, so that would
-	 * make every later clone of a session worker fail with EOPNOTSUPP. Keep PID
-	 * 1 single-threaded and let SIGCHLD interrupt its blocking operations so it
-	 * can check the system init here instead. */
-	if (start_system_init(&system_init)) {
-		perror("linux-guest-agent: starting system init");
+	if (mount_dev()) {
+		perror("linux-guest-agent: mounting /dev");
 		return 1;
 	}
 	session_listener = listener(session_port, 1);
@@ -1199,45 +1353,63 @@ int main(void)
 		return 1;
 	}
 	printf("linux-guest-agent: ready on vsock port %d\n", session_port);
+	fflush(stdout);
 	for (;;) {
-		int fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
-		pid_t keeper, waited;
-		int status;
+		struct pollfd accepting = { .fd = session_listener, .events = POLLIN };
 		struct session_worker_args args;
+		int status, fd;
 
+		status = reap(keeper);
+		if (status != -1) {
+			keeper = 0;
+			if (WIFSIGNALED(status)) {
+				/* Such as a kill(-1, SIGTERM) sent over a lane. */
+				fprintf(stderr, "linux-guest-agent: session killed by signal %d\n",
+					WTERMSIG(status));
+			} else if (WEXITSTATUS(status) == session_exit_switch_root) {
+				enter_system_root(init_pipe);
+			} else if (WEXITSTATUS(status)) {
+				fprintf(stderr, "session worker failed\n");
+				return 1;
+			}
+			close_fd(&init_pipe);
+		}
+		if (power_request)
+			shut_down(power_request);
+		/* One session at a time: while the keeper runs, only wait for
+		 * signals. */
+		if (ppoll(keeper ? NULL : &accepting, keeper ? 0 : 1, NULL,
+			  &original_mask) == -1 && errno != EINTR) {
+			perror("linux-guest-agent: waiting");
+			return 1;
+		}
+		if (keeper || !(accepting.revents & POLLIN))
+			continue;
+		fd = accept4(session_listener, NULL, NULL, SOCK_CLOEXEC);
 		if (fd == -1) {
-			if (errno == EINTR)
-				check_system_init(system_init);
-			else
+			if (errno != EINTR && errno != EAGAIN)
 				perror("accept session");
 			continue;
 		}
-		args = (struct session_worker_args) {
+		args = (struct session_worker_args){
 			.fd = fd,
 			.session_listener = session_listener,
 		};
+		if (pipe2(args.init_pipe, O_CLOEXEC) == -1) {
+			perror("linux-guest-agent: creating the init pipe");
+			close(fd);
+			continue;
+		}
 		/* The keeper's exit means the session's worker and every one of
 		 * its descendants are gone, so the next session starts clean. */
 		keeper = clone(session_keeper, keeper_stack + session_stack_size,
 			       SIGCHLD, &args);
+		close(fd);
+		close(args.init_pipe[1]);
 		if (keeper == -1) {
 			perror("clone session");
-			close(fd);
 			return 1;
 		}
-		close(fd);
-		do {
-			waited = waitpid(keeper, &status, 0);
-			if (waited == -1 && errno == EINTR)
-				check_system_init(system_init);
-		} while (waited == -1 && errno == EINTR);
-		if (waited == -1) {
-			perror("wait session");
-			return 1;
-		}
-		if (!WIFEXITED(status) || WEXITSTATUS(status)) {
-			fprintf(stderr, "session worker failed\n");
-			return 1;
-		}
+		init_pipe = args.init_pipe[0];
 	}
 }

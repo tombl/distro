@@ -90,22 +90,22 @@ This package owns one optional integration: the Lowland guest agent.
 
 - The host protocol client exposes the existing process, filesystem, syscall,
   and networking APIs.
-- The package ships the agent boot disk as an EROFS asset.
+- The package ships the agent as an initramfs asset: a newc archive holding only
+  `/init`.
 - `guestAgent()` returns the agent API and is also a machine plugin provider.
 - It does not boot machines, re-export kernel devices, or ship BusyBox.
 
-The agent executable is PID 1 on its EROFS filesystem. It mounts `devtmpfs`, `devpts`,
-`proc`, `sysfs`, and writable temporary filesystems itself, then serves the
-host protocol. This makes it a small bootloader and control plane without an
-additional CPIO archive or second copy of libc.
+The agent executable is PID 1 on the initramfs. It mounts `devtmpfs` and serves
+the host protocol, and the host drives the rest of the boot with ordinary calls.
+The agent knows no filesystems.
 
 ### `@lowland/image`
 
 This is the canonical, separately replaceable userspace image. Its userspace is
 built from the Alpine-style APK package graph and includes BusyBox and apk-tools.
 It contains a small JavaScript module, declarations, and package-relative image
-assets. It is a machine plugin provider. It attaches the image but does not
-choose whether the machine is temporary or persistent.
+assets. `rootImage()` returns the root entry of the guest agent's mount table,
+beneath a temporary overlay.
 
 The site derives its own image from the same package graph and the same
 `mkImage` constructor, but is not required to ship the exact canonical image.
@@ -196,11 +196,11 @@ The protocol does not mix capabilities into `Machine`: callers invoke guest
 operations on the object returned by `guestAgent()`.
 
 ```ts
-const agent = guestAgent();
+const agent = guestAgent({ mounts: [rootImage()] });
 
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [agent, image, entropyDevice(), consoleDevice(terminal)],
+  plugins: [agent, entropyDevice(), consoleDevice(terminal)],
 });
 
 const result = await agent.run(["uname", "-a"]);
@@ -214,46 +214,35 @@ Every virtio device exposes a generic `closed` lifecycle promise. Integrations
 that own resources alongside a device bind their cleanup to that promise; the
 transport must not grow device-specific hooks such as an Ethernet `onClose`.
 
-## Block-root boot contract
+## Initramfs boot contract
 
-The canonical host path does not supply an initramfs. The kernel first boots a
-small agent filesystem:
+The guest agent ships as an initramfs that the kernel pulls from the host and
+runs as `/init`. The kernel command line carries only what the kernel itself
+consumes. The agent mounts `devtmpfs` and listens on vsock, and the host does
+the rest with ordinary calls, as any initramfs would:
 
-```text
-root=PARTLABEL=LOWLAND_AGENT rootfstype=erofs ro rootwait init=/init
-```
+1. Mount `proc`, `sysfs`, and `devpts`.
+2. Resolve each disk of the mount table by its virtio serial, `m<i>`, through
+   `/sys/block/*/serial`. A shared filesystem's virtio-fs tag is `m<i>` too.
+3. Mount the table beneath `/sysroot`, the root first. A missing type is tried
+   from the non-`nodev` entries of `/proc/filesystems`. An overlay entry is a
+   read-only lower layer with a tmpfs upper layer in the initramfs.
+4. Move `/dev`, `/proc`, and `/sys` into `/sysroot`.
+5. Delete the initramfs's files, then ask PID 1 to switch root. PID 1 enters
+   `/sysroot` once the boot session has ended, so nothing that saw the old root
+   survives, then starts the host's `init`, if any, and supervises it.
 
-The agent runs as PID 1. It mounts `devtmpfs`, `devpts`, `proc`, and `sysfs`.
-It then finds the system image and mounts it. It moves the required virtual
-filesystems into the new root and calls `pivot_root`. It then unmounts the agent
-filesystem. Programs in the system cannot browse the agent files. The running
-agent can remain visible through normal process information in `/proc`.
+A mount table without `/` leaves the agent on its initramfs. `boot` replaces
+the steps with the caller's own. Nothing is decided by filesystem type or
+label: the storage's mode decides how the host opens it, and the kernel's own
+read-only behaviour does the rest. An ext4 journal that needs recovery fails to
+mount on read-only storage, and the error carries the kernel's log.
 
-The agent finds the system image by filesystem label. It recognizes EROFS and
-ext4, and requires exactly one attached filesystem labeled `LOWLAND_ROOT`. It
-fails boot if that label is absent or appears more than once. It does not use
-virtio device order, a kernel argument, or information returned by
-`devices.add()` to choose a disk. `LOWLAND_AGENT` identifies the private boot
-disk and cannot be mistaken for the system image.
-
-Read-only roots get an overlay. EROFS is always read-only, and an ext4
-filesystem is read-only when its block device is. The agent mounts a read-only
-root beneath a temporary OverlayFS upper layer, so the system behaves like a
-normal writable root for one boot without claiming persistence. An ext4
-filesystem on a writable block device is persistent and mounts read-write
-directly. There is no option to disable the overlay. A read-only ext4 root is
-mounted without replaying its journal, so it shows the filesystem as of its last
-checkpoint.
-
-The canonical live site attaches one `LOWLAND_ROOT` EROFS image, which the
-agent mounts beneath the temporary overlay. It also attaches an unformatted
-persistent block device; the installer creates and labels its ext4 filesystem
-inside the guest. Once
-installed, the site does not attach the live EROFS image and mounts only that
-`LOWLAND_ROOT` ext4 disk directly. A `?live=1` recovery boot does not attach an
-existing installed disk, because exposing it alongside the live image would
-create two roots with the canonical label. The private agent filesystem is
-attached in both cases and is never copied into the installed system.
+The canonical live site boots its EROFS image beneath an overlay. It also
+attaches an unformatted persistent block device, which the installer formats
+inside the guest. Once installed, the site boots that ext4 disk directly with a
+boot of its own, because the disk lives in a worker. The agent is never copied
+into the installed system.
 
 EROFS is the canonical immutable-image format. SquashFS remains enabled in the
 kernel for other embedders, but the canonical packages do not produce or ship
@@ -408,7 +397,7 @@ pnpm artifacts
 ```
 
 It builds and copies the native artifacts the packages ship as regular ignored
-files to their owning packages: the kernel wasm and the guest-agent EROFS. It
+files to their owning packages: the kernel wasm and the guest-agent initramfs. It
 does not create store symlinks, provenance sidecars, or an alternative
 downloader. Test images are not artifacts: tests read them from
 `$LOWLAND_TEST_ASSETS`, and build `.#test-assets` themselves when it is unset.

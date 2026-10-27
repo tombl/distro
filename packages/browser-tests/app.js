@@ -23,16 +23,9 @@ const rootfs = fetch("/rootfs.erofs").then(async (response) => {
   return new Uint8Array(await response.arrayBuffer());
 });
 
-async function rootDevice() {
-  const bytes = await rootfs;
-  return blockDevice({
-    capacity: bytes.byteLength,
-    read(offset, target) {
-      const source = bytes.subarray(offset, offset + target.byteLength);
-      target.set(source);
-      return source.byteLength;
-    },
-  });
+// The test system beneath an overlay: the root of every guest's mount table.
+async function rootMount() {
+  return { path: "/", source: await rootfs, type: "erofs", mode: "overlay" };
 }
 
 async function opfsDiskDevice(handle, capacity) {
@@ -55,10 +48,10 @@ async function opfsDiskDevice(handle, capacity) {
 // Boots a guest, runs the scenario, and always shuts the machine down.
 // Scenarios return plain JSON so specs assert on the result directly.
 async function withGuest(scenario, options) {
-  const agent = guestAgent();
+  const agent = guestAgent({ mounts: [await rootMount()] });
   const machine = await bootMachine({
     cpus: options?.cpus ?? 1,
-    plugins: [agent, ...(options?.devices ?? []), await rootDevice()],
+    plugins: [agent, ...(options?.devices ?? [])],
   });
   try {
     return await scenario(agent);
@@ -243,8 +236,8 @@ let lifecycleGuest;
 
 globalThis.startRemoteMemoryLifecycle = async () => {
   if (lifecycleGuest) throw new Error("remote-memory lifecycle guest is already running");
-  const agent = guestAgent();
-  const machine = await bootMachine({ cpus: 1, plugins: [agent, await rootDevice()] });
+  const agent = guestAgent({ mounts: [await rootMount()] });
+  const machine = await bootMachine({ cpus: 1, plugins: [agent] });
   lifecycleGuest = { agent, machine };
 };
 

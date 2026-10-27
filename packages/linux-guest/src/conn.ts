@@ -1,4 +1,4 @@
-// Guest transport (protocol v4): how bytes travel. What they mean lives in
+// Guest transport (protocol v5): how bytes travel. What they mean lives in
 // syscalls.ts and agent.c.
 //
 // A session is one pinned vsock connection to the session port plus a pool
@@ -20,7 +20,7 @@ import { Bytes, Struct, U16LE, U32LE } from "@lowland/bytes";
 const SESSION_PORT = 1024;
 const LANE_PORT = 1025;
 const HANDSHAKE_MAGIC = 0x584e4c54; // "TLNX"
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 5;
 
 // Hard cap on concurrent lanes, equal to the agent's limit. The agent creates
 // their workers on demand; the veneer's process cap (process.ts) keeps

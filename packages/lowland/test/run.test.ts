@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildImage } from "@lowland/image/build";
-import { createNetwork } from "@lowland/guest";
+import { createNetwork, GuestBootError } from "@lowland/guest";
 import { NodeFS } from "@lowland/guest/node";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -278,11 +278,25 @@ describe("lowland run", () => {
     assert.equal(await sha256(data_disk), before);
   });
 
-  it("rejects a disk labeled as a root image", async () => {
+  it("attaches a root image as a disk", async () => {
     const root = await ext4_root(scratch.path);
-    const result = await lowland(["run", "--disk", `${root}:/data`, "true"]);
+    const result = await lowland([
+      "run",
+      "--disk",
+      `${root}:/data:ro`,
+      "test",
+      "-x",
+      "/data/bin/sh",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("reports why a disk did not mount", async () => {
+    const empty = join(scratch.path, "empty.img");
+    await writeFile(empty, new Uint8Array(1024 * 1024));
+    const result = await lowland(["run", "--disk", `${empty}:/data`, "true"]);
     assert.equal(result.status, 125);
-    assert.match(result.stderr, /labeled LOWLAND_ROOT/);
+    assert.match(result.stderr, /^lowland run: mounting m\d+ \(.*empty\.img\) at \/data: EINVAL/);
   });
 
   it("never changes the root image", async () => {
@@ -336,9 +350,15 @@ describe("Linux", () => {
     const file = await linux.fs.open("/data/open-handle", { write: true, create: true });
     await file.write(new TextEncoder().encode("still open"));
     await linux[Symbol.asyncDispose]();
-    await using reader = await Linux.create({
-      disks: [{ source: data_disk, path: "/data", readOnly: true }],
-    });
+    // The open file kept the disk from unmounting, so its journal needs
+    // recovery, which read-only storage cannot have.
+    await assert.rejects(
+      Linux.create({ disks: [{ source: data_disk, path: "/data", readOnly: true }] }),
+      (error) =>
+        error instanceof GuestBootError &&
+        /write access unavailable, cannot proceed/.test(error.kernelLog),
+    );
+    await using reader = await Linux.create({ disks: [{ source: data_disk, path: "/data" }] });
     assert.equal(await reader.fs.readTextFile("/data/open-handle"), "still open");
   });
 
@@ -411,8 +431,9 @@ describe("Linux", () => {
     );
   });
 
-  it("refuses to boot with a disk labeled as a root image", async () => {
+  it("mounts a disk without telling it apart from a root image", async () => {
     const root = await readFile(await ext4_root(scratch.path));
-    await assert.rejects(Linux.create({ disks: [{ source: root, path: "/data" }] }));
+    await using linux = await Linux.create({ disks: [{ source: root, path: "/data" }] });
+    await linux.fs.stat("/data/bin/busybox");
   });
 });

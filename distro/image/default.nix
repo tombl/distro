@@ -11,7 +11,7 @@
 #     links ? { };       # "/abs/path" = "symlink target"
 #     format ? "erofs";  # "erofs" (immutable) or "ext4" (writable)
 #     compression ? "deflate";  # EROFS only: "deflate", "lzma", or "none"
-#     label ? "LOWLAND_ROOT";  # filesystem label, at most 15 characters
+#     label ? null;      # filesystem label, at most 15 characters; none by default
 #     size ? "256M";     # ext4 capacity; EROFS is always exactly its contents
 #   }
 #
@@ -70,7 +70,7 @@ in
   links ? { },
   format ? "erofs",
   compression ? "deflate",
-  label ? "LOWLAND_ROOT",
+  label ? null,
   size ? "256M",
 }:
 

@@ -26,7 +26,7 @@ pkgs.stdenvNoCC.mkDerivation {
     cp -r ${kernel}/dist packages/kernel/dist
     cp ${kernel}/vmlinux.wasm packages/kernel/vmlinux.wasm
     # Runnable examples serve the packages and their artifacts from the site.
-    cp ${linux-guest.package}/agent.img packages/linux-guest/agent.img
+    cp ${linux-guest.package}/agent.cpio packages/linux-guest/agent.cpio
     cp ${lowland-image.rootfs} packages/image/rootfs.erofs
     cp ${lowland-image.builderImage} packages/image/builder.erofs
     pnpm --filter=@lowland/guest build

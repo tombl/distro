@@ -16,18 +16,38 @@ import { bootMachine } from "@lowland/kernel";
 import { guestAgent } from "@lowland/guest";
 import { rootImage } from "@lowland/image";
 
-const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 
 const result = await guest.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
-The machine needs a root filesystem: one EROFS or ext4 image labelled `LOWLAND_ROOT`.
-`rootImage()` from `@lowland/image` attaches a small one with BusyBox and apk.
+The agent boots from an initramfs, then mounts its mount table, which is like fstab, and makes
+the entry at `/` the root. `rootImage()` from `@lowland/image` is a small root with BusyBox and
+apk, beneath a writable layer in memory.
 [Your own software](https://docs.low.land/your-own-software/) explains how to make your own, which
-`rootImage("app.erofs")` attaches in the same way. A missing or duplicate root makes
-`bootMachine()` reject with a `GuestBootError`.
+`rootImage("app.erofs")` boots in the same way. Each entry is a path, a source, a type, a mode
+(`"rw"`, `"ro"`, or `"overlay"`), and options:
+
+```js
+const guest = guestAgent({
+  mounts: [
+    rootImage(),
+    { path: "/data", source: "data.ext4", type: "ext4" },
+    { path: "/src", source: new NodeFS("./src"), mode: "ro" },
+    { path: "/scratch", type: "tmpfs" },
+  ],
+  init: ["/sbin/my-service"],
+});
+```
+
+A source is a disk, which becomes a block device, or a filesystem such as `NodeFS`, which
+becomes a virtio-fs device. Without a type, the guest tries each filesystem it supports, as
+BusyBox `mount` does. `init`, if given, starts once the root is mounted, and its exit powers the
+machine off. A step that fails makes `bootMachine()` reject with a `GuestBootError` that names
+the step, with the error as its `cause` and the end of the kernel's log as its `kernelLog`.
+`boot` replaces the whole boot with your own calls.
 
 The same code runs in a browser. The page must be served with the cross-origin isolation
 headers described in [Hosting](https://docs.low.land/hosting/).
@@ -49,7 +69,7 @@ immediately visible to programs in the guest, and the reverse is also true.
 
 The root filesystem is writable. Changes to a read-only image, such as the one from
 `rootImage()`, are kept in memory and lost when the machine closes. Changes to an ext4 image
-attached with `rootImage("app.ext4", { writable: true })` are written back to it.
+mounted writable, `{ path: "/", source: "app.ext4", type: "ext4" }`, are written back to it.
 
 ## Networking
 
@@ -60,10 +80,10 @@ provide for TCP connections and DNS lookups:
 import { createNetwork } from "@lowland/guest";
 
 const network = createNetwork({ connectTcp, resolveDns });
-const guest = guestAgent();
+const guest = guestAgent({ mounts: [rootImage()] });
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [rootImage(), guest, network.attach(guest)],
+  plugins: [guest, network.attach(guest)],
 });
 ```
 

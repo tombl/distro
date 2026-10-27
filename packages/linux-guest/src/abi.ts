@@ -1,4 +1,4 @@
-// Guest ABI schema (protocol v4).
+// Guest ABI schema (protocol v5).
 //
 // Every fact here is a KERNEL ABI fact for the wasm32 guest. Injected
 // syscalls bypass libc entirely, so these are asm-generic values on a
@@ -108,6 +108,8 @@ const nr = scalar_group("__NR_", {
   ioctl: 29,
   kill: 129,
   getpid: 172,
+  syslog: 116,
+  openat2: 437,
 });
 
 /** asm-generic syscall numbers, e.g. `NR.openat === 56`. */
@@ -147,9 +149,26 @@ export const AT = at.values;
 
 const mount_flags = scalar_group("MS_", {
   RDONLY: 1,
+  REMOUNT: 32,
   BIND: 4096,
+  MOVE: 8192,
   REC: 16384,
 });
+
+// openat2(2): include/uapi/linux/openat2.h.
+const resolve_flags = scalar_group("RESOLVE_", {
+  IN_ROOT: 0x10,
+});
+
+/** openat2 resolve flags, e.g. `RESOLVE.IN_ROOT`. */
+export const RESOLVE = resolve_flags.values;
+
+const open_how = define_struct(
+  "struct open_how",
+  { flags: U64LE, mode: U64LE, resolve: U64LE },
+  { assert_sizeof: true },
+);
+export const OpenHow = open_how.Schema;
 
 /** Linux mount flags accepted by {@link GuestAgent.mount}. */
 export const MountFlags = mount_flags.values;
@@ -213,6 +232,7 @@ const e = scalar_group("E", {
   BUSY: 16,
   EXIST: 17,
   XDEV: 18,
+  NODEV: 19,
   NOTDIR: 20,
   ISDIR: 21,
   INVAL: 22,
@@ -497,6 +517,7 @@ export const abi_checks: {
     "#include <signal.h>", // SIG*
     "#include <sys/wait.h>", // WIF*/W* macros
     "#include <sys/ioctl.h>", // TIOC*, struct winsize
+    "#include <linux/openat2.h>", // RESOLVE_*, struct open_how
   ],
   scalars: [
     ...nr.checks,
@@ -509,7 +530,8 @@ export const abi_checks: {
     ...e.checks,
     ...sig.checks,
     ...tioc.checks,
+    ...resolve_flags.checks,
   ],
-  structs: [stat.check, dirent.check, winsize.check],
+  structs: [stat.check, dirent.check, winsize.check, open_how.check],
   exprs: wait_checks,
 };

@@ -20,7 +20,7 @@ Options:
   -l, --link <guest=target>       Create a symbolic link in the image (repeatable)
       --format <format>           Set the format, erofs or ext4 (default: erofs)
       --compression <compression> Compress EROFS data with deflate, lzma, or none (default: deflate)
-      --label <label>             Set the filesystem label (default: LOWLAND_ROOT)
+      --label <label>             Set the filesystem label (default: none)
       --size <size>               Set the image size, such as 64M (default: 256M)
   -o, --output <file>             Write the image to this path
   -h, --help                      Show help

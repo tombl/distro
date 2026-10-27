@@ -3,7 +3,7 @@
 // flow catches SystemError, because exceptions are the errno channel.
 
 import type { VsockDevice } from "@lowland/kernel";
-import { AT, DT, E, O, parse_dirents, SystemError } from "./abi.ts";
+import { AT, DT, E, O, parse_dirents, RESOLVE, SystemError } from "./abi.ts";
 import { GuestSession } from "./conn.ts";
 import {
   CHUNK,
@@ -15,13 +15,17 @@ import {
   getpid,
   type GuestFd,
   mkdirat,
+  mkdirat_in,
   mount,
   openat,
+  openat2,
   read,
+  read_kernel_log,
   readlinkat,
   renameat,
   spawn,
   spawn_terminal,
+  switch_root,
   symlinkat,
   sync,
   unlinkat,
@@ -265,6 +269,21 @@ export interface GuestClientCapabilities {
   readonly exec: Exec;
   readonly mount: Mount;
   readonly unmount: Unmount;
+  /**
+   * Asks PID 1 to enter /sysroot, then start `init` there if given, and
+   * ends the session: PID 1 switches between sessions, and the next call
+   * connects a new one.
+   */
+  switch_root(init?: { argv: readonly string[]; env: readonly string[] }): Promise<void>;
+  /** The end of the kernel log, as text. */
+  kernel_log(): Promise<string>;
+  /**
+   * Opens `path` as a directory with `root` as its `/`, creating missing
+   * directories: symlinks, absolute or relative, and `..` never leave
+   * `root`. The result is an `O_PATH` descriptor, which other calls on this
+   * session name as `/proc/self/fd/N`.
+   */
+  open_directory_in(root: string, path: string): Promise<GuestFd>;
 }
 
 // A process may hold up to four blocked lanes (reap, stdout, stderr, one
@@ -341,6 +360,59 @@ class GuestClient {
 
   async sync() {
     await sync(await this.#connect());
+  }
+
+  async switch_root(init?: { argv: readonly string[]; env: readonly string[] }) {
+    const pending = this.#connect();
+    const session = await pending;
+    await switch_root(session, init && { ...init, cwd: "/" });
+    if (this.#session === pending) this.#session = null;
+    session.close();
+  }
+
+  async open_directory_in(root: string, path: string) {
+    const session = await this.#connect();
+    const how = { flags: O.PATH | O.DIRECTORY | O.CLOEXEC, resolve: RESOLVE.IN_ROOT };
+    const parts = path.split("/").filter(Boolean);
+    await using root_fd = await openat(session, root, O.PATH | O.DIRECTORY | O.CLOEXEC, 0);
+    const open = (count: number) =>
+      openat2(session, root_fd, parts.slice(0, count).join("/") || ".", how);
+    try {
+      return await open(parts.length);
+    } catch (error) {
+      if (!(error instanceof SystemError && error.code === "ENOENT")) throw error;
+    }
+    // Something is missing: walk down, creating each missing directory in
+    // the directory its parent resolved to.
+    let parent = await open(0);
+    try {
+      for (let count = 1; count <= parts.length; count++) {
+        let next: GuestFd;
+        try {
+          next = await open(count);
+        } catch (error) {
+          if (!(error instanceof SystemError && error.code === "ENOENT")) throw error;
+          try {
+            await mkdirat_in(parent, parts[count - 1]!, 0o755);
+          } catch (error) {
+            // A dangling symlink: opening it again fails honestly below.
+            if (!(error instanceof SystemError && error.code === "EEXIST")) throw error;
+          }
+          next = await open(count);
+        }
+        await parent.close();
+        parent = next;
+      }
+      return parent;
+    } catch (error) {
+      await parent.close();
+      throw error;
+    }
+  }
+
+  async kernel_log() {
+    const log = await read_kernel_log(await this.#connect(), 4096);
+    return new TextDecoder().decode(log);
   }
 
   async mount(source: string | null, target: string, options: MountOptions = {}) {
@@ -623,6 +695,9 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
   return {
     ping: client.ping.bind(client),
     sync: client.sync.bind(client),
+    switch_root: client.switch_root.bind(client),
+    kernel_log: client.kernel_log.bind(client),
+    open_directory_in: client.open_directory_in.bind(client),
     fs: {
       readFile: client.readFile.bind(client),
       readTextFile: client.readTextFile.bind(client),

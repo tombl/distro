@@ -1,4 +1,4 @@
-// The guest syscall table (protocol v4): what the bytes on a lane mean.
+// The guest syscall table (protocol v5): what the bytes on a lane mean.
 //
 // Each exported function is one syscall the veneer composes, defined once:
 // wire encoding, reply decoding, 64-bit argument splitting, and errno
@@ -15,12 +15,14 @@
 //   reap request:    { kind u8 = 3, pid u32 }
 //   terminal spawn:  { kind u8 = 4, len u32 } then { rows u16, columns u16 }
 //                    and the spawn payload
+//   switch root:     { kind u8 = 5, len u32 } then, when len is nonzero, the
+//                    spawn payload of the init PID 1 starts in the new root
 //   reply:           { ret i64, errno u32 } then, when ret != -1: each
 //                    out-blob (full: capacity bytes; ret-sized: min(capacity,
 //                    ret) bytes), or the spawn/reap reply body.
 
 import { Bytes, FixedArray, I64LE, Struct, U16LE, U32LE, U64LE, U8 } from "@lowland/bytes";
-import { AT, NR, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
+import { AT, NR, OpenHow, Stat, stat_size, SystemError, TIOC, Winsize } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 
 /** Host convention for bulk I/O: syscall data payloads are at most 32 KiB. */
@@ -35,6 +37,7 @@ const REQ_SYSCALL = 1;
 const REQ_SPAWN = 2;
 const REQ_REAP = 3;
 const REQ_SPAWN_TERMINAL = 4;
+const REQ_SWITCH_ROOT = 5;
 
 const ARG_SCALAR = 0;
 const ARG_IN = 1;
@@ -164,6 +167,35 @@ export async function openat(
 ): Promise<GuestFd> {
   const { ret } = await syscall(session, NR.openat, AT.FDCWD, c_string(path), flags, mode);
   return new GuestFd(session, Number(ret), path);
+}
+
+/** openat2(2): opens `path` relative to `dirfd`, resolved as `how.resolve` says. */
+export async function openat2(
+  session: GuestSession,
+  dirfd: GuestFd,
+  path: string,
+  how: { flags: number; resolve: number },
+): Promise<GuestFd> {
+  const bytes = new Bytes(OpenHow.size);
+  bytes.alloc(OpenHow).value = {
+    flags: BigInt(how.flags),
+    mode: 0n,
+    resolve: BigInt(how.resolve),
+  };
+  const { ret } = await syscall(
+    session,
+    NR.openat2,
+    dirfd,
+    c_string(path),
+    { in: bytes.array },
+    OpenHow.size,
+  );
+  return new GuestFd(session, Number(ret), path);
+}
+
+/** mkdirat(2) relative to an open directory rather than the working directory. */
+export async function mkdirat_in(dirfd: GuestFd, name: string, mode: number): Promise<void> {
+  await syscall(dirfd.session, NR.mkdirat, dirfd, c_string(name), mode);
 }
 
 /** Read up to `capacity` bytes; an empty result is EOF. Blocks (holding its
@@ -340,6 +372,23 @@ export async function getpid(session: GuestSession): Promise<number> {
   return Number(ret);
 }
 
+const SYSLOG_ACTION_READ_ALL = 3;
+
+/** The last `capacity` bytes of the kernel log, without consuming them. */
+export async function read_kernel_log(
+  session: GuestSession,
+  capacity: number,
+): Promise<Uint8Array> {
+  const { out } = await syscall(
+    session,
+    NR.syslog,
+    SYSLOG_ACTION_READ_ALL,
+    { out: capacity, ret_sized: true },
+    capacity,
+  );
+  return out[0]!;
+}
+
 // --- process lifecycle (the agent's only domain knowledge) -----------------
 
 export interface Spawned {
@@ -437,6 +486,29 @@ export async function spawn_terminal(
     pid: result.body.pid,
     terminal: new GuestFd(session, result.body.terminal, `${argv[0]}:terminal`),
   };
+}
+
+/** Asks PID 1 to enter /sysroot once this session ends, then start `init`
+ *  there, if given. The session validates /sysroot first, and PID 1 does
+ *  the switch only after the host closes the session. */
+export async function switch_root(
+  session: GuestSession,
+  init?: { argv: readonly string[]; cwd: string; env: readonly string[] },
+): Promise<void> {
+  const payload = new Bytes();
+  if (init) spawn_payload(payload, init.argv, init.cwd, init.env);
+
+  const request = new Bytes();
+  request.alloc(U8).value = REQ_SWITCH_ROOT;
+  request.alloc(U32LE).value = payload.length;
+  request.append(payload.array);
+
+  const errno = await session.exchange(async (lane) => {
+    await lane.write(request.array);
+    const reply = new ReplyHead(await lane.read(ReplyHead.size));
+    return reply.ret === -1n ? reply.errno : 0;
+  });
+  if (errno) throw new SystemError(errno);
 }
 
 /** Blocking waitpid in the guest; returns the raw wait status. Every spawn

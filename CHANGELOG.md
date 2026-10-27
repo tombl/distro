@@ -10,12 +10,21 @@
   exposes extensible machine lifecycle and virtio block, console, filesystem,
   network, vsock, and entropy device APIs.
 - `@lowland/guest` provides a bootable guest SDK with process execution and
-  streaming I/O, filesystem and mount operations, labeled EROFS or ext4 root
-  disks, and optional temporary writable overlays.
-- `@lowland/image` attaches the canonical system image with `rootImage()`: a
-  read-only EROFS root with BusyBox, apk-tools and CA certificates, set up for
-  the published apk repository. `rootImage(source)` attaches a custom EROFS or
-  ext4 image from a path, URL, `FileHandle`, bytes, `Blob` or `Response`.
+  streaming I/O, and filesystem and mount operations. `guestAgent()` boots the
+  agent as an initramfs and realizes a mount table, `mounts`, like fstab:
+  disks and shared filesystems mounted `rw`, `ro`, or beneath a temporary
+  writable overlay, with the entry at `/` as the root. A missing `type` is
+  tried from the kernel's filesystems. `boot` replaces the default boot with
+  your own calls, and `init` starts a program in the new root whose exit
+  powers the machine off.
+- `@lowland/image` provides the canonical system image as the root of a mount
+  table with `rootImage()`: a read-only EROFS root with BusyBox, apk-tools and
+  CA certificates beneath a writable overlay, set up for the published apk
+  repository. `rootImage(source)` boots a custom EROFS or ext4 image from a
+  path, URL, `FileHandle`, bytes, `Blob` or `Response`.
+- `@lowland/kernel`'s `diskStorage(source, { writable })` opens a path, URL,
+  `FileHandle`, bytes, `Blob`, `Response` or `BlockStorage` as block storage,
+  rejecting only HTML error pages and partial sectors.
 - `buildImage()` from `@lowland/image/build` builds custom images in Node from
   apk packages, host files and symlinks, in a builder machine shipped with the
   package. Images are compressed with deflate by default; `compression`
@@ -29,18 +38,17 @@
 - `guest.exec(argv, { terminal })` runs a process on a guest pseudoterminal as
   a session leader with job control, and `resize()` changes the terminal's
   size.
-- A guest that cannot mount its system root makes `bootMachine()` reject with
-  a `GuestBootError` that carries the agent's diagnostic, such as `no
-  supported filesystem is labeled LOWLAND_ROOT`, instead of panicking the
-  kernel.
+- A guest whose boot fails makes `bootMachine()` reject with a
+  `GuestBootError` that names the step, carries the system call's error as its
+  `cause`, and holds the end of the kernel log, instead of panicking the
+  kernel. An ext4 image whose journal needs recovery fails to mount from
+  read-only storage in the kernel's own words.
 - `machine.close()` runs the new optional `MachinePlugin.closing()` hooks, in
   reverse plugin order, before teardown. The guest agent uses it to sync
   guest filesystems, so writes to a writable disk survive the close.
   `guest.sync()` syncs on demand.
 - The vsock device accepts guest-initiated connections: `listen(port,
   handler)` serves a host port for as long as the handler runs.
-- Read-only ext4 roots, such as a block device without a `write` callback,
-  are mounted beneath a temporary writable overlay, as EROFS roots are.
 - The kernel mounts EROFS images compressed with deflate, LZMA or LZ4, and
   `mkImage` compresses EROFS images with deflate by default.
 - The toolchain supports C++ exceptions, so btop builds. `buildGoModule`
@@ -111,9 +119,9 @@
 - Node kernel threads no longer load undici to receive their first message.
 - A missing system disk fails the boot at once instead of after 11 seconds of
   polling.
-- `@lowland/guest` rejects an `agent.img` that is not a GPT disk, such as a
-  dev server's HTML fallback page, with an error naming the URL, and retries
-  a failed load.
+- `@lowland/guest` rejects an `agent.cpio` that is not a newc archive, such
+  as a dev server's HTML fallback page, with an error naming the URL, and
+  retries a failed load.
 
 ### Fixed
 

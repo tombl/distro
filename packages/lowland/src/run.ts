@@ -12,7 +12,7 @@ import { NodeFS } from "@lowland/guest/node";
 import { spawnSync } from "node:child_process";
 import { resolve4 } from "node:dns/promises";
 import { once } from "node:events";
-import { open, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
 import type { ReadStream, WriteStream } from "node:tty";
@@ -65,8 +65,6 @@ const VALUE_OPTIONS = new Set([
 ]);
 
 const NETWORKS = ["none", "host"] as const;
-
-const ROOT_LABEL = "LOWLAND_ROOT";
 
 const SIGNALS: Record<string, number> = {
   SIGHUP: 1,
@@ -189,44 +187,6 @@ export function parseRunArgs(
 }
 
 /**
- * Checks a disk image file before boot, so mistakes get a message about the
- * file rather than a failed boot.
- */
-async function check_disk({ source, readOnly }: Attachment) {
-  const handle = await open(source, "r");
-  let header: Uint8Array;
-  try {
-    header = new Uint8Array(2048);
-    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0);
-    header = header.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
-  const label = (offset: number) =>
-    new TextDecoder().decode(header.subarray(offset, offset + 16)).replace(/\0.*$/s, "");
-  let type: string | undefined;
-  let name = "";
-  if (header.byteLength >= 1104 && view.getUint32(1024, true) === 0xe0f5e1e2) {
-    type = "erofs";
-    name = label(1024 + 64);
-  } else if (header.byteLength >= 1160 && view.getUint16(1024 + 56, true) === 0xef53) {
-    type = "ext4";
-    name = label(1024 + 120);
-  }
-  if (!type) throw new Error(`${source} contains neither an EROFS nor an ext4 filesystem`);
-  // The guest agent would find two roots and refuse to boot.
-  if (name === ROOT_LABEL) {
-    throw new Error(
-      `${source} is labeled ${ROOT_LABEL}, the root image label; relabel it to attach it as a disk`,
-    );
-  }
-  if (type === "erofs" && !readOnly) {
-    throw new Error(`${source} is an EROFS image, which can only be attached read-only (:ro)`);
-  }
-}
-
-/**
  * @internal The bytes a socket receives, ending at the remote FIN while the
  * socket stays open for writing. Node's own `Duplex.toWeb()` waits for both
  * directions to close before Node 24.20 and 26.7.
@@ -300,7 +260,6 @@ function host_network(): Network {
 
 /** The `Linux` options for parsed arguments, with host paths checked. */
 export async function machineOptions(run: RunArguments, network?: Network): Promise<LinuxOptions> {
-  await Promise.all(run.disks.map(check_disk));
   // NodeFS resolves its root lazily, so check the directories now, where a
   // failure stops lowland rather than surfacing later in the guest.
   await Promise.all(

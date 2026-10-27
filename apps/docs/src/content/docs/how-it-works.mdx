@@ -61,11 +61,12 @@ move one into a worker of your own with `workerDevice()`.
 
 ## The guest agent
 
-`guestAgent()` adds two devices. The first is a small disk that contains the agent program,
-which the kernel boots as PID 1. The agent mounts the system image, the filesystem labelled
-`LOWLAND_ROOT`, and switches into it as the new root.
+`guestAgent()` adds the agent program as the kernel's initramfs, which the kernel runs as PID 1.
+It adds a device for each source in its mount table: a disk, or a shared directory. Your process
+then boots the guest through the agent: it mounts the table beneath `/sysroot`, and the agent
+switches into it as the new root.
 
-The second device is a vsock device, which carries stream connections between the guest and
+The agent also adds a vsock device, which carries stream connections between the guest and
 your process. Your process opens these connections and the agent accepts them. One
 connection lasts as long as the session, and further connections carry requests. A request
 asks the agent to make one system call, to start a program, or to wait for a program to exit.

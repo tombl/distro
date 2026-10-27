@@ -15,7 +15,7 @@
 <pre id="log"></pre>
 <script type="module">
   import { createNetwork, guestAgent, guestFetchHandler } from "@lowland/guest";
-  import { blockDevice, bootMachine, consoleDevice } from "@lowland/kernel";
+  import { bootMachine, consoleDevice } from "@lowland/kernel";
   import { serveGuest } from "/client.js";
 
   const hubOrigin = "__HUB_ORIGIN__";
@@ -52,18 +52,15 @@
       resolveDns: async () => [],
     });
     const rootfs = await bytes("/rootfs.erofs");
-    const root = blockDevice({
-      capacity: rootfs.byteLength,
-      read(offset, target) {
-        target.set(rootfs.subarray(offset, offset + target.byteLength));
-        return target.byteLength;
-      },
+    // The root is an entry in the agent's mount table, beneath a writable
+    // layer in memory.
+    const guest = guestAgent({
+      mounts: [{ path: "/", source: rootfs, type: "erofs", mode: "overlay" }],
     });
-    const guest = guestAgent();
     const attachment = network.attach(guest);
     await bootMachine({
       cpus: 1,
-      plugins: [root, guest, boot_console, attachment],
+      plugins: [guest, boot_console, attachment],
     });
     await guest.fs.mkdir("/tmp/www");
     await guest.fs.writeTextFile("/tmp/www/index.html", "<h1>hello from the guest</h1>\n");

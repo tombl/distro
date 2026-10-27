@@ -10,8 +10,8 @@ order: 1
 A guest's root filesystem comes from an image attached to the machine as a block device. This
 page describes what an image must contain, and the three ways to get one:
 
-- `rootImage()` from `@lowland/image` attaches the ready-made image that ships with the package.
-  It is a JavaScript plugin for `bootMachine()`, and it also attaches images you build.
+- `rootImage()` from `@lowland/image` is the ready-made image that ships with the package, as
+  the root of the guest agent's mount table. It also boots images you build.
 - `buildImage()` from `@lowland/image/build` builds an image file in Node.js. It is also
   available as the `lowland build` command.
 - `mkImage` is a Nix function that builds an image file from Nix packages.
@@ -36,48 +36,52 @@ as shown in [Your own software](/your-own-software/#building-an-image).
 
 The guest agent from `@lowland/guest` boots any image that meets these requirements:
 
-- The image is an EROFS or ext4 filesystem with the label `LOWLAND_ROOT`.
-- Exactly one such filesystem is attached to the machine.
-- The image contains the directories `/dev`, `/proc`, `/run`, `/sys`, and `/tmp`. The guest
-  mounts its own filesystems there. `buildImage()` and `mkImage` create them.
+- The image is a filesystem the guest kernel can mount, such as EROFS or ext4, at `/` in the
+  agent's mount table.
+- The image contains the directories `/dev`, `/proc`, and `/sys`, where the agent moves its own
+  filesystems, unless it is mounted beneath a writable layer, which can create them.
+  `buildImage()` and `mkImage` create them, and `/run` and `/tmp`.
 - Programs are WebAssembly binaries for 32-bit Linux, linked statically. Scripts with a `#!`
   line also run.
 
-When no filesystem is labelled `LOWLAND_ROOT`, or more than one is, `bootMachine()` rejects with
-a `GuestBootError` from `@lowland/guest`. Its message says what is wrong, for example
-`no supported filesystem is labeled LOWLAND_ROOT`.
+When a mount fails, `bootMachine()` rejects with a `GuestBootError` from `@lowland/guest`. Its
+message names the step and the error, and its `kernelLog` holds the end of the guest kernel's
+log, which usually says why.
 
 ### EROFS and ext4
 
-An image attached read-only, which is the default, never changes. The guest puts a writable
-layer in memory on top of it, so programs can change any file, but the changes are discarded
-when the machine closes. One read-only image can be attached to any number of machines.
+An image opened read-only, which is what `rootImage()` does, never changes. The guest puts a
+writable layer in memory on top of it, so programs can change any file, but the changes are
+discarded when the machine closes. One read-only image can be attached to any number of
+machines.
 
-An ext4 image attached with `rootImage(source, { writable: true })` is mounted read-write, and
-changes are written back to it, as shown in
+An ext4 image in a writable mount entry, `{ path: "/", source, type: "ext4" }`, is mounted
+read-write, and changes are written back to it, as shown in
 [Your own software](/your-own-software/#erofs-or-ext4). Run `sync` in the guest before
 closing the machine, or recent changes may be lost. Attach a writable image to only one machine
-at a time.
+at a time. An ext4 image that was not unmounted cleanly cannot be opened read-only until a
+writable mount has recovered its journal.
 
-### `/init`
+### An init program
 
-If the image contains an executable `/init`, the guest starts it once the root filesystem is
-mounted. Use it to start services that should run for the life of the machine. When `/init`
-exits, the machine shuts down.
+`guestAgent({ init: ["/sbin/init"] })` starts a program once the root filesystem is mounted. Use
+it to start services that should run for the life of the machine. When it exits, the machine
+shuts down.
 
-`/init` is optional. Without it, the guest runs only the programs you start from JavaScript.
+An init is optional. Without one, the guest runs only the programs you start from JavaScript.
 
 ## `rootImage()`
 
 ```js
 import { rootImage } from "@lowland/image";
 
-const guest = guestAgent();
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage(), guest] });
+const guest = guestAgent({ mounts: [rootImage()] });
+await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 ```
 
-`rootImage(source, options)` returns a plugin that attaches an image as a block device. One
-plugin can be passed to any number of machines.
+`rootImage(source)` returns the mount entry `{ path: "/", source, type, mode: "overlay" }`: the
+image opened read-only beneath a writable layer in memory. One entry can be used by any number
+of machines.
 
 ### The bundled image
 
@@ -105,7 +109,7 @@ and shared by every machine on the page.
 Pass a source to attach an image of your own:
 
 ```js
-await using machine = await bootMachine({ cpus: 1, plugins: [rootImage("app.erofs"), guest] });
+const guest = guestAgent({ mounts: [rootImage("app.erofs")] });
 ```
 
 | Source                                | Behavior                                                                                                                         |
@@ -117,25 +121,16 @@ await using machine = await bootMachine({ cpus: 1, plugins: [rootImage("app.erof
 | A `Blob` or `Response`                | The whole image. It is read into memory once.                                                                                    |
 
 Files are read from disk as the guest needs them. A URL is fetched once and shared by every
-machine that the plugin is passed to.
+machine.
 
-Every source must contain an EROFS or ext4 filesystem. Otherwise `bootMachine()` rejects with an
-error that names the source. A common cause is a development server that answers a mistyped
-image URL with its HTML page:
+`rootImage()` reads the superblock of bytes, and of a path in Node.js, at once: it throws if
+there is no EROFS or ext4 filesystem, and otherwise knows the type. Other sources are read when
+the machine boots, and the guest tries each filesystem it supports. A source served as an HTML
+page, such as a development server's answer to a mistyped image URL, is rejected then:
 
 ```text
-http://localhost:5173/app.erofs did not return a filesystem image: got text/html, 116 bytes
+http://localhost:5173/app.erofs did not return a disk image: got text/html, 116 bytes
 ```
-
-### Options
-
-| Option     | Default | Description                                                                                                                                                                                           |
-| ---------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `writable` | `false` | Lets the guest write its changes back to an ext4 image. A path is opened for reading and writing, a `FileHandle` must already be open for writing, and a `Uint8Array` or `ArrayBuffer` is changed in place. |
-
-Without `writable`, the guest boots the image beneath a writable layer in memory, and its
-changes are discarded when the machine closes. `rootImage()` throws if `writable` is set for
-the bundled image, a URL other than a `file:` URL, a `Blob`, or a `Response`.
 
 ## `buildImage()`
 
@@ -159,7 +154,7 @@ the image in it, and writes it to `output`. It runs only in Node.js. Its options
 | `links`    | `{}`             | Symbolic links to create, keyed by absolute guest path, with the link target as the value.                                                                                                    |
 | `format`   | `"erofs"`        | `"erofs"` or `"ext4"`.                                                                                                                                                                         |
 | `compression` | `"deflate"`   | How an EROFS image is compressed: `"deflate"`, `"lzma"`, or `"none"`. `"deflate"` typically makes an image 2 to 3 times smaller at a small cost on reads. `"lzma"` is about 14% smaller again but reads about half as fast. An ext4 image is never compressed. |
-| `label`    | `"LOWLAND_ROOT"` | The filesystem label, 1 to 15 letters, digits, dots, underscores, or hyphens. The guest boots only from `LOWLAND_ROOT`.                                                                         |
+| `label`    | none             | The filesystem label, 1 to 15 letters, digits, dots, underscores, or hyphens.                                                                                                                  |
 | `size`     | `"256M"`         | The image size, in bytes or with a `K`, `M`, or `G` suffix. An EROFS image is only as large as its contents, so for EROFS this is the largest size allowed.                                    |
 | `output`   | required         | The path to write the image to.                                                                                                                                                                |
 
@@ -210,7 +205,7 @@ arguments are:
 | `files`    | `{ }`            | Files to add, keyed by absolute guest path. A value is a path, or `{ source; mode; }` with an octal mode string such as `"0755"`. Without a mode, a file is `0755` if it is executable and `0644` otherwise. |
 | `links`    | `{ }`            | Symbolic links to create, keyed by absolute guest path, with the link target as the value.                                                                                                   |
 | `format`   | `"erofs"`        | `"erofs"` or `"ext4"`.                                                                                                                                                                       |
-| `label`    | `"LOWLAND_ROOT"` | The filesystem label, at most 15 characters. The guest boots only from `LOWLAND_ROOT`.                                                                                                       |
+| `label`    | none             | The filesystem label, at most 15 characters.                                                                                                                                                 |
 | `size`     | `"256M"`         | The size of an ext4 image. An EROFS image is always exactly as large as its contents.                                                                                                        |
 
 A package declares the packages it needs at runtime with `passthru.apk.depends`, a list of
