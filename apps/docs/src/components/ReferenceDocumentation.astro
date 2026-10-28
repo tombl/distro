@@ -10,10 +10,11 @@ import { renderDoc, renderInlineDoc } from "../lib/render-doc";
 interface Props {
   document: Document;
   groups: Group[];
+  slug: string;
 }
 
-const { document, groups } = Astro.props;
-const resolveLink = linkResolver(document, renderedAnchors(groups));
+const { document, groups, slug } = Astro.props;
+const resolveLink = linkResolver(document, renderedAnchors(groups), slug);
 const symbolNames = new Set(document.symbols.map(({ name }) => name));
 
 type Transformers = NonNullable<ComponentProps<typeof Code>["transformers"]>;

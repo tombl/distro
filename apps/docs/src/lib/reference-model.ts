@@ -16,7 +16,12 @@ import type {
   TsTypeParamDef,
 } from "@deno/doc";
 
-import { referenceGroupId, referenceSymbolId, type ReferenceSection } from "./reference-packages";
+import {
+  referenceGroupId,
+  referenceHomes,
+  referenceSymbolId,
+  type ReferenceSection,
+} from "./reference-packages";
 
 type Symbol = Document["symbols"][number];
 
@@ -466,13 +471,15 @@ export function buildReference(pkg: ReferenceSection, document: Document): Group
     };
   }
 
-  const grouped = new Set<string>(pkg.groups.flatMap((group) => group.symbols));
   const groups = [
     ...pkg.groups.map((group) => ({ ...group, symbols: group.symbols as readonly string[] })),
     {
       title: "Other exports",
       description: "Types and lower-level exports not grouped above.",
-      symbols: document.symbols.map(({ name }) => name).filter((name) => !grouped.has(name)),
+      symbols: document.symbols
+        .filter((symbol) => symbol.declarations.some((d) => d.declarationKind === "export"))
+        .map(({ name }) => name)
+        .filter((name) => !referenceHomes.has(name)),
     },
   ];
   return groups
@@ -508,8 +515,9 @@ export function renderedAnchors(groups: Group[]): Set<string> {
 
 // Resolves `{@link Target}` and signature type names to anchors on the page.
 // The target is a top-level symbol (`GuestAgent`) or a member (`GuestAgent.mount`).
-// A member without its own rendered anchor links to its symbol instead.
-export function linkResolver(document: Document, anchors: Set<string>) {
+// A member without its own rendered anchor links to its symbol instead, and a
+// symbol documented on another section's page links to it there.
+export function linkResolver(document: Document, anchors: Set<string>, slug: string) {
   const symbols = new Set(document.symbols.map((symbol) => symbol.name));
   return (target: string): string | undefined => {
     if (/^https?:/i.test(target)) return target;
@@ -519,6 +527,10 @@ export function linkResolver(document: Document, anchors: Set<string>) {
       ? [referenceSymbolId(`${symbolName}.${member}`), referenceSymbolId(symbolName)]
       : [referenceSymbolId(symbolName)];
     const id = candidates.find((candidate) => anchors.has(candidate));
-    return id === undefined ? undefined : `#${id}`;
+    if (id !== undefined) return `#${id}`;
+    const home = referenceHomes.get(symbolName);
+    return home && home !== slug
+      ? `/reference/${home}/#${referenceSymbolId(symbolName)}`
+      : undefined;
   };
 }
