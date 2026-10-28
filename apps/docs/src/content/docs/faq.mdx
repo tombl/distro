@@ -44,14 +44,15 @@ namespaces and cgroups inside a machine are not a boundary. Give each tenant its
 
 ## Does it work in Node.js?
 
-Yes, Node.js 22.3 or later, and it can do more there: real TCP and host directories.
+Yes, Node.js 24.20 or a later 24 release, or 26.7 or later, and it can do more there: real TCP
+and host directories.
 
 ## Which browsers?
 
 Current Chrome, Firefox and Safari, on pages served with the cross-origin isolation headers in
 [Hosting](/hosting/#the-headers).
 Safari does not support `await using` yet, so code that runs there calls
-`await machine.shutdown()` in a `finally` block.
+`await linux.shutdown()` in a `finally` block.
 
 ## Can guests reach the internet?
 
@@ -63,13 +64,19 @@ be real TCP. In a browser it is HTTP through `fetch()`, with the page's cross-or
 
 Yes. Python, Lua, QuickJS, Git, curl, SQLite, Vim and BusyBox are in the public repository.
 
+## Can I boot an image that uses systemd?
+
+No. The guest agent is PID 1, as `tini` is in a container, and runs your `init` as its child.
+Images that need systemd or OpenRC as PID 1 are not supported. See
+[What runs, and what doesn't](/what-runs/#running-as-pid-1).
+
 ## Can it run Node.js inside the guest?
 
 No. Node.js has not been ported.
 
 ## Does data survive a reload?
 
-Not by default. The root filesystem's changes live in memory. Attach a disk backed by OPFS or a
+Not by default. The root filesystem's changes live in memory. Mount a disk backed by OPFS or a
 host file to keep data. See [Files and storage](/files-and-storage/#keeping-data-between-runs).
 
 ## How many machines can I run?

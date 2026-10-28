@@ -2,7 +2,7 @@
 title: Hosting
 description: Serving a page that boots machines, with or without a bundler, and what differs in Node.js.
 section: chapters
-order: 7
+order: 8
 ---
 
 # Hosting
@@ -20,7 +20,7 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Check with `crossOriginIsolated` in the page's console. If it is `false`, `bootMachine()` fails
+Check with `crossOriginIsolated` in the page's console. If it is `false`, `Linux.create()` fails
 when it creates shared memory. Look at the document's response headers in the network panel.
 
 The headers have a cost beyond Lowland. The page can no longer load cross-origin resources,
@@ -47,8 +47,8 @@ The package finds its assets with `new URL(..., import.meta.url)`: the kernel's
 `vmlinux.wasm` and worker script, the guest agent's `agent.cpio`, and the image's
 `rootfs.erofs`. Bundlers that understand that pattern emit them as assets. Each entry point
 refers only to its own: `lowland/machine` to the kernel, `lowland/guest` to the agent, and
-`lowland/image` to the image, so an application that boots its own image never bundles the
-canonical one.
+`lowland/image` to the image. `lowland` imports the first two, but not `lowland/image`, so an
+application that boots its own image never bundles the canonical one.
 
 Vite 8 needs only the headers, as in the [Quick start](/quick-start/#in-a-web-page). Vite 7's
 dev server breaks these URLs when it pre-bundles dependencies, and the machine fails to boot.
@@ -70,6 +70,7 @@ import:
 <script type="importmap">
   {
     "imports": {
+      "lowland": "/node_modules/lowland/dist/index.js",
       "lowland/machine": "/node_modules/lowland/dist/machine/index.js",
       "lowland/guest": "/node_modules/lowland/dist/guest/index.js",
       "lowland/image": "/node_modules/lowland/dist/image/index.js"
@@ -87,12 +88,12 @@ In a browser, the default `rootImage()` downloads about 6.5 MB before the first 
 and the guest agent's initramfs are fetched too. All of them are fetched once per page and shared
 by every machine on it, and ordinary HTTP caching applies to later visits.
 
-A custom image is a URL relative to the page. If it does not serve an image, `bootMachine()`
+A custom image is a URL relative to the page. If it does not serve an image, `Linux.create()`
 rejects and names the source. A dev server that answers a mistyped path with its HTML page
 gives:
 
 ```text
-http://localhost:5173/runner.erofs did not return a filesystem image: got text/html, 116 bytes
+http://localhost:5173/runner.erofs did not return a disk image: got text/html, 116 bytes
 ```
 
 ## Memory
@@ -104,15 +105,16 @@ before the device runs out of RAM. Shut down machines you are done with, so thei
 
 ## Node.js
 
-Node.js 22.3 or later works, and `await using` needs 24 or later. On 22, call
-`await machine.shutdown()` in a `finally` block instead.
+The package needs Node.js 24.20 or a later 24 release, or Node.js 26.7 or later. Earlier
+releases mishandle a TCP connection that the guest closes in one direction only.
 
 There are no headers and nothing to copy. The packages read their assets from `node_modules`,
 and workers are `worker_threads`. In Node.js, `rootImage()` reads a path, a `file:` URL or an
 open `FileHandle` from disk as the guest needs blocks, so a large image is never in memory
-whole. It does not close a `FileHandle` you pass, so close it after the machine closes.
+whole. It does not close a `FileHandle` you pass, so close it after the machine has ended.
 
-An open machine keeps the event loop alive. A script that never closes its machine never exits.
+A running machine keeps the event loop alive. A script that never shuts down its machine never
+exits.
 
 Two features need host capabilities only Node.js has: `NodeFS` for host directories, from
 [Files and storage](/files-and-storage/#sharing-a-host-directory), and real TCP from

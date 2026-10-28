@@ -2,7 +2,7 @@
 title: The security model
 description: What a guest can and cannot touch, and where the isolation boundary is.
 section: chapters
-order: 9
+order: 10
 ---
 
 # The security model
@@ -41,7 +41,7 @@ inside a machine. The kernel enforces all of them, and its memory is in reach of
 that runs each program.
 
 Do not rely on them to separate tenants that do not trust each other. Give each tenant its own
-machine, with its own call to `bootMachine()`. Each machine has its own memory and its own
+machine, with its own call to `Linux.create()`. Each machine has its own memory and its own
 workers.
 
 ## What a machine can reach on the host
@@ -53,13 +53,16 @@ code, or code from the packages, on the host side.
   function, and your `write` function if it has one. A console device passes the guest's output
   to your streams and your input to the guest.
 - **Shared directories.** A filesystem device gives the guest the directory behind its `NodeFS`
-  or `BrowserFS` backend, with the access that the backend allows. `NodeFS` refuses writes when
-  you pass `readOnly`.
+  or `BrowserFS` backend, with the access that the backend allows. A mount entry in mode `"ro"`
+  is mounted read-only, but the guest runs as root and can mount it again. Only the backend
+  refuses writes: pass `readOnly` to `NodeFS`.
 - **Networks.** A network card connects the guest to every other guest on the same network.
   When the guest connects to an address outside the network, your `connectTcp` function
   decides what happens. Connections to the gateway address `192.0.2.1` arrive with the target
   `127.0.0.1`. DNS queries reach your `resolveDns` function. [Networking](/networking/) describes this path in detail.
-- **The guest agent.** `guestAgent()` adds a vsock device. Your process opens connections to
+- **Disks.** A disk in mode `"ro"` or `"overlay"` is opened read-only on the host, so the guest
+  cannot change it.
+- **The guest agent.** The guest agent adds a vsock device. Your process opens connections to
   the agent, and the agent runs as root in the guest. Program output, file contents, and every
   other reply that comes back through the agent are produced inside the guest.
 

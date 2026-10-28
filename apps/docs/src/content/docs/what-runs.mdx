@@ -21,7 +21,7 @@ The sections are named after what a program is trying to do.
 cannot get a copy of its parent's memory at the same addresses without an MMU.
 
 Use `posix_spawn()`, or `system()` and `popen()`, which use it. Most programs that fork only to
-call `exec()` straight away can switch with a small patch, and many already have a
+call `execve()` straight away can switch with a small patch, and many already have a
 `posix_spawn()` path behind a configure check. The SDK answers autoconf's `fork` and `vfork`
 checks with "no", so those programs pick their fallback by themselves.
 
@@ -36,7 +36,7 @@ multithreaded process, `clone()` without `CLONE_VM` fails with `EOPNOTSUPP`.
 
 Both rely on `fork()`. Most servers have a foreground or single-process mode, such as BusyBox
 `httpd -f`, and a threaded or event-driven mode for connections. Use those. Run daemons in the
-foreground with `exec()`, or as the agent's `init`, rather than letting them detach.
+foreground with `spawn()`, or as the machine's `init`, rather than letting them detach.
 
 ## Mapping memory
 
@@ -57,7 +57,7 @@ This bites in two ways. Long computations cannot be interrupted, so a timeout do
 they finish. And spin-waits that wait for another thread to make progress, without yielding,
 can stall forever when the other thread needs the same CPU. Make such loops call
 `sched_yield()` or sleep, or give the machine more CPUs. For code you don't control, enforce
-deadlines by closing the machine, as in
+deadlines by killing the machine, as in
 [Running programs](/running-programs/#time-limits-and-what-they-cannot-stop).
 
 ## Loading code at runtime
@@ -65,10 +65,14 @@ deadlines by closing the machine, as in
 Programs are linked statically. There are no shared libraries and no `dlopen()`. Plugins have
 to be compiled in.
 
-## C++ exceptions
+## Running as PID 1
 
-C++ builds and runs, but exceptions do not work yet. A `throw` crashes the program even where a
-`catch` would handle it. Port code that does not use exceptions, or build with exceptions off.
+The guest agent is PID 1, as `tini` is in a container. A program you pass as `init` runs as its
+child, and its exit powers the machine off. Images that need systemd or OpenRC as PID 1 are not
+supported. Start services from a shell script given as `init`, or from JavaScript, instead.
+
+[The layers beneath](/layers/#machines-without-the-guest-agent) shows how to boot an image with
+an init of its own, without the guest agent.
 
 ## Shell scripts
 
@@ -86,4 +90,4 @@ fewer, longer-lived processes where you can.
 
 To save you checking: POSIX threads, with each thread in its own worker. Signals and handlers,
 within the limit above. Pipes, Unix and TCP sockets, `poll()` and `epoll()`. Pseudo-terminals.
-`clone()` with `CLONE_VM`. ext4, ext2 and EROFS filesystems, tmpfs, and virtio-fs.
+`clone()` with `CLONE_VM`. C++ exceptions. ext4, ext2 and EROFS filesystems, tmpfs, and virtio-fs.

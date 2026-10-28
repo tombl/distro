@@ -14,39 +14,39 @@ That function is the whole policy. There are no routes or firewall rules to conf
 ## A switch in your process
 
 ```js
-import { guestAgent } from "lowland/guest";
-import { bootMachine, createNetwork } from "lowland/machine";
+import { Linux } from "lowland";
+import { createNetwork } from "lowland/machine";
 
-const network = createNetwork({ connectTcp, resolveDns });
-const guest = guestAgent({ mounts: [rootImage()] });
-await using machine = await bootMachine({
-  cpus: 1,
-  plugins: [guest, network.attach()],
-});
+using network = createNetwork({ connectTcp, resolveDns });
+await using linux = await Linux.create({ image: rootImage(), network });
 ```
 
-`createNetwork()` creates an Ethernet switch. `network.attach()` gives the machine a virtio
-network card, `eth0` in the guest, plugged into that switch. The switch learns MAC addresses and
-floods broadcasts like a hardware one, so guests on the same network can use any protocol over
-Ethernet between themselves. All of them run in the same process as the switch.
+`createNetwork()` from `lowland/machine` creates an Ethernet switch. `Linux.create()` attaches
+the machine to it with a virtio network card, `eth0` in the guest, and `linux.network` is that
+attachment. The switch learns MAC addresses and floods broadcasts like a hardware one, so guests
+on the same network can use any protocol over Ethernet between themselves. All of them run in
+the same process as the switch.
 
 A network is the subnet `192.0.2.0/24`, a range reserved for documentation, so it does not
 collide with real networks. A machine takes the lowest free address, `192.0.2.2`, `192.0.2.3`
-and so on, when it configures its attachment, and `attachment.address` reports it from then on.
-A machine that fails before it has booted gives its address back, but an address that a machine
-booted with is not reused. There is no DHCP: the
-attachment adds the kernel argument `ip=`, and the kernel itself configures `lo`, `eth0`, the
-default route and the hostname `lowland` before `/init` runs. So the network needs no guest
-agent and nothing from the image. The kernel lists the nameserver in `/proc/net/pnp`, which
-`/etc/resolv.conf` links to in the bundled image and in images from `buildImage()`. An image of
-your own resolves names once it has the same link.
+and so on, as it boots, and `linux.network.address` reports it. A machine that fails before it
+has booted gives its address back, but an address that a machine booted with is not reused.
 
-A machine takes one network attachment, because `ip=` configures one interface. Passing a second
-one makes `bootMachine()` throw.
+There is no DHCP. The attachment adds the kernel argument `ip=`, and the kernel itself configures
+`lo`, `eth0`, the default route and the hostname `lowland` before the first program runs. So the
+network needs no guest agent and nothing from the image. The kernel lists the nameserver in
+`/proc/net/pnp`, which `/etc/resolv.conf` links to in the bundled image and in images from
+`buildImage()`. An image of your own resolves names once it has the same link. A guest that
+wants to write its own `/etc/resolv.conf` has to remove the link first.
+
+A machine takes one network, because `ip=` configures one interface.
 
 `192.0.2.1` is the gateway. It is not a guest but a small TCP/IP stack inside the network
 object. It answers ARP, TCP and DNS, but not ICMP, so pinging it gets no reply while pinging
 another guest works.
+
+`network.close()`, or the end of the `using` block, closes every connection and detaches every
+guest. A reboot closes the connections of that one machine, and it keeps its address.
 
 ## Leaving the network
 
@@ -67,22 +67,25 @@ the guest learns anything.
 DNS queries to the gateway reach `resolveDns(hostname)`, which returns IPv4 addresses. Other UDP
 leaving the subnet is dropped. There is no hook for it.
 
-Both functions are optional. Without `connectTcp`, every connection that leaves the subnet is
-refused. Without `resolveDns`, the gateway answers every query `REFUSED`. musl's resolver waits
-for a better answer, so a lookup in the guest fails with "Try again" after about five seconds.
-`createNetwork()` with neither is a network that only reaches inwards: you can still connect to
-the guest, and guests on it can still reach each other.
+Both functions are optional, and a network refuses by default. Without `connectTcp`, every
+connection that leaves the subnet is refused at once. Without `resolveDns`, the gateway answers
+every query `REFUSED`. BusyBox `nslookup` reports that straight away, but musl's resolver
+ignores a refusal and waits for its five-second timeout, so a program such as `wget` fails with
+"bad address" after five seconds. To fail lookups at once, pass `resolveDns: async () => []`,
+which answers that the name has no addresses. `createNetwork()` with neither function is a
+network that only reaches inwards: you can still connect to the guest, and guests on it can
+still reach each other.
 
 ## In Node.js
 
-Node.js can open real sockets, so the guest gets real TCP, TLS included. `nodeNetwork()` connects
-through the host's sockets and resolves names with the host's resolver:
+Node.js can open real sockets, so the guest gets real TCP, TLS included. `nodeNetwork()` from
+`lowland/node` connects through the host's sockets and resolves names with the host's resolver:
 
 ```js
 import { createNetwork } from "lowland/machine";
 import { nodeNetwork } from "lowland/node";
 
-const network = createNetwork(nodeNetwork());
+using network = createNetwork(nodeNetwork());
 ```
 
 Connections to `192.0.2.1` reach the host's loopback. This is what `lowland run --network nat`
@@ -94,12 +97,13 @@ HTTP client that shuts down its write side and waits for the reply, works.
 
 ## In a browser
 
-A page cannot open sockets, so `hostFetchNetwork()` turns guest HTTP into `fetch()` calls:
+A page cannot open sockets, so `hostFetchNetwork()` from `lowland/machine` turns guest HTTP into
+`fetch()` calls:
 
 ```js
 import { createNetwork, hostFetchNetwork } from "lowland/machine";
 
-const network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
+using network = createNetwork(hostFetchNetwork({ fetch: (request) => fetch(request) }));
 ```
 
 Its `resolveDns` answers every name with the same placeholder address, because a page cannot
@@ -117,14 +121,18 @@ The default image's apk repository uses `http://`, so `apk add` works through th
 
 ## The example: no network, or an allow-list
 
-The example service runs untrusted snippets, so by default it attaches no network card at all.
-To let snippets fetch from one API and nothing else:
+The example service runs untrusted snippets, so by default it attaches no network at all. To let
+snippets fetch from one API and nothing else:
 
 ```js
+import { resolve4 } from "node:dns/promises";
+import { createNetwork } from "lowland/machine";
+import { nodeNetwork } from "lowland/node";
+
 const allowed = new Set(await resolve4("api.example.com"));
 const { connectTcp } = nodeNetwork();
 
-const network = createNetwork({
+using network = createNetwork({
   async connectTcp(session) {
     if (!allowed.has(session.target.hostname) || session.target.port !== 443) {
       throw new Error("blocked");
@@ -140,19 +148,19 @@ passing through `connectTcp`.
 
 ## Connecting into a guest
 
-`attachment.connect({ port })` opens a TCP connection from JavaScript to a port in that guest,
-and `network.connect()` does the same by address. The guest sees an ordinary connection from
-`192.0.2.1`. The call resolves when the guest accepts and rejects if nothing is listening. A
-server started with `exec()` may not be listening yet when `exec()` resolves, so retry.
+`linux.network.connect({ port })` opens a TCP connection from JavaScript to a port in that
+guest, and `network.connect()` does the same by address. The guest sees an ordinary connection
+from `192.0.2.1`. The call resolves when the guest accepts and rejects if nothing is listening. A
+server started with `spawn()` may not be listening yet when `spawn()` resolves, so retry.
 
-For HTTP, `guestFetchHandler()` wraps this in the shape of `fetch`, taking a `Request` and
-returning a `Response`:
+For HTTP, `guestFetchHandler()` from `lowland/machine` wraps this in the shape of `fetch`, taking
+a `Request` and returning a `Response`:
 
 ```js
 import { guestFetchHandler } from "lowland/machine";
 
-await guest.spawn(["httpd", "-f", "-p", "8080", "-h", "/www"]);
-const handler = guestFetchHandler(attachment, { port: 8080 });
+await linux.spawn(["httpd", "-f", "-p", "8080", "-h", "/www"]);
+const handler = guestFetchHandler(linux.network, { port: 8080 });
 
 const response = await handler(new Request("http://my-app.example/"));
 ```
@@ -167,15 +175,13 @@ a starting point rather than a supported package.
 
 ## Several guests
 
-Attach several guests to one network and they reach each other by address:
+Give several machines the same network and they reach each other by address:
 
 ```js
-const network = createNetwork();
-const serverNet = network.attach();
-const clientNet = network.attach();
-// boot each machine with its attachment...
+using network = createNetwork();
+await using server = await Linux.create({ image, network });
+await using client = await Linux.create({ image, network });
 
-await client.run(["wget", "-qO-", `http://${serverNet.address}:8080/`]);
+await server.spawn(["httpd", "-f", "-p", "8080", "-h", "/www"]);
+await client.run(["wget", "-qO-", `http://${server.network.address}:8080/`]);
 ```
-
-`network.close()` closes every connection and detaches every guest.

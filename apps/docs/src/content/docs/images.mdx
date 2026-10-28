@@ -20,7 +20,7 @@ page describes what an image must contain, and the three ways to get one:
 
 Use `rootImage()` to start, and to try packages. In a running guest with a network attached,
 `apk add` installs packages from the public repository. Those packages are lost when the
-machine closes.
+machine ends.
 
 Use `buildImage()` when the image should already contain packages from the public repository,
 or programs and files from the host. It needs only Node.js.
@@ -29,12 +29,13 @@ Use `mkImage` when you build programs from source with Nix, as described in
 [Your own software](/your-own-software/#compiling-your-own). It installs Nix packages, not packages from the public
 repository.
 
-`buildImage()` and `mkImage` both write an image file. Attach it with `rootImage("app.erofs")`,
-as shown in [Your own software](/your-own-software/#building-an-image).
+`buildImage()` and `mkImage` both write an image file. Boot it with
+`Linux.create({ image: rootImage("app.erofs") })` or `lowland run --image app.erofs`, as shown in
+[Your own software](/your-own-software/#building-an-image).
 
 ## The image contract
 
-The guest agent from `lowland/guest` boots any image that meets these requirements:
+`Linux` and the guest agent boot any image that meets these requirements:
 
 - The image is a filesystem the guest kernel can mount, such as EROFS or ext4, at `/` in the
   agent's mount table.
@@ -44,7 +45,7 @@ The guest agent from `lowland/guest` boots any image that meets these requiremen
 - Programs are WebAssembly binaries for 32-bit Linux, linked statically. Scripts with a `#!`
   line also run.
 
-When a mount fails, `bootMachine()` rejects with a `GuestBootError` from `lowland/guest`. Its
+When a mount fails, `Linux.create()` rejects with a `GuestBootError` from `lowland/guest`. Its
 message names the step and the error, and its `kernelLog` holds the end of the guest kernel's
 log, which usually says why.
 
@@ -52,36 +53,38 @@ log, which usually says why.
 
 An image opened read-only, which is what `rootImage()` does, never changes. The guest puts a
 writable layer in memory on top of it, so programs can change any file, but the changes are
-discarded when the machine closes. One read-only image can be attached to any number of
+discarded when the machine ends. One read-only image can be attached to any number of
 machines.
 
-An ext4 image in a writable mount entry, `{ path: "/", source, type: "ext4" }`, is mounted
+An ext4 image at `/` in mode `"rw"`, `{ path: "/", source, mode: "rw" }`, is mounted
 read-write, and changes are written back to it, as shown in
-[Your own software](/your-own-software/#erofs-or-ext4). Run `sync` in the guest before
-closing the machine, or recent changes may be lost. Attach a writable image to only one machine
-at a time. An ext4 image that was not unmounted cleanly cannot be opened read-only until a
-writable mount has recovered its journal.
+[Your own software](/your-own-software/#erofs-or-ext4). The guest agent syncs and unmounts it
+when the machine shuts down, but a machine that is killed may lose recent changes. Attach a
+writable image to only one machine at a time. An ext4 image that was not unmounted cleanly cannot
+be opened read-only until a writable mount has recovered its journal.
 
 ### An init program
 
-`guestAgent({ init: ["/sbin/init"] })` starts a program once the root filesystem is mounted. Use
-it to start services that should run for the life of the machine. When it exits, the machine
-shuts down.
+`Linux.create({ image: rootImage("app.erofs"), init: ["/usr/bin/my-service"] })` starts a
+program once the root filesystem is mounted. Use it to start services that should run for the life of the machine. When it exits,
+the machine powers off.
 
 An init is optional. Without one, the guest runs only the programs you start from JavaScript.
+The guest agent stays PID 1 either way, so an image's own `/sbin/init`, such as systemd or
+OpenRC, does not run.
 
 ## `rootImage()`
 
 ```js
+import { Linux } from "lowland";
 import { rootImage } from "lowland/image";
 
-const guest = guestAgent({ mounts: [rootImage()] });
-await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
+await using linux = await Linux.create({ image: rootImage() });
 ```
 
 `rootImage(source)` returns the mount entry `{ path: "/", source, type, mode: "overlay" }`: the
 image opened read-only beneath a writable layer in memory. One entry can be used by any number
-of machines.
+of machines. It also works as the root of `guestAgent({ mounts })` from `lowland/guest`.
 
 ### The bundled image
 
@@ -100,7 +103,7 @@ To install packages, attach a network as described in
 [Networking](/networking/), then run apk:
 
 ```js
-await guest.run(["apk", "add", "jq"]);
+await linux.run(["apk", "add", "jq"]);
 ```
 
 In Node.js, the image is read from disk as the guest needs it. In a browser, it is fetched once
@@ -111,14 +114,14 @@ and shared by every machine on the page.
 Pass a source to attach an image of your own:
 
 ```js
-const guest = guestAgent({ mounts: [rootImage("app.erofs")] });
+await using linux = await Linux.create({ image: rootImage("app.erofs") });
 ```
 
 | Source                                | Behavior                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | A string                              | In Node.js, a file path. In a browser, a URL relative to the page.                                                               |
 | A `URL`                               | A `file:` URL is a file path. Any other URL is fetched.                                                                          |
-| A `FileHandle` from `node:fs/promises` | Read in place. It stays open after the machine closes.                                                                           |
+| A `FileHandle` from `node:fs/promises` | Read in place. It stays open after the machine ends.                                                                             |
 | A `Uint8Array` or `ArrayBuffer`       | The whole image, in memory.                                                                                                      |
 | A `Blob` or `Response`                | The whole image. It is read into memory once.                                                                                    |
 
