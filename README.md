@@ -17,7 +17,7 @@ use on their own:
 | `lowland/machine`     | Boots a Linux machine and attaches devices to it.            |
 | `lowland/guest`       | Runs programs and works with files inside a booted machine.  |
 | `lowland/image`       | The canonical system image, and `lowland/image/build`.       |
-| `lowland/node`        | `NodeFS`, a host directory for the guest.                    |
+| `lowland/node`        | `NodeFS`, a host directory, and `nodeNetwork()`, the host network. |
 | `lowland/browser`     | `BrowserFS`, the origin private file system for the guest.   |
 
 It also provides the `lowland` command line.

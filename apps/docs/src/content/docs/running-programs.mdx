@@ -1,71 +1,103 @@
 ---
 title: Running programs
-description: Machines, the guest agent, run and exec, time limits, and terminals.
+description: Machines and their lifecycle, run and spawn, time limits, and terminals.
 section: chapters
 order: 2
 ---
 
 # Running programs
 
-A machine is one Linux kernel with its own memory and workers. The guest agent is how your
-JavaScript gets work done inside it. This chapter covers both, and starts the example service:
-a function that takes a shell snippet from a user, runs it, and returns its output.
+A machine is one Linux kernel with its own memory and workers. This chapter covers how a machine
+starts and ends, how your JavaScript runs programs in it, and starts the example service: a
+function that takes a shell snippet from a user, runs it, and returns its output.
 
 ## The machine
 
 ```js
-const guest = guestAgent({ mounts: [rootImage()] });
-const machine = await bootMachine({ cpus: 2, plugins: [guest] });
+await using linux = await Linux.create({ image: rootImage(), cpus: 2 });
 ```
 
 `cpus` is not a thread count. Every kernel task, including each thread of each program, runs in
 a worker of its own. A virtual CPU is a token those workers pass around, and only a worker that
-holds one runs. `cpus` therefore caps how many tasks run at the same time. One is enough for
-most uses. Raise it when several programs compute at once.
+holds one runs. `cpus` therefore caps how many tasks run at the same time. One, the default, is
+enough for most uses. Raise it when several programs compute at once.
 
-Plugins are configured in the order you list them. Order matters for block devices: the first
-disk is `/dev/vda`, the next `/dev/vdb`, and so on. `args` appends to the kernel command line,
-if you need to.
+## How a machine ends
 
-`machine.exited` resolves when the machine stops, and never rejects. `machine.shutdown()` asks
-the guest to power off: with the guest agent, PID 1 ends every program, then syncs and unmounts
-the filesystems. A guest can power itself off too, for example with `poweroff`. A kernel panic
-resolves it to `{ reason: "crash" }`. `machine.kill()` stops every program at once. Nothing in
-the guest gets a chance to shut down cleanly, so flush anything that matters before you call it.
-The [Files and storage](/files-and-storage/) chapter covers what that means for disks.
+A machine ends in one of four ways, and `linux.exited` resolves to which, once it has. It never
+rejects.
 
-A machine is also disposable. `await using machine = ...` closes it at the end of the block,
-which is how the examples in this guide are written.
+- `{ reason: "poweroff" }`. The guest powered off. `linux.shutdown()` asks for this, and a
+  program in the guest can do it too, with `poweroff`.
+- `{ reason: "kill" }`. `linux.kill()` stopped the machine at once.
+- `{ reason: "crash", error }`. The kernel panicked, with a `MachinePanicError`, or something
+  failed on the host, such as a device.
+- `{ reason: "reboot" }`. The guest rebooted, and the machine was booted with `reboot: "exit"`.
+  Only the [lower layers](/layers/) offer that option. Otherwise a reboot boots the machine
+  again.
+
+`shutdown()` presses the machine's power button and resolves once the machine has ended. The
+guest agent, which is PID 1, sends `SIGTERM` to every process, waits up to three seconds, sends
+`SIGKILL` to the rest, then syncs and unmounts every filesystem before it powers off. Writes to
+disks therefore reach their storage. If the guest has not ended after `timeoutMs`, 30 seconds
+by default, the machine is killed, and the result is `{ reason: "kill" }`.
+
+`kill()` stops every program at once. Nothing in the guest gets a chance to shut down cleanly,
+so writes the guest kernel has not flushed are lost. The
+[Files and storage](/files-and-storage/#dont-lose-writes) chapter covers what that means for
+disks.
+
+`reboot()` restarts the guest the same way, on the same devices, and resolves once the guest
+agent has booted it again. Every program ends, the memory layer above the image starts empty,
+and connections into the guest close. Calls made during the reboot fail.
+
+`await using` calls `shutdown()` at the end of the block, which is how the examples in this
+guide are written.
 
 ## Run a program
 
-`guest.run()` starts a program, waits for it to exit, and returns its exit status and
+`linux.run()` starts a program, waits for it to exit, and returns its exit status and
 everything it wrote:
 
 ```js
-const result = await guest.run(["ls", "-l", "/"]);
+const result = await linux.run(["ls", "-l", "/"]);
 result.status; // { success: true, code: 0, signal: null }
 result.stdout; // Uint8Array
 ```
 
 The argv array goes to `execve()` as it is. There is no shell, so nothing is split, quoted or
-expanded, and the first element is looked up on `PATH`. Programs start in `/tmp`, as root, with
-`PATH=/bin:/usr/bin:/sbin:/usr/sbin` and `HOME=/root`. The `cwd` and `env` options change that.
-Variables in `env` are added to those defaults.
+expanded, and the first element is looked up on `PATH`. Programs start in `/`, as root, with
+`PATH=/bin:/usr/bin:/sbin:/usr/sbin`, `HOME=/root` and `TMPDIR=/tmp`. The `cwd` and `env` options
+change that. Variables in `env` are added to those defaults.
 
-A nonzero exit does not reject. Check `status.success`. `run()` rejects only when the program
-could not start, for example with a `SystemError` whose `code` is `"ENOENT"`.
-
-Use `run()` when the output is bounded. It keeps all of it in memory. For anything long-running
-or chatty, use `exec()`.
-
-## Stream with exec
-
-`guest.spawn()` resolves once the program has started, with a process whose standard streams are
-web streams:
+`input` is what the program reads on its standard input, as text or bytes. Without it, the
+program's input is empty:
 
 ```js
-const process = await guest.spawn(["tr", "a-z", "A-Z"]);
+const sorted = await linux.run(["sort"], { input: "pear\napple\n" });
+```
+
+A nonzero exit does not reject. Check `status.success`. A program killed by a signal has a
+`code` of `null`, and `signal` holds the signal's name, such as `"SIGKILL"`, or its number if
+it has no name in the `Signal` type. `exitCode(status)` from `lowland` turns either into the
+number a shell would report, such as 137 for `SIGKILL`.
+
+`run()` rejects when the program could not start, for example with a `SystemError` whose `code`
+is `"ENOENT"`. It also rejects when its `signal` aborts, when the connection to the guest is
+lost, and when an `input` stream errors, after the program has been given the end of its input.
+An `input` that cannot be read at all, such as a locked stream, is a `TypeError` before the
+program starts.
+
+Use `run()` when the output is bounded. It keeps all of it in memory. For anything long-running
+or chatty, use `spawn()`.
+
+## Stream with spawn
+
+`linux.spawn()` resolves once the program has started, with a process whose standard streams
+are web streams:
+
+```js
+const process = await linux.spawn(["tr", "a-z", "A-Z"]);
 
 const output = new Response(process.stdout).text();
 
@@ -81,28 +113,28 @@ console.log(await process.status);
 has read all of them. Start reading the output before you close standard input. Otherwise a
 program that fills its output pipe stops reading its input, and `close()` never resolves.
 
-Up to eight programs started by `run()` and `exec()` can be running at a time. Further calls
+Up to eight programs started by `run()` and `spawn()` can be running at a time. Further calls
 wait for a slot instead of failing.
 
 ## Redirect standard streams
 
 The `stdio` option connects a program's standard input, output, and error to something other
-than a pipe, as a shell's redirections would. Each entry is `"pipe"`, the default; `"null"` for
-`/dev/null`; `"stdout"`, for standard error only, like `2>&1`; or a guest file opened with
-`guest.fs.open()`, which the program reads or writes directly without the data passing through
-your process:
+than a pipe, as a shell's redirections would. Each entry is `"pipe"`, the default. It can also be
+`"null"` for `/dev/null`, or `"stdout"`, for standard error only, like `2>&1`. Or it can be a
+guest file opened with `linux.fs.open()`, which the program reads or writes directly without the
+data passing through your process:
 
 ```js
-await using log = await guest.fs.open("/tmp/build.log", {
+await using log = await linux.fs.open("/tmp/build.log", {
   write: true,
   create: true,
   truncate: true,
 });
-const result = await guest.run(["make"], { stdio: ["null", log, "stdout"] });
+const result = await linux.run(["make"], { stdio: ["null", log, "stdout"] });
 ```
 
 The program shares the file's offset with you, and keeps its own reference to the file, so
-closing the `FsFile` afterwards is fine. A stream that is not a pipe has nothing behind it:
+closing the `FsFile` afterwards is fine. A stream that is not a pipe has nothing behind it.
 `stdout` and `stderr` are empty, and writes to `stdin` reject. Closing such a `stdin` does
 nothing: the file stays open, and the program's input is unchanged.
 
@@ -112,41 +144,40 @@ Pass an `AbortSignal` to give a program a deadline. When it aborts, the program 
 the call rejects with the abort reason:
 
 ```js
-await guest.run(["sleep", "30"], { signal: AbortSignal.timeout(1000) });
+await linux.run(["sleep", "30"], { signal: AbortSignal.timeout(1000) });
 // rejects with a TimeoutError
 ```
 
-`process.kill()` sends `SIGTERM` or a signal you name.
+`process.kill()` sends `SIGTERM` or a signal you name. Once the guest has reaped the process, it
+does nothing, because the process ID may already belong to another program.
 
 Here Lowland differs from Linux on real hardware. The kernel cannot interrupt WebAssembly while
 it runs, so a program receives signals only when it makes a system call. A program stuck in a
 loop that makes no system calls ignores every signal, `SIGKILL` included, and keeps its CPU.
-With `cpus: 1`, nothing else in the machine runs until it makes one. The pending call does
-not reject either, because it waits for the program to be reaped first.
+With `cpus: 1`, nothing else in the machine runs until it makes one. The pending call does not
+reject either, because it waits for the program to be reaped first. `shutdown()` cannot stop
+such a program either, and ends in its timeout.
 
-If you run code you do not control, enforce the deadline by closing the machine. That always
-works.
+If you run code you do not control, enforce the deadline with `kill()`. That always works.
 
 ## The example: run a snippet
 
-The example service gets a fresh machine for each snippet and enforces its deadline by closing
+The example service gets a fresh machine for each snippet and enforces its deadline by killing
 that machine. Fresh machines mean one user's snippet cannot see another's files, and a machine
 is the boundary the [security model](/security-model/) relies on.
 
 ```js run
-import { bootMachine } from "lowland/machine";
-import { guestAgent } from "lowland/guest";
+import { Linux } from "lowland";
 import { rootImage } from "lowland/image";
 
 const image = rootImage();
 
 export async function runSnippet(code, { timeout = 5000 } = {}) {
-  const guest = guestAgent({ mounts: [image] });
-  await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
+  await using linux = await Linux.create({ image });
 
-  const deadline = setTimeout(() => machine.kill(), timeout);
+  const deadline = setTimeout(() => linux.kill(), timeout);
   try {
-    const process = await guest.spawn(["sh", "-c", code]);
+    const process = await linux.spawn(["sh", "-c", code]);
     await process.stdin.close();
     const [stdout, stderr, status] = await Promise.all([
       new Response(process.stdout).text(),
@@ -163,11 +194,11 @@ console.log(await runSnippet("echo hello; uname -m"));
 ```
 
 One `rootImage()` mount entry can be used by any number of machines. In a browser the image is
-downloaded once and shared, and in Node.js it is read from disk as each machine needs it. A
-guest agent belongs to exactly one machine, so each run creates a new one.
+downloaded once and shared, and in Node.js it is read from disk as each machine needs it.
 
-If the deadline closes the machine, the pending calls reject with a `ProtocolError`, because
-the guest's connection closed mid-request. The service can catch that and report a timeout.
+If the deadline kills the machine, the pending calls reject with a `ProtocolError`, because the
+guest's connection closed mid-request. The service can catch that, and `await linux.exited`
+tells it the reason was `"kill"`.
 
 ## Terminals
 
@@ -187,7 +218,7 @@ terminal.open(document.querySelector("#terminal")!);
 const encoder = new TextEncoder();
 
 for (;;) {
-  const shell = await guest.spawn(["sh"], {
+  const shell = await linux.spawn(["sh"], {
     terminal: { rows: terminal.rows, columns: terminal.cols },
     env: { TERM: "xterm-256color" },
   });
@@ -209,18 +240,23 @@ for (;;) {
 }
 ```
 
-Resolving each write only after xterm.js has drawn it applies backpressure. A guest that
-prints faster than the page can draw slows down, so output does not pile up in memory.
-`resize()` sends `SIGWINCH` to the foreground program.
+Resolving each write only after xterm.js has drawn it applies backpressure. A guest that prints
+faster than the page can draw slows down, so output does not pile up in memory. `resize()` sends
+`SIGWINCH` to the foreground program.
 
 `stdout` only ends once every program has closed the terminal, and a job the shell left in the
 background can keep it open. That is why the loop waits for `status`, then gives the output a
-second to finish. Disposing of the process hangs up the terminal, which ends `stdout` and discards anything the
-guest has not yet delivered.
+second to finish. Disposing of the process hangs up the terminal, which
+ends `stdout` and discards anything the guest has not yet delivered. It also kills the process, if
+it is still running.
 
-`consoleDevice(input, output)` from `lowland/machine` is the other way to get a terminal. It
-adds a console that the guest sees as `/dev/hvc0`, which shows kernel messages and suits an
-image whose `/init` starts a shell with `exec setsid cttyhack sh`.
+`run()` takes `terminal` too, and hangs up the terminal once the program has exited and its
+output has been read. A background job that the program left behind loses its terminal then.
 
-Kernel messages from early boot go nowhere unless you add `bootConsole(output)`. Add it when a
-machine fails before the guest agent is ready, which usually means the image is wrong.
+`consoleDevice(input, output)` from `lowland/machine` is the other way to get a terminal. Pass it
+in `plugins`. It adds a console that the guest sees as `/dev/hvc0`, which shows kernel messages
+and suits an `init` that starts a shell on it.
+
+Kernel messages from early boot go nowhere unless you add `bootConsole(output)` from
+`lowland/machine` to `plugins`. Add it when a machine fails before the guest agent is ready,
+which usually means the image is wrong.

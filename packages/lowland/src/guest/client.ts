@@ -110,7 +110,7 @@ export interface SpawnOptions {
    * input.
    *
    * The process gets its own reference to a file, so you can close the
-   * `FsFile` once `exec` resolves.
+   * `FsFile` once `spawn` resolves.
    *
    * @example Collect errors with the output, with no input
    * ```ts

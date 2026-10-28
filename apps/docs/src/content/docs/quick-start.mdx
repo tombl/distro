@@ -1,35 +1,46 @@
 ---
 title: Quick start
-description: Boot Linux from a Node.js script or a web page and run a program in it.
+description: Boot Linux from a Node.js script, a web page, or the command line, and run a program in it.
 section: chapters
 order: 1
 ---
 
 # Quick start
 
-You need Node.js 24 or later. Install the package:
+You need Node.js 24.20 or a later 24 release, or Node.js 26.7 or later. Install the package:
 
 ```sh
 npm install lowland
 ```
 
-This guide uses three of its entry points. `lowland/machine` is the kernel and its virtual
-devices. `lowland/guest` runs programs and moves files inside a booted machine. `lowland/image`
-provides a small root filesystem with BusyBox and the apk package manager.
+## From the command line
+
+```sh
+npx lowland run uname -a
+```
+
+`lowland run` boots a fresh machine from the image that ships with the package, runs one command
+in it, and exits with the command's status. Without a command it starts a shell. `-v` mounts a
+host directory or image file in the guest, and `--network nat` gives the guest the host's
+network:
+
+```sh
+npx lowland run -v ./src:/work -w /work sh -c 'wc -l *.c'
+```
+
+Run `npx lowland run --help` for the other options.
 
 ## In Node.js
 
 Save this as `hello.mjs`. On this site, Run boots it in your browser instead.
 
 ```js run
-import { bootMachine } from "lowland/machine";
-import { guestAgent } from "lowland/guest";
+import { Linux } from "lowland";
 import { rootImage } from "lowland/image";
 
-const guest = guestAgent({ mounts: [rootImage()] });
-await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
+await using linux = await Linux.create({ image: rootImage() });
 
-const result = await guest.run(["uname", "-a"]);
+const result = await linux.run(["uname", "-a"]);
 console.log(new TextDecoder().decode(result.stdout));
 ```
 
@@ -37,14 +48,19 @@ console.log(new TextDecoder().decode(result.stdout));
 node hello.mjs
 ```
 
-It prints a line that starts with `Linux` and ends with `wasm GNU/Linux`. `uname` ran inside
-the machine, and the machine shut down when `await using` went out of scope. Without that, an open
+It prints a line that starts with `Linux` and ends with `wasm GNU/Linux`. `uname` ran inside the
+machine, and the machine shut down when `await using` went out of scope. Without that, a running
 machine keeps Node.js running.
+
+`image` has no default. `rootImage()` from `lowland/image` is the image that ships with the
+package: BusyBox and the apk package manager, mounted read-only beneath a writable layer in
+memory. Only applications that import `lowland/image` bundle it, so an application that boots
+its own image never carries this one.
 
 ## In a web page
 
 The same code runs in a browser, except that Safari does not support `await using` yet. There,
-call `await machine.shutdown()` in a `finally` block. The page must be
+call `await linux.shutdown()` in a `finally` block. The page must be
 [cross-origin isolated](https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated),
 because the machine's workers share memory, and browsers only allow that on isolated pages.
 With Vite, add the headers to the dev server:
@@ -60,17 +76,20 @@ const headers = {
 export default defineConfig({ server: { headers }, preview: { headers } });
 ```
 
-Then import the packages from a module script as usual. In a browser, `rootImage()` downloads
-the image, about 6.5 MB, before the machine boots. [Hosting](/hosting/) covers production
-headers, other bundlers, and pages without a bundler.
+Then import the package from a module script as usual. In a browser, `rootImage()` downloads the
+image, about 6.5 MB, before the machine boots. [Hosting](/hosting/) covers production headers,
+other bundlers, and pages without a bundler.
 
 ## What happened
 
-`bootMachine()` started a Linux kernel with one virtual CPU and one plugin. `guestAgent()`
-added a small init program that runs as PID 1 and accepts requests from your process: start
-this program, read this file, mount that device. Its mount table has one entry: `rootImage()`,
-a read-only root filesystem beneath a writable layer in memory. Everything else in this guide goes through those two objects, the machine and the
-guest.
+`Linux.create()` booted a Linux kernel with one virtual CPU. The kernel's first program, PID 1,
+is the guest agent, a small program that accepts requests from your process: start this
+program, read this file, mount that device. The agent mounted the image as the root filesystem
+and switched into it, then answered `run()`.
+
+`Linux` is a thin layer over two lower ones, which it exposes as `linux.machine` and
+`linux.guest`. [The layers beneath](/layers/) covers them, for when `Linux` does not
+fit.
 
 The next chapter starts building the example that runs through this guide: a service that runs
 a code snippet from a user and returns what it printed.

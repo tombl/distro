@@ -1,0 +1,165 @@
+---
+title: The layers beneath
+description: The machine and the guest agent that Linux composes, plugins, custom boots, and machines without the agent.
+section: chapters
+order: 7
+---
+
+# The layers beneath
+
+`Linux` is a small composition of two lower layers. `bootMachine()` from `lowland/machine` boots
+a kernel with a set of plugins, which add its devices. `guestAgent()` from `lowland/guest` is one
+of those plugins: the agent that runs as PID 1, boots the mount table, and runs your programs.
+`Linux.create()` amounts to this:
+
+```js
+import { bootMachine, entropyDevice } from "lowland/machine";
+import { guestAgent } from "lowland/guest";
+
+const guest = guestAgent({ mounts: [image, ...mounts], init });
+const attachment = network?.attach();
+const machine = await bootMachine({
+  cpus: 1,
+  plugins: [guest, entropyDevice(), ...(attachment ? [attachment] : []), ...plugins],
+});
+```
+
+`linux.machine` and `linux.guest` are those two objects, and `linux.network` is the attachment.
+Use them for what `Linux` does not repeat, such as `linux.guest.mount()`. Use the layers
+directly when you need something `Linux` does not offer: `bootMachine()`'s `reboot: "exit"`, a
+boot of your own, or a machine without the guest agent.
+
+## Devices the mount table does not cover
+
+Every device of the mount table is created for you, with default options. For other options,
+or other kinds of device, create the device yourself, pass it in `plugins`, and mount it once the
+machine has booted. A shared directory that the host changes while the guest runs, for example,
+needs its metadata cache off:
+
+```js
+import { fileSystemDevice } from "lowland/machine";
+import { NodeFS } from "lowland/node";
+
+const live = fileSystemDevice(new NodeFS("./live"), { tag: "live", cache: false });
+await using linux = await Linux.create({ image: rootImage(), plugins: [live] });
+
+await linux.fs.mkdir("/live");
+await linux.guest.mount("live", "/live", { type: "virtiofs" });
+```
+
+A block device works the same way. Give it a serial, `blockDevice(storage, { serial: "data" })`,
+and `linux.guest.disk("data")` resolves to its device node, as in
+[Files and storage](/files-and-storage/#format-and-mount-it). The mount table uses the tags and
+serials `m0`, `m1` and so on for its own devices.
+
+`consoleDevice(input, output)` adds the console `/dev/hvc0`, and `bootConsole(output)` receives
+the kernel's messages from early boot. `vsockDevice()` carries stream connections between the
+guest and the host without a network.
+
+## A boot of your own
+
+The guest agent's default boot mounts the mount table beneath `/sysroot`, moves `/dev`, `/proc`
+and `/sys` into it, and switches root. `boot` replaces those steps with your own calls. It
+receives the agent before any filesystem but `/dev` is mounted, with one more method,
+`switchRoot()`. This boot mounts an ext4 root from a disk that a worker serves, which the mount
+table cannot describe:
+
+```js
+import { guestAgent, MountFlags } from "lowland/guest";
+
+const guest = guestAgent({
+  init: ["/sbin/my-init"],
+  async boot(guest) {
+    for (const [type, path] of [["proc", "/proc"], ["sysfs", "/sys"], ["devpts", "/dev/pts"]]) {
+      await guest.fs.mkdir(path, { recursive: true });
+      await guest.mount(type, path, { type });
+    }
+    await guest.fs.mkdir("/sysroot");
+    await guest.mount(await guest.disk("root"), "/sysroot", { type: "ext4" });
+    for (const name of ["dev", "proc", "sys"]) {
+      await guest.mount(`/${name}`, `/sysroot/${name}`, { flags: MountFlags.MOVE });
+    }
+    await guest.switchRoot();
+  },
+});
+await using machine = await bootMachine({ cpus: 1, plugins: [guest, rootDisk] });
+```
+
+`switchRoot()` deletes the initramfs's files, ends every process the boot started, and starts
+`init` in the new root. A boot of your own gets no tmpfs at `/run` and `/tmp` unless it mounts
+them. Without a root, there is nothing to switch to, and the agent stays on its initramfs.
+
+## Plugins
+
+A plugin is an object with up to three hooks, and `bootMachine()` calls them in plugin order:
+
+- `configure(setup)` runs once, before the first boot. It adds devices with
+  `setup.devices.add()`, kernel arguments with `setup.args.add()`, and initramfs archives in the
+  newc format with `setup.initramfs.add()`, which the kernel unpacks in the order they were
+  added. `setup.bootConsole` is a stream of the kernel's early messages.
+- `booted(machine)` runs after every boot, reboots included. `bootMachine()` and `reboot()`
+  resolve once every `booted` hook has.
+- `power(action)` is asked by `shutdown()` and `reboot()`, in reverse plugin order, to start the
+  power-off or reboot. It resolves `true` if it did, and the machine then waits for the guest.
+  The guest agent answers by signalling PID 1. If no plugin does, the machine presses the
+  kernel's power button.
+
+A reboot keeps the plugins and their devices. It resets each device and boots a fresh kernel,
+with fresh memory, so `machine.memory` changes. `configure` does not run again. With
+`reboot: "exit"`, a reboot ends the machine instead, `exited` resolves to `{ reason: "reboot" }`,
+and `reboot()` rejects.
+
+## Machines without the guest agent
+
+A machine needs no guest agent. Without one, nothing is mounted for you, and nothing runs
+programs for your JavaScript, but the kernel boots a root filesystem the usual way, from the
+kernel arguments, and runs its `/sbin/init`. The network still works, because the kernel
+configures it.
+
+Our BusyBox has no `init` applet, so this init is a shell script. It has to handle the power
+signals itself: BusyBox's `poweroff`, `halt` and `reboot` ask PID 1 to act by sending it
+`SIGUSR2`, `SIGUSR1` and `SIGTERM`.
+
+```sh title="init.sh"
+#!/bin/sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t proc proc /proc
+mount -t devtmpfs devtmpfs /dev
+trap 'exec poweroff -f' USR1 USR2
+trap 'exec reboot -f' TERM
+echo "init: ready"
+while :; do
+  sleep 1000 &
+  wait $!
+done
+```
+
+The kernel gives init no `PATH`, so the script sets one. The shell runs a trap only between
+commands, so it waits in the background for `sleep`, which a signal interrupts. `poweroff -f`
+and `reboot -f` sync the filesystems, then call `reboot(2)` at once. A real init would stop its
+services first.
+
+```sh
+npx lowland build -p busybox -f ./init.sh:/sbin/init:0755 -o app.erofs
+```
+
+```js
+import { blockDevice, bootMachine, consoleDevice, diskStorage } from "lowland/machine";
+
+await using machine = await bootMachine({
+  cpus: 1,
+  args: ["root=/dev/vda", "ro"],
+  plugins: [
+    blockDevice(await diskStorage("app.erofs", { writable: false })),
+    consoleDevice(input, output),
+  ],
+});
+```
+
+`root=/dev/vda` names the first block device in plugin order. The console is the init's standard
+input and output.
+
+`shutdown()` and `reboot()` press the kernel's power button, which runs `/sbin/poweroff` or
+`/sbin/reboot` in the image. Those signal PID 1 as above. An image that lacks `/sbin/poweroff`
+is powered off at once, without a sync, which loses unwritten data as `kill()` does. An init
+that ignores the signal keeps the machine running until the timeout of `shutdown()` kills it.

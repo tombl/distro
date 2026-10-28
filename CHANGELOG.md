@@ -27,7 +27,7 @@
   rejecting only HTML error pages and partial sectors.
 - `buildImage()` from `lowland/image/build` builds custom images in Node from
   apk packages, host files and symlinks, in a builder machine shipped with the
-  package. Images are compressed with deflate by default; `compression`
+  package. Images are compressed with deflate by default, and `compression`
   selects `lzma` or `none`.
 - `lowland` exports `Linux`, one API that boots a machine and runs
   commands in Node and in browsers: `bootMachine()` and `guestAgent()`
@@ -52,7 +52,7 @@
   read-only storage in the kernel's own words.
 - A machine's lifecycle is `shutdown()`, `reboot()` and `kill()`, with
   `exited`, which never rejects, reporting `poweroff`, `kill`, `reboot` or a
-  `crash`; `await using` shuts down. `shutdown()` and `reboot()` ask the new
+  `crash`, and `await using` shuts down. `shutdown()` and `reboot()` ask the new
   `MachinePlugin.power()` hooks, then press the kernel's power button. A
   reboot restarts the same devices under a fresh kernel by default
   (`reboot: "restart" | "exit"`), and every `booted` hook runs again. The

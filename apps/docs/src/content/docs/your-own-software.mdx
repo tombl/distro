@@ -20,11 +20,15 @@ there, you need no compiler.
 With a network attached, apk installs from the public repository:
 
 ```js
-await guest.run(["apk", "add", "python"]);
+await linux.run(["apk", "add", "python"]);
+```
+
+```sh
+npx lowland run --network nat sh -c 'apk add python && python3 -V'
 ```
 
 The package lands in the memory layer, so it costs a download on every boot and is gone when the
-machine closes. That is fine for trying things. For anything you boot repeatedly, build an
+machine ends. That is fine for trying things. For anything you boot repeatedly, build an
 image.
 
 ## Building an image
@@ -53,12 +57,20 @@ named like `jq` come from the public repository, with dependencies and signature
 to local `.apk` files are installed without a signature check, and a build that uses only local
 files needs no network. The [Images reference](/images/) lists every option.
 
-Boot it by passing the file to `rootImage()`. In Node.js a string is a path, read from disk as
-the guest needs blocks. In a browser it is a URL relative to the page, fetched once:
+Boot it by passing the file as the `image`, or with `--image` on the command line. In Node.js a
+string is a path, read from disk as the guest needs blocks. In a browser it is a URL relative to
+the page, fetched once:
 
 ```js
-const image = rootImage("runner.erofs");
+await using linux = await Linux.create({ image: rootImage("runner.erofs") });
 ```
+
+```sh
+npx lowland run --image runner.erofs run-tests
+```
+
+`image: "runner.erofs"` works too. `rootImage()` also reads the image's superblock where it can,
+and throws at once if the file holds no filesystem it knows.
 
 The example service can now run Python snippets. Swap `rootImage()` for this image, and run
 `["python3", "-c", code]` instead of `["sh", "-c", code]`.
@@ -69,15 +81,21 @@ EROFS, the default, is read-only and compressed, and one file can back many mach
 The guest puts a memory layer above it.
 
 Build ext4 with `--format ext4 --size 64M` when the guest should write back to the image, and
-mount it writable, `{ path: "/", source: "data.ext4", type: "ext4" }`, instead of through
-`rootImage()`. Run `sync` before the machine closes, because closing does not flush the guest's
-page cache. Attach a writable image to one machine at a time.
+make it a root in mode `"rw"`, `{ path: "/", source: "data.ext4", mode: "rw" }`, or
+`-v data.ext4:/` on the command line. The guest agent syncs and unmounts it when the machine
+shuts down, but not when it is killed. Attach a writable image to one machine at a time.
 
 ### An init program
 
-`guestAgent({ init: ["/init"] })` starts a program once the root filesystem is mounted, as the
-kernel starts `/init`, with the console as its standard streams. The machine powers off when it
-exits. Use it for services that live as long as the machine.
+`Linux.create({ image: rootImage("runner.erofs"), init: ["/usr/bin/my-service"] })` starts a
+program once the root filesystem is mounted, as the kernel starts `/init`, with the console as its standard streams. Use it for a
+service that lives as long as the machine. When it exits, the guest agent ends every other
+process, unmounts the filesystems and powers the machine off, and `linux.exited` resolves to
+`{ reason: "poweroff" }`.
+
+The program is not PID 1. The guest agent stays PID 1, as `tini` does in a container, so an
+image that needs systemd or OpenRC as PID 1 is not supported. A shell script that starts your
+services in the background and waits works.
 
 ## Compiling your own
 
@@ -96,7 +114,7 @@ npm install
 node boot.mjs result
 ```
 
-That prints `Hello from Linux on wasm!`. The template has a C program, a `package.nix` that
+That prints `Hello from Linux on wasm!`, as does `npx lowland run --image result hello`. The template has a C program, a `package.nix` that
 builds it, a `flake.nix` that builds an image with `mkImage`, and `boot.mjs`, which boots it.
 
 `package.nix` is an ordinary `stdenv.mkDerivation` whose `stdenv` cross-compiles for the guest.

@@ -7,7 +7,7 @@ order: 2
 
 # Troubleshooting
 
-## `bootMachine()` fails in the browser with an error about `SharedArrayBuffer` or shared memory
+## `Linux.create()` fails in the browser with an error about `SharedArrayBuffer` or shared memory
 
 The page is not cross-origin isolated. Evaluate `crossOriginIsolated` in its console. If it is
 `false`, the document was served without the headers in
@@ -27,27 +27,40 @@ output.
 
 ## `mounting m0 (...) at /: ...`
 
-`bootMachine()` rejected with a `GuestBootError`, because a mount in the guest agent's table
-failed. Its `kernelLog` is the end of the guest kernel's log, which usually says why. A source
-that is not a filesystem fails with `EINVAL` from every type the guest tried. An ext4 image
-that closed without unmounting fails read-only with `EROFS`, because its journal needs
-recovery, which read-only storage cannot have. Mount it writable once to recover it.
+`Linux.create()` rejected with a `GuestBootError`, because an entry of the mount table failed to
+mount. Its `kernelLog` is the end of the guest kernel's log, which usually says why. A source
+that is not a filesystem fails with `EINVAL` from every type the guest tried. An ext4 image that
+was not unmounted cleanly, because its machine was killed, fails in mode `"ro"` or `"overlay"`
+with `EROFS`, because its journal needs recovery, which read-only storage cannot have. Mount it
+in mode `"rw"` once to recover it.
+
+## `Linux.create() needs an image`
+
+`image` has no default. Pass `rootImage()` from `lowland/image` for the bundled image, or a
+source of your own.
 
 ## The machine fails during boot and nothing explains why
 
-Add `bootConsole(output)` from `lowland/machine` to the plugins to see the kernel's boot
-messages. A kernel panic resolves `machine.exited` to `{ reason: "crash", error }`, with a
+Add `bootConsole(output)` from `lowland/machine` to `plugins` to see the kernel's boot
+messages. A kernel panic resolves `linux.exited` to `{ reason: "crash", error }`, with a
 `MachinePanicError` as the error.
 
 ## The Node.js script never exits
 
-A running machine keeps the event loop alive. Call `machine.shutdown()`, or declare it with
+A running machine keeps the event loop alive. Call `linux.shutdown()`, or declare it with
 `await using`.
+
+## `shutdown()` resolves to `{ reason: "kill" }`
+
+The guest did not power off before the timeout, so the machine was killed, and writes it had not
+flushed are lost. A program stuck in a loop without system calls cannot be stopped, and holds
+up the shutdown. Without the guest agent, the image's init may not handle the power signals. See
+[The layers beneath](/layers/#machines-without-the-guest-agent).
 
 ## A timeout fired, but the program is still running
 
 The program is in a loop that makes no system calls, so it cannot receive signals, `SIGKILL`
-included. Close the machine. See
+included. Kill the machine. See
 [What runs, and what doesn't](/what-runs/#busy-loops-and-spinners).
 
 ## Everything in the machine stopped
@@ -55,11 +68,6 @@ included. Close the machine. See
 Usually the same cause: with one virtual CPU, a task in a loop without system calls keeps the
 CPU, and nothing else in the machine runs. A spin-wait in a program waiting for another thread
 does the same. Give the machine more CPUs, or fix the loop to yield.
-
-## A program crashes when it throws a C++ exception
-
-C++ exceptions are not supported yet, even when the exception would be caught. See
-[What runs, and what doesn't](/what-runs/#c-exceptions).
 
 ## `fork` or `mmap` is undeclared when compiling
 
@@ -83,7 +91,7 @@ pass to `hostFetchNetwork()`.
 
 ## Connecting to a guest server is refused right after starting it
 
-`exec()` resolves once the program has started, not once it is listening. Retry the connection
+`spawn()` resolves once the program has started, not once it is listening. Retry the connection
 briefly.
 
 ## Spawning many programs fails with `ENOMEM` in Safari
@@ -94,8 +102,9 @@ fewer processes, or slow the rate.
 
 ## Files written to a disk are missing after reload
 
-The guest kernel had not written them yet when the machine or tab closed. Run `sync` or unmount
-the disk before closing, and mount with `-o sync` if the tab may close at any time. See
+The guest kernel had not written them yet when the machine was killed or the tab closed. Shut
+the machine down instead of killing it, call `linux.fs.sync()` after writes that matter, and mount
+with `options: "sync"` if the tab may close at any time. See
 [Files and storage](/files-and-storage/#dont-lose-writes).
 
 ## `NoModificationAllowedError` when attaching an OPFS disk

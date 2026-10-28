@@ -1,6 +1,6 @@
 ---
 title: Files and storage
-description: The root filesystem, moving files in and out, sharing host directories, and keeping data between runs.
+description: The mount table, the root filesystem, moving files in and out, sharing host directories, and keeping data between runs.
 section: chapters
 order: 3
 ---
@@ -11,23 +11,67 @@ A guest's files live in one of three places: the root image and the memory layer
 host directories you share with the guest, or disks you attach. This chapter covers each of
 them, and how to get data from JavaScript into the guest and back.
 
+## The mount table
+
+Everything a guest mounts at boot comes from one list, the mount table, which works like
+`/etc/fstab`. `image` is its entry at `/`, and `mounts` holds the rest:
+
+```js
+await using linux = await Linux.create({
+  image: rootImage(),
+  mounts: [
+    { path: "/data", source: "data.ext4", mode: "rw" },
+    { path: "/src", source: new NodeFS("./src"), mode: "ro" },
+    { path: "/scratch", type: "tmpfs" },
+  ],
+});
+```
+
+Each entry has a `path`, and these fields:
+
+- **`source`** is what to mount. A disk source becomes a block device: in Node.js a file path,
+  and anywhere a `URL`, a `FileHandle`, bytes, a `Blob`, a `Response`, or a `BlockStorage`
+  of your own. A filesystem backend such as `NodeFS` becomes a shared directory. Filesystems with
+  no device, such as `tmpfs`, have no source.
+- **`type`** is the filesystem type. Without one, the guest tries each type its kernel supports,
+  as BusyBox `mount` does, and a shared directory is `virtiofs`.
+- **`mode`** decides how the storage is opened and mounted. `"rw"`, the default, opens it
+  writable and mounts it read-write. `"ro"` opens and mounts it read-only. `"overlay"` opens it
+  read-only and mounts it beneath a writable layer in memory, so the guest can change its files,
+  but the storage never changes and the changes last only until the machine ends or reboots.
+- **`options`** is passed to the kernel as mount data, as `mount -o` would.
+
+The guest mounts the root first, then a tmpfs at `/run` and `/tmp`, unless the table has an
+entry there, then the other entries in order. Missing mount points are created. If a mount
+fails, `Linux.create()` rejects with a `GuestBootError` that names the entry, and whose
+`kernelLog` holds the end of the guest kernel's log, which usually says why.
+
+The `-v` option of `lowland run` is a mount entry on the command line. A host directory is
+shared and a regular file is attached as a disk. A trailing `:rw`, `:ro` or `:O` is the mode, `O`
+standing for `"overlay"`:
+
+```sh
+npx lowland run -v ./src:/src:ro -v data.ext4:/data sh
+```
+
 ## The root filesystem
 
-The root image from `rootImage()` is read-only, and the guest mounts a writable layer in
-memory on top of it. Programs can change any file, including in `/etc` and `/usr`, but every
-change is lost when the machine closes. Every boot starts from the same files.
+`rootImage()` returns the mount entry `{ path: "/", source, type: "erofs", mode: "overlay" }`.
+Programs can change any file, including in `/etc` and `/usr`, but every change is lost when the
+machine ends. Every boot starts from the same files.
 
 That suits the example service. Each snippet starts from a clean system, and nothing it does
 outlives its machine. It also means that one image file can back any number of machines at
 once.
 
-To keep the root filesystem's changes, boot from an ext4 image with a writable mount entry
-instead, `{ path: "/", source: file, type: "ext4" }`. The [Your own software](/your-own-software/)
-chapter covers building one. A writable image belongs to one machine at a time.
+To keep the root filesystem's changes, make the root an ext4 image in mode `"rw"`, such as
+`image: { path: "/", source: "app.ext4", mode: "rw" }`, or `-v app.ext4:/` on the command line.
+The [Your own software](/your-own-software/) chapter covers building one. A writable image
+belongs to one machine at a time.
 
 ## Moving files in and out
 
-`guest.fs` reads and writes files in the guest from JavaScript. Its methods look like those of
+`linux.fs` reads and writes files in the guest from JavaScript. Its methods look like those of
 `node:fs/promises`, and they are carried out as system calls by the guest agent. They therefore
 see exactly what programs in the guest see, with no cache in between, and they act as root.
 
@@ -35,17 +79,17 @@ The example service now accepts a set of files with the snippet, and returns the
 snippet produced:
 
 ```js
-await guest.fs.mkdir("/work");
+await linux.fs.mkdir("/work");
 for (const [name, contents] of Object.entries(files)) {
-  await guest.fs.writeTextFile(`/work/${name}`, contents);
+  await linux.fs.writeTextFile(`/work/${name}`, contents);
 }
 
-const process = await guest.spawn(["sh", "-c", code], { cwd: "/work" });
+const process = await linux.spawn(["sh", "-c", code], { cwd: "/work" });
 // ...wait for it as before...
 
 const outputs = {};
-for await (const entry of guest.fs.readDir("/work")) {
-  if (entry.isFile) outputs[entry.name] = await guest.fs.readTextFile(`/work/${entry.name}`);
+for await (const entry of linux.fs.readDir("/work")) {
+  if (entry.isFile) outputs[entry.name] = await linux.fs.readTextFile(`/work/${entry.name}`);
 }
 ```
 
@@ -57,36 +101,28 @@ without being held in memory on the host:
 
 ```js
 const response = await fetch("https://example.com/data.tar.gz");
-await guest.fs.writeFile("/work/data.tar.gz", response.body);
+await linux.fs.writeFile("/work/data.tar.gz", response.body);
 ```
 
 Each call is at least one round trip to the guest. For a large tree of small files, send one
 archive and unpack it inside the guest instead:
 
 ```js
-const tar = await guest.spawn(["tar", "-xz", "-C", "/work"]);
-await archive.pipeTo(tar.stdin); // a ReadableStream of a .tar.gz
-await tar.status;
+await linux.run(["tar", "-xz", "-C", "/work"], { input: archive }); // the .tar.gz as bytes or a stream
 ```
 
-The same works in reverse with `tar -c` and `tar.stdout`.
+The same works in reverse with `tar -c` and the result's `stdout`.
 
 ## Sharing a host directory
 
-A shared directory gives the guest live access to files on the host, with no copying. It is a
-virtio-fs device backed by `NodeFS` in Node.js or `BrowserFS` in a browser, which the guest
-mounts by its tag:
+A shared directory gives the guest live access to files on the host, with no copying. Its
+`source` is a filesystem backend: `NodeFS` from `lowland/node` in Node.js, or `BrowserFS` from
+`lowland/browser` in a browser.
 
 ```js
-import { bootMachine, fileSystemDevice } from "lowland/machine";
 import { NodeFS } from "lowland/node";
 
-const guest = guestAgent({ mounts: [rootImage()] });
-const shared = fileSystemDevice(new NodeFS("./project", { readOnly: true }), { tag: "project" });
-await using machine = await bootMachine({ cpus: 1, plugins: [guest, shared] });
-
-await guest.fs.mkdir("/project");
-await guest.mount("project", "/project", { type: "virtiofs" });
+const mounts = [{ path: "/project", source: new NodeFS("./project", { readOnly: true }), mode: "ro" }];
 ```
 
 In a browser, `new BrowserFS(handle)` serves a `FileSystemDirectoryHandle`, such as a folder the
@@ -94,36 +130,44 @@ user picked with `showDirectoryPicker()` or the origin private file system.
 
 Some behavior to know before you rely on it:
 
-- **Read-only belongs to the backend.** Mounting with `MS_RDONLY` does not stop the guest
-  kernel from sending writes to the device. Pass `readOnly: true` to the backend, and writes
-  fail with `EROFS`.
-- **Devices are fixed at boot.** Attach every directory you might share when the machine boots.
-  You can mount and unmount it later, but you cannot add a device.
+- **Read-only belongs to the backend.** Mode `"ro"` mounts the share read-only, but a guest
+  running as root can mount it again read-write. Pass `readOnly: true` to `NodeFS` as well, and
+  the host refuses writes with `EROFS`. `lowland run -v dir:/dst:ro` does both.
 - **The guest caches metadata.** File attributes and name lookups are cached for one second.
   Directory listings are always read fresh. If other host programs change files while the guest
-  runs, pass `cache: false` to `fileSystemDevice()`. File contents the guest has read can still
-  be cached.
+  runs, attach the share yourself with `fileSystemDevice(fs, { tag, cache: false })` from
+  `lowland/machine`, as [The layers beneath](/layers/#devices-the-mount-table-does-not-cover)
+  shows. File contents the guest has read can still be cached.
 - **`BrowserFS` emulates POSIX.** The browser file system API has no permissions, ownership or
   atomic rename. `BrowserFS` keeps modes, owners and timestamps in memory, so they reset when
   you create a new `BrowserFS`. Rename copies and then deletes, so one that fails partway can
-  lose the old destination, leave a partial new one, or leave both names.
-  The [reference](/reference/guest/#BrowserFS) has the details.
+  lose the old destination, leave a partial new one, or leave both names. The
+  [reference](/reference/guest/#BrowserFS) has the details.
 - **`NodeFS` confines paths, within limits.** It keeps the guest inside the shared directory,
   but cannot guarantee that while another host process moves things around in it. Share a
   directory that your application owns.
 
 ## Keeping data between runs
 
-To keep data, attach a disk whose storage lives on the host. `blockDevice()` turns any object
-with a `capacity` and `read`, plus `write` for a writable disk, into a virtio block device. In
-Node.js that object can wrap a file. In a browser, it can wrap a file in the origin private file
+To keep data, attach a disk whose storage lives on the host, in mode `"rw"`. In Node.js the
+source can be a path to an image file. In a browser, it can be a file in the origin private file
 system (OPFS).
+
+### In Node.js
+
+Make the disk an ext4 image, for example with `lowland build --format ext4`, and mount it:
+
+```js
+const mounts = [{ path: "/data", source: "data.ext4", mode: "rw" }];
+```
+
+The file is read and written in place, as the guest needs blocks.
 
 ### In a browser
 
 Fast access to an OPFS file is only available in a dedicated worker, through
-`createSyncAccessHandle()`. The worker serves the disk with `serveDevice()`, and the page
-attaches it with `workerDevice()`:
+`createSyncAccessHandle()`. That makes it a device rather than a mount table source. The worker
+serves the disk with `serveDevice()`, and the page attaches it with `workerDevice()` as a plugin:
 
 ```ts title="disk-worker.ts"
 import { blockDevice, type BlockStorage, serveDevice, serveDeviceError } from "lowland/machine";
@@ -167,7 +211,7 @@ async function openStorage(): Promise<BlockStorage> {
 }
 
 try {
-  serveDevice(self, blockDevice(await openStorage()));
+  serveDevice(self, blockDevice(await openStorage(), { serial: "data" }));
 } catch (error) {
   serveDeviceError(self, error);
 }
@@ -178,8 +222,7 @@ const worker = new Worker(new URL("./disk-worker.ts", import.meta.url), { type: 
 const disk = await workerDevice(worker);
 disk.closed.finally(() => worker.terminate());
 
-const guest = guestAgent({ mounts: [rootImage()] });
-await using machine = await bootMachine({ cpus: 1, plugins: [guest, disk] });
+await using linux = await Linux.create({ image: rootImage(), plugins: [disk] });
 ```
 
 `read` and `write` receive views straight into guest memory, valid until the call returns, so
@@ -190,61 +233,39 @@ rejects with an `Error` of the same `name` and `message`.
 `truncate()` reserves the full capacity against the origin's storage quota at once, and a file
 that already exists keeps its size. Pick the capacity before the first run.
 
-### In Node.js
-
-No worker is needed. Wrap a `FileHandle` opened with `"r+"`:
-
-```js
-import { open } from "node:fs/promises";
-import { blockDevice } from "lowland/machine";
-
-const file = await open("disk.img", "r+");
-const { size } = await file.stat();
-const disk = blockDevice({
-  capacity: size,
-  async read(offset, target) {
-    const { bytesRead } = await file.read(target, 0, target.byteLength, offset);
-    return bytesRead;
-  },
-  async write(offset, data) {
-    const { bytesWritten } = await file.write(data, 0, data.byteLength, offset);
-    return bytesWritten;
-  },
-});
-```
-
-Create the file at its full size first, for example with `truncate()` from `node:fs/promises`.
-
 ### Format and mount it
 
-The disk is an ordinary block device in the guest. With the plugins in the order above, the
-root image is `/dev/vda`, the guest agent's own disk is `/dev/vdb`, and yours is `/dev/vdc`. A
-new disk contains only zeros, so make a filesystem on first use:
+A disk attached as a plugin is an ordinary block device in the guest, not yet mounted.
+`linux.guest.disk(serial)` finds its device node by the serial the worker gave it. A new disk
+contains only zeros, so make a filesystem on first use:
 
 ```js
-const probe = await guest.run(["blkid", "/dev/vdc"]);
+const device = await linux.guest.disk("data");
+const probe = await linux.run(["blkid", device]);
 if (probe.stdout.byteLength === 0) {
-  await guest.run(["mkfs.ext2", "-L", "data", "/dev/vdc"]);
+  await linux.run(["mkfs.ext2", device]);
 }
-await guest.fs.mkdir("/data");
-await guest.mount("/dev/vdc", "/data", { type: "ext2" });
+await linux.fs.mkdir("/data");
+await linux.guest.mount(device, "/data", { type: "ext2" });
 ```
+
+Serials beginning with `m` and a number are taken by the mount table's own disks.
 
 ### Don't lose writes
 
-The guest kernel holds recent writes in its page cache and writes them out later.
-`machine.shutdown()` has the guest agent sync and unmount everything first, but killing the
-machine, or a tab that closes, discards whatever has not been written yet, and can leave the
-filesystem inconsistent. Unmount the disk, or run `sync`, before you kill it:
+The guest kernel holds recent writes in its page cache and writes them out later. `shutdown()`
+and `await using` have the guest agent sync and unmount every filesystem first. `kill()`, a
+deadline that kills, or a tab that closes discards whatever has not been written yet, and can
+leave the filesystem inconsistent. If a machine may be killed, call `linux.fs.sync()` after
+writes that matter.
 
-```js
-await guest.unmount("/data");
-machine.kill();
-```
+A browser tab can close at any moment, so sync after writes that matter, or mount with
+`options: "sync"` and accept slower writes. Ask for durable storage with
+`navigator.storage.persist()`, or the browser may evict the file under storage pressure.
 
-A browser tab can close at any moment, so run `sync` after writes that matter, or mount with
-`-o sync` and accept slower writes. Ask for durable storage with `navigator.storage.persist()`,
-or the browser may evict the file under storage pressure.
+An ext4 disk that was not unmounted cleanly needs its journal recovered. It still mounts in mode
+`"rw"`, which recovers it, but mode `"ro"` or `"overlay"` fails, because read-only storage cannot
+be recovered.
 
 ### One tab at a time
 

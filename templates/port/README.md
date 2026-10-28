@@ -10,7 +10,8 @@ The build requires Nix with flakes enabled. Nix installs on any Linux
 distribution. On macOS, the guest packages are Linux derivations, so they
 build on a Linux builder such as the
 [nixpkgs Linux builder](https://nixos.org/manual/nixpkgs/unstable/#sec-darwin-builder).
-The boot script requires Node 24 or later.
+The boot script requires Node 24.20 or a later 24 release, or Node 26.7 or
+later.
 
 ## Building
 

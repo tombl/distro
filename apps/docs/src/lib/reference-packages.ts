@@ -13,22 +13,6 @@ export const referenceSections = [
         description: "Boot a machine with an image, a mount table, and a network.",
         symbols: ["Linux", "LinuxOptions"],
       },
-      {
-        title: "Run commands and end the machine",
-        description:
-          "The types of a command's options and results, and of how a machine ends, as Linux uses them.",
-        symbols: [
-          "SpawnOptions",
-          "RunOptions",
-          "RunResult",
-          "ChildProcess",
-          "CommandStatus",
-          "exitCode",
-          "SystemError",
-          "MachineExit",
-          "PowerOptions",
-        ],
-      },
     ],
   },
   {
@@ -47,7 +31,6 @@ export const referenceSections = [
           "Machine",
           "MachineExit",
           "PowerOptions",
-          "MachinePanicError",
           "bootConsole",
         ],
       },
@@ -71,8 +54,6 @@ export const referenceSections = [
           "FSCreateContext",
           "FSDirectoryEntry",
           "FSDeviceOptions",
-          "SystemError",
-          "ErrnoCode",
           "FSSetAttributes",
           "FSStat",
           "FSTimestamp",
@@ -86,6 +67,7 @@ export const referenceSections = [
           "vsockDevice",
           "VsockConnection",
           "VsockDevice",
+          "VsockListener",
         ],
       },
       {
@@ -110,7 +92,7 @@ export const referenceSections = [
       {
         title: "Run devices in workers",
         description: "Serve a device from a worker so its storage I/O stays off the main thread.",
-        symbols: ["Endpoint", "serveDevice", "workerDevice"],
+        symbols: ["Endpoint", "serveDevice", "serveDeviceError", "workerDevice"],
       },
       {
         title: "Write plugins",
@@ -123,7 +105,14 @@ export const referenceSections = [
           "MachineSetup",
           "KernelArguments",
           "MachineDevices",
+          "MachineInitramfs",
         ],
+      },
+      {
+        title: "Handle errors",
+        description:
+          "The errno error of guest system calls and filesystem backends, and kernel panics.",
+        symbols: ["SystemError", "ErrnoCode", "MachinePanicError"],
       },
     ],
   },
@@ -159,6 +148,8 @@ export const referenceSections = [
           "CommandStatus",
           "exitCode",
           "Signal",
+          "StdioSpec",
+          "TerminalSize",
         ],
       },
       {
@@ -195,8 +186,9 @@ export const referenceSections = [
       },
       {
         title: "Handle errors",
-        description: "Distinguish guest system errors from protocol failures.",
-        symbols: ["SystemError", "ProtocolError"],
+        description:
+          "A broken connection to the guest agent. A failed system call is a SystemError from lowland/machine.",
+        symbols: ["ProtocolError"],
       },
     ],
   },
@@ -210,7 +202,7 @@ export const referenceSections = [
       {
         title: "Attach an image",
         description: "Attach the canonical image, or your own, as a machine's root.",
-        symbols: ["rootImage", "ImageSource", "RootImageOptions", "ImageFileHandle"],
+        symbols: ["rootImage", "ImageSource", "ImageFileHandle"],
       },
       {
         title: "Build an image",
@@ -222,7 +214,6 @@ export const referenceSections = [
           "ImageFile",
           "ImageFormat",
           "ImageCompression",
-          "PackageRepository",
         ],
       },
     ],
@@ -230,6 +221,22 @@ export const referenceSections = [
 ] as const;
 
 export type ReferenceSection = (typeof referenceSections)[number];
+
+// Every export is documented once, on the page of the section that groups it.
+// Another section that re-exports it links there instead.
+export const referenceHomes: ReadonlyMap<string, string> = (() => {
+  const homes = new Map<string, string>();
+  for (const section of referenceSections) {
+    for (const group of section.groups) {
+      for (const symbol of group.symbols) {
+        const home = homes.get(symbol);
+        if (home) throw new Error(`${symbol} is grouped in both ${home} and ${section.slug}`);
+        homes.set(symbol, section.slug);
+      }
+    }
+  }
+  return homes;
+})();
 
 export function referenceSymbolId(name: string): string {
   return name.replaceAll(/[^a-zA-Z0-9_-]/g, "-");

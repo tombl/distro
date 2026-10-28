@@ -277,7 +277,7 @@ export interface Network extends Disposable {
    *
    * @example Reach a server running in the guest
    * ```ts
-   * const server = await agent.exec(["nc", "-l", "-p", "8080"]);
+   * const server = await agent.spawn(["nc", "-l", "-p", "8080"]);
    * let connection;
    * for (;;) {
    *   try {

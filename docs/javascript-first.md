@@ -1,8 +1,11 @@
 # JavaScript-first repository design
 
 Status: accepted. Its four packages later became one, `lowland`, with an entry
-point per layer (`lowland/machine`, `lowland/guest`, `lowland/image`); see
-`packages/lowland/README.md`.
+point per layer (`lowland/machine`, `lowland/guest`, `lowland/image`). See
+`packages/lowland/README.md`. The package sections below keep their original
+names. The API sections describe the current API, in which a machine shuts
+down, reboots or is killed rather than closed, and `lowland run` takes
+volumes.
 
 This document describes the intended package API, repository layout, artifact
 boundary, and development workflow. It is deliberately a design document, not
@@ -20,9 +23,9 @@ API without preserving its multiple machine constructors.
 - Devices are the kernel's extension mechanism. Plugins are the small amount of
   composition needed when one logical integration contributes several devices,
   kernel arguments, or post-boot work.
-- Canonical machines boot from block devices. The kernel's initramfs ABI stays
-  available for lower-level embeddings, but Lowland does not bundle or depend
-  on an initramfs.
+- Canonical machines boot from block devices. The only initramfs Lowland ships
+  is the guest agent's, and the kernel's initramfs ABI stays available for
+  lower-level embeddings.
 - The high-level product is easy by default, while each constituent part remains
   replaceable.
 
@@ -71,19 +74,19 @@ required.
 
 This package owns the host side of the kernel boundary:
 
-- the packaged `vmlinux.wasm`;
-- WebAssembly memory and worker lifecycle;
-- device-tree construction;
-- virtio transports and devices;
-- host filesystem adapters for Node and browsers;
-- the machine plugin protocol; and
+- the packaged `vmlinux.wasm`,
+- WebAssembly memory and worker lifecycle,
+- device-tree construction,
+- virtio transports and devices,
+- host filesystem adapters for Node and browsers,
+- the machine plugin protocol, and
 - the sole low-level boot function.
 
 The TypeScript source currently published from the Linux checkout moves here.
 The GPL kernel and other compiled sources remain in the Linux repository. This
 repository materializes the resulting `vmlinux.wasm` as a regular ignored file
 next to the JavaScript package before development or packaging. The library
-continues to load it with `new URL("./vmlinux.wasm", import.meta.url)`; callers
+continues to load it with `new URL("./vmlinux.wasm", import.meta.url)`, and callers
 never pass a URL, byte array, or `WebAssembly.Module`.
 
 ### `@lowland/guest`
@@ -139,27 +142,30 @@ export interface BootMachineOptions {
   cpus: number;
   args?: readonly string[];
   plugins?: readonly MachinePluginInput[];
+  reboot?: "restart" | "exit";
 }
 
 export interface Machine extends AsyncDisposable {
   readonly memory: WebAssembly.Memory;
-  readonly closed: Promise<void>;
-  close(): void;
+  readonly exited: Promise<MachineExit>;
+  shutdown(options?: PowerOptions): Promise<MachineExit>;
+  reboot(options?: PowerOptions): Promise<void>;
+  kill(): void;
 }
 
 export function bootMachine(options: BootMachineOptions): Promise<Machine>;
 ```
 
 `cpus` is mandatory at the low-level boundary so callers make scheduling and
-resource policy explicit. The zero-argument `Linux.create()` facade may choose
-one CPU as product policy; applications such as the site choose explicitly.
+resource policy explicit. The `Linux` facade defaults to
+one CPU as product policy, and applications such as the site choose explicitly.
 Caller-supplied kernel arguments remain explicit top-level policy.
 There is no `rootfs` or privileged `image` option. A disk is a device supplied
 by a plugin like any other integration, and so is an initramfs: a plugin passes
 newc archives to `setup.initramfs.add()`, the host concatenates them, and the
 kernel pulls the result through its `boot.get_initrd` import.
 
-The advanced plugin surface can live at `@lowland/kernel/plugin`:
+The advanced plugin surface is part of `lowland/machine`:
 
 ```ts
 export const machinePlugin: unique symbol;
@@ -173,7 +179,7 @@ export type MachinePluginInput = MachinePlugin | MachinePluginProvider;
 export interface MachinePlugin {
   configure(setup: MachineSetup): void | Promise<void>;
   booted?(machine: Machine): void | Promise<void>;
-  closing?(): void | Promise<void>;
+  power?(action: "poweroff" | "reboot"): boolean | Promise<boolean>;
 }
 
 export interface MachineSetup {
@@ -186,10 +192,13 @@ export interface MachineSetup {
 
 `bootMachine()` normalizes a provider by checking for `machinePlugin`, runs
 each `configure()` callback against a private in-progress setup, boots once,
-then awaits each `booted()` callback. A guest-agent provider can therefore add
+then awaits each `booted()` callback. `shutdown()` and `reboot()` ask each
+`power()` hook, in reverse order, whether it started the action, and press the
+kernel's power button if none did. The button runs `/sbin/poweroff` or
+`/sbin/reboot` in the guest. A guest-agent provider can therefore add
 its EROFS and vsock devices during configuration and make `bootMachine()`
 resolve only once the agent answers. The setup value is not sealed or exposed
-on the resulting machine; plugin authors are responsible for not retaining and
+on the resulting machine. Plugin authors are responsible for not retaining and
 misusing a configure-only value.
 
 Simple devices can implement the plugin protocol themselves. A logical
@@ -202,18 +211,18 @@ const agent = guestAgent({ mounts: [rootImage()] });
 
 await using machine = await bootMachine({
   cpus: 1,
-  plugins: [agent, entropyDevice(), consoleDevice(terminal)],
+  plugins: [agent, entropyDevice(), consoleDevice(input, output)],
 });
 
 const result = await agent.run(["uname", "-a"]);
 ```
 
 The block-storage primitive stays reusable. A range-request-backed disk should
-be named for what it does, such as `fetchDisk()`, and live in a focused subpath;
-it should not be called a root disk or coupled to the image package.
+be named for what it does, such as `fetchDisk()`, and live in a focused subpath.
+It should not be called a root disk or coupled to the image package.
 
 Every virtio device exposes a generic `closed` lifecycle promise. Integrations
-that own resources alongside a device bind their cleanup to that promise; the
+that own resources alongside a device bind their cleanup to that promise, and the
 transport must not grow device-specific hooks such as an Ethernet `onClose`.
 
 ## Initramfs boot contract
@@ -248,12 +257,14 @@ into the installed system.
 
 EROFS is the canonical immutable-image format. SquashFS remains enabled in the
 kernel for other embedders, but the canonical packages do not produce or ship
-a SquashFS system image. Persistent storage is site or facade policy; the image
+a SquashFS system image. Persistent storage is site or facade policy. The image
 builder only constructs filesystems and does not decide how they are stored or
 layered.
 
 Linux retains its initramfs support and the host/kernel handoff ABI for custom
-embeddings. The canonical packages do not materialize or bundle an initramfs.
+embeddings. The only initramfs the package ships is the guest agent's,
+`agent.cpio`, which `lowland/guest` gives the kernel. The canonical images are
+block devices.
 Both handoffs, the device tree and the initramfs, use one size-query/copy
 protocol: the kernel calls the import with no buffer to learn the size,
 allocates the buffer itself, and calls it again to have the host copy into it.
@@ -262,40 +273,44 @@ The host never chooses an address in guest memory.
 ## High-level JavaScript API
 
 `Linux` is a real class with a private constructor, because it owns a live
-machine and coordinated integrations. Construction is asynchronous and
-zero-argument creation is the primary path.
+machine and coordinated integrations. Construction is asynchronous. It composes `bootMachine()` and `guestAgent()`
+and adds nothing of its own beyond an entropy device.
 
 ```ts
 export class Linux implements AsyncDisposable {
   private constructor(/* live components */);
 
-  static create(options?: LinuxOptions): Promise<Linux>;
+  static create(options: LinuxOptions): Promise<Linux>;
 
-  readonly fs: FileSystem;
+  readonly machine: Machine;
+  readonly guest: GuestAgent;
   readonly network: NetworkAttachment | undefined;
-  readonly closed: Promise<void>;
+  readonly fs: FileSystem;
+  readonly exited: Promise<MachineExit>;
 
-  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult>;
-  spawn(argv: readonly string[], options?: ExecOptions): Promise<ChildProcess>;
-  close(): void;
+  run(argv: readonly string[], options?: RunOptions): Promise<RunResult>;
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
+  shutdown(options?: PowerOptions): Promise<MachineExit>;
+  reboot(options?: PowerOptions): Promise<void>;
+  kill(): void;
   [Symbol.asyncDispose](): Promise<void>;
 }
 
 export interface LinuxOptions {
-  image?: ImageSource;
-  disks?: readonly { source: ImageSource; path: string; readOnly?: boolean }[];
-  mounts?: readonly { source: FS; path: string; readOnly?: boolean }[];
+  image: Mount | MountSource;
+  mounts?: readonly Mount[];
   network?: Network;
   cpus?: number;
+  init?: readonly string[];
   plugins?: readonly MachinePluginInput[];
 }
 ```
 
 `run()` is the foreground convenience operation and returns collected status
 and output. `spawn()` returns a live process with streaming standard I/O. Both
-take a complete argv array; neither combines an `argv[0]` parameter with a
-second arguments array. Both reuse the guest agent's `ExecOptions`, `RunResult`,
-and `ChildProcess` rather than defining parallel types. Their `terminal`
+take a complete argv array, and neither combines an `argv[0]` parameter with a
+second arguments array. Both reuse the guest agent's `SpawnOptions`, `RunOptions`,
+`RunResult`, and `ChildProcess` rather than defining parallel types. Their `terminal`
 option runs a command on a guest pseudoterminal, as `lowland run` does for a
 terminal, so a page can attach a shell to a terminal emulator such as xterm.js
 and forward its resizes with `ChildProcess.resize()`.
@@ -303,18 +318,19 @@ and forward its resizes with `ChildProcess.resize()`.
 The options are the `lowland run` flags in object form, but they take objects
 rather than host paths, so `Linux` runs unchanged in Node and in browsers. Only
 the CLI is Node-specific: it turns paths into these objects and checks them
-before boot. `image` accepts any source `rootImage()` accepts and is always
-attached read-only beneath a tmpfs overlay, so a `Linux` never writes to its
-root image. `disks` take the same sources, attach EROFS or ext4 images, and
-mount them at guest paths, persisting ext4 writes unless `readOnly` is set. The
-guest reads each disk's filesystem type from its superblock. `mounts` take any
-virtio-fs backend, such as `NodeFS` for a host directory or `BrowserFS` for
-the origin private file system. `network` takes a network from
+before boot. `image` is required, so an application bundles the canonical
+image only if it imports `lowland/image` for `rootImage()`. A bare source
+means `{ path: "/", source, mode: "overlay" }`, so a `Linux` never writes to
+its root image unless `image` is a mount entry that says so. `mounts` are the
+rest of the guest agent's mount table: disks and virtio-fs backends, such as
+`NodeFS` for a host directory or `BrowserFS` for the origin private file
+system, each `rw`, `ro`, or beneath an overlay. `network` takes a network from
 `createNetwork()`, which `Linux` attaches the machine to. Further plugins
 follow the facade's own devices. Commands run in `/` unless their `cwd` says
-otherwise. Disposing a `Linux` flushes and unmounts its disks before closing
-the machine, so their writes reach their sources; `close()` stops it
-immediately.
+otherwise. `linux.machine` and `linux.guest` are the composed layers, and the
+lifecycle is the machine's. Disposing a `Linux` shuts the machine down, and
+PID 1 ends every process, syncs and unmounts first, so writes reach their
+sources. `kill()` stops it immediately.
 
 ## CLI shape
 
@@ -336,23 +352,25 @@ machine:
 Usage: lowland run [options] [--] [command...]
 
 Options:
+  -v, --volume <src:dst[:rw|:ro|:O]>  Mount a host directory or image file (repeatable)
       --image <path>             Boot this root image instead of the canonical one
-      --disk <path:guest[:ro]>   Attach a disk image and mount it (repeatable)
-  -v, --mount <host:guest[:ro]>  Share a host directory into the machine (repeatable)
-  -w, --cwd <path>               Set the command working directory (default: /)
+  -w, --workdir <dir>            Set the command working directory (default: /)
   -e, --env <name[=value]>       Set or pass through an environment variable (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
       --network <none|nat>       Give the machine a network (default: none)
   -t, --tty                      Run the command on a terminal; stdin must be one
 ```
 
-The short flags follow `docker run`. `--network nat` gives the guest egress
+The short flags follow `docker run`. A volume whose source is a directory is
+shared, and a regular file is attached as a disk. `rw`, the default, writes
+through, `ro` is read-only, and `O` puts a temporary overlay above the source.
+A volume at `/` replaces the root, and `--image <path>` is `-v <path>:/:O`. `--network nat` gives the guest egress
 through the host's sockets: its TCP connections and DNS lookups go out as
 lowland's own, with the gateway address reaching the host's loopback. There is
 no network by default.
 
 `build` produces an image file that `run --image`, `rootImage(source)`, or any
-block device can use. Its flags mirror `buildImage()` from `@lowland/image/build`
+block device can use. Its flags mirror `buildImage()` from `lowland/image/build`
 one-to-one: `--package`, `--file host:guest[:mode]`, `--link guest=target`,
 `--format`, `--label`, `--size`, `--compression`, and `--output`. The JavaScript
 options object and these flags are the only build inputs. There is no build
@@ -361,10 +379,10 @@ set of packages, files, and links, like `mkImage`.
 
 Images are ordinary files named by path. There is no daemon, image store,
 registry, tag, container name, or implicit state, so the CLI has no commands to
-list, pull, push, or remove them. Each `run` creates and closes one machine.
-The root image is always read-only beneath a tmpfs overlay, whether it is EROFS
-or ext4, so running an image never changes it. Persistence exists only where
-the caller asks for it, through `--disk` or `--mount`. There is no low-level
+list, pull, push, or remove them. Each `run` boots one machine and shuts it down.
+The root image is read-only beneath a tmpfs overlay by default, whether it is
+EROFS or ext4, so running an image never changes it. Persistence exists only
+where the caller asks for it, through a `rw` volume. There is no low-level
 emulator switch in the product CLI. Kernel tests use the lower-level JavaScript
 API rather than turning product flags into a second testing API.
 
@@ -387,8 +405,8 @@ terminal, `TERM` defaults to `xterm`, and SIGINT, SIGTERM, and SIGHUP sent to
 lowland go to the command. Standard error shares the terminal with standard
 output, as it does on any terminal. When stdin is not a terminal, the shell runs over pipes.
 
-`@lowland/image` remains a library without a command of its own. `lowland`
-depends on it and owns every command-line entry point.
+`lowland/image` has no command of its own. The `lowland` command owns every
+command-line entry point.
 
 ## Artifacts and development
 
@@ -444,9 +462,10 @@ statuses remain product requirements. Shell tooling needed by those jobs is
 packaged with `writeShellApplication` instead of being reimplemented inline in
 YAML.
 
-Networking is opt-in. `@lowland/guest` documents separate recipes for native
-TCP networking in Node and Fetch-backed HTTP networking in browsers; the
-zero-argument facade does not silently select either transport.
+Networking is opt-in. `lowland/machine` documents separate recipes for native
+TCP networking in Node, through `nodeNetwork()` from `lowland/node`, and
+Fetch-backed HTTP networking in browsers. The facade does not silently select
+either transport, and a network without adapters refuses outbound connections.
 
 Release tarballs are assembled by Nix from pnpm-built JavaScript plus the exact
 native artifacts, checked as ordinary npm packages, and published by the Nix
@@ -456,7 +475,7 @@ CI application.
 
 1. Move the kernel host TypeScript into `packages/kernel`, materialize its wasm
    artifact, and remove the dangling workspace checkout dependency.
-2. Introduce `bootMachine()` and the symbol-based plugin protocol; adapt virtio
+2. Introduce `bootMachine()` and the symbol-based plugin protocol, and adapt virtio
    devices as plugins without changing their device APIs.
 3. Boot every canonical low-level test from a block device while retaining the
    kernel initramfs ABI for non-canonical embeddings.
@@ -465,13 +484,13 @@ CI application.
 5. Define the image-to-`/root` association, publish the minimal image package
    shape, and add the Nix image-to-npm helper.
 6. Build the `Linux` facade and the `lowland` CLI.
-7. Make pnpm authoritative for JavaScript builds and Node tests; add the single
+7. Make pnpm authoritative for JavaScript builds and Node tests, and add the single
    artifact materialization command.
 8. Move native packages and tooling under `distro/`, move the browser app under
    `apps/site`, and retain its repository and deployment pipeline.
 9. Replace CI shell with small job-specific Nix applications, then rewrite the
    contributor and architecture documentation against the finished workflow.
-10. Publish the new `@lowland/*` packages. The differently named historical npm
+10. Publish the `lowland` package. The differently named historical npm
     packages can be archived independently and need not be deleted atomically.
 
 Each step should leave one authoritative canonical path behind. The external

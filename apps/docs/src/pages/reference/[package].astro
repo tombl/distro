@@ -46,7 +46,7 @@ const headings: MarkdownHeading[] = [
 >
   <h1><code>{pkg.name}</code></h1>
   <Fragment set:html={readme.html} />
-  <ReferenceDocumentation document={document} groups={groups} />
+  <ReferenceDocumentation document={document} groups={groups} slug={pkg.slug} />
 </Docs>
 
 <style>
