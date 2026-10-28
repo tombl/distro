@@ -201,9 +201,9 @@ See [docs.low.land](https://docs.low.land) for guides and the
 The TypeScript and JavaScript sources are available under the MIT license. The
 package also contains:
 
-- `vmlinux.wasm`, the Linux kernel, under `GPL-2.0-only WITH Linux-syscall-note`;
-- the guest agent's initramfs, statically linked with MIT-licensed musl;
-- the canonical and builder images, with GPL-2.0-only BusyBox and apk-tools,
+- `vmlinux.wasm`, the Linux kernel, under `GPL-2.0-only WITH Linux-syscall-note`.
+- The guest agent's initramfs, statically linked with MIT-licensed musl.
+- The canonical and builder images, with GPL-2.0-only BusyBox and apk-tools,
   MIT-licensed musl, and the MPL-2.0 Mozilla CA certificate bundle. The
   builder image also contains GPL-2.0-only e2fsprogs and GPL-2.0-or-later
   erofs-utils.
