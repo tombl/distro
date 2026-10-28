@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Image sources as root mounts, apart from the canonical image, so the Linux
-// facade can boot your own image without referencing that one.
+// Image sources as root mounts, apart from the canonical image.
 
 import type { DiskFileHandle } from "../machine/disk.ts";
 import type { Mount } from "../guest/agent.ts";

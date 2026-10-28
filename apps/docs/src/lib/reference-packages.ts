@@ -10,8 +10,8 @@ export const referenceSections = [
     groups: [
       {
         title: "Create a machine",
-        description: "Boot a machine with an image, disks, shared directories, and a network.",
-        symbols: ["Linux", "LinuxOptions", "DiskOptions", "MountOptions"],
+        description: "Boot a machine with an image, a mount table, and a network.",
+        symbols: ["Linux", "LinuxOptions"],
       },
       {
         title: "Run commands and end the machine",

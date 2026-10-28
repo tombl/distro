@@ -45,11 +45,11 @@ describe("lowland", () => {
   });
 
   it("reports run argument errors with status 125", () => {
-    const result = lowland("run", "--disk", "x");
+    const result = lowland("run", "-v", "x");
     assert.equal(result.status, 125);
     assert.match(
       result.stderr,
-      /^lowland run: --disk expects path:guest\[:ro\], got x\n\nUsage: lowland run/,
+      /^lowland run: --volume expects src:\/dst\[:ro\|:rw\|:O\], got x\n\nUsage: lowland run/,
     );
   });
 
@@ -159,13 +159,15 @@ describe("lowland run arguments", () => {
         [
           "--image",
           "app.erofs",
-          "--disk",
+          "-v",
           "C:/data.ext4:/data:ro",
-          "--mount",
+          "--volume",
           "./src:/work",
           "-v",
-          "/tmp:/scratch:ro",
-          "--cwd",
+          "/tmp:/scratch:O",
+          "-v",
+          "a:b:/rw:rw",
+          "--workdir",
           "/work",
           "--cpus",
           "2",
@@ -184,11 +186,12 @@ describe("lowland run arguments", () => {
         { HOME: "/home/me" },
       ),
       {
-        image: "app.erofs",
-        disks: [{ source: "C:/data.ext4", path: "/data", readOnly: true }],
-        mounts: [
-          { source: "./src", path: "/work", readOnly: false },
-          { source: "/tmp", path: "/scratch", readOnly: true },
+        volumes: [
+          { source: "app.erofs", path: "/", mode: "overlay" },
+          { source: "C:/data.ext4", path: "/data", mode: "ro" },
+          { source: "./src", path: "/work", mode: "rw" },
+          { source: "/tmp", path: "/scratch", mode: "overlay" },
+          { source: "a:b", path: "/rw", mode: "rw" },
         ],
         cpus: 2,
         network: "nat",
@@ -200,11 +203,9 @@ describe("lowland run arguments", () => {
     );
   });
 
-  it("defaults to / with no network and takes -w for --cwd", () => {
+  it("defaults to / with no network and takes -w for --workdir", () => {
     assert.deepEqual(parseRunArgs(["true"], {}), {
-      image: undefined,
-      disks: [],
-      mounts: [],
+      volumes: [],
       cpus: undefined,
       network: "none",
       command: ["true"],
@@ -230,8 +231,19 @@ describe("lowland run arguments", () => {
   });
 
   for (const [args, message] of [
-    [["--disk", "data.ext4"], /^--disk expects path:guest\[:ro\], got data\.ext4$/],
-    [["--mount", "./src"], /^--mount expects host:guest\[:ro\], got \.\/src$/],
+    [["-v", "data.ext4"], /^--volume expects src:\/dst\[:ro\|:rw\|:O\], got data\.ext4$/],
+    [["-v", ":/data"], /^--volume expects src:\/dst/],
+    [["-v", "./src:work"], /^--volume expects src:\/dst/],
+    [["-v", "./src:/work:rx"], /^--volume expects src:\/dst/],
+    [["-v", "a:/x", "-v", "b:/x"], /^two volumes at \/x$/],
+    [
+      ["--image", "a.erofs", "-v", "b.ext4:/"],
+      /^--image and a volume at \/ both replace the root$/,
+    ],
+    [["--image", ""], /^--image expects a path$/],
+    [["--disk", "a:/b"], /Unknown option '--disk'/],
+    [["--mount", "a:/b"], /Unknown option '--mount'/],
+    [["--cwd", "/b"], /Unknown option '--cwd'/],
     [["--env", "1A=b"], /^--env expects name\[=value\], got 1A=b$/],
     [["--cpus", "0"], /^--cpus expects a positive whole number, got 0$/],
     [["--cpus", "1.5"], /^--cpus expects a positive whole number, got 1\.5$/],
@@ -292,6 +304,88 @@ describe("lowland run failures", () => {
     const { create } = failing_machine({ reason: "poweroff" });
     const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], { create });
     assert.equal(code, 127);
+  });
+});
+
+describe("lowland run signals", () => {
+  it("holds signals until the machine has shut down", async (t) => {
+    t.mock.method(process.stderr, "write", () => true);
+    const before = process.listenerCount("SIGINT");
+    let during = 0;
+    const create = async () =>
+      ({
+        spawn: () => Promise.reject(new SystemError(2)),
+        shutdown: async () => {
+          // A Ctrl-C now would otherwise end lowland before the disks flush.
+          during = process.listenerCount("SIGINT");
+          return { reason: "poweroff" };
+        },
+      }) as unknown as Linux;
+    assert.equal(await execute(parseRunArgs(["missing"], {})!, ["missing"], { create }), 127);
+    assert.ok(during > before);
+    assert.equal(process.listenerCount("SIGINT"), before);
+  });
+
+  it("forwards a signal that arrives while the command starts", async () => {
+    const kills: string[] = [];
+    const status = Promise.withResolvers<{ success: boolean; code: null; signal: "SIGINT" }>();
+    const child = {
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      status: status.promise,
+      kill: async (signal: string) => {
+        kills.push(signal);
+        status.resolve({ success: false, code: null, signal: "SIGINT" });
+      },
+      resize: async () => {},
+      [Symbol.asyncDispose]: async () => {},
+    };
+    const spawned = Promise.withResolvers<void>();
+    const create = async () =>
+      ({
+        spawn: async () => {
+          process.emit("SIGINT");
+          await spawned.promise;
+          return child;
+        },
+        shutdown: async () => ({ reason: "poweroff" }),
+      }) as unknown as Linux;
+    const code = execute(parseRunArgs(["sleep", "60"], {})!, ["sleep", "60"], { create });
+    await new Promise(setImmediate);
+    spawned.resolve();
+    assert.equal(await code, 130);
+    assert.deepEqual(kills, ["SIGINT"]);
+  });
+
+  it("forwards no signal once the command has been reaped", async () => {
+    const kills: string[] = [];
+    // The command exits, but a descendant holds its output open.
+    const output = new TransformStream<Uint8Array, Uint8Array>();
+    const status = Promise.withResolvers<{ success: boolean; code: number; signal: null }>();
+    const child = {
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: output.readable,
+      stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      status: status.promise,
+      kill: async (signal: string) => void kills.push(signal),
+      resize: async () => {},
+      [Symbol.asyncDispose]: async () => {},
+    };
+    const create = async () =>
+      ({
+        spawn: async () => child,
+        shutdown: async () => ({ reason: "poweroff" }),
+      }) as unknown as Linux;
+    const code = execute(parseRunArgs(["true"], {})!, ["true"], { create });
+    await new Promise(setImmediate);
+    process.emit("SIGINT");
+    status.resolve({ success: true, code: 0, signal: null });
+    await new Promise(setImmediate);
+    process.emit("SIGINT");
+    await output.writable.close();
+    assert.equal(await code, 0);
+    assert.deepEqual(kills, ["SIGINT"]);
   });
 });
 
