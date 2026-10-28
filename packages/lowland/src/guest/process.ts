@@ -249,7 +249,7 @@ const unpiped_input = () =>
   });
 
 /**
- * A guest process spawned by `guest.exec`.
+ * A guest process started by `guest.spawn`.
  *
  * `stdin` is a `WritableStream`, `stdout` and `stderr` are
  * `ReadableStream`s, and `status` resolves when the process exits. The
