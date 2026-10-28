@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildImage } from "../src/image/build.ts";
-import { GuestBootError } from "../src/guest/index.ts";
 import { createNetwork } from "../src/machine/index.ts";
 import { NodeFS } from "../src/node/index.ts";
 import { createServer } from "node:http";
@@ -347,7 +346,7 @@ describe("Linux", () => {
     await aborted.catch(() => {});
   });
 
-  it("flushes writes through a file handle left open at disposal", async () => {
+  it("unmounts a disk cleanly despite a file handle left open at disposal", async () => {
     const linux = await Linux.create({
       image: rootImage(),
       disks: [{ source: data_disk, path: "/data" }],
@@ -355,20 +354,11 @@ describe("Linux", () => {
     const file = await linux.fs.open("/data/open-handle", { write: true, create: true });
     await file.write(new TextEncoder().encode("still open"));
     await linux[Symbol.asyncDispose]();
-    // The open file kept the disk from unmounting, so its journal needs
-    // recovery, which read-only storage cannot have.
-    await assert.rejects(
-      Linux.create({
-        image: rootImage(),
-        disks: [{ source: data_disk, path: "/data", readOnly: true }],
-      }),
-      (error) =>
-        error instanceof GuestBootError &&
-        /write access unavailable, cannot proceed/.test(error.kernelLog),
-    );
+    // The guest's shutdown ended the session that held the file, so the disk
+    // unmounted cleanly, and even read-only storage mounts it.
     await using reader = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data" }],
+      disks: [{ source: data_disk, path: "/data", readOnly: true }],
     });
     assert.equal(await reader.fs.readTextFile("/data/open-handle"), "still open");
   });
@@ -383,7 +373,7 @@ describe("Linux", () => {
     await linux[Symbol.asyncDispose]();
     // Disposal waits for the machine itself to shut down.
     const closed = await Promise.race([
-      linux.closed.then(() => true),
+      linux.exited.then(() => true),
       Promise.resolve().then(() => false),
     ]);
     assert.equal(closed, true);
@@ -392,6 +382,26 @@ describe("Linux", () => {
       disks: [{ source: data_disk, path: "/data", readOnly: true }],
     });
     assert.equal(await reader.fs.readTextFile("/data/slots"), "flushed");
+  });
+
+  it("reboots, shuts down and is killed", async () => {
+    const linux = await Linux.create({
+      image: rootImage(),
+      disks: [{ source: data_disk, path: "/data" }],
+    });
+    await linux.fs.writeTextFile("/data/reboot", "kept");
+    const before = await linux.fs.readTextFile("/proc/sys/kernel/random/boot_id");
+    await linux.reboot();
+    assert.notEqual(await linux.fs.readTextFile("/proc/sys/kernel/random/boot_id"), before);
+    // The mount table is realized again.
+    assert.equal(await linux.fs.readTextFile("/data/reboot"), "kept");
+    assert.equal((await linux.run(["true"])).status.success, true);
+    assert.deepEqual(await linux.shutdown(), { reason: "poweroff" });
+    assert.deepEqual(await linux.exited, { reason: "poweroff" });
+
+    const killed = await Linux.create({ image: rootImage() });
+    killed.kill();
+    assert.deepEqual(await killed.exited, { reason: "kill" });
   });
 
   it("needs an image, so only lowland/image brings in the canonical one", async () => {

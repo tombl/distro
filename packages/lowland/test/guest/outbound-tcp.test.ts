@@ -34,7 +34,7 @@ guest_test("outbound TCP", async (t, fixture) => {
   const guest = await fixture.spawn();
 
   async function run(command: string) {
-    const process = await guest.exec(["/bin/sh", "-c", command]);
+    const process = await guest.spawn(["/bin/sh", "-c", command]);
     const [stdout, stderr, status] = await Promise.all([
       collect(process.stdout),
       collect(process.stderr),
@@ -129,7 +129,7 @@ guest_test("outbound TCP", async (t, fixture) => {
     const port = await listen(server);
     try {
       // `connect` writes, reads back the echo, then closes.
-      const reply = guest.exec([
+      const reply = guest.spawn([
         "/tmp/network-test",
         "connect",
         fixture.network.gateway,
@@ -162,7 +162,7 @@ guest_test("outbound TCP", async (t, fixture) => {
     });
     const port = await listen(server);
     try {
-      const result = await guest.exec([
+      const result = await guest.spawn([
         "/tmp/network-test",
         "connect",
         fixture.network.gateway,
@@ -180,6 +180,46 @@ guest_test("outbound TCP", async (t, fixture) => {
       );
     } finally {
       server.close();
+    }
+  });
+
+  await t.test("aborts the guest's sessions on a reboot and keeps its address", async () => {
+    const rebooted = await fixture.spawn();
+    const address = rebooted.network.address;
+    // One session the guest holds open, and one that closed gracefully but
+    // whose host side is still flushing.
+    const held = createServer((socket) => socket.on("error", () => {}));
+    const held_port = await listen(held);
+    const body = pattern_bytes(1256);
+    try {
+      await serve(body, async (url, port) => {
+        fixture.lingering.add(port);
+        const fetched = await rebooted.run(["sh", "-c", `wget -qO- ${url} | wc -c`]);
+        assert.equal(new TextDecoder().decode(fetched.stdout).trim(), String(body.byteLength));
+        const flushing = session_for(fixture, port);
+        await assert_graceful(flushing);
+        void rebooted.spawn(["wget", "-qO-", `http://${fixture.network.gateway}:${held_port}/`]);
+        let open: OutboundSession | undefined;
+        for (let i = 0; i < 500 && !open; i++) {
+          open = fixture.outbound.findLast((session) => session.target.port === held_port);
+          if (!open) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.ok(open, "the guest did not connect");
+
+        await rebooted.machine.reboot();
+        for (const session of [open, flushing]) {
+          assert.equal(session.signal.aborted, true);
+          assert.match(String(session.signal.reason), /guest rebooted/);
+        }
+        assert.equal(rebooted.network.address, address);
+        // The rebooted guest has the same address and reaches the host again.
+        const again = await rebooted.run(["sh", "-c", `wget -qO- ${url} | wc -c`]);
+        assert.equal(new TextDecoder().decode(again.stdout).trim(), String(body.byteLength));
+        const ip = await rebooted.run(["sh", "-c", "ifconfig eth0"]);
+        assert.match(new TextDecoder().decode(ip.stdout), new RegExp(`inet addr:${address} `));
+      });
+    } finally {
+      held.close();
     }
   });
 

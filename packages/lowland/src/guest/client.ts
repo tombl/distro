@@ -23,6 +23,7 @@ import {
   read_kernel_log,
   readlinkat,
   renameat,
+  signal_init,
   switch_root,
   symlinkat,
   sync,
@@ -52,8 +53,8 @@ import {
 /** Data that can be written to a guest file: bytes, a `Blob`, or a stream of bytes. */
 export type FileData = Uint8Array | Blob | ReadableStream<Uint8Array>;
 
-export interface ExecOptions {
-  /** Working directory for the process. Defaults to `/tmp`. */
+export interface SpawnOptions {
+  /** Working directory for the process. Defaults to `/`. */
   cwd?: string;
   /**
    * Environment for the process, merged over the defaults of
@@ -66,7 +67,7 @@ export interface ExecOptions {
    *
    * @example Give a command a time budget
    * ```ts
-   * const process = await guest.exec(["sleep", "30"], {
+   * const process = await guest.spawn(["sleep", "30"], {
    *   signal: AbortSignal.timeout(1000),
    * });
    * try {
@@ -87,7 +88,7 @@ export interface ExecOptions {
    *
    * @example Run an interactive shell
    * ```ts
-   * const shell = await guest.exec(["sh"], { terminal: { rows: 24, columns: 80 } });
+   * const shell = await guest.spawn(["sh"], { terminal: { rows: 24, columns: 80 } });
    * void shell.stdout.pipeTo(output);
    * const input = shell.stdin.getWriter();
    * await input.write(new TextEncoder().encode("tty\n"));
@@ -125,26 +126,36 @@ export interface ExecOptions {
    *   create: true,
    *   truncate: true,
    * });
-   * const sorted = await guest.exec(["sort"], { stdio: [input, output, "pipe"] });
+   * const sorted = await guest.spawn(["sort"], { stdio: [input, output, "pipe"] });
    * await sorted.status;
    * ```
    */
   stdio?: readonly [Exclude<StdioSpec, "stdout">, Exclude<StdioSpec, "stdout">, StdioSpec];
 }
 
+/** Options for `run()`: those of `spawn()`, plus the command's input. */
+export interface RunOptions extends SpawnOptions {
+  /**
+   * What the command reads on standard input, as text or as data, after
+   * which its input ends. Without it, the input ends at once. It needs
+   * standard input to be a pipe.
+   */
+  input?: FileData | string;
+}
+
 const PIPES: Stdio = ["pipe", "pipe", "pipe"];
 
-function stdio_of(options: ExecOptions): Stdio {
+function stdio_of(options: SpawnOptions): Stdio {
   const { stdio } = options;
   if (stdio === undefined) return PIPES;
-  if (options.terminal) throw new TypeError("exec cannot combine `terminal` and `stdio`");
+  if (options.terminal) throw new TypeError("spawn cannot combine `terminal` and `stdio`");
   if (!Array.isArray(stdio) || stdio.length !== 3) {
-    throw new TypeError("exec `stdio` must have three entries");
+    throw new TypeError("spawn `stdio` must have three entries");
   }
   stdio.forEach((spec: unknown, fd) => {
     if (spec === "pipe" || spec === "null" || spec instanceof FsFile) return;
     if (spec === "stdout" && fd === 2) return;
-    throw new TypeError(`exec \`stdio[${fd}]\` cannot be ${String(spec)}`);
+    throw new TypeError(`spawn \`stdio[${fd}]\` cannot be ${String(spec)}`);
   });
   return stdio;
 }
@@ -265,43 +276,6 @@ export interface FileSystem {
   open(path: string, options?: OpenOptions): Promise<FsFile>;
 }
 
-/**
- * Runs a program in the guest and resolves to the running process.
- *
- * Takes an argv array rather than a command string: the array is the argv
- * the program receives, exactly as `execve` would see it, with no shell in
- * between to quote, split, or expand. An argument containing spaces is one
- * element. The first element is looked up on the guest's `PATH`. If the
- * program does not exist, the promise rejects with a `SystemError` whose
- * code is `"ENOENT"`.
- *
- * A guest currently runs up to eight processes at once. Further calls wait
- * for a slot rather than failing.
- *
- * @example Run a command and collect its output
- * ```ts
- * const process = await guest.exec(["uname", "-a"]);
- * console.log(await new Response(process.stdout).text());
- * ```
- *
- * @example Run a shell pipeline
- * ```ts
- * const process = await guest.exec(["sh", "-c", "echo hello | tr a-z A-Z"]);
- * console.log(await new Response(process.stdout).text());
- * ```
- *
- * @example Run commands in parallel
- * ```ts
- * const [date, uname] = await Promise.all([
- *   guest.exec(["date"]),
- *   guest.exec(["uname", "-a"]),
- * ]);
- * console.log(await new Response(date.stdout).text());
- * console.log(await new Response(uname.stdout).text());
- * ```
- */
-export type Exec = (argv: readonly string[], options?: ExecOptions) => Promise<ChildProcess>;
-
 export interface MountOptions {
   /** Filesystem type, such as `virtiofs`, `ext4`, or `tmpfs`. Omit for bind mounts. */
   type?: string;
@@ -324,7 +298,7 @@ export interface GuestClientCapabilities {
   /** Writes every dirty guest filesystem back to its storage. */
   sync(): Promise<void>;
   readonly fs: FileSystem;
-  readonly exec: Exec;
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
   readonly mount: Mount;
   readonly unmount: Unmount;
   /**
@@ -335,6 +309,14 @@ export interface GuestClientCapabilities {
   switch_root(init?: { argv: readonly string[]; env: readonly string[] }): Promise<void>;
   /** The end of the kernel log, as text. */
   kernel_log(): Promise<string>;
+  /**
+   * Sends `signal` to PID 1, over this client's session. Resolves `true`
+   * once the request has gone out, even if the session ends before the
+   * reply, and `false` if it could not be sent.
+   */
+  signal_init(signal: number): Promise<boolean>;
+  /** Forgets the session, as when the guest has rebooted. */
+  reset(): void;
   /**
    * Opens `path` as a directory with `root` as its `/`, creating missing
    * directories: symlinks, absolute or relative, and `..` never leave
@@ -388,6 +370,7 @@ function* prefixes(path: string): Generator<string> {
 
 class GuestClient {
   #session: Promise<GuestSession> | null = null;
+  #connected: GuestSession | null = null;
   #processes = 0;
   #process_waiters: (() => void)[] = [];
   private readonly vsock: VsockDevice;
@@ -396,9 +379,11 @@ class GuestClient {
     this.vsock = vsock;
   }
 
-  // Lazy, memoized connect; cleared on failure so the next call retries. This
-  // is what machine.ts's readiness loop depends on.
+  // Lazy, memoized connect; cleared on failure so the next call retries, and
+  // when the session dies, so a rebooted guest gets a new one. This is what
+  // the agent's readiness loop depends on.
   #connect(timeoutMs?: number): Promise<GuestSession> {
+    if (this.#connected?.dead) this.reset();
     if (!this.#session) {
       const attempt = GuestSession.connect(
         this.vsock,
@@ -408,8 +393,34 @@ class GuestClient {
         throw error;
       });
       this.#session = attempt;
+      void attempt.then(
+        (session) => {
+          if (this.#session === attempt) this.#connected = session;
+        },
+        () => {},
+      );
     }
     return this.#session;
+  }
+
+  reset() {
+    const session = this.#session;
+    this.#session = null;
+    this.#connected = null;
+    void session?.then(
+      (session) => session.close(),
+      () => {},
+    );
+  }
+
+  async signal_init(signal: number) {
+    let session: GuestSession;
+    try {
+      session = await this.#connect();
+    } catch {
+      return false;
+    }
+    return signal_init(session, signal);
   }
 
   async ping(timeoutMs = 5000) {
@@ -424,7 +435,10 @@ class GuestClient {
     const pending = this.#connect();
     const session = await pending;
     await switch_root(session, init && { ...init, cwd: "/" });
-    if (this.#session === pending) this.#session = null;
+    if (this.#session === pending) {
+      this.#session = null;
+      this.#connected = null;
+    }
     session.close();
   }
 
@@ -717,8 +731,8 @@ class GuestClient {
     return new Promise((resolve) => this.#process_waiters.push(() => resolve(release)));
   }
 
-  async exec(argv: readonly string[], options: ExecOptions = {}) {
-    if (!argv.length) throw new TypeError("exec argv must not be empty");
+  async spawn(argv: readonly string[], options: SpawnOptions = {}) {
+    if (!argv.length) throw new TypeError("spawn argv must not be empty");
     const stdio = stdio_of(options);
     options.signal?.throwIfAborted();
     const session = await this.#connect();
@@ -732,7 +746,7 @@ class GuestClient {
     const env = Object.entries(environment).map(([key, value]) => `${key}=${value}`);
     const release = await this.#acquire_process_slot();
     try {
-      const cwd = options.cwd ?? "/tmp";
+      const cwd = options.cwd ?? "/";
       const terminal = options.terminal === true ? { rows: 24, columns: 80 } : options.terminal;
       const spawned = terminal
         ? await spawn_terminal(session, argv, cwd, env, terminal)
@@ -757,6 +771,8 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
     sync: client.sync.bind(client),
     switch_root: client.switch_root.bind(client),
     kernel_log: client.kernel_log.bind(client),
+    signal_init: client.signal_init.bind(client),
+    reset: client.reset.bind(client),
     open_directory_in: client.open_directory_in.bind(client),
     fs: {
       readFile: client.readFile.bind(client),
@@ -779,7 +795,7 @@ export function create_guest_client(vsock: VsockDevice): GuestClientCapabilities
       sync: client.sync.bind(client),
       open: client.open.bind(client),
     },
-    exec: client.exec.bind(client),
+    spawn: client.spawn.bind(client),
     mount: client.mount.bind(client),
     unmount: client.unmount.bind(client),
   };

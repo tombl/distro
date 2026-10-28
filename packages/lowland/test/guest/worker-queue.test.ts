@@ -20,7 +20,7 @@ test(
     const machine = await bootMachine({ cpus: 1, plugins: [agent] });
     let debug: ReturnType<typeof setInterval> | undefined;
     try {
-      const warm = await agent.exec(["true"]);
+      const warm = await agent.spawn(["true"]);
       assert.deepEqual(await warm.status, { success: true, code: 0, signal: null });
       // The warm-up's worker can outlive its reaped process by a moment.
       // Count only the workers that stay.
@@ -38,7 +38,7 @@ test(
         ? setInterval(() => console.error("worker queue", JSON.stringify(worker_queue)), 2000)
         : undefined;
       const queued_before = worker_queue.queued;
-      const child = await agent.exec([
+      const child = await agent.spawn([
         "sh",
         "-c",
         'sleep 1 & until read -r comm </proc/$!/comm && [ "$comm" = sleep ]; do :; done; /bin/true; echo done; wait',
@@ -56,8 +56,8 @@ test(
       clearInterval(debug);
       worker_queue.limit = Infinity;
       drain_worker_queue();
-      machine.close();
-      await machine.closed;
+      machine.kill();
+      await machine.exited;
     }
   },
 );

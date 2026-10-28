@@ -9,11 +9,12 @@ import {
   type MachinePluginProvider,
   type MachineSetup,
 } from "../machine/plugin.ts";
-import { E, MountFlags, SystemError, UnmountFlags } from "./abi.ts";
+import { E, MountFlags, SIG, SystemError, UnmountFlags } from "./abi.ts";
 import {
   create_guest_client,
-  type Exec,
-  type ExecOptions,
+  type FileData,
+  type RunOptions,
+  type SpawnOptions,
   type FileSystem,
   type GuestClientCapabilities,
   type Mount as MountCall,
@@ -42,17 +43,18 @@ function load_agent_initramfs() {
 }
 
 async function wait_for_guest(client: GuestClientCapabilities, machine: Machine) {
-  let machine_ended = false;
-  const ended = machine.closed.then(
-    () => {
-      machine_ended = true;
-      throw new Error("machine closed before guest agent became ready");
-    },
-    (error) => {
-      machine_ended = true;
-      throw error;
-    },
-  );
+  // Once the machine has ended, its reason is the error, whatever the ping
+  // that noticed first says, such as a vsock device that closed under it.
+  let ended_error: { error: unknown } | undefined;
+  const ended = machine.exited.then((exit) => {
+    ended_error = {
+      error:
+        exit.reason === "crash"
+          ? exit.error
+          : new Error(`machine ended (${exit.reason}) before guest agent became ready`),
+    };
+    throw ended_error.error;
+  });
 
   const deadline = performance.now() + 30_000;
   let failure: unknown;
@@ -61,7 +63,7 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
       await Promise.race([client.ping(1000), ended]);
       return;
     } catch (error) {
-      if (machine_ended) throw error;
+      if (ended_error) throw ended_error.error;
       failure = error;
     }
     await Promise.race([new Promise((resolve) => setTimeout(resolve, 25)), ended]);
@@ -69,19 +71,15 @@ async function wait_for_guest(client: GuestClientCapabilities, machine: Machine)
   throw new Error("guest agent did not become ready", { cause: failure });
 }
 
-async function sync_before_close(client: GuestClientCapabilities, timeoutMs: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error("guest did not sync its filesystems before close")),
-      timeoutMs,
-    );
+function byte_stream(data: FileData): ReadableStream<Uint8Array> {
+  if (data instanceof ReadableStream) return data;
+  if (data instanceof Blob) return data.stream();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(data);
+      controller.close();
+    },
   });
-  try {
-    await Promise.race([client.sync(), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {
@@ -150,10 +148,54 @@ export interface Mount {
  */
 export interface GuestAgent extends MachinePluginProvider {
   readonly fs: FileSystem;
-  /** Starts a process with streaming standard I/O. */
-  readonly exec: Exec;
-  /** Runs a process and collects its status, stdout, and stderr. */
-  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult>;
+  /**
+   * Starts a program with streaming standard I/O, and resolves to the
+   * running process.
+   *
+   * Takes an argv array rather than a command string: the array is the argv
+   * the program receives, exactly as `execve` would see it, with no shell in
+   * between to quote, split, or expand. An argument containing spaces is one
+   * element. The first element is looked up on the guest's `PATH`. If the
+   * program does not exist, the promise rejects with a `SystemError` whose
+   * code is `"ENOENT"`.
+   *
+   * A guest currently runs up to eight processes at once. Further calls wait
+   * for a slot rather than failing.
+   *
+   * @example Run a command and collect its output
+   * ```ts
+   * const process = await guest.spawn(["uname", "-a"]);
+   * console.log(await new Response(process.stdout).text());
+   * ```
+   *
+   * @example Run a shell pipeline
+   * ```ts
+   * const process = await guest.spawn(["sh", "-c", "echo hello | tr a-z A-Z"]);
+   * console.log(await new Response(process.stdout).text());
+   * ```
+   *
+   * @example Run commands in parallel
+   * ```ts
+   * const [date, uname] = await Promise.all([
+   *   guest.spawn(["date"]),
+   *   guest.spawn(["uname", "-a"]),
+   * ]);
+   * console.log(await new Response(date.stdout).text());
+   * console.log(await new Response(uname.stdout).text());
+   * ```
+   */
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess>;
+  /**
+   * Runs a program and collects its status, stdout, and stderr. A status
+   * that is not success does not reject.
+   *
+   * @example Feed a command its input
+   * ```ts
+   * const sorted = await guest.run(["sort"], { input: "b\na\n" });
+   * console.log(new TextDecoder().decode(sorted.stdout)); // "a\nb\n"
+   * ```
+   */
+  run(argv: readonly string[], options?: RunOptions): Promise<RunResult>;
   readonly mount: MountCall;
   readonly unmount: Unmount;
   /**
@@ -212,11 +254,6 @@ export interface GuestAgentOptions {
    * `boot` that calls `switchRoot()`.
    */
   init?: readonly string[];
-  /**
-   * How long `machine.close()` waits for the guest to sync its filesystems
-   * before forcing teardown. Defaults to 30 000 ms.
-   */
-  syncTimeoutMs?: number;
 }
 
 /**
@@ -652,10 +689,9 @@ async function delete_initramfs(guest: GuestAgent) {
  * the root, or it runs `options.boot`. `bootMachine()` resolves once the
  * guest has booted. A failed step rejects with a {@link GuestBootError}.
  *
- * `machine.close()` first syncs the guest's filesystems through a ready
- * agent, waiting at most `syncTimeoutMs`; if that fails, teardown is forced
- * and `machine.closed` rejects. Closing before the agent is ready skips the
- * sync.
+ * The agent is the guest's PID 1. On `machine.shutdown()` or a guest's
+ * `poweroff`, it ends every process, syncs and unmounts the filesystems,
+ * then powers off; `reboot` does the same, then reboots.
  *
  * @example Boot the canonical image beneath a writable overlay
  * ```ts
@@ -685,12 +721,13 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       throw new TypeError("init needs a mount at / or a boot that calls switchRoot()");
     }
   }
-  const sync_timeout = options.syncTimeoutMs ?? 30_000;
   const vsock = vsockDevice();
   const client = create_guest_client(vsock);
   let configured = false;
   let attached_machine: Machine | undefined;
-  let ready: Promise<void> | undefined;
+  // This boot's readiness. A reboot gives the machine a new memory, and the
+  // agent has to boot the guest again over a new session.
+  let ready: { memory: WebAssembly.Memory; promise: Promise<void> } | undefined;
   let is_ready = false;
 
   const boot = async (machine: Machine) => {
@@ -749,9 +786,30 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
       return Promise.reject(new Error("guest agent is attached to a different machine"));
     }
     attached_machine = machine;
-    return (ready ??= boot(machine).then(() => {
-      is_ready = true;
-    }));
+    if (ready?.memory !== machine.memory) {
+      is_ready = false;
+      // The previous boot's session died with its kernel.
+      client.reset();
+      const current = {
+        memory: machine.memory,
+        promise: boot(machine).then(() => {
+          if (ready === current) is_ready = true;
+        }),
+      };
+      ready = current;
+    }
+    return ready.promise;
+  };
+
+  // PID 1 takes SIGUSR2 as poweroff and SIGTERM as reboot, as BusyBox init
+  // does. The signal goes over the session this client already holds: PID 1
+  // serves one session at a time, so a session of the hook's own would wait
+  // behind it.
+  const power = async (action: "poweroff" | "reboot") => {
+    // Before the agent is ready, the kernel's button runs /sbin/poweroff or
+    // /sbin/reboot, which signal PID 1 the same way.
+    if (!is_ready) return false;
+    return client.signal_init(action === "poweroff" ? SIG.USR2 : SIG.TERM);
   };
 
   const plugin: MachinePlugin = {
@@ -786,27 +844,108 @@ export function guestAgent(options: GuestAgentOptions = {}): GuestAgent {
     async booted(machine) {
       await wait(machine);
     },
-    async closing() {
-      // Readiness has its own deadline; waiting for it here would leave close
-      // unbounded, and an agent that never answered has written nothing.
-      if (is_ready) await sync_before_close(client, sync_timeout);
-    },
+    power,
   };
 
   const agent: GuestAgent = {
     fs: client.fs,
-    exec: client.exec,
+    spawn: client.spawn,
     mount: client.mount,
     unmount: client.unmount,
-    async run(argv, options) {
-      const child: ChildProcess = await client.exec(argv, options);
-      const [status, stdout, stderr] = await Promise.all([
-        child.status,
-        collect(child.stdout),
-        collect(child.stderr),
-        child.stdin.close(),
-      ]);
-      return { status, stdout, stderr };
+    async run(argv, options = {}) {
+      const { input, ...spawn_options } = options;
+      if (input !== undefined && spawn_options.stdio && spawn_options.stdio[0] !== "pipe") {
+        throw new TypeError("run `input` needs standard input to be a pipe");
+      }
+      // Taken before the command starts, so an input that can't be read,
+      // such as a locked stream, fails run() before there is a process.
+      const reader =
+        input === undefined
+          ? undefined
+          : byte_stream(
+              typeof input === "string" ? new TextEncoder().encode(input) : input,
+            ).getReader();
+      let child: ChildProcess;
+      try {
+        child = await client.spawn(argv, spawn_options);
+      } catch (error) {
+        // The input was never read, so it is left as it was.
+        reader?.releaseLock();
+        throw error;
+      }
+      // Feeding stops once the command has exited and its output has ended,
+      // so an input stream that never ends can't hold up the result.
+      const stop = new AbortController();
+      // Settles with `value`, or with "stopped" once run() stops feeding. The
+      // stop listener goes as soon as `value` settles, so a long input
+      // doesn't collect one per chunk.
+      const until_stopped = <T>(value: Promise<T>) =>
+        new Promise<T | "stopped">((resolve, reject) => {
+          if (stop.signal.aborted) {
+            // Nobody will look at `value` now, but its failure is no
+            // unhandled rejection.
+            value.catch(() => {});
+            return resolve("stopped");
+          }
+          const stopped = () => resolve("stopped");
+          stop.signal.addEventListener("abort", stopped, { once: true });
+          value
+            .finally(() => stop.signal.removeEventListener("abort", stopped))
+            .then(resolve, reject);
+        });
+      let input_error: { error: unknown } | undefined;
+      const feed = async () => {
+        if (!reader) return void (await until_stopped(child.stdin.close()));
+        const writer = child.stdin.getWriter();
+        try {
+          for (;;) {
+            const next = await until_stopped(reader.read());
+            if (next === "stopped") return;
+            if (next.done) break;
+            // A command that exits without reading all of it closes the pipe,
+            // which is no failure of run().
+            const written = writer.write(next.value).then(
+              () => true,
+              () => false,
+            );
+            if ((await until_stopped(written)) !== true) return;
+          }
+        } catch (error) {
+          // The input itself failed. Its end still reaches the command as
+          // EOF, and run() reports the error once the command has finished.
+          input_error = { error };
+        } finally {
+          // Cancelled and unlocked by the time run() returns, without
+          // waiting on the source's own cancel.
+          void reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+        await until_stopped(writer.close().catch(() => {}));
+      };
+      // Awaited only once the command has finished: a guest that powers off
+      // meanwhile must not leave its rejection unhandled. The stop below
+      // ends the feed at once, so the wait is short.
+      const feeding = feed();
+      feeding.catch(() => {});
+      let result: RunResult;
+      try {
+        const [status, stdout, stderr] = await Promise.all([
+          child.status,
+          collect(child.stdout),
+          collect(child.stderr),
+        ]);
+        result = { status, stdout, stderr };
+      } finally {
+        stop.abort();
+        await feeding.catch(() => {});
+        // run() owns the process: disposing of it closes its descriptors and
+        // hangs up its terminal, which ends a write that a descendant never
+        // reads. It signals the process only if it hasn't been reaped, which
+        // is when run() fails. Not awaited, since that write may outlast it.
+        void child[Symbol.asyncDispose]().catch(() => {});
+      }
+      if (input_error) throw input_error.error;
+      return result;
     },
     async disk(serial) {
       return disk_with_serial(await find_disks(agent), serial);

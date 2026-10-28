@@ -70,6 +70,7 @@ type DeviceMessage =
   | { type: "disable"; vq: number }
   | { type: "notify"; vq: number }
   | { type: "reset" }
+  | { type: "detach" }
   | { type: "close" };
 
 const serialize_error = (error: unknown): SerializedError => {
@@ -183,6 +184,12 @@ function create_remote_device(endpoint: Endpoint, ready: ReadyMessage): Device {
       if (terminal_error) throw terminal_error;
       connection = connect_remote_device(endpoint, transport, context);
       return connection.device;
+    },
+    async detach() {
+      const current = connection;
+      if (!current) return;
+      await current.detach();
+      if (connection === current) connection = undefined;
     },
     shutdown() {
       if (close_started) return close_completion.promise;
@@ -306,10 +313,22 @@ function connect_remote_device(
     },
   };
 
+  // The kernel has gone. The worker resets its device and forgets this
+  // binding, then acknowledges as it does a reset, so the next boot can
+  // bind it to a new memory.
+  const detach = () => {
+    Atomics.add(control, 0, 1);
+    enabled.fill(0);
+    const done = new Promise<void>((resolve) => resets.push(resolve));
+    post_endpoint(endpoint, { type: "detach" } satisfies DeviceMessage);
+    return done;
+  };
+
   return {
     device,
     receive,
     fail,
+    detach,
     revoke() {
       Atomics.add(control, 0, 1);
       enabled.fill(0);
@@ -426,6 +445,17 @@ export function serveDevice(endpoint: Endpoint, handle: Device): void {
             post_endpoint(endpoint, { type: "reset_done" } satisfies WorkerMessage),
           );
           return;
+        case "detach": {
+          const bound = connected;
+          connected = undefined;
+          void (bound ? device.detach() : Promise.resolve()).then(
+            // The detached queues were invalidated, so their work in flight
+            // cannot complete into the next binding.
+            () => post_endpoint(endpoint, { type: "reset_done" } satisfies WorkerMessage),
+            send_error,
+          );
+          return;
+        }
         case "close":
           if (closing) return;
           closing = true;

@@ -36,10 +36,12 @@ let
 
     buildPhase = ''
       runHook preBuild
-      # abi.ts imports the bytes helpers beside it in the package source.
-      mkdir -p src/guest src/bytes
+      # abi.ts imports the bytes helpers and SystemError beside it in the
+      # package source.
+      mkdir -p src/guest src/bytes src/machine
       cp ${../../packages/lowland/src/guest/abi.ts} src/guest/abi.ts
       cp ${../../packages/lowland/src/bytes/index.ts} src/bytes/index.ts
+      cp ${../../packages/lowland/src/machine/error.ts} src/machine/error.ts
       echo '{"type":"module"}' > package.json
       node gen-abi-check.ts ./src/guest/abi.ts > abi-check.c
       $CC -Wall -Wextra -Werror -Wno-error=unused-command-line-argument \

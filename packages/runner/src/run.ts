@@ -162,10 +162,11 @@ const machine = await bootMachine({
 });
 
 try {
-  await machine.closed;
-} catch (error) {
-  console.error(error);
-  process.exitCode = 1;
+  const exit = await machine.exited;
+  if (exit.reason === "crash") {
+    console.error(exit.error);
+    process.exitCode = 1;
+  }
 } finally {
   restoreTerminal();
   if (args.console) process.stdin.pause();

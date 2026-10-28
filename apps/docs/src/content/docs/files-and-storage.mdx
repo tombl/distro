@@ -40,7 +40,7 @@ for (const [name, contents] of Object.entries(files)) {
   await guest.fs.writeTextFile(`/work/${name}`, contents);
 }
 
-const process = await guest.exec(["sh", "-c", code], { cwd: "/work" });
+const process = await guest.spawn(["sh", "-c", code], { cwd: "/work" });
 // ...wait for it as before...
 
 const outputs = {};
@@ -64,7 +64,7 @@ Each call is at least one round trip to the guest. For a large tree of small fil
 archive and unpack it inside the guest instead:
 
 ```js
-const tar = await guest.exec(["tar", "-xz", "-C", "/work"]);
+const tar = await guest.spawn(["tar", "-xz", "-C", "/work"]);
 await archive.pipeTo(tar.stdin); // a ReadableStream of a .tar.gz
 await tar.status;
 ```
@@ -232,13 +232,14 @@ await guest.mount("/dev/vdc", "/data", { type: "ext2" });
 
 ### Don't lose writes
 
-The guest kernel holds recent writes in its page cache and writes them out later. Closing the
-machine discards whatever has not been written yet, and can leave the filesystem inconsistent.
-Unmount the disk, or run `sync`, before closing:
+The guest kernel holds recent writes in its page cache and writes them out later.
+`machine.shutdown()` has the guest agent sync and unmount everything first, but killing the
+machine, or a tab that closes, discards whatever has not been written yet, and can leave the
+filesystem inconsistent. Unmount the disk, or run `sync`, before you kill it:
 
 ```js
 await guest.unmount("/data");
-machine.close();
+machine.kill();
 ```
 
 A browser tab can close at any moment, so run `sync` after writes that matter, or mount with

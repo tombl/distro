@@ -36,11 +36,12 @@ recovery, which read-only storage cannot have. Mount it writable once to recover
 ## The machine fails during boot and nothing explains why
 
 Add `bootConsole(output)` from `lowland/machine` to the plugins to see the kernel's boot
-messages. A kernel panic rejects `machine.closed` with a `MachinePanicError`.
+messages. A kernel panic resolves `machine.exited` to `{ reason: "crash", error }`, with a
+`MachinePanicError` as the error.
 
 ## The Node.js script never exits
 
-An open machine keeps the event loop alive. Call `machine.close()`, or declare it with
+A running machine keeps the event loop alive. Call `machine.shutdown()`, or declare it with
 `await using`.
 
 ## A timeout fired, but the program is still running

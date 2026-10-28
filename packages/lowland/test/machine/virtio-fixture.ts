@@ -17,6 +17,7 @@ export interface TestDeviceOptions {
   views?: boolean;
   queues?: readonly TestQueueHandler[];
   reset?(): void;
+  restart?(): void;
   stop?(): void;
   close?(): void | PromiseLike<void>;
 }
@@ -43,6 +44,10 @@ export class TestDevice extends VirtioDevice {
 
   protected reset() {
     this.#options.reset?.();
+  }
+
+  protected restart() {
+    this.#options.restart?.();
   }
 
   protected stop() {

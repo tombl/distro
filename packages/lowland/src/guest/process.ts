@@ -3,7 +3,7 @@
 // syscalls and hands them to the process as posix_spawn file actions, and
 // stdio and signals are plain injected syscalls on the host's ends.
 
-import { E, O, SIG, SystemError, WEXITSTATUS, WIFEXITED, WIFSIGNALED, WTERMSIG } from "./abi.ts";
+import { E, O, SIG, SystemError, WEXITSTATUS, WIFSIGNALED, WTERMSIG } from "./abi.ts";
 import type { GuestSession } from "./conn.ts";
 import { FsFile, with_file_descriptor } from "./file.ts";
 import {
@@ -52,18 +52,31 @@ const signal_names = new Map<number, Signal>(
 );
 
 /**
- * How a guest process ended.
- *
- * A process killed by a signal reports the signal and a `code` of `0`, so
- * check `success` rather than decoding the pair.
+ * How a guest process ended: it exited with a `code`, or a `signal` killed
+ * it. Exactly one of the two is `null`.
  */
 export interface CommandStatus {
   /** The process exited with code 0. */
   readonly success: boolean;
-  /** The exit code. */
-  readonly code: number;
+  /** The exit code, or `null` if a signal killed the process. */
+  readonly code: number | null;
   /** The signal that killed the process, or `null` if it exited. */
   readonly signal: Signal | number | null;
+}
+
+/**
+ * The exit status a shell would report for a process: its exit code, or
+ * 128 plus the number of the signal that killed it.
+ *
+ * @example Exit with a guest command's status
+ * ```ts
+ * const result = await guest.run(["make"]);
+ * process.exitCode = exitCode(result.status);
+ * ```
+ */
+export function exitCode(status: CommandStatus): number {
+  if (status.signal === null) return status.code ?? 0;
+  return 128 + (typeof status.signal === "number" ? status.signal : signal_numbers[status.signal]);
 }
 
 /** The size of a terminal, in character cells. */
@@ -74,7 +87,7 @@ export interface TerminalSize {
 
 /**
  * What one of a process's standard descriptors is connected to, in the
- * `stdio` exec option:
+ * `stdio` spawn option:
  *
  * - `"pipe"`: a pipe to the host, read or written through the matching
  *   `ChildProcess` stream.
@@ -243,12 +256,12 @@ const unpiped_input = () =>
  * process is an async disposable, so `await using` kills it and waits for
  * it to be reaped when the block ends.
  *
- * A process spawned with the `terminal` exec option runs on a guest
+ * A process spawned with the `terminal` spawn option runs on a guest
  * pseudoterminal instead of pipes. `stdin` is then what the user types and
  * `stdout` is what the terminal displays, with the process's standard error
  * mixed in, so `stderr` is always empty.
  *
- * With the `stdio` exec option, a stream whose descriptor is not `"pipe"`
+ * With the `stdio` spawn option, a stream whose descriptor is not `"pipe"`
  * has nothing behind it: `stdout` or `stderr` is empty, and `stdin` rejects
  * writes, while closing it does nothing.
  */
@@ -271,7 +284,7 @@ export class ChildProcess implements AsyncDisposable {
    *
    * @example Feed input to a command
    * ```ts
-   * const process = await guest.exec(["cat"]);
+   * const process = await guest.spawn(["cat"]);
    * const writer = process.stdin.getWriter();
    * await writer.write(new TextEncoder().encode("hello from the page\n"));
    * await writer.close();
@@ -287,7 +300,7 @@ export class ChildProcess implements AsyncDisposable {
    *
    * @example Stream output as it arrives
    * ```ts
-   * const process = await guest.exec([
+   * const process = await guest.spawn([
    *   "sh",
    *   "-c",
    *   "for i in 1 2 3; do echo line $i; sleep 1; done",
@@ -308,12 +321,12 @@ export class ChildProcess implements AsyncDisposable {
   readonly terminal: boolean;
   /**
    * Resolves to the process's `CommandStatus` when it exits. If the process
-   * was aborted through the `signal` exec option, rejects with the abort
+   * was aborted through the `signal` spawn option, rejects with the abort
    * reason instead.
    *
    * @example Check how a command ended
    * ```ts
-   * const process = await guest.exec(["sh", "-c", "exit 37"]);
+   * const process = await guest.spawn(["sh", "-c", "exit 37"]);
    * console.log(await process.status);
    * // { success: false, code: 37, signal: null }
    * ```
@@ -340,6 +353,9 @@ export class ChildProcess implements AsyncDisposable {
   #stdin_progress = Promise.withResolvers<void>();
   #stdin_error: unknown = null;
   #stdin_stopped = false;
+  // Set once the guest has reaped the process, after which its pid is not
+  // ours to signal.
+  #reaped = false;
 
   constructor(init: ChildProcessInit) {
     const { session, pid, signal, release } = init;
@@ -366,7 +382,7 @@ export class ChildProcess implements AsyncDisposable {
       const abort = () => {
         this.#aborted = true;
         this.#abort_reason = signal.reason;
-        void this.close().catch(() => {});
+        void this.#dispose().catch(() => {});
       };
       signal.addEventListener("abort", abort, { once: true });
       this.#remove_abort = () => signal.removeEventListener("abort", abort);
@@ -391,7 +407,7 @@ export class ChildProcess implements AsyncDisposable {
         // A write waiting on backpressure holds off the abort callback until
         // it settles, and it only settles once the guest reads. Close as soon
         // as the stream is aborted so that wait ends.
-        controller.signal.addEventListener("abort", () => void this.close().catch(() => {}), {
+        controller.signal.addEventListener("abort", () => void this.#dispose().catch(() => {}), {
           once: true,
         });
       },
@@ -442,7 +458,7 @@ export class ChildProcess implements AsyncDisposable {
       // An injected write cannot be cancelled independently. Tear down the
       // process so a blocked write returns before its numeric fd is closed
       // and can be reused.
-      abort: () => this.close(),
+      abort: () => this.#dispose(),
     });
   }
 
@@ -539,7 +555,7 @@ export class ChildProcess implements AsyncDisposable {
    *
    * @example Follow the host terminal's size
    * ```ts
-   * const shell = await guest.exec(["sh"], {
+   * const shell = await guest.spawn(["sh"], {
    *   terminal: { rows: process.stdout.rows, columns: process.stdout.columns },
    * });
    * process.stdout.on("resize", () => {
@@ -557,12 +573,14 @@ export class ChildProcess implements AsyncDisposable {
   async #reap(release: () => void): Promise<CommandStatus> {
     try {
       const status = await reap(this.#session, this.pid);
+      this.#reaped = true;
       if (this.#aborted) throw this.#abort_reason;
+      if (WIFSIGNALED(status)) {
+        const signal = signal_names.get(WTERMSIG(status)) ?? WTERMSIG(status);
+        return { success: false, code: null, signal };
+      }
       const code = WEXITSTATUS(status);
-      const signal = WIFSIGNALED(status)
-        ? (signal_names.get(WTERMSIG(status)) ?? WTERMSIG(status))
-        : null;
-      return { success: WIFEXITED(status) && code === 0, code, signal };
+      return { success: code === 0, code, signal: null };
     } catch (error) {
       if (this.#aborted) throw this.#abort_reason;
       throw error;
@@ -576,23 +594,24 @@ export class ChildProcess implements AsyncDisposable {
    * Sends a signal, defaulting to `SIGTERM`. `status` then resolves with
    * the signal set.
    *
+   * Once `status` has settled, the process has been reaped and its pid may
+   * belong to another process, so `kill()` then does nothing.
+   *
    * @example Stop a runaway process
    * ```ts
-   * const process = await guest.exec(["sleep", "30"]);
+   * const process = await guest.spawn(["sleep", "30"]);
    * await process.kill();
    * console.log(await process.status);
-   * // { success: false, code: 0, signal: "SIGTERM" }
+   * // { success: false, code: null, signal: "SIGTERM" }
    * ```
    */
   async kill(signal: Signal = "SIGTERM") {
+    // Once reaped, the pid may already belong to another process.
+    if (this.#reaped) return;
     await kill(this.#session, this.pid, signal_numbers[signal]);
   }
 
-  /**
-   * Kills the process with `SIGKILL` and waits for it to be reaped.
-   * Idempotent, and also called when an `await using` scope ends.
-   */
-  close(): Promise<void> {
+  #dispose(): Promise<void> {
     return (this.#close ??= this.#close_all());
   }
 
@@ -603,7 +622,7 @@ export class ChildProcess implements AsyncDisposable {
     // read already in flight on it, but the child dying EOFs the pipe. The
     // reap is intentionally NOT cancelled: it must complete to free the
     // agent's process-table slot.
-    await kill(this.#session, this.pid, SIG.KILL).catch(() => {});
+    if (!this.#reaped) await kill(this.#session, this.pid, SIG.KILL).catch(() => {});
     if (this.#terminal) {
       // Other processes on the terminal can keep it open after the leader
       // dies. Shutdown hangs it up, which ends their reads and writes,
@@ -618,7 +637,18 @@ export class ChildProcess implements AsyncDisposable {
     if (failed) throw failed.reason;
   }
 
+  /**
+   * Kills the process with `SIGKILL` unless it has already been reaped,
+   * waits for it to be reaped, and releases its pipes or terminal.
+   * Idempotent. An `await using` scope runs
+   * it as the scope ends.
+   *
+   * @example Make sure a process is gone when a scope ends
+   * ```ts
+   * await using server = await guest.spawn(["httpd", "-f"]);
+   * ```
+   */
   async [Symbol.asyncDispose](): Promise<void> {
-    await this.close();
+    await this.#dispose();
   }
 }

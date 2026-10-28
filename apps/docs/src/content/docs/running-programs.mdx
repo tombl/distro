@@ -27,10 +27,11 @@ Plugins are configured in the order you list them. Order matters for block devic
 disk is `/dev/vda`, the next `/dev/vdb`, and so on. `args` appends to the kernel command line,
 if you need to.
 
-`machine.closed` settles when the machine stops. It resolves after `machine.close()`, or after
-the guest powers itself off, for example with `poweroff -f`. It rejects with a
-`MachinePanicError` if the kernel panics. `close()` stops every program at once. Nothing in the
-guest gets a chance to shut down cleanly, so flush anything that matters before you call it.
+`machine.exited` resolves when the machine stops, and never rejects. `machine.shutdown()` asks
+the guest to power off: with the guest agent, PID 1 ends every program, then syncs and unmounts
+the filesystems. A guest can power itself off too, for example with `poweroff`. A kernel panic
+resolves it to `{ reason: "crash" }`. `machine.kill()` stops every program at once. Nothing in
+the guest gets a chance to shut down cleanly, so flush anything that matters before you call it.
 The [Files and storage](/files-and-storage/) chapter covers what that means for disks.
 
 A machine is also disposable. `await using machine = ...` closes it at the end of the block,
@@ -60,11 +61,11 @@ or chatty, use `exec()`.
 
 ## Stream with exec
 
-`guest.exec()` resolves once the program has started, with a process whose standard streams are
+`guest.spawn()` resolves once the program has started, with a process whose standard streams are
 web streams:
 
 ```js
-const process = await guest.exec(["tr", "a-z", "A-Z"]);
+const process = await guest.spawn(["tr", "a-z", "A-Z"]);
 
 const output = new Response(process.stdout).text();
 
@@ -143,9 +144,9 @@ export async function runSnippet(code, { timeout = 5000 } = {}) {
   const guest = guestAgent({ mounts: [image] });
   await using machine = await bootMachine({ cpus: 1, plugins: [guest] });
 
-  const deadline = setTimeout(() => machine.close(), timeout);
+  const deadline = setTimeout(() => machine.kill(), timeout);
   try {
-    const process = await guest.exec(["sh", "-c", code]);
+    const process = await guest.spawn(["sh", "-c", code]);
     await process.stdin.close();
     const [stdout, stderr, status] = await Promise.all([
       new Response(process.stdout).text(),
@@ -186,7 +187,7 @@ terminal.open(document.querySelector("#terminal")!);
 const encoder = new TextEncoder();
 
 for (;;) {
-  const shell = await guest.exec(["sh"], {
+  const shell = await guest.spawn(["sh"], {
     terminal: { rows: terminal.rows, columns: terminal.cols },
     env: { TERM: "xterm-256color" },
   });
@@ -204,7 +205,7 @@ for (;;) {
   typing.dispose();
   resizing.dispose();
   await Promise.race([output, new Promise((resolve) => setTimeout(resolve, 1000))]);
-  await shell.close();
+  await shell[Symbol.asyncDispose]();
 }
 ```
 
@@ -214,7 +215,7 @@ prints faster than the page can draw slows down, so output does not pile up in m
 
 `stdout` only ends once every program has closed the terminal, and a job the shell left in the
 background can keep it open. That is why the loop waits for `status`, then gives the output a
-second to finish. `close()` hangs up the terminal, which ends `stdout` and discards anything the
+second to finish. Disposing of the process hangs up the terminal, which ends `stdout` and discards anything the
 guest has not yet delivered.
 
 `consoleDevice(input, output)` from `lowland/machine` is the other way to get a terminal. It

@@ -282,12 +282,13 @@ machine = await bootMachine({
 
 if (machine) initialMemoryBytes = machine.memory.buffer.byteLength;
 
-void machine?.closed.catch((error) => {
-  finish({ passed: false, reason: `machine failed: ${error}` });
+void machine?.exited.then((exit) => {
+  if (exit.reason === "crash") finish({ passed: false, reason: `machine failed: ${exit.error}` });
 });
 
 const outcome = await result;
-machine?.close();
+// The test's result is in, so the machine has nothing left to flush.
+machine?.kill();
 for (const disk of disks) closeSync(disk);
 
 if (!outcome.passed) console.error(`vm test failed: ${outcome.reason}`);

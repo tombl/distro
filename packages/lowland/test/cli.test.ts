@@ -8,10 +8,12 @@ import { fileURLToPath } from "node:url";
 import { parseBuildArgs } from "../src/cli/build.ts";
 import { SystemError } from "../src/guest/index.ts";
 import type { Linux } from "../src/linux.ts";
+import type { MachineExit } from "../src/machine/index.ts";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import type { ExecOptions, TerminalSize } from "../src/guest/index.ts";
-import { execute, exitCode, parseRunArgs, type HostTerminal } from "../src/cli/run.ts";
+import type { SpawnOptions, TerminalSize } from "../src/guest/index.ts";
+import { execute, parseRunArgs, type HostTerminal } from "../src/cli/run.ts";
+import { exitCode } from "../src/guest/index.ts";
 import { UsageError } from "../src/cli/usage.ts";
 
 const cli = fileURLToPath(new URL("../src/cli/cli.ts", import.meta.url));
@@ -248,38 +250,47 @@ describe("lowland run arguments", () => {
   it("maps statuses to shell exit codes", () => {
     assert.equal(exitCode({ success: true, code: 0, signal: null }), 0);
     assert.equal(exitCode({ success: false, code: 7, signal: null }), 7);
-    assert.equal(exitCode({ success: false, code: 0, signal: "SIGKILL" }), 137);
-    assert.equal(exitCode({ success: false, code: 0, signal: 6 }), 134);
+    assert.equal(exitCode({ success: false, code: null, signal: "SIGKILL" }), 137);
+    assert.equal(exitCode({ success: false, code: null, signal: 6 }), 134);
   });
 });
 
 describe("lowland run failures", () => {
-  // A stand-in machine whose command is missing and whose disposal fails.
-  function failing_machine(dispose: () => Promise<void>) {
-    return async () =>
+  // A stand-in machine whose command is missing and which ends as `exit`.
+  function failing_machine(exit: MachineExit) {
+    const timeouts: (number | undefined)[] = [];
+    const create = async () =>
       ({
         spawn: () => Promise.reject(new SystemError(2)),
-        [Symbol.asyncDispose]: dispose,
+        shutdown: async (options?: { timeoutMs?: number }) => {
+          timeouts.push(options?.timeoutMs);
+          return exit;
+        },
       }) as unknown as Linux;
+    return { create, timeouts };
   }
 
-  it("exits 125 when disposal fails, even after the command ran", async (t) => {
-    const stderr = t.mock.method(process.stderr, "write", () => true);
-    const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], {
-      create: failing_machine(() => Promise.reject(new Error("could not flush the disks"))),
+  for (const [exit, message] of [
+    [{ reason: "kill" }, "the machine did not shut down within 10 s, and was killed"],
+    [{ reason: "crash", error: new Error("flush failed") }, "flush failed"],
+  ] as const) {
+    it(`exits 125 when the machine ends with ${exit.reason}, even after the command ran`, async (t) => {
+      const stderr = t.mock.method(process.stderr, "write", () => true);
+      const { create, timeouts } = failing_machine(exit);
+      const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], { create });
+      assert.equal(code, 125);
+      assert.deepEqual(timeouts, [10_000]);
+      assert.deepEqual(
+        stderr.mock.calls.map((call) => call.arguments[0]),
+        ["lowland run: missing: command not found\n", `lowland run: ${message}\n`],
+      );
     });
-    assert.equal(code, 125);
-    assert.deepEqual(
-      stderr.mock.calls.map((call) => call.arguments[0]),
-      ["lowland run: missing: command not found\n", "lowland run: could not flush the disks\n"],
-    );
-  });
+  }
 
-  it("keeps the command's status when disposal succeeds", async (t) => {
+  it("keeps the command's status when the machine powers off", async (t) => {
     t.mock.method(process.stderr, "write", () => true);
-    const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], {
-      create: failing_machine(() => Promise.resolve()),
-    });
+    const { create } = failing_machine({ reason: "poweroff" });
+    const code = await execute(parseRunArgs(["missing"], {})!, ["missing"], { create });
     assert.equal(code, 127);
   });
 });
@@ -299,10 +310,10 @@ describe("lowland run terminals", () => {
     const terminal = { input, output } as unknown as HostTerminal;
     const failure = Promise.withResolvers<never>();
     const resizes: TerminalSize[] = [];
-    let spawned: ExecOptions | undefined;
+    let spawned: SpawnOptions | undefined;
     const create = async () =>
       ({
-        async spawn(_: string[], options: ExecOptions) {
+        async spawn(_: string[], options: SpawnOptions) {
           spawned = options;
           // The window changes size while the guest terminal is created.
           output.rows = 35;
@@ -315,7 +326,7 @@ describe("lowland run terminals", () => {
             resize: async (size: TerminalSize) => void resizes.push(size),
           };
         },
-        [Symbol.asyncDispose]: async () => {},
+        shutdown: async () => ({ reason: "poweroff" }),
       }) as unknown as Linux;
     return { input, output, terminal, failure, resizes, create, spawned: () => spawned };
   }

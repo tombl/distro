@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { FSError } from "../../src/machine/index.ts";
+import { SystemError } from "../../src/machine/index.ts";
 import { NodeFS } from "../../src/node/index.ts";
 
 // Virtio-fs carries Linux ABI flags even when this test runs on another host.
@@ -62,7 +62,7 @@ test("node virtio-fs adapter rejects adversarial path components", async () => {
   for (const name of ["", ".", "..", "../outside", "/absolute", "nul\0byte"]) {
     await assert.rejects(
       async () => filesystem.lookup(filesystem.root, name),
-      (error) => error instanceof FSError && [13, 22].includes(error.errno),
+      (error) => error instanceof SystemError && [13, 22].includes(error.errno),
       name,
     );
   }
@@ -90,7 +90,7 @@ test("node virtio-fs adapter never follows a final symlink for metadata operatio
 
   await assert.rejects(
     filesystem.setattr!(escaped, { mode: 0o600 }),
-    (error) => error instanceof FSError && error.errno === 95,
+    (error) => error instanceof SystemError && error.errno === 95,
   );
   await filesystem.setattr!(escaped, {
     atime: { seconds: 1n },
@@ -98,7 +98,7 @@ test("node virtio-fs adapter never follows a final symlink for metadata operatio
   });
   await assert.rejects(
     filesystem.access!(escaped, constants.R_OK),
-    (error) => error instanceof FSError && error.errno === 40,
+    (error) => error instanceof SystemError && error.errno === 40,
   );
 
   const after = await stat(target);
@@ -135,11 +135,11 @@ test("node virtio-fs adapter keeps open files distinct across unlink and recreat
   );
   await assert.rejects(
     filesystem.getattr(old.node),
-    (error) => error instanceof FSError && error.errno === 2,
+    (error) => error instanceof SystemError && error.errno === 2,
   );
   await assert.rejects(
     filesystem.open!(old.node, linux_open.readonly),
-    (error) => error instanceof FSError && error.errno === 2,
+    (error) => error instanceof SystemError && error.errno === 2,
   );
   await filesystem.setattr!(old.node, { size: 2n }, old.handle);
   assert.equal(new TextDecoder().decode(await filesystem.read!(old.node, old.handle, 0n, 3)), "ol");
@@ -175,7 +175,7 @@ test("node virtio-fs adapter preserves inode generations across replacement rena
   assert.equal((await filesystem.getattr(source.node)).size, 6n);
   await assert.rejects(
     filesystem.getattr(destination.node),
-    (error) => error instanceof FSError && error.errno === 2,
+    (error) => error instanceof SystemError && error.errno === 2,
   );
 });
 
@@ -207,7 +207,7 @@ test("node virtio-fs adapter enforces read-only shares in the backend", async ()
       }),
     () => filesystem.unlink!(filesystem.root, name),
   ]) {
-    await assert.rejects(operation, (error) => error instanceof FSError && error.errno === 30);
+    await assert.rejects(operation, (error) => error instanceof SystemError && error.errno === 30);
   }
   await filesystem.release!(node, handle);
   assert.equal(await readFile(path.join(shared, name), "utf8"), "readable");
@@ -219,7 +219,7 @@ test("node virtio-fs adapter rejects Linux open modes it cannot implement", asyn
   assert(node);
   await assert.rejects(
     filesystem.open!(node, linux_open.readonly | linux_open.path),
-    (error) => error instanceof FSError && error.errno === 95,
+    (error) => error instanceof SystemError && error.errno === 95,
   );
 });
 
@@ -243,7 +243,7 @@ test("node virtio-fs adapter detects an ancestor replaced by a symlink", async (
   await symlink(outside, path.join(shared, "safe"));
   await assert.rejects(
     async () => filesystem.lookup(safe, "secret"),
-    (error) => error instanceof FSError && error.errno === 13,
+    (error) => error instanceof SystemError && error.errno === 13,
   );
 });
 
@@ -289,7 +289,7 @@ test("node virtio-fs adapter detaches the descendants of a replaced or removed n
   for (const node of [target, child]) {
     await assert.rejects(
       filesystem.getattr(node),
-      (error) => error instanceof FSError && error.errno === 2,
+      (error) => error instanceof SystemError && error.errno === 2,
     );
   }
   assert.equal(await filesystem.lookup(filesystem.root, "replace-target"), source);
@@ -302,7 +302,7 @@ test("node virtio-fs adapter detaches the descendants of a replaced or removed n
   await filesystem.rmdir!(filesystem.root, "replace-target");
   await assert.rejects(
     filesystem.getattr(source),
-    (error) => error instanceof FSError && error.errno === 2,
+    (error) => error instanceof SystemError && error.errno === 2,
   );
   assert.equal((await filesystem.getattr(kept)).mode & constants.S_IFMT, constants.S_IFDIR);
 });

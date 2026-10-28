@@ -5,14 +5,17 @@ import {
   entropyDevice,
   type FS,
   type Machine,
+  type MachineExit,
   type Network,
   type NetworkAttachment,
+  type PowerOptions,
 } from "./machine/index.ts";
 import type { MachinePlugin, MachinePluginInput } from "./machine/plugin.ts";
 import {
   guestAgent,
   type ChildProcess,
-  type ExecOptions,
+  type RunOptions,
+  type SpawnOptions,
   type FileSystem,
   type GuestAgent,
   type Mount,
@@ -119,8 +122,9 @@ const DEFAULT_MOUNTS: readonly Mount[] = [
 /**
  * A Linux machine with the canonical kernel, guest agent, and an image.
  *
- * Each value owns one live machine. Close it with `await using`, or with
- * `close()` when its disks need no flushing.
+ * Each value owns one live machine. Shut it down with `await using` or
+ * `shutdown()`: the guest ends its processes, then syncs and unmounts its
+ * filesystems, so writes to disks reach their files.
  *
  * @example Run a command
  * ```ts
@@ -136,19 +140,11 @@ export class Linux implements AsyncDisposable {
   readonly #machine: Machine;
   readonly #guest: GuestAgent;
   readonly #network: NetworkAttachment | undefined;
-  readonly #disk_paths: readonly string[];
-  readonly #children = new Set<ChildProcess>();
 
-  private constructor(
-    machine: Machine,
-    guest: GuestAgent,
-    network: NetworkAttachment | undefined,
-    disk_paths: readonly string[],
-  ) {
+  private constructor(machine: Machine, guest: GuestAgent, network: NetworkAttachment | undefined) {
     this.#machine = machine;
     this.#guest = guest;
     this.#network = network;
-    this.#disk_paths = disk_paths;
   }
 
   /** Boots a machine and mounts its disks and filesystems. */
@@ -192,12 +188,7 @@ export class Linux implements AsyncDisposable {
       cpus: options.cpus ?? 1,
       plugins: [guest, entropyDevice(), ...(network ? [network] : []), ...(options.plugins ?? [])],
     });
-    return new Linux(
-      machine,
-      guest,
-      network,
-      disks.map((disk) => disk.path),
-    );
+    return new Linux(machine, guest, network);
   }
 
   /** File operations in the guest. */
@@ -213,9 +204,9 @@ export class Linux implements AsyncDisposable {
     return this.#network;
   }
 
-  /** Settles when the machine closes, rejecting if it failed unexpectedly. */
-  get closed(): Promise<void> {
-    return this.#machine.closed;
+  /** Settles once the machine has ended, and never rejects. */
+  get exited(): Promise<MachineExit> {
+    return this.#machine.exited;
   }
 
   /**
@@ -223,8 +214,8 @@ export class Linux implements AsyncDisposable {
    * `/` unless `options.cwd` says otherwise. With `options.terminal`, it
    * runs on a guest terminal and its standard error is part of `stdout`.
    */
-  run(argv: readonly string[], options?: ExecOptions): Promise<RunResult> {
-    return this.#guest.run(argv, { ...options, cwd: options?.cwd ?? "/" });
+  run(argv: readonly string[], options?: RunOptions): Promise<RunResult> {
+    return this.#guest.run(argv, options);
   }
 
   /**
@@ -249,54 +240,31 @@ export class Linux implements AsyncDisposable {
    * await shell.status;
    * ```
    */
-  async spawn(argv: readonly string[], options?: ExecOptions): Promise<ChildProcess> {
-    const child = await this.#guest.exec(argv, { ...options, cwd: options?.cwd ?? "/" });
-    this.#children.add(child);
-    void child.status.finally(() => this.#children.delete(child)).catch(() => {});
-    return child;
+  spawn(argv: readonly string[], options?: SpawnOptions): Promise<ChildProcess> {
+    return this.#guest.spawn(argv, options);
   }
 
   /**
-   * Shuts the machine down immediately, without waiting. Writes to disks
-   * that the guest has not flushed yet are lost, so prefer `await using`
-   * when disks are attached.
+   * Powers the machine off: the guest ends its processes, syncs and
+   * unmounts its filesystems, then powers off. Kills the machine if it has
+   * not ended after `timeoutMs`, 30 000 ms by default.
    */
-  close(): void {
-    this.#machine.close();
+  shutdown(options?: PowerOptions): Promise<MachineExit> {
+    return this.#machine.shutdown(options);
   }
 
-  /**
-   * Kills the commands started with `spawn()`, flushes and unmounts the
-   * disks so their writes reach the files, and waits for the machine to shut
-   * down. Rejects, after shutting down, if the disks could not be flushed.
-   */
+  /** Reboots the guest, and resolves once it has booted again. */
+  reboot(options?: PowerOptions): Promise<void> {
+    return this.#machine.reboot(options);
+  }
+
+  /** Stops the machine at once. Writes the guest has not flushed are lost. */
+  kill(): void {
+    this.#machine.kill();
+  }
+
+  /** `shutdown()`, with its default timeout. */
   async [Symbol.asyncDispose](): Promise<void> {
-    let flushed = true;
-    let failure: unknown;
-    try {
-      // Running commands keep disks busy, and the machine is going away.
-      await Promise.all(
-        [...this.#children].map(async (child) => {
-          await child.kill("SIGKILL").catch(() => {});
-          await child.status.catch(() => {});
-        }),
-      );
-      if (this.#disk_paths.length) {
-        // sync needs no process slot and flushes even through file handles
-        // that are still open, which would make the unmounts below fail.
-        try {
-          await this.#guest.fs.sync();
-        } catch (error) {
-          flushed = false;
-          failure = error;
-        }
-        for (const path of this.#disk_paths.toReversed()) {
-          await this.#guest.unmount(path).catch(() => {});
-        }
-      }
-    } finally {
-      await this.#machine[Symbol.asyncDispose]();
-    }
-    if (!flushed) throw new Error("could not flush the disks", { cause: failure });
+    await this.#machine[Symbol.asyncDispose]();
   }
 }
