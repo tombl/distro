@@ -30,11 +30,17 @@
   package. Images are compressed with deflate by default; `compression`
   selects `lzma` or `none`.
 - `lowland` exports `Linux`, one API that boots a machine and runs
-  commands in Node and in browsers. Its command line runs a command in a fresh
-  machine with `npx lowland run`, sharing host directories (`-v`), setting the
+  commands in Node and in browsers: `bootMachine()` and `guestAgent()`
+  composed, with a required `image`, the rest of the mount table as `mounts`,
+  and the machine and agent as `linux.machine` and `linux.guest`. Its command
+  line runs a command in a fresh machine with `npx lowland run`, mounting host
+  directories and disk images read-write, read-only or beneath an overlay
+  (`-v src:dst[:rw|:ro|:O]`, with `--image` for the root), setting the
   working directory (`-w`), CPUs and host networking, and giving interactive
   commands a guest terminal (`-t`). `npx lowland build` takes the same options
   as `buildImage()`.
+- With a root, the guest agent's default boot mounts a tmpfs at `/run` and
+  `/tmp` unless the mount table has entries there.
 - `guest.spawn(argv, { terminal })` runs a process on a guest pseudoterminal as
   a session leader with job control, and `resize()` changes the terminal's
   size. `{ stdio }` connects its standard input, output and error to pipes,
