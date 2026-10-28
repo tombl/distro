@@ -2,6 +2,7 @@
 
 import { SystemError, type ChildProcess, exitCode, type TerminalSize } from "../guest/index.ts";
 import { rootImage } from "../image/index.ts";
+import type { Mount } from "../guest/index.ts";
 import { createNetwork, type Network } from "../machine/index.ts";
 import { NodeFS, nodeNetwork } from "../node/index.ts";
 import { spawnSync } from "node:child_process";
@@ -18,18 +19,21 @@ Run a command in a fresh Linux machine. With no command, start a shell, on a
 terminal when stdin is one.
 
 Options:
+  -v, --volume <src:dst[:mode]>  Mount a host directory or disk image (repeatable)
       --image <path>             Boot this root image instead of the canonical one
-      --disk <path:guest[:ro]>   Attach a disk image and mount it (repeatable)
-  -v, --mount <host:guest[:ro]>  Share a host directory into the machine (repeatable)
-  -w, --cwd <path>               Set the command working directory (default: /)
+  -w, --workdir <dir>            Set the command working directory (default: /)
   -e, --env <name[=value]>       Set an environment variable, or pass one through (repeatable)
       --cpus <count>             Boot this many virtual CPUs (default: 1)
       --network <none|nat>       Give the machine a network (default: none)
   -t, --tty                      Run the command on a terminal; stdin must be one
   -h, --help                     Show help
 
-The root image is never modified: changes to it last only as long as the
-machine. Writes persist only to ext4 disks and shared directories.
+A volume's source is a host directory, which is shared into the machine, or
+a disk image file, which is attached as a disk. Its mode is rw (the default),
+ro, or O, an overlay: the guest can write to it, but its writes last only as
+long as the machine and the source never changes. A volume at / replaces the
+root image. --image <path> is -v <path>:/:O, so the root image is never
+modified. The machine has a tmpfs at /run and /tmp unless a volume is there.
 
 With --network nat, the guest has egress through the host's sockets: its TCP
 connections and DNS lookups go out as lowland's own, and 192.0.2.1 reaches
@@ -48,11 +52,10 @@ killed by a signal exits 128 plus the signal number.
 
 /** Options that take a value, so the first other word starts the command. */
 const VALUE_OPTIONS = new Set([
-  "--image",
-  "--disk",
-  "--mount",
+  "--volume",
   "-v",
-  "--cwd",
+  "--image",
+  "--workdir",
   "-w",
   "--env",
   "-e",
@@ -62,25 +65,28 @@ const VALUE_OPTIONS = new Set([
 
 const NETWORKS = ["none", "nat"] as const;
 
-/** A `--disk` or `--mount` value: a host path and where it goes in the guest. */
-export interface Attachment {
+const MODES = { rw: "rw", ro: "ro", O: "overlay" } as const;
+
+/** A `--volume` value: a host path, where it goes in the guest, and how. */
+export interface Volume {
   source: string;
   path: string;
-  readOnly: boolean;
+  mode: Mount["mode"] & {};
 }
 
-/** Splits `source:guest[:ro]`, where the source may itself contain colons. */
-function parse_attachment(flag: string, value: string): Attachment {
+/** Splits `src:dst[:mode]`, where the source may itself contain colons. */
+function parse_volume(value: string): Volume {
   const parts = value.split(":");
-  const readOnly = parts.length >= 3 && parts.at(-1) === "ro";
-  if (readOnly) parts.pop();
+  const last = parts.at(-1)!;
+  const mode =
+    parts.length >= 3 && Object.hasOwn(MODES, last) ? MODES[last as keyof typeof MODES] : undefined;
+  if (mode) parts.pop();
   const path = parts.pop();
   const source = parts.join(":");
-  if (!source || !path)
-    throw new UsageError(
-      `${flag} expects ${flag === "--disk" ? "path" : "host"}:guest[:ro], got ${value}`,
-    );
-  return { source, path, readOnly };
+  if (!source || !path?.startsWith("/")) {
+    throw new UsageError(`--volume expects src:/dst[:ro|:rw|:O], got ${value}`);
+  }
+  return { source, path, mode: mode ?? "rw" };
 }
 
 function parse_env(value: string, environment: NodeJS.ProcessEnv): [string, string] | undefined {
@@ -97,9 +103,7 @@ function parse_env(value: string, environment: NodeJS.ProcessEnv): [string, stri
 
 /** The parsed form of `lowland run` arguments. */
 export interface RunArguments {
-  image?: string;
-  disks: Attachment[];
-  mounts: Attachment[];
+  volumes: Volume[];
   cpus?: number;
   network: (typeof NETWORKS)[number];
   command: string[];
@@ -130,10 +134,9 @@ export function parseRunArgs(
     parsed = parseArgs({
       args: args.slice(0, end),
       options: {
+        volume: { type: "string", short: "v", multiple: true, default: [] },
         image: { type: "string" },
-        disk: { type: "string", multiple: true, default: [] },
-        mount: { type: "string", short: "v", multiple: true, default: [] },
-        cwd: { type: "string", short: "w", default: "/" },
+        workdir: { type: "string", short: "w", default: "/" },
         env: { type: "string", short: "e", multiple: true, default: [] },
         cpus: { type: "string" },
         network: { type: "string", default: "none" },
@@ -159,39 +162,58 @@ export function parseRunArgs(
       return entry ? [entry] : [];
     }),
   );
+  const volumes = values.volume.map(parse_volume);
+  if (values.image !== undefined) {
+    if (!values.image) throw new UsageError("--image expects a path");
+    volumes.unshift({ source: values.image, path: "/", mode: "overlay" });
+  }
+  const paths = new Set<string>();
+  for (const { path } of volumes) {
+    if (paths.has(path)) {
+      throw new UsageError(
+        path === "/" ? "--image and a volume at / both replace the root" : `two volumes at ${path}`,
+      );
+    }
+    paths.add(path);
+  }
   return {
-    image: values.image,
-    disks: values.disk.map((value) => parse_attachment("--disk", value)),
-    mounts: values.mount.map((value) => parse_attachment("--mount", value)),
+    volumes,
     cpus: values.cpus === undefined ? undefined : Number(values.cpus),
     network,
     command,
-    cwd: values.cwd,
+    cwd: values.workdir,
     env,
     tty: values.tty,
   };
 }
 
-/** The `Linux` options for parsed arguments, with host paths checked. */
+/**
+ * The `Linux` options for parsed arguments. A directory becomes a share and
+ * anything else a disk, so the sources are checked here, where a failure
+ * stops lowland rather than surfacing later in the guest.
+ */
 export async function machineOptions(run: RunArguments, network?: Network): Promise<LinuxOptions> {
-  // NodeFS resolves its root lazily, so check the directories now, where a
-  // failure stops lowland rather than surfacing later in the guest.
-  await Promise.all(
-    run.mounts.map(async ({ source }) => {
+  const mounts = await Promise.all(
+    run.volumes.map(async ({ source, path, mode }): Promise<Mount> => {
       const info = await stat(source).catch(() => undefined);
-      if (!info?.isDirectory()) throw new Error(`${source} is not a directory`);
+      if (!info) throw new Error(`${source} does not exist`);
+      // Opening a FIFO blocks, and a device is no disk image.
+      if (!info.isDirectory() && !info.isFile()) {
+        throw new Error(`${source} is neither a directory nor a regular file`);
+      }
+      if (info.isDirectory()) {
+        return { path, source: new NodeFS(source, { readOnly: mode !== "rw" }), mode };
+      }
+      // rootImage() checks that a root image is one and knows its type.
+      return path === "/" ? { ...rootImage(source), mode } : { path, source, mode };
     }),
   );
+  const root = mounts.findIndex(({ path }) => path === "/");
   return {
     // The command line is not bundled into applications, so it can default
     // to the canonical image.
-    image: rootImage(run.image),
-    disks: run.disks,
-    mounts: run.mounts.map(({ source, path, readOnly }) => ({
-      source: new NodeFS(source, { readOnly }),
-      path,
-      readOnly,
-    })),
+    image: root === -1 ? rootImage() : mounts.splice(root, 1)[0]!,
+    mounts,
     cpus: run.cpus,
     network,
   };
@@ -357,8 +379,16 @@ async function attach(child: ChildProcess, terminal: HostTerminal | undefined) {
   const signals = terminal
     ? (["SIGINT", "SIGTERM", "SIGHUP"] as const)
     : (["SIGINT", "SIGTERM"] as const);
+  // Not once the command has been reaped: its pid may belong to another
+  // process by then, while a descendant still holds the output open.
+  let reaped = false;
+  void child.status.then(
+    () => (reaped = true),
+    () => (reaped = true),
+  );
   const forwards = signals.map(
-    (signal) => [signal, () => void child.kill(signal).catch(() => {})] as const,
+    (signal) =>
+      [signal, () => void (reaped ? undefined : child.kill(signal).catch(() => {}))] as const,
   );
   const on_resize = () => void child.resize(window_size(terminal!)).catch(() => {});
   const input = terminal?.input ?? process.stdin;
@@ -437,6 +467,8 @@ export async function execute(
   { terminal, create = Linux.create }: ExecuteOptions = {},
 ): Promise<number> {
   const network = parsed.network === "nat" ? createNetwork(nodeNetwork()) : undefined;
+  let spawning = true;
+  let pending: "SIGINT" | "SIGTERM" | "SIGHUP" | undefined;
   try {
     let linux: Linux;
     try {
@@ -445,9 +477,38 @@ export async function execute(
       report(error);
       return EXIT_FAILURE;
     }
+    // A signal must not end lowland before the guest has shut down and
+    // flushed its disks. One that arrives while the command starts is kept
+    // for it. While the command runs, attach() forwards signals to it.
+    // Afterwards they are ignored, and the shutdown timeout bounds the wait.
+    const held = terminal
+      ? (["SIGINT", "SIGTERM", "SIGHUP"] as const)
+      : (["SIGINT", "SIGTERM"] as const);
+    const holds = held.map(
+      (signal) =>
+        [
+          signal,
+          () => {
+            if (spawning) pending ??= signal;
+          },
+        ] as const,
+    );
+    for (const [signal, hold] of holds) process.on(signal, hold);
+    try {
+      return await finish(linux);
+    } finally {
+      for (const [signal, hold] of holds) process.off(signal, hold);
+    }
+  } finally {
+    network?.close();
+  }
+
+  async function finish(linux: Linux) {
     let code: number;
     try {
       const child = await spawn(linux, parsed, argv, terminal);
+      spawning = false;
+      if (typeof child !== "number" && pending) void child.kill(pending).catch(() => {});
       code = typeof child === "number" ? child : await attach(child, terminal);
     } catch (error) {
       report(error);
@@ -466,8 +527,6 @@ export async function execute(
       return EXIT_FAILURE;
     }
     return code;
-  } finally {
-    network?.close();
   }
 }
 

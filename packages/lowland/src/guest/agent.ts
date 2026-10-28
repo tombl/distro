@@ -233,8 +233,10 @@ export interface GuestAgentOptions {
    * device: a block device with the serial `m<i>`, or a virtio-fs device with
    * the tag `m<i>`, where `i` is its index here. The boot mounts the entry at
    * `/` first and then the others in order, beneath `/sysroot`, then makes
-   * `/sysroot` the root. At most one entry can be at `/`. Without one, the
-   * agent stays on its initramfs and mounts the others there. Each path is
+   * `/sysroot` the root. At most one entry can be at `/`. With one, a tmpfs
+   * is mounted at `/run` (mode 0755) and at `/tmp` (mode 1777) right after
+   * it, unless the table has an entry at that path. Without one, the agent
+   * stays on its initramfs and mounts the others there. Each path is
    * resolved with the root as `/`, so symlinks in an image never lead out of
    * it, and missing directories are created. If a step fails, the boot
    * unmounts what it mounted, or remounts it read-only, before rejecting.
@@ -544,6 +546,15 @@ async function unwind_mounts(guest: GuestAgent, mounted: readonly MountRecord[])
   clearTimeout(timer);
 }
 
+/**
+ * Scratch space in memory, whatever the root is, unless the table has its own
+ * entry at the path.
+ */
+const SCRATCH_MOUNTS: readonly Mount[] = [
+  { path: "/run", type: "tmpfs", options: "mode=0755" },
+  { path: "/tmp", type: "tmpfs", options: "mode=1777" },
+];
+
 /** The default boot: realize the mount table, then switch root if it has one. */
 async function boot_mount_table(
   guest: GuestBoot,
@@ -571,8 +582,16 @@ async function boot_mount_table(
   const root = mounts.find((mount) => mount.path === "/");
   const prefix = root ? "/sysroot" : "";
   const table = mounts.map((mount, index) => ({ mount, index }));
-  // The root goes first, so nothing it would cover is mounted before it.
-  table.sort((a, b) => Number(b.mount.path === "/") - Number(a.mount.path === "/"));
+  if (root) {
+    for (const mount of SCRATCH_MOUNTS) {
+      if (!mounts.some(({ path }) => path === mount.path)) table.push({ mount, index: -1 });
+    }
+  }
+  // The root goes first, so nothing it would cover is mounted before it, and
+  // the scratch filesystems next, so they cover nothing of the table's.
+  const rank = ({ mount, index }: (typeof table)[number]) =>
+    mount.path === "/" ? 0 : index === -1 ? 1 : 2;
+  table.sort((a, b) => rank(a) - rank(b));
   for (const { mount, index } of table) {
     const source = mount.source;
     const name = source === undefined ? mount.type! : `m${index} (${describe_source(source)})`;

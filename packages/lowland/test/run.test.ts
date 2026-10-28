@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -96,9 +96,9 @@ describe("lowland run", () => {
   });
 
   it("exits 125 for argument errors", async () => {
-    const result = await lowland(["run", "--disk", "nowhere"]);
+    const result = await lowland(["run", "-v", "nowhere"]);
     assert.equal(result.status, 125);
-    assert.match(result.stderr, /^lowland run: --disk expects path:guest\[:ro\]/);
+    assert.match(result.stderr, /^lowland run: --volume expects src:\/dst/);
   });
 
   it("passes stdin through and keeps stdout and stderr separate", async () => {
@@ -117,7 +117,7 @@ describe("lowland run", () => {
 
   it("sets the working directory, / by default", async () => {
     assert.equal((await lowland(["run", "pwd"])).stdout, "/\n");
-    assert.equal((await lowland(["run", "--cwd", "/etc", "pwd"])).stdout, "/etc\n");
+    assert.equal((await lowland(["run", "--workdir", "/etc", "pwd"])).stdout, "/etc\n");
     assert.equal((await lowland(["run", "-w", "/etc", "pwd"])).stdout, "/etc\n");
   });
 
@@ -133,6 +133,14 @@ describe("lowland run", () => {
     assert.deepEqual(result, { status: 0, stdout: "from the host\n", stderr: "" });
     const isolated = await lowland(["run", "wget", "-qO-", url]);
     assert.notEqual(isolated.status, 0);
+  });
+
+  it("gives the machine a network card only with --network nat", async () => {
+    const list = ["sh", "-c", "ls /sys/class/net"];
+    const none = await lowland(["run", "--network", "none", ...list]);
+    assert.deepEqual(none, { status: 0, stdout: "lo\n", stderr: "" });
+    const nat = await lowland(["run", "--network", "nat", ...list]);
+    assert.deepEqual(nat, { status: 0, stdout: "eth0\nlo\n", stderr: "" });
   });
 
   it("keeps sending to a host peer that has finished sending", async () => {
@@ -190,7 +198,7 @@ describe("lowland run", () => {
   it("shares a host directory read-only", async () => {
     const shared = join(scratch.path, "read-only");
     await mkdir(shared);
-    const result = await lowland(["run", "--mount", `${shared}:/work:ro`, "touch", "/work/x"]);
+    const result = await lowland(["run", "-v", `${shared}:/work:ro`, "touch", "/work/x"]);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Read-only file system/);
   });
@@ -198,21 +206,21 @@ describe("lowland run", () => {
   it("persists writes to an ext4 disk", async () => {
     const write = await lowland([
       "run",
-      "--disk",
+      "-v",
       `${data_disk}:/data`,
       "sh",
       "-c",
       "echo kept > /data/note",
     ]);
     assert.equal(write.status, 0, write.stderr);
-    const read = await lowland(["run", "--disk", `${data_disk}:/data:ro`, "cat", "/data/note"]);
+    const read = await lowland(["run", "-v", `${data_disk}:/data:ro`, "cat", "/data/note"]);
     assert.deepEqual(read, { status: 0, stdout: "kept\n", stderr: "" });
   });
 
   it("flushes a disk when a host reader closes the output early", async () => {
     const child = spawn(
       process.execPath,
-      [cli, "run", "--disk", `${data_disk}:/data`, "sh", "-c", "echo early > /data/epipe; yes"],
+      [cli, "run", "-v", `${data_disk}:/data`, "sh", "-c", "echo early > /data/epipe; yes"],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let stderr = "";
@@ -224,7 +232,7 @@ describe("lowland run", () => {
     // would on the host.
     assert.equal(status, 141, stderr);
     assert.doesNotMatch(stderr, /lowland|Uncaught/);
-    const read = await lowland(["run", "--disk", `${data_disk}:/data:ro`, "cat", "/data/epipe"]);
+    const read = await lowland(["run", "-v", `${data_disk}:/data:ro`, "cat", "/data/epipe"]);
     assert.equal(read.stdout, "early\n");
   });
 
@@ -261,41 +269,46 @@ describe("lowland run", () => {
     assert.match(stderr, /^lowland run: .*ENOSPC/);
   });
 
-  it("reports a missing host directory", async () => {
-    const result = await lowland([
-      "run",
-      "--mount",
-      `${join(scratch.path, "absent")}:/work`,
-      "true",
-    ]);
+  it("reports a missing volume source", async () => {
+    const result = await lowland(["run", "-v", `${join(scratch.path, "absent")}:/work`, "true"]);
     assert.equal(result.status, 125);
-    assert.match(result.stderr, /absent is not a directory/);
+    assert.match(result.stderr, /absent does not exist/);
+  });
+
+  it("refuses a volume source that is neither a directory nor a file", async () => {
+    const fifo = join(scratch.path, "image.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const result = await lowland(["run", "-v", `${fifo}:/:ro`, "true"]);
+    assert.equal(result.status, 125);
+    assert.match(result.stderr, /image\.fifo is neither a directory nor a regular file/);
   });
 
   it("does not change a read-only disk", async () => {
     const before = await sha256(data_disk);
-    const result = await lowland(["run", "--disk", `${data_disk}:/data:ro`, "touch", "/data/x"]);
-    assert.notEqual(result.status, 0);
+    // The disk mounts and reads, but refuses the write.
+    const result = await lowland([
+      "run",
+      "-v",
+      `${data_disk}:/data:ro`,
+      "sh",
+      "-c",
+      "ls /data >/dev/null && touch /data/x",
+    ]);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Read-only file system/);
     assert.equal(await sha256(data_disk), before);
   });
 
   it("attaches a root image as a disk", async () => {
     const root = await ext4_root(scratch.path);
-    const result = await lowland([
-      "run",
-      "--disk",
-      `${root}:/data:ro`,
-      "test",
-      "-x",
-      "/data/bin/sh",
-    ]);
+    const result = await lowland(["run", "-v", `${root}:/data:ro`, "test", "-x", "/data/bin/sh"]);
     assert.equal(result.status, 0, result.stderr);
   });
 
   it("reports why a disk did not mount", async () => {
     const empty = join(scratch.path, "empty.img");
     await writeFile(empty, new Uint8Array(1024 * 1024));
-    const result = await lowland(["run", "--disk", `${empty}:/data`, "true"]);
+    const result = await lowland(["run", "-v", `${empty}:/data`, "true"]);
     assert.equal(result.status, 125);
     assert.match(result.stderr, /^lowland run: mounting m\d+ \(.*empty\.img\) at \/data: EINVAL/);
   });
@@ -308,6 +321,68 @@ describe("lowland run", () => {
     const read = await lowland(["run", "--image", root, "test", "-e", "/etc/changed"]);
     assert.equal(read.status, 1);
     assert.equal(await sha256(root), before);
+  });
+
+  it("overlays a host directory without changing it", async () => {
+    const shared = join(scratch.path, "overlaid");
+    await mkdir(shared);
+    await writeFile(join(shared, "in.txt"), "from the host\n");
+    const result = await lowland([
+      "run",
+      "-v",
+      `${shared}:/work:O`,
+      "sh",
+      "-c",
+      "echo changed > /work/in.txt && echo new > /work/out.txt && cat /work/in.txt /work/out.txt",
+    ]);
+    assert.deepEqual(result, { status: 0, stdout: "changed\nnew\n", stderr: "" });
+    assert.equal(await readFile(join(shared, "in.txt"), "utf8"), "from the host\n");
+    await assert.rejects(readFile(join(shared, "out.txt")), { code: "ENOENT" });
+  });
+
+  it("overlays a disk without changing it", async () => {
+    const before = await sha256(data_disk);
+    const result = await lowland([
+      "run",
+      "-v",
+      `${data_disk}:/data:O`,
+      "sh",
+      "-c",
+      "echo gone > /data/overlaid && cat /data/overlaid",
+    ]);
+    assert.deepEqual(result, { status: 0, stdout: "gone\n", stderr: "" });
+    assert.equal(await sha256(data_disk), before);
+  });
+
+  it("replaces the root with a volume at /", async () => {
+    const root = await ext4_root(scratch.path);
+    // The canonical image has no /etc/root-marker, and this root does not
+    // either until the first run writes it, read-write, into the file.
+    const write = await lowland([
+      "run",
+      "-v",
+      `${root}:/`,
+      "sh",
+      "-c",
+      "echo rw > /etc/root-marker",
+    ]);
+    assert.equal(write.status, 0, write.stderr);
+    const read = await lowland(["run", "-v", `${root}:/:ro`, "cat", "/etc/root-marker"]);
+    assert.deepEqual(read, { status: 0, stdout: "rw\n", stderr: "" });
+    const before = await sha256(root);
+    const touch = await lowland(["run", "-v", `${root}:/:ro`, "touch", "/etc/x"]);
+    assert.match(touch.stderr, /Read-only file system/);
+    assert.equal(await sha256(root), before);
+    const rejected = await lowland(["run", "--image", root, "-v", `${root}:/`, "true"]);
+    assert.equal(rejected.status, 125);
+  });
+
+  it("mounts a tmpfs at /tmp unless a volume is there", async () => {
+    const type = ["sh", "-c", "grep ' /tmp ' /proc/mounts | cut -d' ' -f3"];
+    assert.equal((await lowland(["run", ...type])).stdout, "tmpfs\n");
+    const shared = join(scratch.path, "tmp");
+    await mkdir(shared);
+    assert.equal((await lowland(["run", "-v", `${shared}:/tmp`, ...type])).stdout, "virtiofs\n");
   });
 });
 
@@ -349,7 +424,7 @@ describe("Linux", () => {
   it("unmounts a disk cleanly despite a file handle left open at disposal", async () => {
     const linux = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data" }],
+      mounts: [{ path: "/data", source: data_disk }],
     });
     const file = await linux.fs.open("/data/open-handle", { write: true, create: true });
     await file.write(new TextEncoder().encode("still open"));
@@ -358,7 +433,7 @@ describe("Linux", () => {
     // unmounted cleanly, and even read-only storage mounts it.
     await using reader = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data", readOnly: true }],
+      mounts: [{ path: "/data", source: data_disk, mode: "ro" }],
     });
     assert.equal(await reader.fs.readTextFile("/data/open-handle"), "still open");
   });
@@ -366,7 +441,7 @@ describe("Linux", () => {
   it("flushes disks on disposal while commands hold every process slot", async () => {
     const linux = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data" }],
+      mounts: [{ path: "/data", source: data_disk }],
     });
     await linux.fs.writeFile("/data/slots", new TextEncoder().encode("flushed"));
     for (let i = 0; i < 8; i++) await linux.spawn(["sleep", "1000"], { cwd: "/data" });
@@ -379,7 +454,7 @@ describe("Linux", () => {
     assert.equal(closed, true);
     await using reader = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data", readOnly: true }],
+      mounts: [{ path: "/data", source: data_disk, mode: "ro" }],
     });
     assert.equal(await reader.fs.readTextFile("/data/slots"), "flushed");
   });
@@ -387,7 +462,7 @@ describe("Linux", () => {
   it("reboots, shuts down and is killed", async () => {
     const linux = await Linux.create({
       image: rootImage(),
-      disks: [{ source: data_disk, path: "/data" }],
+      mounts: [{ path: "/data", source: data_disk }],
     });
     await linux.fs.writeTextFile("/data/reboot", "kept");
     const before = await linux.fs.readTextFile("/proc/sys/kernel/random/boot_id");
@@ -405,31 +480,20 @@ describe("Linux", () => {
   });
 
   it("needs an image, so only lowland/image brings in the canonical one", async () => {
-    await assert.rejects(
-      Linux.create({} as LinuxOptions),
-      /needs an image, such as rootImage\(\) from lowland\/image/,
-    );
+    await assert.rejects(Linux.create({} as LinuxOptions), {
+      name: "TypeError",
+      message: /needs an image, such as rootImage\(\) from lowland\/image/,
+    });
     await assert.rejects(
       Linux.create({ image: { ...rootImage(), path: "/data" } }),
       /the image must be mounted at \/, not \/data/,
     );
   });
 
-  it("rejects relative and duplicate guest paths", async () => {
-    const source = new NodeFS(".");
+  it("rejects a relative guest path", async () => {
     await assert.rejects(
-      Linux.create({ image: rootImage(), mounts: [{ source, path: "work" }] }),
+      Linux.create({ image: rootImage(), mounts: [{ source: new NodeFS("."), path: "work" }] }),
       /must be absolute/,
-    );
-    await assert.rejects(
-      Linux.create({
-        image: rootImage(),
-        mounts: [
-          { source, path: "/work" },
-          { source, path: "/work" },
-        ],
-      }),
-      /two mounts target \/work/,
     );
   });
 
@@ -440,8 +504,10 @@ describe("Linux", () => {
     {
       await using linux = await Linux.create({
         image: rootImage(),
-        disks: [{ source: bytes, path: "/data" }],
-        mounts: [{ source: new NodeFS(shared), path: "/work" }],
+        mounts: [
+          { path: "/data", source: bytes },
+          { path: "/work", source: new NodeFS(shared) },
+        ],
       });
       const result = await linux.run([
         "sh",
@@ -453,7 +519,7 @@ describe("Linux", () => {
     assert.equal(await readFile(join(shared, "object"), "utf8"), "mount\n");
     await using reader = await Linux.create({
       image: rootImage(),
-      disks: [{ source: bytes, path: "/data", readOnly: true }],
+      mounts: [{ path: "/data", source: bytes, mode: "ro" }],
     });
     assert.equal(await reader.fs.readTextFile("/data/object"), "disk\n");
   });
@@ -508,7 +574,7 @@ describe("Linux", () => {
     const root = await readFile(await ext4_root(scratch.path));
     await using linux = await Linux.create({
       image: rootImage(),
-      disks: [{ source: root, path: "/data" }],
+      mounts: [{ path: "/data", source: root }],
     });
     await linux.fs.stat("/data/bin/busybox");
   });

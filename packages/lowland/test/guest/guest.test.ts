@@ -376,12 +376,13 @@ test("resolves mount points inside the root, whatever symlinks it holds", async 
     ],
   });
   try {
-    // Each mount is in the new root, at the path its symlink names there.
+    // Each mount is in the new root, at the path its symlink names there,
+    // after the scratch /run and /tmp the boot mounts beneath a root.
     const mounts = await guest.fs.readTextFile("/proc/mounts");
     const tmpfs = mounts.split("\n").filter((line) => line.startsWith("tmpfs "));
     assert.deepEqual(
       tmpfs.map((line) => line.split(" ")[1]),
-      ["/run", "/run/made", "/run/climbed"],
+      ["/run", "/tmp", "/run", "/run/made", "/run/climbed"],
     );
     assert.equal((await guest.fs.lstat("/alias")).isSymlink, true);
   } finally {

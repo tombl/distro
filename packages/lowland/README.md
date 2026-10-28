@@ -12,7 +12,7 @@ npm install lowland
 ```sh
 npx lowland run uname -a
 npx lowland run -v ./src:/work -w /work sh -c 'ls -l'
-npx lowland run --image app.erofs --disk data.ext4:/data --network nat my-app
+npx lowland run --image app.erofs -v data.ext4:/data --network nat my-app
 ```
 
 `lowland run` boots a fresh machine, runs one command, and exits with the
@@ -25,13 +25,15 @@ window resizes the guest terminal. `-t`, `--tty` runs a given command on a
 terminal too, such as `npx lowland run -t vi`. Otherwise commands run over
 pipes, with stdout and stderr kept separate.
 
+- `-v`, `--volume <src:dst[:rw|:ro|:O]>` mounts a host directory, which is
+  shared, or an EROFS or ext4 image file, which is attached as a disk. `rw`,
+  the default, writes through to the source, `ro` mounts it read-only, and
+  `O` mounts it beneath a temporary overlay: the guest can write to it, but
+  the source never changes. A volume at `/` replaces the root image.
 - `--image <path>` boots another root image, such as one from `lowland build`,
-  instead of the canonical image. The root is always read-only beneath a
-  temporary overlay, so running an image never changes it.
-- `--disk <path:guest[:ro]>` attaches an EROFS or ext4 image file and mounts it.
-  Writes to an ext4 disk persist in the file unless it is mounted `:ro`.
-- `-v`, `--mount <host:guest[:ro]>` shares a host directory.
-- `-w`, `--cwd <path>` sets the working directory, `/` by default.
+  instead of the canonical image. It is `-v <path>:/:O`, so running an image
+  never changes it.
+- `-w`, `--workdir <dir>` sets the working directory, `/` by default.
 - `-e`, `--env <name[=value]>` sets an environment variable, or passes one
   through from the host.
 - `--cpus <count>` boots more virtual CPUs than the default of one.
@@ -64,7 +66,7 @@ import { NodeFS } from "lowland/node";
 
 await using linux = await Linux.create({
   image: rootImage(),
-  mounts: [{ source: new NodeFS("./src"), path: "/work" }],
+  mounts: [{ path: "/work", source: new NodeFS("./src") }],
 });
 const result = await linux.run(["ls", "/work"]);
 console.log(new TextDecoder().decode(result.stdout));
@@ -74,18 +76,24 @@ console.log(new TextDecoder().decode(result.stdout));
 code runs in a browser:
 
 - `image` is required. `rootImage()` from `lowland/image` is the canonical
-  image, with BusyBox, apk-tools, and CA certificates. Your own image, and
-  each disk's `source`, take any source `rootImage()` accepts: a file path in
-  Node, a URL, a file handle, bytes, a blob, or a response. The root is
-  mounted read-only beneath a writable layer in memory, unless `image` is a
-  mount entry of your own at `/`.
-- `mounts` take a filesystem: a `NodeFS` from `lowland/node` for a host
-  directory, or a `BrowserFS` from `lowland/browser` for the origin private
-  file system.
+  image, with BusyBox, apk-tools, and CA certificates. Your own image is a
+  source: a file path in Node, a URL, a file handle, bytes, a blob, or a
+  response. The root is mounted read-only beneath a writable layer in
+  memory, unless `image` is a mount entry of your own at `/`.
+- `mounts` are further entries of the guest agent's mount table (see
+  below). A disk's `source` takes the same sources as `image`, and a shared
+  filesystem's is a `NodeFS` from `lowland/node` for a host directory, or a
+  `BrowserFS` from `lowland/browser` for the origin private file system.
+- `init` is a program to start once the root has booted, whose exit powers
+  the machine off.
 - `network` takes a network from `createNetwork()` in `lowland/machine`, such
   as `createNetwork(nodeNetwork())` with `nodeNetwork` from `lowland/node` for
   the host's network, as `--network nat` uses.
 - `cpus` and further `plugins` go to the machine.
+
+`linux.machine` and `linux.guest` are the layers it composes, for the rest
+of their APIs, and `shutdown()`, `reboot()`, `kill()` and `exited` are the
+machine's.
 
 `run()` collects a command's output, and `spawn()` streams it. Like
 `lowland run`, both run commands in `/` unless their `cwd` option says
@@ -135,7 +143,8 @@ const result = await guest.run(["uname", "-a"]);
 The guest agent boots from an initramfs, mounts its mount table, which is
 like fstab, and makes the entry at `/` the root. Each entry is a path, a
 source (a disk or a filesystem such as `NodeFS`), a type, a mode (`"rw"`,
-`"ro"`, or `"overlay"`), and options.
+`"ro"`, or `"overlay"`), and options. With a root, it mounts a tmpfs at `/run`
+and `/tmp` unless the table has entries there.
 
 Each entry point loads only the files it needs. The kernel, `vmlinux.wasm`,
 comes with `lowland/machine` and what imports it, the guest agent's
