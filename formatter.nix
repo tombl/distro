@@ -21,6 +21,12 @@ pkgs.treefmt.withConfig {
     formatter = {
       actionlint = {
         command = "actionlint";
+        # The formatting check's copy of the tree has no .git, from which
+        # actionlint would otherwise find its config.
+        options = [
+          "-config-file"
+          ".github/actionlint.yaml"
+        ];
         includes = [ ".github/workflows/*.yml" ];
       };
       deadnix = {
