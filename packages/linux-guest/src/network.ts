@@ -19,6 +19,11 @@ const GATEWAY_MAC: MacAddress = [0x02, 0, 0, 0, 0, 1];
 const TCP_MSS = 1200;
 const TCP_RECEIVE_WINDOW = 0xffff;
 const TCP_TIMEOUT_MS = 30_000;
+// Retransmission timeout bounds (RFC 6298). The floor is Linux's TCP_RTO_MIN;
+// the ceiling keeps several retries inside TCP_TIMEOUT_MS.
+const TCP_INITIAL_RTO_MS = 1_000;
+const TCP_MIN_RTO_MS = 200;
+const TCP_MAX_RTO_MS = 8_000;
 /** Host-facing UDP streams retain at most this many datagrams, then tail-drop. */
 const UDP_READABLE_QUEUE_CAP = 64;
 const ETHERNET_MTU = 1500;
@@ -433,6 +438,9 @@ interface TcpFlow {
   receive_tail: Promise<void>;
   advertised_window: number;
   peer_window: number;
+  retransmission_timeout: number;
+  smoothed_rtt?: number;
+  rtt_variance?: number;
   handshake?: PromiseWithResolvers<TcpConnection>;
   handshake_timeout?: ReturnType<typeof setTimeout>;
   readable?: ReadableStreamDefaultController<Uint8Array>;
@@ -754,14 +762,19 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     return datagram.array;
   }
 
-  async function send_tcp(flow: TcpFlow, flags: number, payload = new Uint8Array()) {
+  async function send_tcp(
+    flow: TcpFlow,
+    flags: number,
+    payload = new Uint8Array(),
+    sequence = flow.send_sequence,
+  ) {
     const window = tcp_receive_window(flow);
     const segment = tcp_segment(
       flow.peer_ip,
       flow.guest.ip,
       flow.peer_port,
       flow.guest_port,
-      flow.send_sequence,
+      sequence,
       flow.receive_sequence,
       flags,
       payload,
@@ -805,6 +818,60 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     });
   }
 
+  function sample_rtt(flow: TcpFlow, rtt: number) {
+    if (flow.smoothed_rtt === undefined || flow.rtt_variance === undefined) {
+      flow.smoothed_rtt = rtt;
+      flow.rtt_variance = rtt / 2;
+    } else {
+      flow.rtt_variance = 0.75 * flow.rtt_variance + 0.25 * Math.abs(flow.smoothed_rtt - rtt);
+      flow.smoothed_rtt = 0.875 * flow.smoothed_rtt + 0.125 * rtt;
+    }
+    flow.retransmission_timeout = Math.min(
+      TCP_MAX_RTO_MS,
+      Math.max(TCP_MIN_RTO_MS, flow.smoothed_rtt + Math.max(1, 4 * flow.rtt_variance)),
+    );
+  }
+
+  /**
+   * Sends a segment that occupies sequence space (SYN, FIN, or data) and
+   * resolves once the guest acknowledges it. The sender keeps one such
+   * segment in flight, so the retransmission timer is its only loss signal:
+   * the segment is resent whenever the timer expires, with exponential
+   * backoff, until the acknowledgement arrives or its waiter times out.
+   */
+  async function send_tcp_reliably(flow: TcpFlow, flags: number, payload = new Uint8Array()) {
+    const sequence = flow.send_sequence;
+    const length = payload.byteLength + (flags & (TcpFlag.SYN | TcpFlag.FIN) ? 1 : 0);
+    const acknowledgement = sequence_add(sequence, length);
+    let settled = false;
+    const acked = wait_for_ack(flow, acknowledgement).finally(() => {
+      settled = true;
+    });
+    // Teardown can reject the waiter while the first transmission is pending.
+    void acked.catch(() => {});
+    flow.send_sequence = acknowledgement;
+    await send_tcp(flow, flags, payload, sequence);
+    const sent_at = performance.now();
+    let timeout = flow.retransmission_timeout;
+    let retransmitted = false;
+    while (!settled) {
+      const expired = Promise.withResolvers<void>();
+      const timer = setTimeout(expired.resolve, timeout);
+      try {
+        await Promise.race([acked, expired.promise]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (settled || flow.closed) break;
+      retransmitted = true;
+      timeout = Math.min(TCP_MAX_RTO_MS, timeout * 2);
+      await send_tcp(flow, flags, payload, sequence);
+    }
+    await acked;
+    // Karn's algorithm: the acknowledgement of a resent segment is ambiguous.
+    if (!retransmitted) sample_rtt(flow, performance.now() - sent_at);
+  }
+
   function acknowledge_waiters(flow: TcpFlow, acknowledgement: number) {
     for (let index = flow.ack_waiters.length - 1; index >= 0; index--) {
       const waiter = flow.ack_waiters[index]!;
@@ -837,11 +904,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       const peer_window = await wait_for_peer_window(flow);
       const length = Math.min(TCP_MSS, peer_window, data.byteLength - offset);
       const payload = data.slice(offset, offset + length);
-      const acknowledgement = sequence_add(flow.send_sequence, payload.byteLength);
-      const acked = wait_for_ack(flow, acknowledgement);
-      await send_tcp(flow, TcpFlag.ACK | TcpFlag.PSH, payload);
-      flow.send_sequence = acknowledgement;
-      await acked;
+      await send_tcp_reliably(flow, TcpFlag.ACK | TcpFlag.PSH, payload);
       offset += length;
     }
   }
@@ -850,11 +913,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
     if (flow.closed || flow.local_ended) return;
     await wait_for_peer_window(flow);
     flow.local_ended = true;
-    const acknowledgement = sequence_add(flow.send_sequence, 1);
-    const acked = wait_for_ack(flow, acknowledgement);
-    await send_tcp(flow, TcpFlag.ACK | TcpFlag.FIN);
-    flow.send_sequence = acknowledgement;
-    await acked;
+    await send_tcp_reliably(flow, TcpFlag.ACK | TcpFlag.FIN);
     if (flow.remote_ended) close_tcp_flow(flow);
   }
 
@@ -995,6 +1054,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       receive_tail: Promise.resolve(),
       advertised_window: TCP_RECEIVE_WINDOW,
       peer_window: segment.window,
+      retransmission_timeout: TCP_INITIAL_RTO_MS,
     };
     tcp_flows.set(key, flow);
     const abort = new AbortController();
@@ -1012,8 +1072,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
         // its rejection below when emission succeeds.
         void waiter.promise.catch(() => {});
         flow.activation_waiter = waiter;
-        await send_tcp(flow, TcpFlag.SYN | TcpFlag.ACK);
-        flow.send_sequence = sequence_add(flow.send_sequence, 1);
+        await send_tcp_reliably(flow, TcpFlag.SYN | TcpFlag.ACK);
         await waiter.promise;
       })();
       return flow.activation;
@@ -1075,6 +1134,13 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       if (segment.flags & TcpFlag.ACK && segment.acknowledgement === flow.send_sequence) {
         establish_tcp_flow(flow);
       }
+      return;
+    }
+
+    if (segment.flags & TcpFlag.SYN) {
+      // The guest resends its SYN-ACK until our handshake ACK arrives. A
+      // listener's accept() waits for that ACK, so answer every copy.
+      await send_tcp(flow, TcpFlag.ACK);
       return;
     }
 
@@ -1331,7 +1397,7 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       guest_port: options.port,
       peer_ip: GATEWAY_IP,
       peer_port: port,
-      send_sequence: sequence_add(initial, 1),
+      send_sequence: initial,
       receive_sequence: 0,
       established: false,
       local_ended: false,
@@ -1342,12 +1408,12 @@ export function createNetwork({ connectTcp, resolveDns }: NetworkOptions): Netwo
       receive_tail: Promise.resolve(),
       advertised_window: TCP_RECEIVE_WINDOW,
       peer_window: 0,
+      retransmission_timeout: TCP_INITIAL_RTO_MS,
       handshake,
     };
     tcp_flows.set(key, flow);
     expire_tcp_handshake(flow, `timed out connecting to ${options.hostname}:${options.port}`);
-    const syn = tcp_segment(GATEWAY_IP, guest.ip, port, options.port, initial, 0, TcpFlag.SYN);
-    void send_ip(guest.macAddress, GATEWAY_IP, guest.ip, IpProtocol.TCP, syn).catch((error) => {
+    void send_tcp_reliably(flow, TcpFlag.SYN).catch((error) => {
       close_tcp_flow(flow, error);
     });
     if (options.signal) {
