@@ -267,6 +267,12 @@ jobs:
       !cancelled() && needs.build.result == 'success' && (needs.heavy-check.result == 'success' || needs.heavy-check.result == 'skipped') &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro') ||
       github.event.pull_request.head.repo.full_name == 'tombl/distro')
+    # One deploy per ref at a time, so the bridge site's check below for a
+    # newer commit holds until it has published. Every waiting run queues:
+    # GitHub otherwise keeps only the last to arrive, which may be older.
+    concurrency:
+      group: deploy-site-${{ github.ref }}
+      queue: max
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -288,6 +294,24 @@ jobs:
           RCLONE_CONFIG_R2_ENDPOINT: "https://7d87194d9d4af2959fb81de343dd63d9.r2.cloudflarestorage.com"
         run: |
           distro/site/scripts/publish-apk-repo.sh
+      - name: Publish bridge site
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
+        env:
+          RCLONE_CONFIG_GARAGE_TYPE: s3
+          RCLONE_CONFIG_GARAGE_PROVIDER: Other
+          RCLONE_CONFIG_GARAGE_REGION: garage
+          RCLONE_CONFIG_GARAGE_ENDPOINT: https://s3.tombl.net
+          RCLONE_CONFIG_GARAGE_ACCESS_KEY_ID: ${{secrets.GARAGE_ACCESS_KEY_ID}}
+          RCLONE_CONFIG_GARAGE_SECRET_ACCESS_KEY: ${{secrets.GARAGE_SECRET_ACCESS_KEY}}
+        run: |
+          # A run whose checks finish after a newer commit's mustn't put the
+          # older bridge back.
+          git fetch --quiet origin main
+          if [ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]; then
+            echo "main has moved on from $GITHUB_SHA; leaving the bridge site to its run"
+            exit 0
+          fi
+          packages/bridge-site/publish.sh
       - name: Deploy production
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'tombl/distro'
         env:

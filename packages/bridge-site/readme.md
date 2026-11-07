@@ -66,8 +66,12 @@ origin reports whether a VM page is currently relaying it.
 
 ## Building and hosting
 
-`nix build .#bridge-site` produces a provider-neutral static site. Serve the
-result at both `hub.localhost.low.land` and `*.localhost.low.land`. The host must:
+`nix build .#bridge-site` produces a provider-neutral static site. CI publishes
+each `main` build with `publish.sh` to the `localhost.low.land` bucket on
+tombl.net's Garage, which serves `*.localhost.low.land`. The objects carry
+their own `Content-Type` and `Cache-Control: no-cache`; the host adds the rest.
+Serve the result at both `hub.localhost.low.land` and `*.localhost.low.land`.
+The host must:
 
 - terminate TLS for the wildcard family;
 - serve files from the derivation at every hostname in that family;
