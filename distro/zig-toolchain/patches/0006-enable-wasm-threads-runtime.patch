@@ -1,0 +1,34 @@
+diff --git a/std/heap.zig b/std/heap.zig
+index 49e3d2b..d425141 100644
+--- a/std/heap.zig
++++ b/std/heap.zig
+@@ -13,7 +13,12 @@
+ pub const SmpAllocator = @import("heap/SmpAllocator.zig");
+ pub const FixedBufferAllocator = @import("heap/FixedBufferAllocator.zig");
+ pub const PageAllocator = @import("heap/PageAllocator.zig");
+-pub const WasmAllocator = if (builtin.single_threaded) BrkAllocator else @compileError("unimplemented");
++pub const WasmAllocator = if (builtin.link_libc)
++    c_allocator_impl
++else if (builtin.single_threaded)
++    BrkAllocator
++else
++    @compileError("unimplemented");
+ pub const BrkAllocator = @import("heap/BrkAllocator.zig");
+
+ pub const DebugAllocatorConfig = @import("heap/debug_allocator.zig").Config;
+diff --git a/std/Io/Threaded.zig b/std/Io/Threaded.zig
+index 0799314..fb19144 100644
+--- a/std/Io/Threaded.zig
++++ b/std/Io/Threaded.zig
+@@ -957,7 +957,10 @@
+             comptime assert(builtin.cpu.has(.wasm, .atomics));
+             // TODO implement cancelation for WASM futex waits by signaling the futex
+             if (!uncancelable) try Thread.checkCancel();
+-            const to: i64 = if (timeout_ns) |ns| ns else -1;
++            const to: i64 = if (timeout_ns) |ns|
++                @intCast(@min(ns, std.math.maxInt(i64)))
++            else
++                -1;
+             const signed_expect: i32 = @bitCast(expect);
+             const result = asm volatile (
+                 \\local.get %[ptr]

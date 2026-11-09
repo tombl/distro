@@ -1,0 +1,25 @@
+diff --git a/std/Build.zig b/std/Build.zig
+index 524ab85..ee2bd9d 100644
+--- a/std/Build.zig
++++ b/std/Build.zig
+@@ -1512,7 +1512,17 @@ pub fn standardTargetOptionsQueryOnly(b: *Build, args: StandardTargetOptionsArgs
+-    const whitelist = args.whitelist orelse return selected_target;
++    var distro_target = selected_target;
++    if (mcpu == null and
++        distro_target.cpu_arch == .wasm32 and
++        distro_target.os_tag == .linux and
++        distro_target.abi == .musl)
++    {
++        distro_target.cpu_features_add.addFeatureSet(Target.wasm.featureSet(&.{
++            .atomics, .bulk_memory, .mutable_globals, .sign_ext,
++        }));
++    }
++    const whitelist = args.whitelist orelse return distro_target;
+
+     // Make sure it's a match of one of the list.
+     for (whitelist) |q| {
+-        if (q.eql(selected_target))
+-            return selected_target;
++        if (q.eql(distro_target))
++            return distro_target;
+     }

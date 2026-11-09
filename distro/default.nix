@@ -73,6 +73,14 @@ lib.makeScope (scope: lib.callPackageWith ({ inherit lib pkgs; } // scope)) (
     rustPlatform = callPackage ./rust-platform/package.nix { };
     rust-cli-matrix = callPackage ./rust-cli-matrix/package.nix { };
 
+    # Upstream Zig with an external distro libc and a target stdlib overlay.
+    zig-toolchain = callPackage ./zig-toolchain/package.nix { };
+
+    # Bootstrap proof that upstream Zig can link directly against the distro
+    # sysroot before the target standard-library port is involved.
+    zig-bootstrap-smoke = callPackage ./zig-bootstrap-smoke/package.nix { };
+    zig-smoke = callPackage ./zig-smoke/package.nix { };
+
     # userland:
     apk-tools = callPackage ./apk-tools/package.nix {
       src = self.apk-tools-src;

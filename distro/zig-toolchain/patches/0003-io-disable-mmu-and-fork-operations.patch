@@ -1,0 +1,50 @@
+diff --git a/std/Io/Threaded.zig b/std/Io/Threaded.zig
+index 34b03ff..c8dbb80 100644
+--- a/std/Io/Threaded.zig
++++ b/std/Io/Threaded.zig
+@@ -3,6 +3,7 @@ const builtin = @import("builtin");
+ const native_os = builtin.os.tag;
+ const is_windows = native_os == .windows;
+ const is_darwin = native_os.isDarwin();
++const is_wasm_linux = builtin.cpu.arch == .wasm32 and native_os == .linux and builtin.target.isMuslLibC();
+ const is_debug = builtin.mode == .Debug;
+
+ const std = @import("../std.zig");
+@@ -2014,7 +2015,8 @@ const have_wait4 = switch (native_os) {
+ };
+
+ const have_mmap = switch (native_os) {
+-    .wasi, .windows => false,
++    .wasi, .windows => false,
++    .linux => !is_wasm_linux,
+     else => true,
+ };
+ const have_poll = switch (native_os) {
+@@ -14869,6 +14871,10 @@ const Spawned = struct {
+ };
+
+ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Spawned {
++    // wasm cannot implement fork's return-twice contract. This is replaced by
++    // a callback clone in the next runtime tier.
++    if (is_wasm_linux) return error.OperationUnsupported;
++
+     // The child process does need to access (one end of) these pipes. However,
+     // we must initially set CLOEXEC to avoid a race condition. If another thread
+     // is racing to spawn a different child process, we don't want it to inherit
+@@ -18202,5 +18208,7 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
+     const t: *Threaded = @ptrCast(@alignCast(userdata));
+     const memory = mm.memory;
++    if (is_wasm_linux) unreachable;
++
+     if (mm.section) |section| switch (native_os) {
+         .windows => {
+             if (section == windows.INVALID_HANDLE_VALUE) return;
+@@ -18230,6 +18238,8 @@ fn fileMemoryMapSetLength(
+     const page_align = std.heap.page_size_min;
+     const old_memory = mm.memory;
+
++    if (is_wasm_linux) return error.OperationUnsupported;
++
+     if (mm.section) |section| {
+         _ = section;
+         if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
